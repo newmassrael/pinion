@@ -86,6 +86,32 @@ EXAMPLE = "hello-node-lab"
 EXT = "/external"
 VIEWPORT = (1440, 900)
 
+#: ⚠⚠ ★★★★★ R2079 — **the card this walk is about must DIAL, and the router
+#: cannot.** This walk's whole subject is the `connect.endpoints` row, which is
+#: worked out from a card's outbound wires, and it named `R-01` at seven sites.
+#:
+#: R2074 corrected `spec::LINKS` to name the dialler the behaviour canon names,
+#: and the consequence is structural rather than incidental: five of the seven
+#: wires land on the router directly and the other two reach it through one
+#: hop, so — measured by reachability over the declared links — **there is no
+#: card the router can dial without closing a cycle.** It is a pure sink. A
+#: repair that gave it an outbound wire (the fix that worked for `r1934`'s
+#: fan-out) is refused by the model here, by construction and forever.
+#:
+#: ⇒ the subject is asked of the graph instead: any card with an outbound wire
+#: has the row this walk is about. Named `subject_that_dials` rather than
+#: hunted inline so the seven sites share one answer.
+def subject_that_dials(tf) -> str:
+    """A card with a drawn outbound wire, so it has a wire-derived row."""
+    dialling = sorted(
+        {link["from"] for link in json.loads(tf.query(f"{EXT}/links"))}
+    )
+    assert dialling, (
+        "no card on this canvas dials anything, so there is no wire-derived "
+        "row for this walk to be about"
+    )
+    return dialling[0]
+
 #: An address at a host nothing in the opening graph listens on. It is the one
 #: the behaviour canon's own warning is about.
 OUTSIDE = "tcp/10.0.0.21:7449"
@@ -139,6 +165,29 @@ def gate_text(tf) -> str:
     return json.dumps(json.loads(tf.query(f"{EXT}/gate")), ensure_ascii=False)
 
 
+def a_card_the_subject_can_dial(tf) -> str:
+    """A card the dialling subject may be wired to, asked of the graph.
+
+    ★ R2079 — three clauses, each one a refusal the model handed back while
+    this round repaired the sibling walks:
+
+      * it must LISTEN — a card that is the target of some drawn link
+        demonstrably does (`T-01 does not listen, so nothing can dial it`);
+      * it must not already be dialled by the subject, or drawing adds nothing;
+      * it must not be the subject.
+
+    ⇒ the graph's rules are the model's to state, and a hand-picked pair earned
+    `that link would close a cycle: 4 -> 6` earlier in this same round.
+    """
+    subject = subject_that_dials(tf)
+    all_links = json.loads(tf.query(f"{EXT}/links"))
+    already = {link["to"] for link in all_links if link["from"] == subject}
+    listens = {link["to"] for link in all_links}
+    return next(
+        name for name in sorted(listens) if name != subject and name not in already
+    )
+
+
 def share_the_connect_row(tf) -> list[str]:
     """Reach the shared state the way a person does, and answer the drawn set.
 
@@ -146,7 +195,7 @@ def share_the_connect_row(tf) -> list[str]:
     with what the canvas was saying — then write an address of your own over
     that seed. The wires come straight back as the other half.
     """
-    tf.invoke(f"{EXT}/select", "R-01")
+    tf.invoke(f"{EXT}/select", subject_that_dials(tf))
     drawn = parts(row(tf, "connect.endpoints")["value"])
     tf.invoke(f"{EXT}/author_field", "connect.endpoints")
     tf.invoke(f"{EXT}/set_field", f"connect.endpoints={OUTSIDE}")
@@ -158,6 +207,11 @@ def share_the_connect_row(tf) -> list[str]:
 
 def a_the_wire_publishes_both_halves(tf) -> None:
     banner("A — the wire publishes what was written and what was worked out")
+    # ★ R2079 — select the dialling subject FIRST. This section read the row of
+    # whatever the screen opened with, which is the router, and the router has
+    # no wire-derived row since R2074 made it a pure sink (measured: every other
+    # card reaches it, so it can dial nothing without closing a cycle).
+    tf.invoke(f"{EXT}/select", subject_that_dials(tf))
     opening = row(tf, "connect.endpoints")
     assert_eq(opening["source"], "wire", "A: the opening row is the canvas's alone")
     assert_eq(
@@ -197,11 +251,24 @@ def a_the_wire_publishes_both_halves(tf) -> None:
 
 def b_one_row_holds_both_contributions(tf) -> None:
     banner("B — a written address and every drawn one, in one row")
-    tf.invoke(f"{EXT}/select", "R-01")
+    subject = subject_that_dials(tf)
+    tf.invoke(f"{EXT}/select", subject)
+    # ★ R2079 — ONE WRITTEN PLUS EVERY DRAWN, counted off the model. This read
+    # `len(shown) == 3`, which was one written address plus the router's three
+    # outbound wires minus… nothing: it was a transcription of a fixture where
+    # the subject dialled two things. The section's own title states the claim
+    # — *a written address and every drawn one* — so the count is derivable and
+    # the literal was never the point.
+    drawn_now = [
+        link
+        for link in json.loads(tf.query(f"{EXT}/links"))
+        if link["from"] == subject
+    ]
     shown = parts(row(tf, "connect.endpoints")["value"])
     ok(
-        f"B: ★★★★★ the row holds both contributions ({shown})",
-        shown[0] == OUTSIDE and len(shown) == 3,
+        f"B: ★★★★★ the row holds both contributions ({shown}) — one written "
+        f"plus {len(drawn_now)} drawn",
+        shown[0] == OUTSIDE and len(shown) == 1 + len(drawn_now),
     )
     ok(
         "B: written first — the half a person is looking for is the half they "
@@ -217,7 +284,7 @@ def b_one_row_holds_both_contributions(tf) -> None:
     tf.invoke(f"{EXT}/export", "")
     produced = json.loads(tf.query(f"{EXT}/produced"))
     assert_eq(
-        produced["config"]["nodes"]["R-01"]["connect"]["endpoints"],
+        produced["config"]["nodes"][subject_that_dials(tf)]["connect"]["endpoints"],
         shown,
         "B: ★★★ and the PLAN ships the same list — two derivations of one fact "
         "is the failure this screen keeps finding",
@@ -226,16 +293,29 @@ def b_one_row_holds_both_contributions(tf) -> None:
     # writing it as well must not double it.
     tf.invoke(f"{EXT}/set_field", f"connect.endpoints={OUTSIDE}, {shown[1]}")
     both = parts(row(tf, "connect.endpoints")["value"])
+    # ★ R2079 — UNCHANGED, which is the claim. This spelled the expected list
+    # as `[OUTSIDE, shown[1], shown[2]]` and raised `IndexError` once the
+    # subject dialled one thing rather than two: the third slot was the
+    # router's old third wire. Naming an address the canvas already draws adds
+    # nothing, so the row after is the row before — at any number of wires.
     assert_eq(
         both,
-        [OUTSIDE, shown[1], shown[2]],
+        shown,
         "B: ★★ an address both halves name appears once, in the place the "
         "written half puts it",
     )
+    # ★ R2079 — the drawn addresses the WRITTEN half does not also name, which
+    # is what "the canvas alone says" means. This asserted `1`, true when the
+    # subject dialled two and the line above wrote one of them; with a subject
+    # that dials once, the written half names the only drawn address and the
+    # canvas is left saying nothing of its own — 0, correctly.
+    written_now = {OUTSIDE, shown[1]}
+    canvas_alone = [address for address in shown[1:] if address not in written_now]
     assert_eq(
         row(tf, "connect.endpoints")["derived_elements"],
-        1,
-        "B: and only the one the canvas alone says is counted as its",
+        len(canvas_alone),
+        f"B: and only what the canvas alone says is counted as its "
+        f"({canvas_alone} of {shown[1:]})",
     )
     tf.invoke(f"{EXT}/set_field", f"connect.endpoints={OUTSIDE}")
 
@@ -245,13 +325,14 @@ def b_one_row_holds_both_contributions(tf) -> None:
 
 def c_the_canvas_keeps_reaching_a_row_somebody_owns_half_of(tf) -> None:
     banner("C — drawing a link still moves a row somebody owns half of")
-    tf.invoke(f"{EXT}/select", "R-01")
+    tf.invoke(f"{EXT}/select", subject_that_dials(tf))
     before = row(tf, "connect.endpoints")
     # Give the card this dials a second address to land on, then draw the link.
-    tf.invoke(f"{EXT}/select", "P-02")
+    partner = a_card_the_subject_can_dial(tf)
+    tf.invoke(f"{EXT}/select", partner)
     tf.invoke(f"{EXT}/set_field", "listen.endpoints=tcp/0.0.0.0:7449, tcp/0.0.0.0:7450")
-    tf.invoke(f"{EXT}/select", "R-01")
-    tf.invoke(f"{EXT}/connect", "R-01,P-02")
+    tf.invoke(f"{EXT}/select", subject_that_dials(tf))
+    tf.invoke(f"{EXT}/connect", f"{subject_that_dials(tf)},{partner}")
     grown = row(tf, "connect.endpoints")
     ok(
         f"C: ★★★★★ the drawn link reaches a row somebody owns half of "
@@ -277,8 +358,8 @@ def c_the_canvas_keeps_reaching_a_row_somebody_owns_half_of(tf) -> None:
     drawn = [
         link
         for link in json.loads(tf.query(f"{EXT}/links"))
-        if link["from"] == "R-01"
-        and link["to"] == "P-02"
+        if link["from"] == subject_that_dials(tf)
+        and link["to"] == partner
         and link["endpoint"].endswith(":7450")
     ]
     assert drawn, "the link this section drew is in the model"
@@ -295,16 +376,17 @@ def c_the_canvas_keeps_reaching_a_row_somebody_owns_half_of(tf) -> None:
 
 def d_a_moving_derivation_is_not_somebody_editing(tf) -> None:
     banner("D — a row that moved because the canvas moved was not edited")
-    tf.invoke(f"{EXT}/select", "R-01")
+    tf.invoke(f"{EXT}/select", subject_that_dials(tf))
     # Settle the form, so what follows is measured from a clean baseline.
     tf.invoke(f"{EXT}/run", "")
     tf.invoke(f"{EXT}/run", "")
     settled = row(tf, "connect.endpoints")
     assert_eq(settled["edited"], False, "D: nothing is pending after a launch")
-    tf.invoke(f"{EXT}/select", "P-02")
+    partner = a_card_the_subject_can_dial(tf)
+    tf.invoke(f"{EXT}/select", partner)
     tf.invoke(f"{EXT}/set_field", "listen.endpoints=tcp/0.0.0.0:7449, tcp/0.0.0.0:7460")
-    tf.invoke(f"{EXT}/select", "R-01")
-    tf.invoke(f"{EXT}/connect", "R-01,P-02")
+    tf.invoke(f"{EXT}/select", subject_that_dials(tf))
+    tf.invoke(f"{EXT}/connect", f"{subject_that_dials(tf)},{partner}")
     moved = row(tf, "connect.endpoints")
     ok(
         f"D: the shown value moved ({len(parts(moved['value']))} addresses, was "
@@ -326,8 +408,8 @@ def d_a_moving_derivation_is_not_somebody_editing(tf) -> None:
     drawn = [
         link
         for link in json.loads(tf.query(f"{EXT}/links"))
-        if link["from"] == "R-01"
-        and link["to"] == "P-02"
+        if link["from"] == subject_that_dials(tf)
+        and link["to"] == partner
         and link["endpoint"].endswith(":7460")
     ]
     assert drawn, "the link this section drew is in the model"
@@ -340,7 +422,7 @@ def d_a_moving_derivation_is_not_somebody_editing(tf) -> None:
 
 def e_the_seat_gives_the_written_half_back(tf) -> None:
     banner("E — the seat gives their half back, and the row stays")
-    tf.invoke(f"{EXT}/select", "R-01")
+    tf.invoke(f"{EXT}/select", subject_that_dials(tf))
     seats = rects(tf)
     ok(
         "E: ★★ the seat on a shared row is neither of the other two acts",
@@ -399,7 +481,7 @@ def e_the_seat_gives_the_written_half_back(tf) -> None:
 
 def f_a_shared_row_carries_both_badges(tf) -> None:
     banner("F — a shared row says what an edit costs AND where the rest came from")
-    tf.invoke(f"{EXT}/select", "R-01")
+    tf.invoke(f"{EXT}/select", subject_that_dials(tf))
     derived_only = rects(tf)
     ok(
         "F: a row with one contributor that nobody can edit shows its source",
@@ -468,7 +550,7 @@ def f_a_shared_row_carries_both_badges(tf) -> None:
 
 def g_the_gate_says_the_fact_underneath(tf) -> None:
     banner("G — the surviving warning: this card dials outside the graph")
-    tf.invoke(f"{EXT}/select", "R-01")
+    tf.invoke(f"{EXT}/select", subject_that_dials(tf))
     findings = gate_text(tf)
     drawn = parts(row(tf, "connect.endpoints")["value"])
     ok(
@@ -486,7 +568,7 @@ def g_the_gate_says_the_fact_underneath(tf) -> None:
     ]
     assert_eq(len(said), 1, "G: exactly one line is about it")
     assert_eq(
-        said[0].count("R-01"),
+        said[0].count(subject_that_dials(tf)),
         1,
         f"G: ★★★★★ and the card is named ONCE in it: {said[0]!r}",
     )
@@ -518,7 +600,7 @@ def g_the_gate_says_the_fact_underneath(tf) -> None:
 
 def h_a_single_valued_row_refuses_two_contributors(tf) -> None:
     banner("H — two contributions to one mode contradict; they do not compose")
-    tf.invoke(f"{EXT}/select", "R-01")
+    tf.invoke(f"{EXT}/select", subject_that_dials(tf))
     mode = row(tf, "mode")
     assert_eq(mode["source"], "role", "H: it is worked out from the role")
     assert_eq(mode["written"], None, "H: and nobody wrote any of it")

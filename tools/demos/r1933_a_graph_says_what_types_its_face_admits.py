@@ -73,15 +73,42 @@ SEAT = "lab"
 #:
 #: R1961 — it was `T-02`, which stopped satisfying the second half. A card reads
 #: the transport it speaks off an address it uses — its own listen endpoint, or
-#: the one it dials — and T-02 has neither, so it now carries
-#: `Endpoint::Unspoken` and the face refuses it. `P-03` listens, and its dial
-#: pin is equally unwired. The card that speaks nothing is not dropped from this
-#: walk: section C asks about it directly.
-FREE_CARD = "P-03"
+#: the one it dials — and T-02 had neither, so it carried `Endpoint::Unspoken`
+#: and the face refused it. R1961 moved the constant to `P-03`, which listened
+#: and whose dial pin was then equally unwired.
+#:
+#: ⚠ Both of those sentences are HISTORY as of R2079 and are kept as history:
+#: T-02 dials something now and P-03's dial pin is wired. The live reasoning is
+#: the paragraph below.
+#: ⚠⚠ ★★★★★ R2079 — `R-01`, where this said `P-03`, and the comment above it
+#: recorded the premise that expired: *"`P-03` listens, and its dial pin is
+#: equally unwired."* R2074 corrected `spec::LINKS` to name the dialler the
+#: behaviour canon names, and `P-03` gained an outbound wire — so splitting its
+#: dial pin is refused, correctly: *something is wired to Output port 0;
+#: splitting would take away the place that wire lands*.
+#:
+#: Measured across every card on the canvas, exactly ONE can have its dial pin
+#: split — the router, which dials nothing now and so carries no wire there.
+#: The two properties this walk needs of the card are that the face TAKES its
+#: whole dial address (section C) and that the pin is unwired so a HALF can be
+#: asked for (section D), and the router is the only card with both.
+FREE_CARD = "R-01"
 
-#: R1961 — the card on the opening graph that listens nowhere and dials nothing,
-#: so nothing on it names a transport.
-UNSPOKEN_CARD = "T-02"
+#: R1961 — the card whose DIAL pin names no transport, because it dials nothing.
+#:
+#: ⚠⚠ ★★★★★ R2079 — `R-01`, where this said `T-02`, and the two swapped roles.
+#: R2074 corrected `spec::LINKS` to name the dialler the behaviour canon names,
+#: which left the router a pure sink and gave `T-02` an outbound wire. Measured
+#: after that round:
+#:
+#:     dials nothing:   ['R-01']
+#:     listens nowhere: ['T-01', 'Q-01', 'S-01', 'T-02', 'P-03']
+#:
+#: ⇒ ★ and the OLD comment's premise is gone with it: no card on this graph both
+#: listens nowhere and dials nothing any more, so the sentence had to be split.
+#: What this walk needs is the narrower fact — a dial pin with nothing to name a
+#: transport from — which is exactly what a card that dials nothing has.
+UNSPOKEN_CARD = "R-01"
 
 CHECKS: list[str] = []
 
@@ -107,6 +134,29 @@ def surface_of(app: RpcSubprocess, seat: str) -> str:
 
 def admits(app: RpcSubprocess, surface: str) -> dict:
     return js(app.query(f"{surface}/admits"))
+
+
+def fresh_card(app: RpcSubprocess, surface: str) -> str:
+    """Place a card from the palette and answer its name.
+
+    ★ R2079 — a card just placed has been told nothing: no listen address, no
+    dial address, so neither of its pins names a transport. That is the state
+    this walk's `Unspoken` arm needs and the opening graph no longer has.
+
+    The row is pressed by the ADDRESS the screen publishes for it (R2049), and
+    a non-router role is chosen because a router may not be placed in every
+    kind of graph (R1999) — the press would be refused for a reason that has
+    nothing to do with what section C asks.
+    """
+    spec = js(app.query(f"{surface}/spec"))
+    row = next(r for r in spec["roles"] if r["name"] != "Router")
+    before = {n.strip() for n in str(app.query(f"{surface}/nodes")).split(",") if n.strip()}
+    app.click(path=row["tag"])
+    app.tick_ms(16)
+    after = {n.strip() for n in str(app.query(f"{surface}/nodes")).split(",") if n.strip()}
+    made = sorted(after - before)
+    assert len(made) == 1, f"pressing {row['tag']} placed {made}"
+    return made[0]
 
 
 def expose(app: RpcSubprocess, surface: str, card: str, address: str):
@@ -186,10 +236,29 @@ def body() -> None:
         # is refused too, because publishing it would offer a peer an address it
         # cannot dial. Before R1961 no such card existed — an escape hatch gave
         # every unnamed card TCP — so this arm of the face's rule was unreachable.
-        why = expose(app, surface, UNSPOKEN_CARD, "dial")
+        #
+        # ⚠⚠ ★★★★★ R2079 — **and the card is MADE, because R2074 left the graph
+        # with none.** That round corrected `spec::LINKS` to name the dialler
+        # the behaviour canon names, and the arm went unreachable a second time.
+        # Measured before repairing, and both of the obvious re-pointings were
+        # wrong:
+        #
+        #   * `T-02`, which this named, GAINED an outbound wire;
+        #   * `R-01`, which now dials nothing, still has a taken dial pin —
+        #     a card DECLARES a transport independently of any drawn wire, so
+        #     *dials nothing* and *names no transport* are different facts.
+        #
+        # Asked of every card on the canvas, all eight answer `TAKEN`. What has
+        # an unspoken dial pin is a card nobody has wired or configured yet — so
+        # the walk presses a palette row and uses that, which is R2074's own
+        # `fresh_card()` reasoning: when an assertion loses the state it stood
+        # on, make the state rather than delete the assertion.
+        made = fresh_card(app, surface)
+        why = expose(app, surface, made, "dial")
         ok(
-            f"C: ★★★★★ but {UNSPOKEN_CARD}.dial is REFUSED — it listens nowhere "
-            f"and dials nothing, so nothing says what it speaks — {why!r}",
+            f"C: ★★★★★ but {made}.dial is REFUSED — a card just placed has been "
+            f"told no transport, so nothing says what that pin would speak — "
+            f"{why!r}",
             why is not None and "does not admit" in (why or ""),
         )
 

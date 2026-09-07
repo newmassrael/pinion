@@ -112,17 +112,33 @@ def body() -> None:
             f"{len(review['findings'])} finding(s)",
             "fitness" in review and "findings" in review,
         )
-        # ★★★★★ The opening canvas is CLEAN, and that is a good state for the
-        # screen and no population at all for what follows — a register that
+        # ★★★★★ What follows must be CAUSED rather than found — a register that
         # dropped everything would satisfy an empty list just as well. So the
-        # findings below are CAUSED, by the gesture a person actually makes on
-        # this screen: this taxonomy's judgement rule is *listening, and nothing
-        # on this canvas dials it*, so taking wires away puts a card into it.
+        # findings below are made by the gesture a person actually makes on this
+        # screen: this taxonomy's judgement rule is *listening, and nothing on
+        # this canvas dials it*, so taking wires away puts a card into it.
+        #
+        # ⚠⚠ ★★★★★ R2079 — **the baseline is RECORDED, not asserted empty.**
+        #
+        # This read `fitness == "clean" and not findings`, and R2074 made that
+        # false: it corrected `spec::LINKS` so the opening wires name the
+        # dialler the behaviour canon names, and the canon's graph legitimately
+        # earns five non-blocking remarks — `P-03` listens with only a muted
+        # wire arriving, `T-02` and `S-01` listen nowhere, `P-01`/`P-02` have
+        # discovery on. The launch gate is describing a faithful graph
+        # correctly.
+        #
+        # ⇒ ★ **the premise was a NON-VACUITY DEVICE, not a fact about the
+        # screen.** What it needed was *the findings below are mine*; what it
+        # wrote down was *there are none to begin with*, which is a stronger
+        # claim that the screen was free to stop satisfying. Held as a delta
+        # instead: whatever the canvas opens with, the gesture must ADD to it.
+        opening = {row["sentence"] for row in review["findings"]}
         ok(
-            f"A: ★★★★★ it opens CLEAN, so everything below is caused rather "
-            f"than found — {review['fitness']!r}, {len(review['findings'])} "
-            f"finding(s)",
-            review["fitness"] == "clean" and not review["findings"],
+            f"A: ★ the opening canvas is recorded, so everything below is read "
+            f"as a CHANGE to it rather than as an absolute — "
+            f"{review['fitness']!r}, {len(opening)} finding(s)",
+            review["fitness"] in ("clean", "remarked"),
         )
         links = js(app.query(f"{surface}/links"))
         inbound = [row["id"] for row in links if row["to"] == "R-01"]
@@ -135,10 +151,15 @@ def body() -> None:
             app.invoke(f"{surface}/delete_link", str(link))
         app.tick_ms(16)
         review = js(app.query(f"{surface}/review"))
+        # ★★★★★ R2079 — the review has something to say THAT IT DID NOT SAY
+        # BEFORE. `len(findings) > 0` would now pass on the opening remarks
+        # alone, which is the vacuity the recorded baseline exists to refuse.
+        caused = {row["sentence"] for row in review["findings"]} - opening
         ok(
-            f"A: ★★★★★ and the review now has something to say — "
-            f"{review['fitness']!r}, {len(review['findings'])} finding(s)",
-            len(review["findings"]) > 0,
+            f"A: ★★★★★ and the review now says something it did not say before "
+            f"— {review['fitness']!r}, {len(caused)} caused of "
+            f"{len(review['findings'])}: {sorted(caused)}",
+            bool(caused),
         )
         # ★★★★★ Three-valued, not a boolean. The middle arm is the statement a
         # gate that only ever says "open" cannot make.

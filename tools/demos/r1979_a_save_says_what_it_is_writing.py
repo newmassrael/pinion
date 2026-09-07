@@ -142,12 +142,21 @@ def body() -> None:
         surface = surface_of(app, SEAT)
         whole = app.query(f"{surface}/archive")
 
-        banner("A — a clean document saves and says nothing about faults")
+        banner("A — a document with nothing BLOCKING saves and names no faults")
         review = js(app.query(f"{surface}/review"))
+        # ⚠⚠ ★★★★★ R2079 — the distinction this section rests on is BLOCKING,
+        # not clean. It read `fitness == "clean" and not findings`, and R2074
+        # made that false: correcting `spec::LINKS` to name the dialler the
+        # behaviour canon names earns the opening graph five non-blocking
+        # remarks. Section B's contrast is with a document that is BROKEN, so
+        # what A needs is *nothing here stops a run* — which `may_run` states
+        # directly instead of being inferred from an empty list.
+        opening_fitness = review["fitness"]
         ok(
-            f"A: ★ the canvas is clean to begin with, so everything after it is "
-            f"caused — {review['fitness']!r}",
-            review["fitness"] == "clean" and not review["findings"],
+            f"A: ★ nothing on the opening canvas BLOCKS, so what section B "
+            f"causes is read as a change — {opening_fitness!r}, "
+            f"{len(review['findings'])} non-blocking finding(s)",
+            review["may_run"] and opening_fitness != "stopped",
         )
         said = app.invoke(f"{surface}/save_graph", "")
         app.tick_ms(16)

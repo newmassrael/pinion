@@ -107,10 +107,28 @@ def body() -> None:
             {"fitness", "findings", "counted", "covered"} <= set(review),
         )
 
-        banner("B — ★★★★★ clean, and it says what it was clean ABOUT")
+        banner("B — ★★★★★ a verdict, and it says what it was reached ABOUT")
+        # ⚠⚠ ★★★★★ R2079 — this read `findings == []`, and R2074 made that
+        # false: correcting `spec::LINKS` to name the dialler the behaviour
+        # canon names earns the opening graph five NON-BLOCKING remarks, which
+        # the launch gate is right to report.
+        #
+        # ⇒ ★ **the section's subject is the POPULATION, not the word.** What it
+        # exists to show is that a verdict publishes what it was reached over,
+        # so `clean` is a measurement rather than an absence — and that claim is
+        # untouched by which of the three words the verdict carries. What is
+        # asserted instead is the property the section's contrast needs: nothing
+        # here BLOCKS.
+        #
+        # ⚠ Stated rather than hidden: the *clean* case is no longer reachable
+        # on the opening canvas, so this walk no longer exercises it. Reaching
+        # it would mean giving the remarked cards endpoints, which is a change
+        # to the reproduced fixture and not this repair's business.
         ok(
-            f"B: the canon topology checks clean — fitness={review['fitness']}",
-            review["findings"] == [],
+            f"B: nothing on the canon topology BLOCKS — "
+            f"fitness={review['fitness']}, {len(review['findings'])} "
+            f"non-blocking finding(s)",
+            review["fitness"] != "stopped",
         )
         covered = review["covered"]
         ok(

@@ -155,10 +155,24 @@ def body() -> None:
         by_kind = [r for r in rows if r["source"] == "kind"]
         by_item = [r for r in rows if r["source"] == "item"]
         by_node = [r for r in rows if r["source"] == "node"]
+        # ⚠⚠ ★★★★★ R2079 — **the kind's property is its own WORD, not which
+        # side the pin is on.** This read `all(side == "dial")`, and R2074 made
+        # it false: correcting `spec::LINKS` to name the dialler the behaviour
+        # canon names turned the router into a pure sink, so its ACCEPT slots
+        # are now named by the kind too — `['accept 0', 'dial']` is what the
+        # failure printed, and both of those are the taxonomy's words.
+        #
+        # ⇒ ★ the distinction this section draws is between the three SOURCES,
+        # and the two below state theirs directly: an item's name is an address
+        # (it has a `/`), a node's is silent (`None`). The kind's is neither —
+        # a word of its own — which is the property that survives a pin
+        # changing sides.
         ok(
-            f"A: ★ the KIND's own declaration names the dial pins — "
+            f"A: ★ the KIND's own declaration names its pins with words of its "
+            f"own, neither an address nor a silence — "
             f"{sorted({r['name'] for r in by_kind})}",
-            all(r["side"] == "dial" for r in by_kind) and by_kind != [],
+            by_kind != []
+            and all(r["name"] and "/" not in r["name"] for r in by_kind),
         )
         ok(
             "A: ★★★★★ an ITEM's authored label names an accept slot for the "

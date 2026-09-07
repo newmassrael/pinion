@@ -110,6 +110,30 @@ def ok(what: str, condition: bool) -> None:
     assert condition, what
 
 
+def fresh_card(app: RpcSubprocess, surface: str) -> str:
+    """Place a card from the palette and answer its name.
+
+    ★ R2079 — a card just placed has been told nothing: no listen address and
+    no dialled peer, so neither pin has a transport to read off anything. That
+    is the *speaks nothing* state this walk's sections B and E both need, and
+    R2074 left the opening graph without one.
+
+    Pressed by the ADDRESS the screen publishes for the row (R2049), and a
+    non-router role is chosen because a router may not be placed in every kind
+    of graph (R1999) — the press would be refused for a reason unrelated to
+    what this walk asks.
+    """
+    spec = js(app.query(f"{surface}/spec"))
+    row = next(r for r in spec["roles"] if r["name"] != "Router")
+    before = {n.strip() for n in str(app.query(f"{surface}/nodes")).split(",") if n.strip()}
+    app.click(path=row["tag"])
+    app.tick_ms(16)
+    after = {n.strip() for n in str(app.query(f"{surface}/nodes")).split(",") if n.strip()}
+    made = sorted(after - before)
+    assert len(made) == 1, f"pressing {row['tag']} placed {made}"
+    return made[0]
+
+
 def js(value):
     return json.loads(value) if isinstance(value, str) else value
 
@@ -172,6 +196,21 @@ def body() -> None:
         )
 
         banner("B — ★ the sentence is the PIN's, not one global rule")
+        # ⚠⚠ ★★★★★ R2079 — **the card that speaks nothing is MADE.**
+        #
+        # This section asserts three KINDS of sentence exist — a tcp one, a quic
+        # one, and the typeless one belonging to a card with no address at all —
+        # and section E then names that card and checks the refusal on it.
+        # R2074 corrected `spec::LINKS` to name the dialler the behaviour canon
+        # names, and no card on the opening graph speaks nothing any more: every
+        # one either listens on an address or dials a peer that does.
+        #
+        # ⇒ ★ so the walk places one. A card just pressed from the palette has
+        # been told no address on either side, which is exactly the state both
+        # sections need — R2074's own `fresh_card()` reasoning, and the third
+        # walk in this round to need it.
+        speechless_card = fresh_card(app, surface)
+        rows = takes(app, surface)
         dials = [row for row in rows if row["pin"] == "dial"]
         # ★★★★★ R1975 — TWO cards are named now, because the edit and the pin it
         # moves are on different cards, and that is the behaviour canon's own

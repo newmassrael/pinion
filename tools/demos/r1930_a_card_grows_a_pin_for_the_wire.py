@@ -140,10 +140,26 @@ def body() -> None:
             f"A: ★ every answer is one of the four — {sorted(words)}",
             words <= {"standing", "takes", "grows", "refuses"},
         )
+        # ⚠⚠ ★★★★★ R2079 — **the four are reached across the WALK, not on the
+        # opening canvas.**
+        #
+        # This asserted `words == {standing, takes, grows, refuses}` of the
+        # opening state, and R2074 made it false: correcting `spec::LINKS` to
+        # name the dialler the behaviour canon names leaves the canvas showing
+        # three — `grows` is not among them, because no card is in the state
+        # that produces it.
+        #
+        # ⇒ ★ the claim is the NON-VACUITY one written beside it — *an arm
+        # nothing reaches is an arm nothing checks* — and that is a claim about
+        # what this walk exercises, not about what the screen happens to open
+        # in. Section B produces `grows` deliberately a few dozen lines down,
+        # so the four are accumulated and the assertion moved to the end, where
+        # it can still fail for its own reason.
+        reached = set(words)
         ok(
-            "A: ★★★★★ and all FOUR are actually produced on this canvas — an arm "
-            f"nothing reaches is an arm nothing checks: {sorted(words)}",
-            words == {"standing", "takes", "grows", "refuses"},
+            f"A: ★ the opening canvas reaches {len(words)} of the four — "
+            f"{sorted(words)}",
+            len(words) >= 2,
         )
         takes = sorted(n for n, r in rows.items() if r["verdict"] == "takes")
         grows = sorted(n for n, r in rows.items() if r["verdict"] == "grows")
@@ -276,6 +292,17 @@ def body() -> None:
             f"D: ★★★★★ BOTH kinds of yes are reachable mid-drag — {both}. Without "
             "this the two sentences below could be one sentence",
             set(both) == {"takes", "grows"},
+        )
+        # ★★★★★ R2079 — section A's non-vacuity claim, made where it can be
+        # true: all four verdict arms are reached by this walk. A's own version
+        # asserted it of the OPENING canvas, which R2074 left showing three —
+        # `grows` needs the mid-drag state this section builds. An arm nothing
+        # reaches is an arm nothing checks, and that is a property of the walk.
+        reached |= set(both)
+        ok(
+            f"D: ★★★★★ and all FOUR arms are reached across this walk — "
+            f"{sorted(reached)}",
+            reached == {"standing", "takes", "grows", "refuses"},
         )
         for verdict, name in sorted(both.items()):
             app.hover(at=centre(app, f"lab.pin.{name}.accept"))

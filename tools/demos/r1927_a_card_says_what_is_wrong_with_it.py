@@ -82,12 +82,24 @@ EXT = "/external"
 SEAT = "lab"
 VIEWPORT = (1400, 900)
 
-#: The listening card this walk starves, and the card that feeds it. Named
-#: rather than discovered so the walk fails loudly if the specification's
-#: opening graph changes shape under it, instead of quietly finding another
-#: pair and asserting something else.
-STARVED = "P-03"
-FEEDER = "R-01"
+#: The listening card this walk starves, and the card that feeds it.
+#:
+#: ⚠⚠ ★★★★★ R2079 — **the pair is MADE now, and named at the point it is made.**
+#: These were `P-03` and `R-01`, chosen because the router fed the peer, and
+#: R2074 corrected `spec::LINKS` to name the dialler the behaviour canon names:
+#: the router now dials NOTHING, so `R-01>P-03` is not a link to delete, and
+#: `P-03` arrives already starved — its only inbound wire is the muted one. Both
+#: of section A's premises went with that: *`P-03` is clean at open* and *the
+#: model warns about none of them* were both false, and the walk's own comment
+#: said the pair was "named rather than discovered so the walk fails loudly if
+#: the opening graph changes shape under it". It did fail loudly. This is the
+#: repair the loudness was for.
+#:
+#: ⇒ ★ a card just placed reaches nothing and is reached by nothing, so wiring
+#: INTO it can close no cycle and it starts clean; give it a listen address and
+#: one inbound wire and it is exactly the fed-then-starved subject this walk
+#: needs — built, so the section keeps its meaning however the fixture moves
+#: next. See `feed_a_fresh_card`.
 
 #: The two cards this walk makes answer to one identifier, to reach the
 #: BLOCKING class. `id` is the path the settings schema declares unique.
@@ -113,6 +125,37 @@ def surface_of(app: RpcSubprocess, seat: str) -> str:
     published = js(app.query(f"{EXT}/destinations"))
     row = next(row for row in published["destinations"] if row["key"] == seat)
     return row["screen"]["address"]
+
+
+def feed_a_fresh_card(app: RpcSubprocess, surface: str) -> tuple[str, str]:
+    """Place a card, give it an address, wire one card to it. `(fed, feeder)`.
+
+    ★ R2079 — the fed-then-starvable pair this walk needs, built rather than
+    borrowed. A card just placed reaches nothing and is reached by nothing, so
+    wiring INTO it can close no cycle (the refusal a hand-picked pair earned
+    twice in this round) and it arrives with no warning against it.
+
+    The feeder is any card already on the canvas: it cannot be reached from a
+    fresh card, so no choice among them is refused. The row is pressed by the
+    ADDRESS the screen publishes (R2049) and a non-router role is used, because
+    a router may not be placed in every kind of graph (R1999).
+    """
+    spec = js(app.query(f"{surface}/spec"))
+    row = next(r for r in spec["roles"] if r["name"] != "Router")
+    was = {n.strip() for n in str(app.query(f"{surface}/nodes")).split(",") if n.strip()}
+    app.click(path=row["tag"])
+    app.tick_ms(16)
+    now = {n.strip() for n in str(app.query(f"{surface}/nodes")).split(",") if n.strip()}
+    made = sorted(now - was)
+    assert len(made) == 1, f"pressing {row['tag']} placed {made}"
+    fed = made[0]
+    app.invoke(f"{surface}/select", fed)
+    app.invoke(f"{surface}/set_field", "listen.endpoints=tcp/0.0.0.0:7600")
+    app.tick_ms(16)
+    feeder = sorted(was)[0]
+    app.invoke(f"{surface}/connect", f"{feeder},{fed}")
+    app.tick_ms(16)
+    return fed, feeder
 
 
 def register(app: RpcSubprocess, surface: str) -> dict:
@@ -200,16 +243,32 @@ def body() -> None:
         )
         surface = surface_of(app, SEAT)
 
-        banner("A — what the model says is wrong, on the opening canvas")
+        banner("A — what the model says is wrong, and the subject this walk builds")
+        # ★ R2079 — the fed card and its feeder are made here. See the comment
+        # on `TWINS` above for why they can no longer be borrowed.
+        STARVED, FEEDER = feed_a_fresh_card(app, surface)
         opening = register(app, surface)
         ok(f"A: one row per card — {sorted(opening)}", len(opening) >= 3)
         for name in (STARVED, FEEDER, *TWINS):
             ok(f"A: the walk's subject {name} is on this canvas", name in opening)
+        # ⚠⚠ ★★★★★ R2079 — the model warns about none of THIS WALK'S SUBJECTS,
+        # where this asserted it warns about no card at all. R2074's corrected
+        # wiring leaves the opening canvas legitimately remarking on `P-03` (it
+        # listens and only a muted wire arrives) — a true statement about a
+        # faithful graph, and nothing to do with what this walk causes.
+        #
+        # ⇒ ★ the claim is *what follows is mine*, so it is asked of the cards
+        # this walk acts on rather than of the whole canvas. The baseline is
+        # recorded either way, and section B's `newly` set is what proves the
+        # warning it causes is new.
         told = sorted(name for name, row in opening.items() if row["said"])
+        mine = sorted(
+            name for name in (STARVED, FEEDER, *TWINS) if opening[name]["said"]
+        )
         ok(
-            "A: ★★★★★ the MODEL warns about none of them — the specified graph "
-            f"dials everything that listens, so the rule fires nowhere: {told}",
-            told == [],
+            f"A: ★★★★★ the MODEL warns about none of this walk's subjects, so "
+            f"what follows is caused — mine {mine}, canvas {told}",
+            mine == [],
         )
         ok(
             f"A: and the SCREEN already has findings of its own — "

@@ -73,7 +73,28 @@ SEAT = "lab"
 
 #: The card three wires leave, named rather than discovered: a walk that hunted
 #: for a fan-out would quietly assert about whichever one it found.
-FAN_OUT = "R-01"
+#:
+#: ⚠⚠ ★★★★★ R2079 — `T-01`, where this said `R-01` until R2074 flattened the
+#: graph. Two measurements decided it, and the second overruled the first
+#: attempt at this repair:
+#:
+#: 1. no card fans out any more — every one of the seven dials exactly ONE
+#:    thing, where the router used to dial three;
+#: 2. and the router **cannot be made** to fan out. Five of the seven wires
+#:    land on it, so dialling any of its own diallers is refused outright —
+#:    `that link would close a cycle: 4 -> 6`, which is the model doing its job.
+#:    Of the two cards it does not receive from, one does not listen.
+#:
+#: ⇒ ★ the subject moved to a card that CAN host the shape: nothing lands on
+#: `T-01`, so it closes no cycle, and the three cards below all listen. It is
+#: still NAMED rather than discovered, which is what the paragraph above is for.
+FAN_OUT = "T-01"
+
+#: ★ R2079 — the cards it is made to dial. `T-01` already dials `P-01`, so
+#: these two take it to three. The shape this walk tests is a property of the
+#: SITUATION rather than of the opening graph, so it is built here — R2074's own
+#: `fresh_card()` reasoning, applied to wires instead of cards.
+FAN_TARGETS = ("P-02", "P-03")
 
 CHECKS: list[str] = []
 
@@ -138,6 +159,25 @@ def body() -> None:
             f"A: the register answers, and it is empty — {passing(app, surface)}",
             passing(app, surface) == [],
         )
+        # ⚠⚠ ★★★★★ R2079 — **the fan-out is MADE, not borrowed.**
+        #
+        # This read `len(leaving(before_links, FAN_OUT)) >= 3` and found it, and
+        # R2074 made that false — not by moving this walk's wires but by
+        # flattening the graph's SHAPE. Measured after that round: every one of
+        # the seven cards dials exactly ONE thing and no card fans out at all,
+        # where the router used to dial three. Correcting `spec::LINKS` to name
+        # the dialler the behaviour canon names concentrated five of the seven
+        # wires onto the router as a TARGET.
+        #
+        # ⇒ ★ **a walk that borrows a shape from the fixture is hostage to the
+        # fixture.** The shape this one needs is a card dialling three things,
+        # which is a property of the SITUATION it tests rather than of the
+        # opening graph — so it is built here, the way R2074's own repair built
+        # the states its assertions had lost (`fresh_card()`, same round, same
+        # reasoning, applied to cards instead of wires).
+        for target in FAN_TARGETS:
+            app.invoke(f"{surface}/connect", f"{FAN_OUT},{target}")
+            app.tick_ms(16)
         before_links = links(app, surface)
         fan = leaving(before_links, FAN_OUT)
         ok(

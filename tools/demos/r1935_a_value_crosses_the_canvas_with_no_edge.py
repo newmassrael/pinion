@@ -70,7 +70,17 @@ SEAT = "lab"
 #: The card three wires leave, named rather than discovered — the same fan-out
 #: R1934 used, for the same reason: a walk that hunted for one would quietly
 #: assert about whichever it found.
-FAN_OUT = "R-01"
+#:
+#: ⚠ R2079 — `T-01`, and it tracks R1934's move for R1934's measured reasons:
+#: R2074 flattened the graph so no card fans out, and the router cannot be made
+#: to (five of seven wires land on it, so dialling its own diallers is refused
+#: as a cycle). Nothing lands on `T-01`, so it can host the shape.
+FAN_OUT = "T-01"
+
+#: ★ R2079 — the cards it is made to dial; `T-01` already dials `P-01`. Built
+#: rather than borrowed, because the shape is a property of the situation this
+#: walk tests and not of the opening graph.
+FAN_TARGETS = ("P-02", "P-03")
 
 CHECKS: list[str] = []
 
@@ -142,6 +152,11 @@ def body() -> None:
             and opening["far"] == []
             and opening["dangling"] == [],
         )
+        # ★ R2079 — the fan-out is MADE, not borrowed. See `FAN_OUT` above for
+        # the two measurements that forced it.
+        for target in FAN_TARGETS:
+            app.invoke(f"{surface}/connect", f"{FAN_OUT},{target}")
+            app.tick_ms(16)
         before_links = links(app, surface)
         fan = leaving(before_links, FAN_OUT)
         ok(

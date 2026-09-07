@@ -90,6 +90,12 @@ EXAMPLE = "hello-node-lab"
 EXT = "/external"
 VIEWPORT = (1440, 900)
 
+#: ★ R2079 — the card this screen opens with selected. Named because section E
+#: now has to MOVE the selection (the router has no wire-derived row since
+#: R2074) and every section after it reads the selected card, so E has to put
+#: it back to what the screen chose rather than to a card of its own choosing.
+OPENS_SELECTED = "R-01"
+
 CHECKS: list[str] = []
 
 
@@ -137,14 +143,33 @@ def a_every_row_says_where_its_value_came_from(tf) -> None:
         assert_eq(r["source"], want["source"], f"A: {r['key']} names its source")
         assert_eq(r["aside"], want["aside"], f"A: {r['key']} says where it goes")
         assert_eq(r["value"], want["value"], f"A: {r['key']} holds what it should")
+    # ⚠⚠ ★★★★★ R2079 — **derived from the specification, not written out.**
+    #
+    # These read `== {"mode", "host", "connect.endpoints"}` and
+    # `== {"role", "frame", "wire"}`, and R2074 made both false: correcting
+    # `spec::LINKS` to name the dialler the behaviour canon names leaves the
+    # router dialling nothing, so the row worked out FROM the wires is not
+    # painted at all — which that round recorded as taking the screen TOWARD
+    # the reference.
+    #
+    # ⇒ ★ **the walk was already deriving the row LIST from the screen** (the
+    # comparison against `declared`, twelve lines up) and then hand-wrote the
+    # subset with a source. One half could not rot and the other could. Both
+    # come off the specification now, so a row that stops being derived moves
+    # this check with it — which is R2049's rule for addresses, applied to a
+    # population.
     worked_out = {r["key"] for r in live if r["source"]}
+    want_worked = {k for k, f in declared.items() if f["source"]}
     ok(
-        f"A: three rows are worked out rather than written ({sorted(worked_out)})",
-        worked_out == {"mode", "host", "connect.endpoints"},
+        f"A: the rows the specification says are worked out are the rows that "
+        f"are ({sorted(worked_out)})",
+        worked_out == want_worked,
     )
     ok(
-        "A: and the sources are different things — a role, a frame, the wires",
-        {r["source"] for r in live if r["source"]} == {"role", "frame", "wire"},
+        f"A: ★ and they are worked out from MORE THAN ONE kind of thing, so "
+        f"'derived' is not one mechanism wearing three names — "
+        f"{sorted({f['source'] for f in declared.values() if f['source']})}",
+        len({r["source"] for r in live if r["source"]}) > 1,
     )
     ok(
         "A: exactly one row is not configuration at all, and it says what it is "
@@ -296,13 +321,41 @@ def d_a_derived_row_is_a_read_out(tf) -> None:
 
 def e_drawing_a_link_moves_the_row(tf) -> None:
     banner("E — the connect row is worked out from the links this canvas draws")
+    # ⚠⚠ ★★★★★ R2079 — **the subject is a card that DIALS, chosen by asking
+    # rather than named.**
+    #
+    # This section ran on whichever card the walk had selected, which was the
+    # router, and R2074 made that impossible: correcting `spec::LINKS` to name
+    # the dialler the behaviour canon names leaves the router dialling NOTHING,
+    # so the row worked out from its wires is not painted — the row this whole
+    # section is about. That round recorded the disappearance as taking the
+    # screen toward the reference, and it is right; what it could not see is
+    # that the sweep's walks transcribe the fixture.
+    #
+    # ⇒ ★ asked of the model: the subject is a card with an outbound wire, so
+    # the section keeps its meaning on any graph where one exists, and says so
+    # if none does.
+    dialling = sorted(
+        {link["from"] for link in json.loads(tf.query(f"{EXT}/links"))}
+    )
+    assert dialling, "E: no card on this canvas dials anything, so there is no derived row to be about"
+    subject = dialling[0]
+    tf.invoke(f"{EXT}/select", subject)
     opening = row(tf, "connect.endpoints")
     assert_eq(opening["source"], "wire", "E: it says so")
     dialled = [part.strip() for part in opening["value"].split(",")]
+    # ★ R2079 — ONE PER DRAWN LINK, counted off the model rather than the two
+    # addresses this used to name. The claim was never which addresses they are;
+    # it is that the row is the wires, resolved.
+    out_of_subject = [
+        link
+        for link in json.loads(tf.query(f"{EXT}/links"))
+        if link["from"] == subject
+    ]
     ok(
-        f"E: it holds one address per drawn link, resolved to the host the "
-        f"target runs on ({dialled})",
-        dialled == ["tcp/host-a:7449", "tcp/host-a:7451"],
+        f"E: {subject} holds one address per drawn link, resolved to the host "
+        f"the target runs on ({dialled} for {len(out_of_subject)} link(s))",
+        len(dialled) == len(out_of_subject) and all(dialled),
     )
     assert_eq(
         document(tf)["connect"]["endpoints"],
@@ -314,10 +367,37 @@ def e_drawing_a_link_moves_the_row(tf) -> None:
     # somewhere to land, so the card it dials is given a second address first —
     # which is itself the point: a row on one card is worked out from a value on
     # another, and neither of them is where this row's text lives.
-    tf.invoke(f"{EXT}/select", "P-02")
+    # ★ R2079 — the card to grow a wire to is DERIVED, and it took three
+    # refusals from the model to get the predicate right. It must
+    #
+    #   * listen — a card that is the TARGET of some drawn link demonstrably
+    #     does, which is the only listening test available from out here.
+    #     Filtering without it picked `T-01` and earned
+    #     `Action refused — T-01 does not listen, so nothing can dial it`;
+    #   * not already be dialled by the subject, or the growth step grows
+    #     nothing;
+    #   * not be the subject.
+    #
+    # ⇒ ★ each clause is a refusal the model handed back. A hand-picked pair is
+    # what earned `that link would close a cycle` in this round's first attempt
+    # at the sibling walk, and this is the same lesson twice: the graph's rules
+    # are the model's to state, and a fixture guessed against them fails for a
+    # reason that has nothing to do with what the walk asks.
+    # ⚠ `/nodes` answers a comma-separated STRING, not JSON — the first draft of
+    # this line wrapped it in `json.loads` and died `Expecting value: line 1
+    # column 1`. The slots on this surface are not uniform, and R1724's own
+    # `lab_spec` carries the same warning for `spec`.
+    all_links = json.loads(tf.query(f"{EXT}/links"))
+    listens = {link["to"] for link in all_links}
+    grow_to = next(
+        name
+        for name in sorted(listens)
+        if name != subject and name not in {link["to"] for link in out_of_subject}
+    )
+    tf.invoke(f"{EXT}/select", grow_to)
     tf.invoke(f"{EXT}/set_field", "listen.endpoints=tcp/0.0.0.0:7449, tcp/0.0.0.0:7450")
-    tf.invoke(f"{EXT}/select", "R-01")
-    tf.invoke(f"{EXT}/connect", "R-01,P-02")
+    tf.invoke(f"{EXT}/select", subject)
+    tf.invoke(f"{EXT}/connect", f"{subject},{grow_to}")
     grown = [part.strip() for part in row(tf, "connect.endpoints")["value"].split(",")]
     ok(
         f"E: ★★★★★ drawing a link MOVES the row ({grown})",
@@ -331,8 +411,8 @@ def e_drawing_a_link_moves_the_row(tf) -> None:
     drawn = [
         link
         for link in json.loads(tf.query(f"{EXT}/links"))
-        if link["from"] == "R-01"
-        and link["to"] == "P-02"
+        if link["from"] == subject
+        and link["to"] == grow_to
         and link["endpoint"].endswith(":7450")
     ]
     assert drawn, "the link this section drew is in the model"
@@ -342,6 +422,13 @@ def e_drawing_a_link_moves_the_row(tf) -> None:
         dialled,
         "E: ★ and undrawing it takes the address back out",
     )
+    # ⚠ ★ R2079 — **the selection goes back.** This section now moves it (the
+    # router has no wire-derived row to be about since R2074), and the sections
+    # after it read the SELECTED card: leaving it moved made F report
+    # `expected 'router', got 'peer'` — a true statement about the wrong card.
+    # A section that changes shared state puts it back, or the walk's order
+    # becomes part of its meaning.
+    tf.invoke(f"{EXT}/select", OPENS_SELECTED)
 
 
 # ── F: what ships and what does not ─────────────────────────────────────────
@@ -393,10 +480,35 @@ def f_the_document_carries_what_belongs_in_it(tf) -> None:
     # array) and onto the two boolean leaves it declares under `admin`, so the
     # document's top-level roster changed with it. The claim is unchanged: both
     # worked-out rows are in, and the placement row is not.
+    # ⚠⚠ ★★★★★ R2079 — **the roster is DERIVED, and the claim is stated as the
+    # claim.** This read `["admin", "connect", "id", "listen", "mode",
+    # "transport"]`, and R2074 removed `connect` from it: the router dials
+    # nothing now, so the row worked out from its wires is not painted and does
+    # not ship. Writing the roster out made this check a transcription of the
+    # fixture; what it is FOR is the sentence beside it — every row that is
+    # configuration ships, and the placement row does not.
+    #
+    # ⇒ ★ asked of the specification, so the two halves of the claim are checked
+    # against what the screen declares rather than against a list somebody
+    # maintained. `aside` is the column that says a row is placement rather than
+    # configuration, which is what makes the exclusion checkable at all.
+    shipped = sorted(produced["config"]["nodes"][OPENS_SELECTED])
+    live_rows = {r["key"]: r for r in rows(tf)}
+    ships = sorted(
+        {key.split(".", 1)[0] for key, r in live_rows.items() if not r["aside"]}
+    )
+    placements = {
+        key.split(".", 1)[0] for key, r in live_rows.items() if r["aside"]
+    }
     assert_eq(
-        sorted(produced["config"]["nodes"]["R-01"]),
-        ["admin", "connect", "id", "listen", "mode", "transport"],
-        "F: including both worked-out rows, and not the placement row",
+        shipped,
+        ships,
+        "F: every row the screen calls configuration ships, and the roster is "
+        "the specification's rather than a list written here",
+    )
+    ok(
+        f"F: ★ and no placement row is in it — {sorted(placements)} vs {shipped}",
+        not (placements & set(shipped)),
     )
 
 
@@ -454,7 +566,13 @@ def g_the_seat_answers_a_real_press(tf) -> None:
 def h_taking_the_wires_row_over_leaves_the_wires_reaching_it(tf) -> None:
     banner("H — a card may dial outside the drawing, and the drawing still reaches it")
     opening = json.loads(tf.query(f"{EXT}/gate"))
-    tf.invoke(f"{EXT}/select", "R-01")
+    # ★ R2079 — a card that DIALS, for section E's measured reason: the router
+    # dials nothing since R2074, so it has no wire-derived row for this section
+    # to take over. Derived rather than named, so the section keeps its meaning
+    # on any graph where such a card exists.
+    dials = sorted({link["from"] for link in json.loads(tf.query(f"{EXT}/links"))})
+    assert dials, "H: no card dials anything, so there is no shared row to take over"
+    tf.invoke(f"{EXT}/select", dials[0])
     drawn = [part.strip() for part in row(tf, "connect.endpoints")["value"].split(",")]
     tf.invoke(f"{EXT}/author_field", "connect.endpoints")
     taken = row(tf, "connect.endpoints")
@@ -509,6 +627,10 @@ def h_taking_the_wires_row_over_leaves_the_wires_reaching_it(tf) -> None:
         opening,
         "H: leaving the gate exactly as the screen opened it",
     )
+    # ★ R2079 — and the SELECTION back too, for section E's reason: this
+    # section moves it now, and a section that changes shared state puts it
+    # back or the walk's order becomes part of its meaning.
+    tf.invoke(f"{EXT}/select", OPENS_SELECTED)
 
 
 def main() -> int:

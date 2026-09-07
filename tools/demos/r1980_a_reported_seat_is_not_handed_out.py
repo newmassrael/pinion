@@ -85,6 +85,26 @@ def ok(what: str, condition: bool) -> None:
     assert condition, what
 
 
+def fresh_card(app: RpcSubprocess, surface: str) -> str:
+    """Place a card from the palette and answer its name.
+
+    ★ R2079 — a card just placed reaches nothing and is reached by nothing, so
+    it is the safe way to build a graph shape a section needs: wiring into it
+    can close no cycle. Pressed by the ADDRESS the screen publishes for the row
+    (R2049), and a non-router role is chosen because a router may not be placed
+    in every kind of graph (R1999).
+    """
+    spec = js(app.query(f"{surface}/spec"))
+    row = next(r for r in spec["roles"] if r["name"] != "Router")
+    before = {n.strip() for n in str(app.query(f"{surface}/nodes")).split(",") if n.strip()}
+    app.click(path=row["tag"])
+    app.tick_ms(16)
+    after = {n.strip() for n in str(app.query(f"{surface}/nodes")).split(",") if n.strip()}
+    made = sorted(after - before)
+    assert len(made) == 1, f"pressing {row['tag']} placed {made}"
+    return made[0]
+
+
 def js(value):
     return json.loads(value) if isinstance(value, str) else value
 
@@ -167,6 +187,28 @@ def body() -> None:
         # picked the router, which three wires reach, so unlinking one left the
         # seat as occupied as before and the check failed for a reason that had
         # nothing to do with what it was asking.
+        # ⚠⚠ ★★★★★ R2079 — **and the card with one inbound wire is MADE when the
+        # canvas has none spare.**
+        #
+        # R2074 corrected `spec::LINKS` to name the dialler the behaviour canon
+        # names, which concentrated the graph: measured after that round, seven
+        # wires land on THREE cards and five of them on the router, so only two
+        # cards have exactly one inbound — and this section's own two exclusions
+        # (`held`, `stranger["to"]`) take both. The search then fell through and
+        # the walk died `StopIteration`, which is why it reported no assertion
+        # at all.
+        #
+        # ⇒ ★ a card just placed reaches nothing, so wiring INTO it can close no
+        # cycle; given a listen address it becomes exactly the one-inbound card
+        # this section needs. Made rather than hunted, so the section keeps its
+        # meaning however the fixture's shape moves next.
+        spare = fresh_card(app, surface)
+        app.invoke(f"{surface}/select", spare)
+        app.invoke(f"{surface}/set_field", "listen.endpoints=tcp/0.0.0.0:7500")
+        app.tick_ms(16)
+        app.invoke(f"{surface}/connect", f"{held},{spare}")
+        app.tick_ms(16)
+        drawn = links_of(app, surface)
         inbound = {}
         for row in drawn:
             inbound[row["to"]] = inbound.get(row["to"], 0) + 1

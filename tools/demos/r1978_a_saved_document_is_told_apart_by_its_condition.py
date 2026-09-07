@@ -127,12 +127,19 @@ def body() -> None:
         )
         surface = surface_of(app, SEAT)
 
-        banner("A — the canvas opens clean, so what follows is caused")
+        banner("A — the canvas's opening state is recorded, so what follows is caused")
         review = js(app.query(f"{surface}/review"))
+        # ⚠⚠ ★★★★★ R2079 — recorded, not asserted clean. R2074 corrected
+        # `spec::LINKS` to name the dialler the behaviour canon names, and that
+        # graph legitimately earns five non-blocking remarks. The premise was a
+        # non-vacuity device — *what follows is mine* — written as the stronger
+        # claim *there is nothing to begin with*.
+        opening_fitness = review["fitness"]
+        opening = {row["sentence"] for row in review["findings"]}
         ok(
-            f"A: ★★★★★ clean to begin with — {review['fitness']!r}, "
-            f"{len(review['findings'])} finding(s)",
-            review["fitness"] == "clean" and not review["findings"],
+            f"A: ★ the opening state is recorded — {opening_fitness!r}, "
+            f"{len(opening)} finding(s)",
+            opening_fitness in ("clean", "remarked"),
         )
         whole = app.query(f"{surface}/archive")
         ok(
@@ -250,9 +257,13 @@ def body() -> None:
         app.invoke(f"{surface}/open_graph", whole)
         app.tick_ms(16)
         after = js(app.query(f"{surface}/review"))
+        # ★ R2079 — back to the state it OPENED in, which is what this section
+        # claims and what A recorded; `== "clean"` was a second copy of the
+        # stale premise.
         ok(
-            f"F: ★★★★★ the screen comes back — fitness {after['fitness']!r}",
-            after["fitness"] == "clean",
+            f"F: ★★★★★ the screen comes back to the state it opened in — "
+            f"fitness {after['fitness']!r} vs {opening_fitness!r}",
+            after["fitness"] == opening_fitness,
         )
 
         print(f"\n{len(CHECKS)} check(s) held.")
