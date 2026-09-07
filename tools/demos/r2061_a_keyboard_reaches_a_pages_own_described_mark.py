@@ -406,7 +406,20 @@ def body() -> None:
         app.intervene(f"{EXT}/nav", "logs")
         for _ in range(4):
             app.tick_ms(16)
-        severity = "lv.header.severity"
+        # ★ The row is FOUND, not spelled: it is the stop on this page whose
+        # published cursor FOLLOWS, which is the very property this clause is
+        # about. A tag written out here would be a second copy of an address the
+        # screen already composes, and a wrong letter in it would read as the
+        # screen not painting the mark rather than as a typo.
+        severity = None
+        for stop_here in walk_ring(app):
+            app.request("focus/set", {"tag": stop_here})
+            app.tick_ms(16)
+            nav = {n.get("tag"): n for n in access(app)}.get(stop_here, {}).get("navigation")
+            if nav and nav.get("activation") == "follows":
+                severity = stop_here
+                break
+        ok("G: this page has a row whose cursor FOLLOWS", severity is not None)
         app.request("focus/set", {"tag": severity})
         app.tick_ms(16)
         # ⚠ `Home` first, because the clause above walked this row to its end and
@@ -423,13 +436,26 @@ def body() -> None:
             moved != chosen,
         )
         ok(
-            "G: and the tree says so: the row's cursor follows",
-            (
-                {n.get("tag"): n for n in access(app)}
-                .get(severity, {})
-                .get("navigation", {})
-                .get("activation")
-                == "follows"
+            f"G: and the row that did it is {severity}, whose members the tree "
+            "announces as a choice rather than as places to visit",
+            # ⚠ The wire spells this role `radio`, not the Rust variant's
+            # `RadioButton` — the same lowercase/short spelling R1916 recorded
+            # for the description region, and a draft comparing the Rust name
+            # reported zero on a screen that was publishing three.
+            all(
+                n.get("role") == "radio"
+                for n in access(app)
+                if n.get("tag")
+                in {
+                    m["tag"]
+                    for m in (
+                        {k.get("tag"): k for k in access(app)}
+                        .get(severity, {})
+                        .get("navigation", {})
+                        .get("members")
+                        or []
+                    )
+                }
             ),
         )
 
