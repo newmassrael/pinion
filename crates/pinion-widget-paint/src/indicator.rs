@@ -55,6 +55,32 @@ use pinion_core::voice::Silence;
 
 use crate::control_mark::{CHEVRON, CROSS, fills, strokes};
 
+/// ★★★★★ R2057 — the solid triangle this vocabulary points with, drawn once.
+///
+/// Apex up, base below it, so a sort arrow with `ascending` and a twisty with
+/// its children showing are both this run turned toward what they mean. It was
+/// a literal inside the sort arm until a second mark needed the same shape, at
+/// which point two literals would have been two things free to stop looking
+/// alike — the defect this tree keeps paying for one layer up, in addresses.
+const TRIANGLE: [(i32, i32); 3] = [(-5, 3), (5, 3), (0, -4)];
+
+/// ★★★★★ R2057 — the twisty's triangle, pointing along the row when folded.
+///
+/// NARROWER and taller than [`TRIANGLE`], and that is the design rather than an
+/// accident of arithmetic: a sort arrow sits beside a word in a heading and is
+/// read at a glance, while a twisty sits at the head of a row in a column only
+/// as wide as itself and is pressed. Different jobs, different proportions.
+///
+/// ⚠ It also has to be a different run, and that constraint was MEASURED rather
+/// than assumed. Drawing the twisty from `TRIANGLE` made an open one identical
+/// to a descending sort — which the vocabulary's own uniqueness gate refused,
+/// and rightly, for a reason stronger than the one that gate states:
+/// [`face_of`] recovers a mark FROM PAINT by comparing path commands, so two
+/// faces with one drawing make that reader answer the wrong one. A test asked
+/// for the twisty and was handed `Sort`. Stroking instead of filling does not
+/// rescue it either — `face_of` reads commands and not style.
+const TWISTY: [(i32, i32); 3] = [(-3, -4), (-3, 4), (4, 0)];
+
 /// The mark one widget draws beside a value — the state the value is in, or
 /// what the seat beside it would do.
 ///
@@ -78,6 +104,28 @@ pub enum Indicator {
     /// the act is the other one's mirror and a reader who has learned one has
     /// learned the other (R1717).
     GiveBack,
+    /// ★★★★★ R2057 — the twisty at the head of a row that has children:
+    /// `open` says whether they are showing.
+    ///
+    /// It is the SORT triangle given a quarter turn, and reuses that point set
+    /// rather than declaring a second one — because the two marks are the same
+    /// idea seen twice: *a solid triangle points at where the thing is*. A sort
+    /// arrow points along the rows it orders; a twisty points at its children,
+    /// down the page when they are showing and along the row when they are
+    /// folded away. Drawing them from one run means a change to the shape
+    /// cannot leave the pair looking like two different vocabularies.
+    ///
+    /// ⚠ Open twisty and descending sort therefore draw ALIKE, and that is
+    /// argued rather than overlooked: a twisty sits at the head of a row and a
+    /// sort arrow in a column heading, so no slot ever offers both, and every
+    /// toolkit this class of widget comes from draws them alike for the same
+    /// reason. The marks this vocabulary keeps APART are the ones a reader
+    /// meets side by side — which is why a closed selector is a chevron and not
+    /// a third triangle.
+    Disclosure {
+        /// `true` when this row's children are showing.
+        open: bool,
+    },
     /// A cross — take this row out.
     ///
     /// ⚠ It draws the same cross as
@@ -126,6 +174,8 @@ impl Indicator {
             Self::Sort { ascending: true },
             Self::Sort { ascending: false },
             Self::Selector,
+            Self::Disclosure { open: true },
+            Self::Disclosure { open: false },
             Self::TakeOver,
             Self::GiveBack,
             Self::Discard,
@@ -154,9 +204,21 @@ pub fn scenes(mark: Indicator, rect: Rect, ink: Color) -> Vec<Scene> {
         // beside a word rather than pointed at — the one place in this
         // vocabulary where weight is the point. `ascending` is the canonical
         // drawing and `descending` is it flipped, so the pair cannot disagree.
-        Indicator::Sort { ascending } => vec![fills(
+        Indicator::Sort { ascending } => {
+            vec![fills(rect, &[flip_y(ascending, (cx, cy), &TRIANGLE)], ink)]
+        }
+        // ★★★★★ R2057 — pointed at where the children are: along the row while
+        // they are folded away, down the page while they show. `TWISTY` folded
+        // is the canonical drawing and open is it given one quarter turn, so
+        // the pair cannot disagree — the derivation the sort pair and the
+        // take-over pair both use.
+        Indicator::Disclosure { open } => vec![fills(
             rect,
-            &[flip_y(ascending, (cx, cy), &[(-5, 3), (5, 3), (0, -4)])],
+            &[if open {
+                place((cx, cy), &TWISTY, |(dx, dy)| (-dy, dx))
+            } else {
+                place((cx, cy), &TWISTY, |d| d)
+            }],
             ink,
         )],
         // The reference's own chevron, turned to point down. A selector opens
@@ -340,7 +402,7 @@ mod tests {
     use super::{Indicator, scenes, slot};
     use pinion_core::scene::{PathCommand, Rect, Scene};
     use pinion_core::style::Color;
-    use std::collections::BTreeSet;
+    use std::collections::BTreeMap;
 
     const INK: Color = Color::rgb(0xE8, 0xEB, 0xEF);
 
@@ -435,13 +497,23 @@ mod tests {
     #[test]
     fn r1952_no_two_indicators_draw_the_same_mark() {
         let rect = Rect::new(0, 0, 24, 24);
-        let mut seen: BTreeSet<Vec<(u32, u32)>> = BTreeSet::new();
+        // ★★★★★ R2057 — this check is STRONGER than the sentence it carries,
+        // and R2057 learned that by trying to argue with it. A twisty drawn
+        // from the sort triangle is not a reader's problem alone: `face_of`
+        // recovers a mark from paint by comparing commands, so two faces with
+        // one drawing make that reader answer the wrong one — measured, a test
+        // asked for a twisty and was handed a sort arrow. So "no two faces draw
+        // alike" is not an aesthetic rule that may be argued away with a
+        // declared twin; it is what keeps the paint READABLE.
+        let mut seen: BTreeMap<Vec<(u32, u32)>, Indicator> = BTreeMap::new();
         for mark in Indicator::every() {
-            assert!(
-                seen.insert(ink_of(mark, rect)),
-                "{mark:?} draws the same points as another face, so the two say \
-                 the same thing to a reader",
-            );
+            if let Some(other) = seen.insert(ink_of(mark, rect), mark) {
+                panic!(
+                    "{mark:?} draws the same points as {other:?}, so the two say \
+                     the same thing to a reader AND `face_of` cannot tell them \
+                     apart when reading a scene back",
+                );
+            }
         }
         assert_eq!(seen.len(), Indicator::every().len());
     }

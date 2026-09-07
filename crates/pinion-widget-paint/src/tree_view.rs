@@ -51,9 +51,6 @@
 //!   keyboard-defer precedent).
 //! - **Multi-select / drag-drop / inline rename**. Not in R671 scope.
 
-use crate::glyph::{
-    DISCLOSURE_COLLAPSED as GLYPH_COLLAPSED, DISCLOSURE_EXPANDED as GLYPH_EXPANDED,
-};
 use pinion_core::composite_tag::GridTag;
 use pinion_core::composite_tag::compose_send_payload;
 use pinion_core::external::{
@@ -448,13 +445,17 @@ pub fn view_virtual_tree(
 /// The caller wraps these in the row (full width) or the frozen cell (fixed
 /// width) container.
 fn tree_cell_content(row: &VisibleRow, theme: &Theme, style: &TreeViewStyle) -> Vec<Scene> {
-    let glyph = if !row.has_children {
-        GLYPH_LEAF
-    } else if row.expanded {
-        GLYPH_EXPANDED
-    } else {
-        GLYPH_COLLAPSED
-    };
+    // ★★★★★ R2057 — a branch's twisty is a DRAWN mark; a leaf still reserves
+    // the column and draws nothing in it.
+    //
+    // The two triangles were `U+25B6` / `U+25BC`, and the one face this tree
+    // renders through carries neither, so every branch row showed a `.notdef`
+    // box. A leaf keeps its NO-BREAK SPACE: that character IS in the face, and
+    // what it is doing is holding the column open so leaf and branch labels
+    // line up — a job for a spacer, not for a mark.
+    let twisty = row
+        .has_children
+        .then_some(crate::indicator::Indicator::Disclosure { open: row.expanded });
     let label_color = theme.resolve(ColorRole::OnSurface);
     let glyph_color = theme.resolve(ColorRole::OnSurfaceMuted);
     let indent_px = row.depth * style.indent_step;
@@ -473,18 +474,29 @@ fn tree_cell_content(row: &VisibleRow, theme: &Theme, style: &TreeViewStyle) -> 
     // identically. The container's width = style.glyph_size_px;
     // height = row_height (the glyph is vertically centered by the
     // row's `AlignItems::Center`).
-    let glyph_node = Scene::Text(
-        TextNode::styled(
-            glyph,
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(style.glyph_size_px)
-                .with_fg(glyph_color),
-        )
-        // R51.81 — presentational so enrich_names_from_scene skips
-        // the glyph and lands on the label TextNode.
-        .with_role(TextRole::Presentational),
-    );
+    let glyph_node = match twisty {
+        // The mark carries the same declaration the presentational text run
+        // carried: decorative, with the sentence naming what announces the
+        // state instead — the row's own label and expanded state.
+        Some(mark) => crate::indicator::inline(
+            mark,
+            style.glyph_size_px,
+            glyph_color,
+            "the twisty for this row; the row announces whether it is expanded",
+        ),
+        None => Scene::Text(
+            TextNode::styled(
+                GLYPH_LEAF,
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(style.glyph_size_px)
+                    .with_fg(glyph_color),
+            )
+            // R51.81 — presentational so enrich_names_from_scene skips
+            // the spacer and lands on the label TextNode.
+            .with_role(TextRole::Presentational),
+        ),
+    };
     row_children.push(Scene::Container(
         ContainerNode::new(vec![glyph_node]).with_layout(
             LayoutStyle::new()
@@ -1449,38 +1461,49 @@ mod tests {
         assert_eq!(tags, vec!["tree".to_string(), "tree#root".to_string()]);
     }
 
+    /// ★★★★★ R2057 — the twisty is asked for as a MARK, not as a character.
+    ///
+    /// These two read `U+25BC` / `U+25B6` out of the row's text and compared
+    /// the string. Both were green for 1,386 rounds while the one face this
+    /// tree renders through carried neither character, so every branch row a
+    /// reader saw had a `.notdef` box where the twisty belongs: the assertion
+    /// was true and the screen was wrong. Read back through the drawn-mark
+    /// census, that cannot happen — there is no string to be right about.
     #[test]
-    fn r671_tree_view_expanded_glyph_is_down_triangle() {
-        let items = vec![TreeItem::branch(
-            "root",
-            "Root",
-            true,
-            vec![TreeItem::leaf("a", "A")],
-        )];
-        let scene = view_tree("tree", &items, &light_theme(), &TreeViewStyle::m3_default());
-        if let Scene::Container(c) = &scene {
-            let row = &c.children[0];
-            assert_eq!(find_glyph_in_row(row).as_deref(), Some(GLYPH_EXPANDED));
-        } else {
-            panic!("expected Container root");
+    fn r671_tree_view_twisty_points_at_where_the_children_are() {
+        for (expanded, what) in [(true, "down at what it opened"), (false, "along its row")] {
+            let items = vec![TreeItem::branch(
+                "root",
+                "Root",
+                expanded,
+                vec![TreeItem::leaf("a", "A")],
+            )];
+            let scene = view_tree("tree", &items, &light_theme(), &TreeViewStyle::m3_default());
+            let Scene::Container(c) = &scene else {
+                panic!("expected Container root")
+            };
+            assert_eq!(
+                crate::indicator::marks_in(&c.children[0]),
+                vec![crate::indicator::Indicator::Disclosure { open: expanded }],
+                "an {} branch points {what}",
+                if expanded { "open" } else { "folded" },
+            );
         }
     }
 
+    /// ★ And a LEAF draws no mark at all — it reserves the column with a
+    /// spacer, which is a different job and keeps the labels lined up.
     #[test]
-    fn r671_tree_view_collapsed_glyph_is_right_triangle() {
-        let items = vec![TreeItem::branch(
-            "root",
-            "Root",
-            false,
-            vec![TreeItem::leaf("a", "A")],
-        )];
+    fn r2057_a_leaf_row_draws_no_twisty() {
+        let items = vec![TreeItem::leaf("a", "A")];
         let scene = view_tree("tree", &items, &light_theme(), &TreeViewStyle::m3_default());
-        if let Scene::Container(c) = &scene {
-            let row = &c.children[0];
-            assert_eq!(find_glyph_in_row(row).as_deref(), Some(GLYPH_COLLAPSED));
-        } else {
-            panic!("expected Container root");
-        }
+        let Scene::Container(c) = &scene else {
+            panic!("expected Container root")
+        };
+        assert!(
+            crate::indicator::marks_in(&c.children[0]).is_empty(),
+            "a leaf has nothing to fold, so it points at nothing",
+        );
     }
 
     #[test]

@@ -29,9 +29,6 @@
 //! `U+25BC` expanded), so a grouped header reads with the same affordance as a
 //! [`crate::disclosure`] section and a `tree_view` branch.
 
-use crate::glyph::{
-    DISCLOSURE_COLLAPSED as GLYPH_COLLAPSED, DISCLOSURE_EXPANDED as GLYPH_EXPANDED,
-};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, Theme};
@@ -63,15 +60,27 @@ pub fn group_header_row(
     width: u32,
     height: u32,
 ) -> Scene {
-    let chevron = if collapsed {
-        GLYPH_COLLAPSED
-    } else {
-        GLYPH_EXPANDED
-    };
+    // ★★★★★ R2057 — the twisty leaves the SENTENCE and becomes a mark beside it.
+    //
+    // It was concatenated into the label — `format!("{chevron}  {label}")` —
+    // with `U+25B6` / `U+25BC`, neither of which the one face this tree renders
+    // through carries: every group header read as a `.notdef` box, two spaces,
+    // then its name. Putting the mark in the words also put it in the header's
+    // accessible NAME, so a reader who cannot see the drawing was told a
+    // character instead of a state.
+    //
+    // Drawn beside the text, the mark is decorative and says so, and the words
+    // are only words.
+    let twisty = crate::indicator::inline(
+        crate::indicator::Indicator::Disclosure { open: !collapsed },
+        HEADER_FONT_PX,
+        theme.resolve(ColorRole::OnSurface),
+        "the twisty for this group; the header beside it names the group",
+    );
     let text = if detail.is_empty() {
-        format!("{chevron}  {label}")
+        label.to_owned()
     } else {
-        format!("{chevron}  {label}  ({detail})")
+        format!("{label}  ({detail})")
     };
     let label_node = Scene::Text(TextNode::styled(
         text,
@@ -81,7 +90,7 @@ pub fn group_header_row(
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
     Scene::Container(
-        ContainerNode::new(vec![label_node])
+        ContainerNode::new(vec![twisty, label_node])
             .with_tag(tag)
             .with_style(BoxStyle::filled(
                 theme.resolve(ColorRole::SurfaceContainerHigh),
@@ -102,36 +111,60 @@ mod tests {
     use pinion_core::scene::Scene;
     use pinion_core::theme::Theme;
 
-    /// Pull the header label text out of the built row (the single Text child).
+    /// Pull the header label text out of the built row.
+    ///
+    /// ★ R2057 — the LAST child, because the twisty is a drawn mark in front of
+    /// it now rather than two characters inside it.
     fn header_text(scene: &Scene) -> &str {
         let Scene::Container(root) = scene else {
             panic!("group header is a Container")
         };
-        let Scene::Text(t) = &root.children[0] else {
+        let Some(Scene::Text(t)) = root.children.last() else {
             panic!("header has a Text child")
         };
         &t.content
     }
 
+    /// ★★★★★ R2057 — the twisty is a MARK, and the words are only words.
+    ///
+    /// These three compared the label against a string that began with
+    /// `U+25BC` / `U+25B6`. Both characters are absent from the one face this
+    /// tree renders through, so the assertions were true while every group
+    /// header on screen began with a `.notdef` box — and, because the mark was
+    /// inside the sentence, a reader who cannot see the drawing was read a
+    /// character where a state belonged.
     #[test]
-    fn expanded_header_shows_down_twisty_label_and_detail() {
+    fn r2057_the_twisty_is_a_mark_beside_the_words_not_inside_them() {
         let theme = Theme::light();
-        let row = group_header_row("pg#0".to_string(), "Transform", "2", false, &theme, 400, 28);
-        assert_eq!(header_text(&row), "\u{25BC}  Transform  (2)");
-    }
-
-    #[test]
-    fn collapsed_header_shows_right_twisty() {
-        let theme = Theme::light();
-        let row = group_header_row("pg#1".to_string(), "Appearance", "4", true, &theme, 400, 28);
-        assert_eq!(header_text(&row), "\u{25B6}  Appearance  (4)");
+        for (collapsed, open) in [(false, true), (true, false)] {
+            let row = group_header_row(
+                "pg#0".to_string(),
+                "Transform",
+                "2",
+                collapsed,
+                &theme,
+                400,
+                28,
+            );
+            assert_eq!(
+                crate::indicator::marks_in(&row),
+                vec![crate::indicator::Indicator::Disclosure { open }],
+                "a {} group points at where its rows are",
+                if open { "shown" } else { "folded" },
+            );
+            assert_eq!(
+                header_text(&row),
+                "Transform  (2)",
+                "and the words carry no mark at all",
+            );
+        }
     }
 
     #[test]
     fn empty_detail_omits_parentheses() {
         let theme = Theme::light();
         let row = group_header_row("pg#2".to_string(), "Physics", "", false, &theme, 400, 28);
-        assert_eq!(header_text(&row), "\u{25BC}  Physics");
+        assert_eq!(header_text(&row), "Physics");
     }
 
     #[test]

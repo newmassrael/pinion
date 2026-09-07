@@ -40,10 +40,7 @@
 //! as the disclosure's accessible name, and the panel's text never
 //! leaks into the header's name.
 
-use crate::glyph::{
-    DISCLOSURE_COLLAPSED as GLYPH_COLLAPSED, DISCLOSURE_EXPANDED as GLYPH_EXPANDED,
-};
-use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
+use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::disclosure::DisclosureState;
@@ -176,22 +173,25 @@ pub fn view_disclosure(
     } else {
         theme.resolve(ColorRole::OnSurface)
     };
-    let glyph = if expanded {
-        GLYPH_EXPANDED
-    } else {
-        GLYPH_COLLAPSED
-    };
-    let chevron = Scene::Text(
-        TextNode::styled(
-            glyph,
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(style.chevron_size_px)
-                .with_fg(text_color),
-        )
-        // Presentational so enrich_names_from_scene skips the twisty
-        // and lands on the linguistic summary label.
-        .with_role(TextRole::Presentational),
+    // ★★★★★ R2057 — the twisty is a DRAWN triangle, not a character.
+    //
+    // It was `U+25B6` / `U+25BC`, and the one face this tree renders through
+    // carries neither: every reader saw a `.notdef` box where the mark belongs.
+    // The face is not at fault — it is a Latin/Greek/Cyrillic text face, and
+    // geometric shapes live in symbol faces — so a triangle asked of it is
+    // outside it by construction. The behaviour reference draws its marks as
+    // paths for the same reason and does not have this class of defect at all;
+    // measured, it uses none of these codepoints anywhere.
+    //
+    // `inline` keeps what the text run carried: the box is decorative and says
+    // so with the sentence naming what announces the state instead, which is
+    // what `Presentational` was doing here.
+    let chevron = crate::indicator::inline(
+        crate::indicator::Indicator::Disclosure { open: expanded },
+        style.chevron_size_px,
+        text_color,
+        "the twisty that folds this section; the summary beside it announces \
+         whether it is open",
     );
     let summary_node = Scene::Text(TextNode::styled(
         summary,
@@ -379,36 +379,24 @@ mod tests {
                 text_summary(),
             )
         });
-        assert_eq!(header_twisty_glyph(&collapsed), GLYPH_COLLAPSED);
-        assert_eq!(header_twisty_glyph(&expanded), GLYPH_EXPANDED);
-    }
-
-    fn header_twisty_glyph(scene: &Scene) -> &str {
-        let Scene::Container(root) = scene else {
-            panic!("root container")
-        };
-        let Scene::Container(header) = &root.children[0] else {
-            panic!("header container")
-        };
-        let Scene::Text(t) = &header.children[0] else {
-            panic!("twisty text")
-        };
-        // Twisty is Presentational so the AT name lands on the summary.
-        assert_eq!(t.role, Some(TextRole::Presentational));
-        // Borrow the glyph string slice out of the TextNode content.
-        glyph_of(t)
-    }
-
-    fn glyph_of(t: &TextNode) -> &str {
-        // `content` is the rendered string; both glyphs are single
-        // scalar values so an exact compare is unambiguous.
-        if t.content == GLYPH_EXPANDED {
-            GLYPH_EXPANDED
-        } else if t.content == GLYPH_COLLAPSED {
-            GLYPH_COLLAPSED
-        } else {
-            panic!("unexpected twisty glyph: {:?}", t.content);
-        }
+        // ★★★★★ R2057 — asked of the MARK, not of a character.
+        //
+        // This read `U+25B6` / `U+25BC` out of a text run and compared the
+        // string, which passed for 1,361 rounds while the one face this tree
+        // renders through carried neither: the assertion was true and the
+        // reader saw a `.notdef` box. A drawn mark cannot be asserted that way
+        // and cannot fail that way either — what is read back here is the
+        // shape, through the same census every gate in that module walks.
+        assert_eq!(
+            crate::indicator::marks_in(&collapsed),
+            vec![crate::indicator::Indicator::Disclosure { open: false }],
+            "a folded section points along the row it is on",
+        );
+        assert_eq!(
+            crate::indicator::marks_in(&expanded),
+            vec![crate::indicator::Indicator::Disclosure { open: true }],
+            "and an open one points down at what it opened",
+        );
     }
 
     #[test]

@@ -22,11 +22,22 @@
 //! representation (`""`, `"\u{2195}"`, a fixed-width blank) is a style
 //! choice, not a shared decision — it stays per-consumer (R758).
 
-/// Collapsed-state disclosure twisty — `U+25B6` BLACK RIGHT-POINTING TRIANGLE.
-pub const DISCLOSURE_COLLAPSED: &str = "\u{25B6}";
-
-/// Expanded-state disclosure twisty — `U+25BC` BLACK DOWN-POINTING TRIANGLE.
-pub const DISCLOSURE_EXPANDED: &str = "\u{25BC}";
+// ★★★★★ R2057 — the two disclosure twisties are GONE from this module.
+//
+// They were `U+25B6` and `U+25BC`, and the one face this tree renders through
+// carries neither, so every widget that drew one — the disclosure section, the
+// tree view, the group header, and an example's tree rows — showed a `.notdef`
+// box where the twisty belongs. R1952 had already reached this conclusion for
+// the four marks the analysis shell paints, and named the reason: this is a
+// Latin/Greek/Cyrillic text face, so every triangle, chevron and arrow asked of
+// it is outside it BY CONSTRUCTION, and the behaviour reference draws its marks
+// as paths for exactly that reason — measured, it uses none of these
+// codepoints anywhere at all.
+//
+// The mark is now `Indicator::Disclosure`, drawn as a path. Removing the
+// constants rather than leaving them unused is what takes them out of
+// [`FACELESS`]: a declared mark this tree cannot draw is a promise it cannot
+// keep, whether or not anybody is currently calling it.
 
 /// Ascending column-sort arrow — `U+25B2` BLACK UP-POINTING TRIANGLE.
 pub const SORT_ASCENDING: &str = "\u{25B2}";
@@ -125,7 +136,14 @@ pub const fn sort_glyph(dir: Option<bool>) -> Option<&'static str> {
 /// mark being drawable by today's face is not a reason for it to stay a
 /// character, and R1952 moved `U+00D7` out of [`crate::config_form`] for
 /// exactly that reason. It is a reason it is not a DEFECT.
-pub const FACELESS: usize = 6;
+/// ★★★★★ R2057 — **six became four**, and the two that went were the widest
+/// spread: the disclosure twisties, drawn by four painters in this crate and by
+/// an example's tree rows. They are `Indicator::Disclosure` now.
+///
+/// What is left is `SORT_ASCENDING`, `SORT_DESCENDING`, `WINDOW_MAXIMIZE` and
+/// `SELECT_ALL_COMPLETE` — and the last of those is in NEITHER face this tree
+/// carries, so it cannot be repaid by shipping a different one.
+pub const FACELESS: usize = 4;
 
 #[cfg(test)]
 mod tests {
@@ -199,7 +217,7 @@ mod tests {
         for known in [
             super::WINDOW_CLOSE,
             super::SELECT_ALL_COMPLETE,
-            super::DISCLOSURE_COLLAPSED,
+            super::WINDOW_MAXIMIZE,
         ] {
             assert!(
                 declared.iter().any(|(_, text)| text == known),

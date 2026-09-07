@@ -2467,13 +2467,24 @@ pub fn selector_cell_editor(c: &CellEditRender<'_>) -> Scene {
             .with_size_px(cell.style.label_size_px)
             .with_fg(cell.fg),
     ));
-    let chevron = Scene::Text(TextNode::styled(
-        crate::glyph::DISCLOSURE_EXPANDED,
-        Rect::default(),
-        TextStyle::new()
-            .with_size_px(STEP_GLYPH_PX)
-            .with_fg(cell.theme.resolve(ColorRole::OnSurfaceMuted)),
-    ));
+    // ★★★★★ R2057 — the mark this cell wants is a SELECTOR, and it was
+    // borrowing the disclosure triangle.
+    //
+    // This function's own doc says what it draws: *the chevron that says it
+    // opens*. It was setting `DISCLOSURE_EXPANDED` — a character meaning "this
+    // section is unfolded" — to say "press me and a list appears". Two
+    // different facts, one glyph, and the glyph was absent from the one face
+    // this tree renders through, so what a reader actually saw was a `.notdef`
+    // box saying neither.
+    //
+    // `Indicator::Selector` is the mark for this, already drawn as a path and
+    // already used by every other closed selector in this crate.
+    let chevron = crate::indicator::inline(
+        crate::indicator::Indicator::Selector,
+        STEP_GLYPH_PX,
+        cell.theme.resolve(ColorRole::OnSurfaceMuted),
+        "the chevron that opens this cell's list; the cell announces its value",
+    );
     let content_w = editor_content_w(cell, 0);
     Scene::Container(
         ContainerNode::new(vec![Scene::Container(

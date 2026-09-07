@@ -100,7 +100,6 @@ use pinion_core::widgets::virtual_list::{compute_visible_range, scroll_offset_to
 use pinion_core::{Frame, LocalTaskPump, Scene, Signal, WidgetCore, use_local_task_pump};
 use pinion_shell::typeahead::tree_typeahead_jump;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
-use pinion_widget_paint::glyph::{DISCLOSURE_COLLAPSED, DISCLOSURE_EXPANDED};
 use pinion_widget_paint::scrollbar::{VerticalScrollbarStyle, view_vertical_scrollbar};
 use pinion_widget_paint::tree_view::{TreeRowClickExternal, TreeViewStyle, row_focus_bg};
 use pinion_widget_paint::virtual_list::view_flex_virtual_list;
@@ -548,7 +547,7 @@ fn status_text(rows: &[LazyRow]) -> String {
 /// [[abstraction-needs-second-consumer]].)
 fn row_cells(
     depth: u32,
-    glyph: &str,
+    twisty: Option<pinion_widget_paint::indicator::Indicator>,
     label: &str,
     label_role: ColorRole,
     theme: &Theme,
@@ -566,16 +565,29 @@ fn row_cells(
     // Fixed-width glyph column so leaf rows (narrow placeholder) and branch
     // rows (triangle) line up their labels; presentational so the row's AT
     // name comes from the label, not the glyph.
-    let glyph_node = Scene::Text(
-        TextNode::styled(
-            glyph,
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(style.glyph_size_px)
-                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-        )
-        .with_role(TextRole::Presentational),
-    );
+    // ★★★★★ R2057 — a branch's twisty is a DRAWN mark; a leaf holds the column
+    // open with a spacer, which is what the placeholder was always for.
+    //
+    // The two triangles were characters the one face this tree renders through
+    // does not carry, so every branch row here showed a `.notdef` box.
+    let glyph_node = match twisty {
+        Some(mark) => pinion_widget_paint::indicator::inline(
+            mark,
+            style.glyph_size_px,
+            theme.resolve(ColorRole::OnSurfaceMuted),
+            "the twisty for this row; the row announces whether it is expanded",
+        ),
+        None => Scene::Text(
+            TextNode::styled(
+                GLYPH_LEAF,
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(style.glyph_size_px)
+                    .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            )
+            .with_role(TextRole::Presentational),
+        ),
+    };
     cells.push(Scene::Container(
         ContainerNode::new(vec![glyph_node]).with_layout(
             LayoutStyle::new()
@@ -618,18 +630,14 @@ fn node_row_view(
     theme: &Theme,
     style: &TreeViewStyle,
 ) -> Scene {
-    let glyph = if !row.has_children {
-        GLYPH_LEAF
-    } else if row.expanded {
-        DISCLOSURE_EXPANDED
-    } else {
-        DISCLOSURE_COLLAPSED
-    };
+    let twisty = row
+        .has_children
+        .then_some(pinion_widget_paint::indicator::Indicator::Disclosure { open: row.expanded });
     let is_focused = cursor == Some(row.id.as_str());
     Scene::Container(
         ContainerNode::new(row_cells(
             row.depth,
-            glyph,
+            twisty,
             &row.label,
             ColorRole::OnSurface,
             theme,
@@ -647,7 +655,8 @@ fn skeleton_row_view(depth: u32, theme: &Theme, style: &TreeViewStyle) -> Scene 
     Scene::Container(
         ContainerNode::new(row_cells(
             depth,
-            GLYPH_LEAF,
+            // A row that is still loading has nothing to fold yet.
+            None,
             LOADING_LABEL,
             ColorRole::OnSurfaceMuted,
             theme,
