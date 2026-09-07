@@ -71,6 +71,24 @@ def _wait_inspector_with(tf, needle: str, desc: str):
         desc=desc,
     )
 
+def _count_paths(node) -> int:
+    """How many drawn marks are inside `node` (R2062).
+
+    The disclosure used to be a text run and is a stroked path now, so
+    counting paths is what asks *does a reader see a mark*.
+    """
+    count = 0
+    if isinstance(node, dict):
+        if node.get("type") == "Path":
+            count += 1
+        for value in node.values():
+            count += _count_paths(value)
+    elif isinstance(node, list):
+        for value in node:
+            count += _count_paths(value)
+    return count
+
+
 def _collect_tags(node) -> list[str]:
     """Depth-first walk collecting all Container tags."""
     tags: list[str] = []
@@ -151,11 +169,27 @@ def body() -> None:
             "TreeView must render the button label text in a leaf row"
         )
 
-        # (A14) Expanded-state disclosure glyph (`U+25BC`) is present
-        # — branches default to expanded so the full subtree shows.
-        assert _walk_for_text(result, "▼"), (
-            "expanded-branch rows must render the U+25BC glyph"
+        # (A14) Expanded branches carry a disclosure MARK — branches
+        # default to expanded so the full subtree shows.
+        #
+        # ★★★★★ R2062 — this asked for the CHARACTER `U+25BC`, and R2057
+        # made the mark a drawn path because the one face this tree
+        # renders through does not carry that codepoint: the assertion
+        # was green while a reader saw a `.notdef` box. What is asked
+        # for now is that the tree DRAWS the mark, and that no row sets
+        # any of the old characters as text — a string cannot be right
+        # about a shape.
+        tree = find_by_tag(result, "inspector_tree")
+        assert tree is not None, "the tree must be addressable to ask what it draws"
+        assert _count_paths(tree) > 0, (
+            "expanded-branch rows must DRAW a disclosure mark"
         )
+        for ch in ("▼", "▶", "▸", "▾", "▲"):
+            assert not _walk_for_text(tree, ch), (
+                f"a row sets {ch!r} as text — a mark this tree's one face "
+                f"cannot draw, which is how this assertion used to pass over "
+                f"an unrenderable box"
+            )
 
         # (A15) Tree styling — rows render through the substrate's
         # m3_default; the `inspector_tree` Container is reachable in

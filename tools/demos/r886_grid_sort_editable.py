@@ -161,29 +161,59 @@ def body() -> None:
         wait_query(tf, "/external/sort", "none",
                    desc="out-of-range column clamps to unsorted")
 
-        # ── (F) the sorted header paints the direction glyph ────────
+        # ── (F) the sorted header paints the direction MARK ─────────
         # R1548.1 — asked of the header CELL, not of a concatenated string.
         # Until R1547.1 this binding painted `"{label}{glyph}"` as ONE text
         # node, which is what made `startswith("Count") and "▲" in t` a legal
         # reading; R1547.1 split them, because a label is the header's content
-        # (and its accessible name) while the sort glyph is presentational, and
+        # (and its accessible name) while the sort mark is presentational, and
         # the joined node announced "Asset ▲" to a screen reader. The
         # cell-scoped question is the one that survives the split — and it says
-        # something the string never did: that the glyph is inside the Count
+        # something the string never did: that the mark is inside the Count
         # column's OWN cell, rather than anywhere in a string that happens to
         # start with "Count".
+        #
+        # ★★★★★ R2062 — and it asked for the CHARACTERS `U+25B2` / `U+25BC`
+        # until now. R2058 made those marks drawn paths, because the one face
+        # this tree renders through does not carry either codepoint: the
+        # assertion was green while a reader saw a `.notdef` box. What is asked
+        # for now is what a reader actually distinguishes — the sorted column is
+        # the only one that DRAWS anything, and the two directions draw
+        # differently. No string can be right about a shape.
         tf.invoke("/external/cycle_sort", 2)
         snap = wait_snap(
             tf,
-            lambda s: {"Count", "▲"} <= _header_cell_texts(s, 2),
+            lambda s: "Count" in _header_cell_texts(s, 2)
+            and _header_cell_marks(s, 2),
             viewport=VIEWPORT,
-            desc="ascending glyph lands on the Count header",
+            desc="ascending mark lands on the Count header",
         )
+        up = _header_cell_marks(snap, 2)
+        drawn = [c for c in range(4) if _header_cell_marks(snap, c)]
+        assert_eq(drawn, [2], "exactly one header draws a direction mark")
         texts = _snap_texts(snap)
-        assert_eq(sum(1 for t in texts if "▲" in t), 1,
-                  "exactly one header carries the glyph")
-        assert_eq(any("▼" in t for t in texts), False,
-                  "no descending glyph while ascending")
+        for ch in ("▲", "▼"):
+            assert_eq(any(ch in t for t in texts), False,
+                      f"no header sets {ch!r} as text — this face cannot draw it")
+
+        tf.invoke("/external/cycle_sort", 2)
+        snap = wait_snap(
+            tf,
+            lambda s: _header_cell_marks(s, 2) not in (None, [], up),
+            viewport=VIEWPORT,
+            desc="the descending mark is a different drawing",
+        )
+        assert_eq(_header_cell_marks(snap, 2) != up, True,
+                  "ascending and descending are told apart by the drawing")
+        assert_eq([c for c in range(4) if _header_cell_marks(snap, c)], [2],
+                  "still exactly one header draws a mark")
+        # ★ Put the column back where this clause found it — ascending — so
+        # (G) below still starts from the state it was written against. Two
+        # more cycles: descending -> none -> ascending.
+        tf.invoke("/external/cycle_sort", 2)
+        tf.invoke("/external/cycle_sort", 2)
+        wait_query(tf, "/external/sort", "2:ascending",
+                   desc="the clause leaves the column ascending, as it found it")
 
         # ── (G) cycle_sort returns the new key (1-RT outcome) ───────
         r = tf.invoke("/external/cycle_sort", 2)
@@ -220,6 +250,33 @@ def _header_cell_texts(snap, col: int) -> set:
         _walk_texts(cell, texts)
         out.update(t.strip() for t in texts)
     return out
+
+
+def _header_cell_marks(snap, col: int) -> list:
+    """★ R2062 — the DRAWING inside column `col`'s header cell, as its commands.
+
+    The sort direction used to be a character in this cell's text; it is a
+    stroked path now, so there is no string to be right about. What comes back
+    is what a reader is shown: empty for an unsorted column, and two different
+    runs for the two directions.
+    """
+    found: list = []
+    _walk_node(snap, f"{GRID}#h{col}", found)
+    out: list = []
+    for cell in found:
+        _walk_paths(cell, out)
+    return out
+
+
+def _walk_paths(node, out: list) -> None:
+    if isinstance(node, dict):
+        if node.get("type") == "Path":
+            out.append(node.get("commands") or node.get("children"))
+        for v in node.values():
+            _walk_paths(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            _walk_paths(v, out)
 
 
 def _walk_node(node, tag: str, out: list) -> None:
