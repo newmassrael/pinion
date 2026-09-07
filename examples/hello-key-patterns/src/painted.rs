@@ -656,13 +656,17 @@ fn r1730_every_region_either_speaks_or_says_why_it_is_quiet() {
         let state = use_view_state();
         let (_, scene) = painted_at(&state, (WIN_W, WIN_H));
         let mut nodes = super::KeyPatternView::access_node(&IDLE_FIELD, None);
-        // The shell's own enrichment: a name may be `None` on the node and
-        // resolved from the paint, so a gate reading the tree without this step
-        // would be asking about a tree nobody receives.
-        pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
-        let announced = pinion_a11y::announcements(&nodes);
-        let referenced = pinion_a11y::referenced_tags(&nodes);
-        let census = pinion_core::voice::voice_census(&scene, &announced, &referenced);
+        // ★★★★★ R2069 — the two steps between the tree and the verdict come
+        // from the framework now, and the enrichment is inside them.
+        //
+        // This screen used to spell all four out, as five siblings did, each
+        // with a hand-copied warning beside the enrichment saying what its
+        // omission costs — one rule written six times. It is not a warning any
+        // more: `spoken::census` cannot be called without the step, so the
+        // false-red R1867 measured (90 regions reported `name Some("")`, none of
+        // which a running window has) is not reachable from here.
+        let spoken = pinion_a11y::test_fixtures::spoken::census(&scene, &mut nodes);
+        let census = spoken.census;
         let undecided: Vec<&str> = census
             .nodes
             .iter()

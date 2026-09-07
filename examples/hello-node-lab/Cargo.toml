@@ -56,6 +56,11 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+# ★ R2069 — the voice census's construction (`test_fixtures::spoken`). This
+# screen asserts the `derived` count it returns is ZERO, where a sibling asserts
+# the same number is above it, which is why the fixture returns rather than
+# judges.
+pinion-a11y = { path = "../../crates/pinion-a11y", features = ["test-fixtures"] }
 # R1957 — `layering::marks_painted_over`, which reads the walk's own order to
 # say whether a mark drawn LATER covers one drawn earlier. The overflow menu
 # this screen opens was being painted over by its own canvas and no check here

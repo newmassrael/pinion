@@ -76,3 +76,10 @@ impl WidgetA11y for NoPrimaryFixture {}
 /// R1549.2 §2 #6 — the repeating-button fixture's blank impl, so a TUI
 /// test can drive a held press through the same trait stack.
 impl WidgetA11y for RepeatingButtonFixture {}
+
+// ★★★★★ R2069 §5.40 §5.12 — the voice census's CONSTRUCTION, which six screens
+// had each written out. Its own module for the reason `pinion_core::
+// test_fixtures::screen_ink` has one: it is a HARNESS vocabulary rather than a
+// widget stand-in — what a screen supplies is its scene and its tree, and what
+// this owns is the two steps in between that nobody should be able to skip.
+pub mod spoken;

@@ -43,6 +43,11 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+# ★ R2069 — the voice census's construction, which this screen used to write
+# out: `pinion_a11y::test_fixtures::spoken::census` does the two steps between
+# the tree and the verdict, including the enrichment whose omission fails FALSE
+# RED rather than green.
+pinion-a11y = { path = "../../crates/pinion-a11y", features = ["test-fixtures"] }
 # R1653 — the integration test runs the real view -> layout pipeline, so the
 # rectangles it asserts against are the ones the window would paint.
 pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }

@@ -65,6 +65,10 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+# ★ R2069 — the voice census's construction (`test_fixtures::spoken`). This
+# host takes the census twice and unions it, so it calls the fixture twice: the
+# construction is shared and the axis stays here.
+pinion-a11y = { path = "../../crates/pinion-a11y", features = ["test-fixtures"] }
 # R1653 — the painted-geometry check runs the real view -> layout pipeline.
 pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
 # R1811 — the slack gate measures with the SAME cache the layout shaped with;

@@ -1050,24 +1050,26 @@ fn voice_of(state: &std::rc::Rc<ViewState>) -> pinion_core::voice::VoiceCensus {
 
     let (_, scene) = painted_at(state, (WIN_W, WIN_H));
     let mut nodes = super::PacketView::access_node(&IDLE_FIELD, None);
-    // ★ The shell's own enrichment. A widget's `access_node` may leave a name
-    // `None`, and the name a reader hears is resolved from the PAINT SCENE after
-    // layout on WAI-ARIA 1.2's name-computation precedence — so a gate that read
-    // the tree without this step would be asking about a tree nobody receives.
-    // This screen leaves two panes to be named from the runs that declare
-    // themselves their names, which is what makes those `name_of` redirects
-    // true rather than merely well formed.
-    let derived = pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+    // ★★★★★ R2069 — the construction is the framework's now, and the enrichment
+    // is inside it. A widget's `access_node` may leave a name `None`, and the
+    // name a reader hears is resolved from the PAINT SCENE after layout on
+    // WAI-ARIA 1.2's name-computation precedence — so a gate that read the tree
+    // without that step would be asking about a tree nobody receives, and this
+    // screen used to say so in a comment beside the call as four siblings did.
+    //
+    // ★ THE COUNT STAYS THIS SCREEN'S JUDGEMENT. `spoken::census` returns how
+    // many names it filled in and asserts nothing about the number, because two
+    // screens assert opposite directions of it: here it must be > 0 — this
+    // screen leaves two panes to be named from the runs that declare their own
+    // names, which is what makes those `name_of` redirects true rather than
+    // merely well formed — and the node lab asserts == 0, naming everything
+    // itself.
+    let spoken = pinion_a11y::test_fixtures::spoken::census(&scene, &mut nodes);
     assert!(
-        derived > 0,
+        spoken.derived > 0,
         "no node was named from the paint, so the `name_of` redirects name nothing",
     );
-    // The framework's own derivations rather than second ones: what counts as a
-    // reference, and what an announcement is, are rules the wire and this gate
-    // have to agree about.
-    let announced = pinion_a11y::announcements(&nodes);
-    let referenced = pinion_a11y::referenced_tags(&nodes);
-    pinion_core::voice::voice_census(&scene, &announced, &referenced)
+    spoken.census
 }
 
 /// ★★★★★ R1693 — **every addressable region of this screen is classified**, and

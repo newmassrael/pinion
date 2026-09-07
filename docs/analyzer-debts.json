@@ -469,18 +469,6 @@
       ]
     },
     {
-      "name": "debt-five-screens-hand-roll-one-voice-gate",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "ordinary",
-      "why": [
-        "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
-      ]
-    },
-    {
       "name": "debt-four-decode-layer-headings-are-out-of-a-keyboard-readers-reach",
       "substituted": false,
       "blocked_by": "buildable",
@@ -648,6 +636,18 @@
       "rank": "unranked",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
+      "name": "debt-thirty-six-examples-hand-roll-one-ring-census",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-tool-capability-spec"
       ]
     },
     {

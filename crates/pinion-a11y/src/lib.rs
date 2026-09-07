@@ -77,8 +77,11 @@ pub mod widget_a11y;
 // R51.129 §5.40 — `WidgetA11y` impl for `pinion_core::test_fixtures::
 // ButtonFixture`. Gated on the `test-fixtures` feature; never reaches
 // production binaries.
+// ★ R2069 — `pub`, where it was private: the module gained a HARNESS vocabulary
+// (`test_fixtures::spoken`) that six screens' own test modules call, alongside
+// the trait impls that only ever needed to exist.
 #[cfg(any(test, feature = "test-fixtures"))]
-mod test_fixtures;
+pub mod test_fixtures;
 
 pub use action::{AccessAction, PinionAccessAction, translate_action};
 pub use assemble::{build_access_tree, resolve_access_bounds};

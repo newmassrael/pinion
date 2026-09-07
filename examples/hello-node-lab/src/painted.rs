@@ -6349,7 +6349,10 @@ fn voice_of(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> pinion_core::voi
     // name-computation precedence. Until this gate judged names it did not, and
     // reading the tree without this step asks a question about a tree nobody
     // receives — every node would be nameless by construction.
-    let derived = pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+    // ★★★★★ R2069 — the construction is the framework's (`test_fixtures::
+    // spoken`), enrichment included, so the step this comment used to warn
+    // about cannot be left out of the call.
+    let spoken = pinion_a11y::test_fixtures::spoken::census(&scene, &mut nodes);
     // ★ And it finds nothing to do, which is a claim rather than an accident:
     // this screen names every node it announces, at the site that builds it. A
     // counterfactual is why this line is asserted instead of assumed — deleting
@@ -6357,17 +6360,16 @@ fn voice_of(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> pinion_core::voi
     // fill. If that ever stops being true the name a reader hears starts coming
     // from the paint scene, and this gate would have gone on judging names the
     // production path resolves differently.
+    //
+    // ★★ The direction is THIS SCREEN'S, which is why the fixture returns the
+    // count and judges nothing: `hello-packet-view` asserts the same number is
+    // ABOVE zero, because two of its panes are named from the runs they paint.
     assert_eq!(
-        derived, 0,
-        "the screen left {derived} node(s) to be named from the paint scene",
+        spoken.derived, 0,
+        "the screen left {} node(s) to be named from the paint scene",
+        spoken.derived,
     );
-    // ★ The framework's own derivations, not second ones. What counts as a
-    // reference, and what an announcement is, are rules the wire and this gate
-    // must agree about; this gate had a hand copy of the first until the round's
-    // third-consumer grep.
-    let announced = pinion_a11y::announcements(&nodes);
-    let referenced = pinion_a11y::referenced_tags(&nodes);
-    pinion_core::voice::voice_census(&scene, &announced, &referenced)
+    spoken.census
 }
 
 /// The tags a [`spec::VoiceSpec`] row stands for, expanded from the table its

@@ -51,6 +51,10 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+# ★ R2069 — the voice census's construction (`test_fixtures::spoken`). The
+# `derived` count it returns is still judged HERE, because this screen wants it
+# above zero and a sibling wants it at zero.
+pinion-a11y = { path = "../../crates/pinion-a11y", features = ["test-fixtures"] }
 # R1653 — the integration test runs the real view -> layout pipeline, so the
 # rectangles it asserts against are the ones the window would paint.
 pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }

@@ -547,10 +547,11 @@ fn r1731_every_region_either_speaks_or_says_why_it_is_quiet() {
         let state = use_view_state();
         let (_, scene) = painted_at(&state, (WIN_W, WIN_H));
         let mut nodes = super::LogView::access_node(&IDLE_FIELD, None);
-        pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
-        let announced = pinion_a11y::announcements(&nodes);
-        let referenced = pinion_a11y::referenced_tags(&nodes);
-        let census = pinion_core::voice::voice_census(&scene, &announced, &referenced);
+        // ★★★★★ R2069 — the framework's construction, enrichment included. This
+        // screen was the third of six to spell the four steps out; the step
+        // whose omission reports a defect the screen does not have is now
+        // inside the call rather than beside it in a comment.
+        let census = pinion_a11y::test_fixtures::spoken::census(&scene, &mut nodes).census;
         for fault in [Voice::Unvoiced, Voice::Mumbled, Voice::Hollow, Voice::Ghost] {
             let bad: Vec<&str> = census
                 .nodes

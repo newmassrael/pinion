@@ -1758,10 +1758,16 @@ fn census_of_the_open_destination() -> pinion_core::voice::VoiceCensus {
     let mut cache = pinion_runtime::LayoutCache::new();
     pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
     let mut nodes = AnalyzerShellView::access_node(&ScreenState::default(), None);
-    pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
-    let announced = pinion_a11y::announcements(&nodes);
-    let referenced = pinion_a11y::referenced_tags(&nodes);
-    pinion_core::voice::voice_census(&scene, &announced, &referenced)
+    // ★★★★★ R2069 — the two steps between the tree and the verdict are the
+    // framework's now (`pinion_a11y::test_fixtures::spoken`), which is the lift
+    // the comment above this function said was owed and registered.
+    //
+    // ⚠ What did NOT move is what this file does with it: this screen takes the
+    // census TWICE and unions the two, because exactly one of its status band's
+    // two occupants is painted at a time. That axis is this screen's, and a
+    // helper that owned the loop would have taken it away — so the fixture is
+    // called once per occupancy and the union stays here.
+    pinion_a11y::test_fixtures::spoken::census(&scene, &mut nodes).census
 }
 
 /// Every region this screen PAINTS is one it PUBLISHES, and the other way round.
