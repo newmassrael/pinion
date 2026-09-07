@@ -486,7 +486,12 @@ impl<K: NodeKind> Document<K> {
             let reroute = self
                 .add_node(tree, NodeBody::Reroute, x, y)
                 .map_err(|_| RerouteError::NoSuchTree(tree))?;
-            let feed = self.push_link(tree, source, Socket::new(reroute, 0), all_muted);
+            let feed = self.push_link(
+                tree,
+                source,
+                Socket::new(reroute, 0),
+                crate::model::Carried::muted_as(all_muted),
+            );
             // 2 — the cut links are re-pointed, keeping their identity.
             let out = Socket::new(reroute, 0);
             if let Some(host) = self.tree_mut(tree) {

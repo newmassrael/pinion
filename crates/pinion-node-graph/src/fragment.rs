@@ -591,7 +591,7 @@ impl<K: NodeKind> Document<K> {
             // A cut carries the wiring as it was: a muted link is still a link,
             // and a fragment that quietly unmuted one would paste back a graph
             // that computes something the original did not (R1586).
-            content.push_link(ROOT, link.from, link.to, link.muted);
+            content.push_link(ROOT, link.from, link.to, crate::model::Carried::of(&link));
         }
 
         Ok(Fragment {
@@ -1188,7 +1188,7 @@ impl<K: NodeKind> Document<K> {
                 tree,
                 Socket::new(from, link.from.port),
                 Socket::new(to, link.to.port),
-                link.muted,
+                crate::model::Carried::of(link),
             ));
         }
 
@@ -1204,7 +1204,7 @@ impl<K: NodeKind> Document<K> {
                         tree,
                         *producer,
                         Socket::new(node, consumer.socket.port),
-                        consumer.muted,
+                        crate::model::Carried::muted_as(consumer.muted),
                     ));
                 }
             }
@@ -1504,7 +1504,7 @@ fn copy_tree_body<K: NodeKind>(
         );
     }
     for link in source.links() {
-        destination.push_link(target, link.from, link.to, link.muted);
+        destination.push_link(target, link.from, link.to, crate::model::Carried::of(link));
     }
 }
 

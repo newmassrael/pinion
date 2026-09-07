@@ -565,6 +565,12 @@ impl<K: NodeKind> Document<K> {
                 from: held.from,
                 to: held.to,
                 muted: held.muted,
+                // ★ R2075 — an expansion is a REACHABILITY view, walked by
+                // derivations that ask which nodes reach which. It has no
+                // drawing of its own: nothing paints an expanded link, so
+                // carrying a reading direction here would be a fact with no
+                // reader that the next round would have to explain.
+                drawn_from_consumer: false,
             })
             .collect()
     }

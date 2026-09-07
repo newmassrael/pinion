@@ -17,8 +17,9 @@ use std::fmt;
 
 use crate::frame::{Orphaned, parents_of};
 use crate::model::{
-    Admission, Document, InterfaceSide, KindPort, Link, LinkId, Multiplicity, Node, NodeBody,
-    NodeId, NodeKind, PortRef, ROOT, Refusal, Side, Socket, Tree, TreeId, centroid, crossing,
+    Admission, Carried, Document, InterfaceSide, KindPort, Link, LinkId, Multiplicity, Node,
+    NodeBody, NodeId, NodeKind, PortRef, ROOT, Refusal, Side, Socket, Tree, TreeId, centroid,
+    crossing,
 };
 use crate::numbering::Numbering;
 
@@ -427,7 +428,7 @@ impl<K: NodeKind> Document<K> {
             .filter_map(|&id| self.take_link(tree, id))
             .collect();
         for link in carried {
-            self.push_link(definition, link.from, link.to, link.muted);
+            self.push_link(definition, link.from, link.to, Carried::of(&link));
         }
         // R1586 — a crossing becomes TWO links, and only one of them can carry
         // the fact that the value was being stopped. It is the per-consumer
@@ -468,7 +469,7 @@ impl<K: NodeKind> Document<K> {
                     definition,
                     Socket::new(entry, port),
                     consumer,
-                    was_muted(consumer),
+                    Carried::muted_as(was_muted(consumer)),
                 );
             }
         }
@@ -476,7 +477,12 @@ impl<K: NodeKind> Document<K> {
             let port = u32::try_from(index).unwrap_or(u32::MAX);
             // The shared half of an outbound crossing: several consumers may
             // read this port and disagree, so the fact rides the outside links.
-            self.push_link(definition, face.producer, Socket::new(exit, port), false);
+            self.push_link(
+                definition,
+                face.producer,
+                Socket::new(exit, port),
+                Carried::plain(),
+            );
         }
 
         // The instance, wired where the selection was wired — and sitting where
@@ -496,12 +502,22 @@ impl<K: NodeKind> Document<K> {
         for (index, face) in plan.inputs.iter().enumerate() {
             let port = u32::try_from(index).unwrap_or(u32::MAX);
             // The shared half of an inbound crossing — see `crossing_muted`.
-            self.push_link(tree, face.producer, Socket::new(node, port), false);
+            self.push_link(
+                tree,
+                face.producer,
+                Socket::new(node, port),
+                Carried::plain(),
+            );
         }
         for (index, face) in plan.outputs.iter().enumerate() {
             let port = u32::try_from(index).unwrap_or(u32::MAX);
             for &consumer in &face.consumers {
-                self.push_link(tree, Socket::new(node, port), consumer, was_muted(consumer));
+                self.push_link(
+                    tree,
+                    Socket::new(node, port),
+                    consumer,
+                    Carried::muted_as(was_muted(consumer)),
+                );
             }
         }
         Grouped {
@@ -625,7 +641,7 @@ impl<K: NodeKind> Document<K> {
                 tree,
                 Socket::new(from, link.from.port),
                 Socket::new(to, link.to.port),
-                link.muted,
+                Carried::of(link),
             ));
         }
 
@@ -648,7 +664,7 @@ impl<K: NodeKind> Document<K> {
                         tree,
                         link.from,
                         Socket::new(to, inner_link.to.port),
-                        link.muted || inner_link.muted,
+                        Carried::muted_as(link.muted || inner_link.muted),
                     ));
                 }
             }
@@ -668,7 +684,7 @@ impl<K: NodeKind> Document<K> {
                     tree,
                     Socket::new(from, inner_link.from.port),
                     link.to,
-                    link.muted || inner_link.muted,
+                    Carried::muted_as(link.muted || inner_link.muted),
                 ));
             }
         }

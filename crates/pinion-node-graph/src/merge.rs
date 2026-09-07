@@ -225,11 +225,20 @@ fn node_difference<K: NodeKind>(a: &Node<K>, b: &Node<K>) -> Option<What> {
 /// rather than a simplification: `muted` stops a value reaching a port, which
 /// is what the graph MEANS.
 fn link_difference(a: &Link, b: &Link) -> Option<What> {
+    // ⚠ R2075 — `drawn_from_consumer` is destructured and NOT compared, which is
+    // a decision rather than an omission. A three-way merge asks whether the
+    // GRAPH was rewritten, and which way round a curve reads is not the graph:
+    // two documents whose only difference is a drawing have the same meaning,
+    // and reporting a rewrite there would make a presentation edit conflict
+    // with a structural one. The destructuring is what makes the choice
+    // explicit — a field added later cannot be forgotten here, it has to be
+    // named and decided.
     let Link {
         id: _,
         from,
         to,
         muted,
+        drawn_from_consumer: _,
     } = a;
     ((from, to, muted) != (&b.from, &b.to, &b.muted)).then_some(What::Rewritten)
 }

@@ -267,6 +267,96 @@ pub struct Link {
     /// node passes one through. They are named apart here — see [`Node::bypassed`].
     #[serde(default)]
     pub muted: bool,
+    /// ★★★★★ R2075 — **the curve is drawn leaving the CONSUMING end**, which
+    /// says nothing about which end produces.
+    ///
+    /// # Why a graph needs this at all
+    ///
+    /// A link's direction answers *which way does this go* — who feeds whom,
+    /// which way a type converts, which end a value leaves from. A DRAWING
+    /// answers a different question: which way round the curve reads on the
+    /// canvas. Those coincide in most graphs and they are not the same fact,
+    /// and a domain where they come apart is not exotic: in a message fabric a
+    /// subscriber DIALS the mesh, so the connection is made in the opposite
+    /// direction from the data, and a diagram that draws the dialling direction
+    /// tells the reader the wrong story about where the messages go.
+    ///
+    /// Measured on a behaviour reference this repository reproduces: it
+    /// declares each of its eight wires as a producing end and a consuming end,
+    /// carries exactly this flag on **two** of them, and says in its own
+    /// comment that the flag turns the drawing round and leaves the meaning
+    /// alone.
+    ///
+    /// ⚠ **Not derivable, and that was measured rather than assumed.** The
+    /// obvious rule — reverse when the producer sits to the right of the
+    /// consumer — holds for both flagged wires there and fails on a third that
+    /// is not flagged, which takes a curve offset instead. It is an authoring
+    /// choice about how a particular diagram reads.
+    ///
+    /// # What reads it, and what must not
+    ///
+    /// A renderer, and a hit test that has to agree with the renderer. NOTHING
+    /// in this crate reads it: every structural derivation, the evaluator and
+    /// the run all take a link's direction from [`Self::from`] and [`Self::to`],
+    /// which is why this can be a presentation fact without becoming a second
+    /// account of the graph's shape. That is the same separation
+    /// [`crate::Appearance`] keeps for a node, said for a link — and it is
+    /// stricter here, because [`Self::muted`] IS semantic and this is not.
+    ///
+    /// It travels the way `muted` travels: a group collapse, a paste and a
+    /// re-aimed end all carry it, because a wire that reads one way round and
+    /// reads the other way round after being folded into a part is a diagram
+    /// that changed meaning to a person while changing nothing to the model.
+    #[serde(default)]
+    pub drawn_from_consumer: bool,
+}
+
+/// ★★★★★ R2075 — **what a link carries across a derivation that stands one link
+/// in for another**: everything about a wire that is neither its identity nor
+/// its two ends.
+///
+/// A group collapse, a paste, a boundary move and a re-aimed end all build a
+/// new [`Link`] where an old one stood, and each of these facts is one the new
+/// wire must inherit rather than default. Named together so that adding one
+/// costs no call site anything, and so that a site cannot pass two booleans in
+/// the wrong order — which is what this was on the way to becoming when the
+/// second fact arrived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct Carried {
+    /// Whether the link carries no value — see [`Link::muted`].
+    pub muted: bool,
+    /// Whether the curve reads from the consuming end — see
+    /// [`Link::drawn_from_consumer`].
+    pub drawn_from_consumer: bool,
+}
+
+impl Carried {
+    /// What this link carries, for a derivation that is MOVING it.
+    pub(crate) const fn of(link: &Link) -> Self {
+        Self {
+            muted: link.muted,
+            drawn_from_consumer: link.drawn_from_consumer,
+        }
+    }
+
+    /// A wire this crate is synthesising, which inherits nothing because there
+    /// is nothing it stands in for — a boundary link, a reroute's feed.
+    pub(crate) const fn plain() -> Self {
+        Self {
+            muted: false,
+            drawn_from_consumer: false,
+        }
+    }
+
+    /// A wire this crate is synthesising for a consumer whose old link was
+    /// muted: the mutedness is inherited and the drawing is not, because there
+    /// is no old curve for the new one to read like.
+    pub(crate) const fn muted_as(muted: bool) -> Self {
+        Self {
+            muted,
+            drawn_from_consumer: false,
+        }
+    }
 }
 
 /// A consumer a derivation is about to feed, and whether the link it stands in
@@ -4755,6 +4845,9 @@ impl<K: NodeKind> Document<K> {
                 from,
                 to,
                 muted: false,
+                // ★ R2075 — a wire a person has just drawn reads the way they
+                // drew it. Turning it round is an act of its own.
+                drawn_from_consumer: false,
             },
             crowded,
             None,
@@ -5096,6 +5189,48 @@ impl<K: NodeKind> Document<K> {
         Ok(std::mem::replace(&mut target.muted, muted))
     }
 
+    /// ★★★★★ R2075 — **draw `link` from its consuming end, or from its
+    /// producing one**, answering which it was.
+    ///
+    /// A wire reads one way round on the canvas and dials the other, which is
+    /// not a contradiction: a subscriber DIALS the mesh, so the connection runs
+    /// against the data. See [`Link::drawn_from_consumer`] for what this is and
+    /// what may read it.
+    ///
+    /// Beside [`Self::set_link_muted`] and for its stated reason: the endpoints
+    /// are what every invariant here is stated over, so they are not editable in
+    /// place, and the facts that ARE get one narrow verb each rather than a
+    /// `link_mut` that could reach anything.
+    ///
+    /// ⚠ It changes nothing this crate computes. Every structural derivation,
+    /// the evaluator and the run read [`Link::from`] and [`Link::to`], and none
+    /// of them reads this — which is what lets a renderer and a hit test agree
+    /// on a drawing without the graph acquiring a second account of its shape.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NoSuchTree`] or [`EditError::NoSuchLink`].
+    pub fn set_link_drawn_from_consumer(
+        &mut self,
+        tree: TreeId,
+        link: LinkId,
+        drawn_from_consumer: bool,
+    ) -> Result<bool, EditError> {
+        let host = self
+            .trees
+            .get_mut(tree.0 as usize)
+            .ok_or(EditError::NoSuchTree(tree))?;
+        let target = host
+            .links
+            .iter_mut()
+            .find(|l| l.id == link)
+            .ok_or(EditError::NoSuchLink { tree, link })?;
+        Ok(std::mem::replace(
+            &mut target.drawn_from_consumer,
+            drawn_from_consumer,
+        ))
+    }
+
     /// Take a node out of a tree without touching any link.
     ///
     /// The link bookkeeping is the caller's here — which is exactly why this is
@@ -5133,17 +5268,26 @@ impl<K: NodeKind> Document<K> {
     /// split exists to make impossible. [`Self::validate`] is the standing
     /// check that this trust is warranted.
     ///
-    /// `muted` is an argument rather than a default because a derived link
-    /// stands in for one that already existed, and whether *that* one carried a
-    /// value is a fact the derivation must not quietly discard (R1586). Making
-    /// it a parameter is what turns "did every link-moving operation preserve
-    /// mutedness?" into something the compiler asks at each of its call sites.
+    /// [`Carried`] is an argument rather than a default because a derived link
+    /// stands in for one that already existed, and what *that* one carried is a
+    /// set of facts the derivation must not quietly discard (R1586). Making it
+    /// a parameter is what turns "did every link-moving operation preserve
+    /// them?" into something the compiler asks at each of its call sites.
+    ///
+    /// ★★★★★ R2075 — a STRUCT where this was a bare `muted: bool`, and the
+    /// reason is the argument above applied a second time. A link now carries
+    /// two such facts — whether it is muted, and which way round it reads — and
+    /// two adjacent booleans in a signature is a call site that can be wrong in
+    /// a way nothing catches. Named together, a third fact costs no call site
+    /// anything, and each site says which of the two shapes it means:
+    /// [`Carried::of`] for a link that is being moved, [`Carried::plain`] for
+    /// one this crate is synthesising.
     pub(crate) fn push_link(
         &mut self,
         tree: TreeId,
         from: Socket,
         to: Socket,
-        muted: bool,
+        carried: Carried,
     ) -> LinkId {
         let Some(host) = self.tree_mut(tree) else {
             return LinkId(u32::MAX);
@@ -5154,7 +5298,8 @@ impl<K: NodeKind> Document<K> {
             id,
             from,
             to,
-            muted,
+            muted: carried.muted,
+            drawn_from_consumer: carried.drawn_from_consumer,
         });
         id
     }

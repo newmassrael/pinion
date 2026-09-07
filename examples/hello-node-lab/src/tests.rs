@@ -1388,8 +1388,8 @@ fn r1969_1_every_declared_link_lands_on_a_card_that_says_where_to_reach_it() {
     };
     let blind: Vec<String> = spec::LINKS
         .iter()
-        .filter(|(_, to)| !listens(to))
-        .map(|(from, to)| format!("{from} -> {to}"))
+        .filter(|wire| !listens(wire.to))
+        .map(|wire| format!("{} -> {}", wire.from, wire.to))
         .collect();
     // ★★★★★ R2074 — **ZERO now, and the fixture is what changed rather than the
     // rule.** The one blind acceptor was `T-02`, which declares no listen
@@ -1415,7 +1415,8 @@ fn r1969_1_every_declared_link_lands_on_a_card_that_says_where_to_reach_it() {
     );
     // ★ And every OTHER acceptor really does say where to reach it, so the one
     // above is a named exception and not the shape of the whole fixture.
-    for (from, to) in spec::LINKS {
+    for wire in spec::LINKS {
+        let (from, to) = (wire.from, wire.to);
         assert!(
             listens(to) || blind.contains(&format!("{from} -> {to}")),
             "{from} -> {to}",
@@ -7556,6 +7557,125 @@ fn r2071_the_root_card_of_a_reused_number_shows_the_inside_cards_values() {
 /// So this drives the whole way round: make a card inside a definition, write
 /// the bytes, open the bytes, and read what the root card of the re-used number
 /// shows. By VALUE, for the reason `shown_rows` states.
+#[test]
+fn r2075_a_wire_reads_the_way_it_is_drawn_and_dials_the_way_it_is_declared() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        let doc = state.doc.borrow();
+        let tree = doc.tree(ROOT).expect("the opening tree");
+
+        let reversed: Vec<(String, String)> = tree
+            .links()
+            .iter()
+            .filter(|link| link.drawn_from_consumer)
+            .map(|link| (state.name_of(link.from.node), state.name_of(link.to.node)))
+            .collect();
+        assert_eq!(
+            reversed.len(),
+            spec::LINKS.iter().filter(|w| w.drawn_from_consumer).count(),
+            "★ every wire the specification says reads backwards is on the \
+             canvas that way — {reversed:?}"
+        );
+        assert!(
+            !reversed.is_empty(),
+            "★ and there is at least one, or this test is about nothing"
+        );
+
+        for link in tree.links() {
+            let (a, b) = (link.from.node, link.to.node);
+            let Some((start, end)) = super::wire_run_read(&state, a, b, link.drawn_from_consumer)
+            else {
+                continue;
+            };
+            let Some((plain_start, plain_end)) = super::wire_run_read(&state, a, b, false) else {
+                continue;
+            };
+            if link.drawn_from_consumer {
+                assert_eq!(
+                    (start, end),
+                    (plain_end, plain_start),
+                    "★★★★★ {} -> {} reads from the consuming end, so its chord \
+                     runs the other way across the canvas",
+                    state.name_of(a),
+                    state.name_of(b)
+                );
+            } else {
+                assert_eq!(
+                    (start, end),
+                    (plain_start, plain_end),
+                    "★ and a wire that says nothing about its drawing is drawn \
+                     the way it dials"
+                );
+            }
+            // ★★★★★ AND THE MODEL IS UNTOUCHED BY EITHER. The dialling end is
+            // where it was: this is a presentation fact, and a screen that let
+            // it reach `from`/`to` would have given the graph a second account
+            // of its own shape.
+            assert_eq!(
+                (link.from.node, link.to.node),
+                (a, b),
+                "★ the drawing did not move the wire"
+            );
+        }
+    });
+}
+
+/// ★★★★★ R2075 — **a fold carries which way a wire reads**, because a diagram
+/// that changes meaning to a person while changing nothing to the model is a
+/// diagram that lied on one side of the fold.
+///
+/// The crate carries it the way it carries mutedness — [`Carried`] is a
+/// parameter of the one link-minting call, so every derivation that stands one
+/// link in for another answers the compiler — and this is the screen asking
+/// whether that reaches the gesture a person makes.
+#[test]
+fn r2075_folding_a_part_keeps_which_way_its_wires_read() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+
+        // The two cards of a wire the specification draws backwards, so the
+        // fold has one to carry.
+        let backwards = spec::LINKS
+            .iter()
+            .find(|w| w.drawn_from_consumer)
+            .expect("the specification draws one backwards");
+        let from = state.node_of(backwards.from).expect("its dialler");
+        let to = state.node_of(backwards.to).expect("what it dials");
+
+        state
+            .selection
+            .set(pinion_core::selection::Selection::group(vec![from, to]));
+        super::group_selection(&state, "part").expect("two cards make a subgraph");
+        let part = state.node_of("part").expect("the instance");
+        super::enter_card(&state, part).expect("go inside");
+
+        let doc = state.doc.borrow();
+        let tree = doc.tree(state.here()).expect("the definition");
+        let carried: Vec<bool> = tree
+            .links()
+            .iter()
+            .filter(|link| {
+                (link.from.node, link.to.node) == (from, to)
+                    || (link.from.node, link.to.node) == (to, from)
+            })
+            .map(|link| link.drawn_from_consumer)
+            .collect();
+        assert_eq!(
+            carried,
+            vec![true],
+            "★★★★★ the wire came into the definition still reading from its \
+             consuming end — a fold that dropped it would redraw a person's \
+             diagram while changing nothing they could point at"
+        );
+    });
+}
+
+/// ★★★★★ R2074 — **a saved document hands each card back its own settings**,
+/// which is the behavioural proof R1983.1 asked for.
 #[test]
 fn r2071_a_saved_document_hands_each_card_back_its_own_settings() {
     let owner = Owner::new();

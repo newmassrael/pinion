@@ -630,15 +630,56 @@ pub const NODES: &[NodeSpec] = &[
 /// before this round, `R-01` was the source of three wires and dialled three
 /// things; the reference has it dial **nothing** — every wire arrives at it —
 /// and `T-02`, which dials `P-02` there, dialled nothing here.
-pub const LINKS: &[(&str, &str)] = &[
-    ("T-01", "P-01"),
-    ("Q-01", "R-01"),
-    ("P-01", "R-01"),
-    ("S-01", "R-01"),
-    ("P-02", "R-01"),
-    ("T-02", "P-02"),
-    ("P-03", "R-01"),
+pub const LINKS: &[LinkSpec] = &[
+    LinkSpec::wire("T-01", "P-01"),
+    LinkSpec::wire("Q-01", "R-01"),
+    LinkSpec::wire("P-01", "R-01"),
+    LinkSpec::wire("S-01", "R-01"),
+    LinkSpec::wire("P-02", "R-01"),
+    // ★★★★★ R2075 — the two the reference draws the other way round. Its own
+    // comment says the flag turns the drawing and leaves the meaning alone, and
+    // measured, it carries the flag on exactly these two of its eight.
+    LinkSpec::wire("T-02", "P-02").read_from_the_consumer(),
+    LinkSpec::wire("P-03", "R-01").read_from_the_consumer(),
 ];
+
+/// ★★★★★ R2075 — one opening wire: who dials whom, and which way the curve
+/// reads.
+///
+/// A pair of names until this round, which was enough while those two were the
+/// same fact. They are not: R2074 corrected three of these to the direction the
+/// reference DECLARES, and two of them are ones it DRAWS the other way round —
+/// so a pair could express the model or the diagram and not both.
+pub struct LinkSpec {
+    /// The card that dials.
+    pub from: &'static str,
+    /// The card it dials.
+    pub to: &'static str,
+    /// Whether the curve is drawn leaving the consuming end — see
+    /// [`pinion_node_graph::Link::drawn_from_consumer`], which is where this
+    /// ends up and what the canvas reads.
+    pub drawn_from_consumer: bool,
+}
+
+impl LinkSpec {
+    /// A wire drawn the way it dials, which is what most of them are.
+    pub const fn wire(from: &'static str, to: &'static str) -> Self {
+        Self {
+            from,
+            to,
+            drawn_from_consumer: false,
+        }
+    }
+
+    /// The same wire, drawn from the other end. Named for what a reader sees
+    /// rather than for the flag, so a table of these reads as a diagram.
+    pub const fn read_from_the_consumer(self) -> Self {
+        Self {
+            drawn_from_consumer: true,
+            ..self
+        }
+    }
+}
 
 /// The link the screen opens with selected, and therefore the only one whose
 /// label is drawn. The reference is explicit that a label belongs to the

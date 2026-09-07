@@ -3468,7 +3468,7 @@ impl ResetScope {
                     .collect();
                 let mut want: Vec<(String, String)> = spec::LINKS
                     .iter()
-                    .map(|(a, b)| ((*a).to_owned(), (*b).to_owned()))
+                    .map(|wire| (wire.from.to_owned(), wire.to.to_owned()))
                     .collect();
                 now.sort();
                 want.sort();
@@ -3530,7 +3530,7 @@ impl ResetScope {
             Self::Links => {
                 let mut want: Vec<(String, String)> = spec::LINKS
                     .iter()
-                    .map(|(a, b)| ((*a).to_owned(), (*b).to_owned()))
+                    .map(|wire| (wire.from.to_owned(), wire.to.to_owned()))
                     .collect();
                 let mut drop_these: Vec<LinkId> = Vec::new();
                 {
@@ -3801,8 +3801,9 @@ fn seed_links(
     ids: &BTreeMap<String, NodeId>,
 ) -> Option<LinkId> {
     let mut selected_link = None;
-    for (from, to) in spec::LINKS {
-        let (Some(&a), Some(&b)) = (ids.get(*from), ids.get(*to)) else {
+    for wire in spec::LINKS {
+        let (from, to) = (wire.from, wire.to);
+        let (Some(&a), Some(&b)) = (ids.get(from), ids.get(to)) else {
             continue;
         };
         // ★ R1681 — the SAME endpoint arithmetic the canvas uses, not a second
@@ -3815,7 +3816,15 @@ fn seed_links(
         };
         match doc.connect(ROOT, Socket::new(a, 0), Socket::new(b, port)) {
             Ok(made) => {
-                if (*from, *to) == spec::SELECTED_LINK {
+                // ★★★★★ R2075 — the specification's drawing, put on the wire
+                // the model just made. `connect` mints a link that reads the way
+                // it dials, which is right for a wire a person draws; a wire the
+                // specification declares may read the other way, and this is
+                // where that is said.
+                if wire.drawn_from_consumer {
+                    let _ = doc.set_link_drawn_from_consumer(ROOT, made.link, true);
+                }
+                if (from, to) == spec::SELECTED_LINK {
                     selected_link = Some(made.link);
                 }
             }
@@ -5870,11 +5879,40 @@ fn advanced_fold_word(state: &LabState, id: NodeId) -> String {
 /// `None` for a wire either end of which this canvas does not draw — there is
 /// no chord to have run anywhere.
 fn wire_run(state: &LabState, from: NodeId, to: NodeId) -> Option<((u32, u32), (u32, u32))> {
+    wire_run_read(state, from, to, false)
+}
+
+/// ★★★★★ R2075 — the same chord, **read from whichever end the wire says**.
+///
+/// A wire dials one way and may READ the other: on this canvas a subscriber
+/// dials the mesh, so the connection is made against the direction the messages
+/// travel, and a diagram that drew the dialling direction would tell a reader
+/// the wrong story. The model carries the two apart —
+/// [`pinion_node_graph::Link::drawn_from_consumer`] — and this is where the
+/// screen honours it.
+///
+/// ⚠ It is the SAME function the hit tests use, which is the whole reason
+/// [`wire_run`] exists (R1992: three readers spelled this chord for themselves,
+/// and a painter that moved while the hit tests did not is a wire a person
+/// points at and presses nothing). A wire drawn the other way round has to be
+/// PRESSABLE the other way round, and that follows from the seam rather than
+/// from anybody remembering.
+fn wire_run_read(
+    state: &LabState,
+    from: NodeId,
+    to: NodeId,
+    drawn_from_consumer: bool,
+) -> Option<((u32, u32), (u32, u32))> {
     let (a, b) = (card_rect(state, from)?, card_rect(state, to)?);
-    Some((
+    let (start, end) = (
         centre(pin_rect(state, a, true)),
         centre(pin_rect(state, b, false)),
-    ))
+    );
+    Some(if drawn_from_consumer {
+        (end, start)
+    } else {
+        (start, end)
+    })
 }
 
 /// The link whose wire passes within a few pixels of the cursor, in the world
@@ -5883,7 +5921,12 @@ fn link_at(state: &LabState, px: i64, py: i64) -> Option<LinkId> {
     let doc = state.doc.borrow();
     let tree = doc.tree(state.here())?;
     for link in tree.links() {
-        let Some(((ax, ay), (bx, by))) = wire_run(state, link.from.node, link.to.node) else {
+        let Some(((ax, ay), (bx, by))) = wire_run_read(
+            state,
+            link.from.node,
+            link.to.node,
+            link.drawn_from_consumer,
+        ) else {
             continue;
         };
         // Sample the straight chord: the wire is drawn as a curve between the
@@ -6061,7 +6104,15 @@ fn insert_target_for(state: &LabState, node: NodeId) -> Option<InsertTarget> {
         if link.from.node == node || link.to.node == node {
             continue;
         }
-        let Some((a, b)) = wire_run(state, link.from.node, link.to.node) else {
+        // ★ R2075 — the chord a person is AIMING at, which is the drawn one: a
+        // wire read from its consuming end runs the other way across the canvas
+        // and a hand goes where the ink is.
+        let Some((a, b)) = wire_run_read(
+            state,
+            link.from.node,
+            link.to.node,
+            link.drawn_from_consumer,
+        ) else {
             continue;
         };
         // (3)
@@ -11471,7 +11522,12 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
                 if moving == Some(link.id) {
                     continue;
                 }
-                let Some((from, to)) = wire_run(state, link.from.node, link.to.node) else {
+                let Some((from, to)) = wire_run_read(
+                    state,
+                    link.from.node,
+                    link.to.node,
+                    link.drawn_from_consumer,
+                ) else {
                     continue;
                 };
                 let chosen = selected_link == Some(LinkPick::Authored(link.id));
@@ -17214,7 +17270,7 @@ fn spec_json() -> serde_json::Value {
             "build": opening_implementation(n.id).stack.word(),
             "speaks": opening_implementation(n.id).speaks.word(),
         })).collect::<Vec<_>>(),
-        "links": spec::LINKS.iter().map(|(a, b)| serde_json::json!([a, b])).collect::<Vec<_>>(),
+        "links": spec::LINKS.iter().map(|wire| serde_json::json!([wire.from, wire.to])).collect::<Vec<_>>(),
         "selected_link": [spec::SELECTED_LINK.0, spec::SELECTED_LINK.1],
         "selected_node": spec::SELECTED_NODE,
         // ★★ R1716 — the axis columns travel with the row. An agent expanding

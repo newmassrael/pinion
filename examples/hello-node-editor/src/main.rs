@@ -558,7 +558,7 @@ const STORAGE_KEY: &str = "node_graph.state";
 // editor's own reader is what makes the change breaking anyway: it refuses on
 // any version mismatch at all, so a file saved at 22 is turned away by name
 // rather than being read as something it is not.
-const PERSISTED_SCHEMA_VERSION: u32 = 23;
+const PERSISTED_SCHEMA_VERSION: u32 = 24;
 
 /// R1599 — the append-only `(version, digest)` ledger the persistence gate
 /// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
@@ -615,6 +615,16 @@ const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[
     // mismatch, so a file saved at 22 is turned away BY NAME rather than read
     // as something it is not.
     (23, 0x4d62_0ac3_6f72_70e5),
+    // R2075 — a link says which way round its curve READS
+    // (`Link::drawn_from_consumer`), which is a presentation fact and not a
+    // direction: a subscriber dials the mesh, so the connection runs against
+    // the data, and a diagram that drew the dialling direction would tell a
+    // reader the wrong story. A field on every link, so the persisted shape
+    // moved. `serde(default)` means an old blob READS correctly — every wire
+    // drawn the way it dials, which is what every wire in every old file was —
+    // and this editor's reader refuses on any mismatch anyway, so a file saved
+    // at 23 is turned away BY NAME.
+    (24, 0xc1e1_5175_6039_7770),
 ];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step

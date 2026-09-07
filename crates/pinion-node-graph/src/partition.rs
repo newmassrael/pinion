@@ -77,8 +77,8 @@ use std::fmt;
 use crate::frame::{Orphaned, parents_of};
 use crate::group::{INTERFACE_GAP, PortSide};
 use crate::model::{
-    Document, DroppedLink, InterfaceSide, KindPort, LinkId, NodeBody, NodeId, NodeKind, Sink,
-    Socket, Tree, TreeId,
+    Carried, Document, DroppedLink, InterfaceSide, KindPort, LinkId, NodeBody, NodeId, NodeKind,
+    Sink, Socket, Tree, TreeId,
 };
 use crate::numbering::Numbering;
 
@@ -883,6 +883,22 @@ impl<K: NodeKind> Document<K> {
         Ok(plan)
     }
 
+    /// ★★★★★ R2075 — **a crossing this move is re-making**, which is what every
+    /// link a repartition adds is.
+    ///
+    /// A boundary move does not draw new wires: every link it pushes stands in
+    /// for a crossing the move dissolved, so the fact it inherits is the old
+    /// crossing's mutedness and NOT its drawing — there is no old curve for the
+    /// new one to read like, because the wire it replaces ran between different
+    /// nodes.
+    ///
+    /// Named because that sentence was being spelled fifteen times as an
+    /// argument, and because a reader of those fifteen sites should be told
+    /// what they have in common rather than shown the same constructor call.
+    fn remade_crossing(&mut self, tree: TreeId, from: Socket, to: Socket, muted: bool) -> LinkId {
+        self.push_link(tree, from, to, Carried::muted_as(muted))
+    }
+
     /// Apply a validated inward plan. Nothing here can fail.
     fn perform_inward(
         &mut self,
@@ -929,7 +945,7 @@ impl<K: NodeKind> Document<K> {
         for (from, to) in &plan.carried {
             if let (Some(from), Some(landed)) = (remap(&mapping, *from), remap(&mapping, to.socket))
             {
-                self.push_link(definition, from, landed, to.muted);
+                self.remade_crossing(definition, from, landed, to.muted);
             }
         }
         for takeover in &plan.takeovers {
@@ -937,12 +953,12 @@ impl<K: NodeKind> Document<K> {
                 continue;
             };
             for consumer in &takeover.consumers {
-                self.push_link(definition, producer, consumer.socket, consumer.muted);
+                self.remade_crossing(definition, producer, consumer.socket, consumer.muted);
             }
         }
         for (producer, consumer) in &plan.passthroughs {
             if let Some(landed) = remap(&mapping, consumer.socket) {
-                self.push_link(definition, *producer, landed, consumer.muted);
+                self.remade_crossing(definition, *producer, landed, consumer.muted);
             }
         }
         if let Some(entry) = entry {
@@ -950,7 +966,12 @@ impl<K: NodeKind> Document<K> {
                 let at = interface_edit.survivor(InterfaceSide::Input, *port);
                 for consumer in consumers {
                     if let Some(landed) = remap(&mapping, consumer.socket) {
-                        self.push_link(definition, Socket::new(entry, at), landed, consumer.muted);
+                        self.remade_crossing(
+                            definition,
+                            Socket::new(entry, at),
+                            landed,
+                            consumer.muted,
+                        );
                     }
                 }
             }
@@ -961,13 +982,13 @@ impl<K: NodeKind> Document<K> {
                     // moved, which is the identity the face recorded (R1586).
                     let muted = face.was_muted(*consumer);
                     if let Some(landed) = remap(&mapping, *consumer) {
-                        self.push_link(definition, Socket::new(entry, at), landed, muted);
+                        self.remade_crossing(definition, Socket::new(entry, at), landed, muted);
                     }
                 }
                 for producer in &face.outer {
                     // The shared half of the crossing; the fact rides the
                     // per-consumer half, as it does in a collapse.
-                    self.push_link(tree, *producer, Socket::new(instance, at), false);
+                    self.push_link(tree, *producer, Socket::new(instance, at), Carried::plain());
                 }
             }
         }
@@ -976,12 +997,17 @@ impl<K: NodeKind> Document<K> {
                 let at = interface_edit.added(InterfaceSide::Output, nth);
                 for producer in &face.inner {
                     if let Some(producer) = remap(&mapping, *producer) {
-                        self.push_link(definition, producer, Socket::new(exit, at), false);
+                        self.push_link(
+                            definition,
+                            producer,
+                            Socket::new(exit, at),
+                            Carried::plain(),
+                        );
                     }
                 }
                 for consumer in &face.outer {
                     let muted = face.was_muted(*consumer);
-                    self.push_link(tree, Socket::new(instance, at), *consumer, muted);
+                    self.remade_crossing(tree, Socket::new(instance, at), *consumer, muted);
                 }
             }
         }
@@ -1222,14 +1248,14 @@ impl<K: NodeKind> Document<K> {
         for (from, to) in &plan.carried {
             if let (Some(from), Some(landed)) = (remap(&mapping, *from), remap(&mapping, to.socket))
             {
-                self.push_link(tree, from, landed, to.muted);
+                self.remade_crossing(tree, from, landed, to.muted);
             }
         }
         for (feed, consumers) in &plan.entry_feeds {
             let Some(feed) = feed else { continue };
             for consumer in consumers {
                 if let Some(landed) = remap(&mapping, consumer.socket) {
-                    self.push_link(tree, *feed, landed, consumer.muted);
+                    self.remade_crossing(tree, *feed, landed, consumer.muted);
                 }
             }
         }
@@ -1238,7 +1264,7 @@ impl<K: NodeKind> Document<K> {
                 continue;
             };
             for consumer in consumers {
-                self.push_link(tree, producer, consumer.socket, consumer.muted);
+                self.remade_crossing(tree, producer, consumer.socket, consumer.muted);
             }
         }
         if let Some(entry) = entry {
@@ -1246,11 +1272,11 @@ impl<K: NodeKind> Document<K> {
                 let at = interface_edit.added(InterfaceSide::Input, nth);
                 for consumer in &face.inner {
                     let muted = face.was_muted(*consumer);
-                    self.push_link(definition, Socket::new(entry, at), *consumer, muted);
+                    self.remade_crossing(definition, Socket::new(entry, at), *consumer, muted);
                 }
                 for producer in &face.outer {
                     if let Some(producer) = remap(&mapping, *producer) {
-                        self.push_link(tree, producer, Socket::new(instance, at), false);
+                        self.push_link(tree, producer, Socket::new(instance, at), Carried::plain());
                     }
                 }
             }
@@ -1259,12 +1285,17 @@ impl<K: NodeKind> Document<K> {
             for (nth, face) in plan.outbound.iter().enumerate() {
                 let at = interface_edit.added(InterfaceSide::Output, nth);
                 for producer in &face.inner {
-                    self.push_link(definition, *producer, Socket::new(exit, at), false);
+                    self.push_link(
+                        definition,
+                        *producer,
+                        Socket::new(exit, at),
+                        Carried::plain(),
+                    );
                 }
                 for consumer in &face.outer {
                     let muted = face.was_muted(*consumer);
                     if let Some(landed) = remap(&mapping, *consumer) {
-                        self.push_link(tree, Socket::new(instance, at), landed, muted);
+                        self.remade_crossing(tree, Socket::new(instance, at), landed, muted);
                     }
                 }
             }

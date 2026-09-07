@@ -361,7 +361,7 @@ impl<K: NodeKind> Document<K> {
         let bridged = plan
             .into_iter()
             .map(|(from, to, muted)| Bridge {
-                link: self.push_link(tree, from, to, muted),
+                link: self.push_link(tree, from, to, crate::model::Carried::muted_as(muted)),
                 from,
                 to,
                 muted,

@@ -3300,7 +3300,7 @@ fn a_link_naming_a_missing_node_is_refused_rather_than_crashing() {
         ROOT,
         Socket::new(NodeId(97), 0),
         Socket::new(f.sink, 0),
-        false,
+        crate::model::Carried::plain(),
     );
     assert!(matches!(
         f.document.validate().first(),
@@ -5678,7 +5678,12 @@ fn a_document_that_arrived_from_elsewhere_cannot_be_dissolved_into_a_self_link()
             .connect(ROOT, Socket::new(b, 0), Socket::new(a, 0))
             .is_err()
     );
-    document.push_link(ROOT, Socket::new(b, 0), Socket::new(a, 0), false);
+    document.push_link(
+        ROOT,
+        Socket::new(b, 0),
+        Socket::new(a, 0),
+        crate::model::Carried::plain(),
+    );
 
     let rewired = document.dissolve(ROOT, b).unwrap();
     assert!(

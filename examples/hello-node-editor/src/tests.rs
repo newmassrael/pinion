@@ -9187,6 +9187,10 @@ fn r1262_edge_endpoint_variants_share_one_body() {
         from: Socket::new(NodeId(99), 0),
         to: Socket::new(NodeId(0), 0),
         muted: false,
+        // ★ R2075 — a presentation fact this screen does not use: it draws
+        // every wire the way it dials. Named rather than defaulted because the
+        // literal is what makes a new field a decision at each site.
+        drawn_from_consumer: false,
     };
     assert_eq!(
         edge_endpoints(&graph, &dangling),

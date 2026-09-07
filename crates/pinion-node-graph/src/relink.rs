@@ -288,6 +288,10 @@ impl<K: NodeKind> Document<K> {
                 from: plan.from,
                 to: plan.to,
                 muted: plan.held.muted,
+                // ★ R2075 — a re-aimed end keeps the wire's identity, its mute
+                // and its place in the order, so it keeps which way round it
+                // reads too: moving an end is not redrawing the diagram.
+                drawn_from_consumer: plan.held.drawn_from_consumer,
             },
             plan.crowded,
             Some(plan.at),
