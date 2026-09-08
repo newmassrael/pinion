@@ -343,6 +343,25 @@ impl GpuSurface {
     pub(crate) fn configure(&mut self, device: &wgpu::Device) -> Result<(), GpuError> {
         let refused = caught(device, || self.surface.configure(device, &self.config));
         self.presentable = refused.is_none() && !self.liveness.is_lost();
+        // ★ R2092 — the trap this decision has to be made AROUND, asserted so
+        // the tree is told the day it stops being one.
+        //
+        // `wgpu::Surface::get_configuration` exists and looks like the honest
+        // answer to "is this surface configured". It is not: `configure`
+        // stores the config it was HANDED, unconditionally, after a call that
+        // returns `()`. So a refused configure still answers `Some`, and a
+        // reader deciding presentability from it would be confidently wrong —
+        // which is this whole debt's shape, arrived at through a different
+        // door. Debug-only, and it fires only on the path that already knows
+        // it was refused, so the cost is nothing and the signal is exact: if
+        // `wgpu` ever stores on success only, this goes red and the comment
+        // above it is the map to what changed.
+        debug_assert!(
+            refused.is_none() || self.surface.get_configuration().is_some(),
+            "wgpu stores a refused configuration too — if this fires, \
+             `get_configuration` has become usable and this crate should ask \
+             it instead of judging by a silence"
+        );
         match refused {
             None => Ok(()),
             Some(e) => {

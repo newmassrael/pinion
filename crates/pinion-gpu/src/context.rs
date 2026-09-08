@@ -336,6 +336,35 @@ impl GpuContext {
     /// facts, and collapsing them is how the old code lost the second one.
     pub fn recover(&self, surface: &mut GpuSurface, missed: Missed) -> Option<Rung> {
         let rung = surface.note_missed(missed)?;
+        // ★ R2092 §5.16 — a maintain BEFORE the rung as well as after it, and
+        // the reason is the one hole R2091 measured rather than argued.
+        //
+        // `GpuSurface::configure` decides presentability from two facts: no
+        // error reached a scope, and the device is not known to be lost. The
+        // first is a SILENCE, and `wgpu` routes `DeviceError::Lost` past every
+        // sink (`handle_error_inner`: `ErrorType::DeviceLost => return`), so
+        // for that cause the silence is uninformative and the liveness flag is
+        // the only thing standing between a refused configure and a
+        // `presentable` that lies. That flag is set by a callback which only a
+        // `maintain` queues — so reading it without one first is reading a
+        // fact that may be a whole frame stale, and the surface a rung builds
+        // is exactly the never-successfully-configured shape whose next
+        // acquisition is the process-fatal report.
+        //
+        // Submitting nothing here costs nothing it should not (same three
+        // measured constraints as the submit below) and narrows the window to
+        // a loss that lands BETWEEN this call and the configure a few lines
+        // down. ⚠ It does not close it, and the reason is sharper than "there
+        // is no accessor": `wgpu::Surface::get_configuration` EXISTS, and it
+        // cannot answer this question. Measured in `wgpu` 29's own source —
+        // `Surface::configure` stores `*conf = Some(config.clone())`
+        // *unconditionally*, after a call that returns `()` — so it reports
+        // the configuration last REQUESTED, not the one in force, and answers
+        // `Some` for a configure that was refused. A reader reaching for it to
+        // decide presentability would get a confident yes. So a silence is
+        // still what the decision rests on; that residue is the debt's, and
+        // naming the trap is what keeps the next round from walking into it.
+        self.queue.submit(core::iter::empty());
         match rung {
             Rung::Reconfigured | Rung::Repeated => drop(surface.configure(&self.device)),
             Rung::Rebuilt => {
