@@ -49,13 +49,24 @@ class Census:
         self.examples: set[str] = set()
         self.unanswered = 0
         #: Which windows could not answer, so a reader can chase one instead
-        #: of being told only how many there were.
+        #: of being told only how many there were. DISTINCT, in first-seen
+        #: order: one example driven by forty demos is one thing to chase.
         self.silent: list[str] = []
         self.totals = dict.fromkeys(FIELDS, 0)
-        #: `demo/window -> missed`, for every window that missed anything.
+        #: `example/window -> missed`, ACCUMULATED across every demo that drove
+        #: that example.
+        #:
+        #: 🟥 R2096 — this used to assign rather than add, and the first real
+        #: sweep showed the defect in its own output: the totals said 20 missed
+        #: frames while the named list summed to 7, because 726 demos drive 220
+        #: examples and a repeated `example/window` key overwrote its earlier
+        #: count. The TOTALS were right (they always added); only the list a
+        #: reader acts on was wrong, which is the worse half to get wrong.
         self.affected: dict[str, int] = {}
-        #: Windows whose last reading was not presenting, with the reason.
-        self.dark: list[str] = []
+        #: Windows whose last reading was not presenting, mapped to the reason.
+        #: A dict for the same reason `affected` is one: the same window seen
+        #: dark in six demos is one window to chase, not six lines.
+        self.dark: dict[str, str] = {}
 
     def add(self, line: str) -> None:
         parts = line.rstrip("\n").split("\t")
@@ -64,19 +75,21 @@ class Census:
         example, window = parts[0], parts[1]
         self.windows += 1
         self.examples.add(example)
+        where = f"{example}/{window}"
         if parts[2] == "unanswered" or len(parts) < 3 + len(FIELDS):
             self.unanswered += 1
-            self.silent.append(f"{example}/{window}")
+            if where not in self.silent:
+                self.silent.append(where)
             return
         counts = [int(n) if n.lstrip("-").isdigit() else 0 for n in parts[2 : 2 + len(FIELDS)]]
         for field, count in zip(FIELDS, counts, strict=True):
             self.totals[field] += count
         if counts[0]:
-            self.affected[f"{example}/{window}"] = counts[0]
+            self.affected[where] = self.affected.get(where, 0) + counts[0]
         presenting = parts[2 + len(FIELDS)] if len(parts) > 2 + len(FIELDS) else "True"
         reason = parts[3 + len(FIELDS)] if len(parts) > 3 + len(FIELDS) else "-"
         if presenting == "False":
-            self.dark.append(f"{example}/{window} ({reason})")
+            self.dark[where] = reason
 
     def lines(self) -> list[str]:
         out = [
@@ -107,7 +120,10 @@ class Census:
                 "no denominator for the rendering defect"
             )
         if self.dark:
-            out.append(f"[present-census] ENDED DARK: {', '.join(self.dark)}")
+            out.append(
+                "[present-census] ENDED DARK: "
+                + ", ".join(f"{where} ({reason})" for where, reason in self.dark.items())
+            )
         return out
 
 
@@ -126,25 +142,38 @@ def selftest() -> int:
 
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "census.tsv"
+        # ⚠ R2096 — the fixture now has an example driven TWICE, because that is
+        # the shape a real sweep has (726 demos over 220 examples) and it is the
+        # shape the first version got wrong: the repeated key overwrote instead
+        # of adding, so the totals and the named list disagreed in the census's
+        # own output. A fixture without a repeat could not have caught it.
         path.write_text(
             "hello-a\tmain\t0\t0\t0\t0\t0\tTrue\t-\n"
             "hello-b\tmain\t118\t118\t1\t1\t116\tFalse\tdevice_lost\n"
             "hello-b\ttorn\t2\t0\t0\t0\t0\tTrue\t-\n"
+            "hello-b\tmain\t5\t5\t5\t0\t0\tTrue\t-\n"
+            "hello-c\tmain\tunanswered\n"
             "hello-c\tmain\tunanswered\n",
             encoding="utf-8",
         )
         census = total(path)
-        assert census.windows == 4, census.windows
+        assert census.windows == 6, census.windows
         assert len(census.examples) == 3, census.examples
-        assert census.unanswered == 1, census.unanswered
+        assert census.unanswered == 2, census.unanswered
+        # Counted twice, listed once: a window to chase is one window however
+        # many demos met it.
         assert census.silent == ["hello-c/main"], census.silent
-        assert census.totals["missed"] == 120, census.totals
-        assert census.totals["broken"] == 118, census.totals
+        assert census.totals["missed"] == 125, census.totals
+        assert census.totals["broken"] == 123, census.totals
         assert census.totals["repeated"] == 116, census.totals
-        assert census.affected == {"hello-b/main": 118, "hello-b/torn": 2}, census.affected
-        assert census.dark == ["hello-b/main (device_lost)"], census.dark
+        # ★ THE ROW THAT CAUGHT THE DEFECT: 118 + 5, not 5.
+        assert census.affected == {"hello-b/main": 123, "hello-b/torn": 2}, census.affected
+        assert census.dark == {"hello-b/main": "device_lost"}, census.dark
+        # And the named list must ADD UP TO the total it is listed under —
+        # the property whose absence was visible in the first real sweep.
+        assert sum(census.affected.values()) == census.totals["missed"], census.affected
         text = "\n".join(census.lines())
-        assert "120 (118 broken)" in text, text
+        assert "125 (123 broken)" in text, text
         assert "3 example(s)" in text, text
         assert "could not answer" in text, text
         # A count of silent windows with no NAME is a number a reader cannot
