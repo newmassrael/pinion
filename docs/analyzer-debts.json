@@ -596,7 +596,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
-      "rank": "ordinary",
+      "rank": "critical",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype, analyzer-debt-repayment-loop, screen-a-vs-canon-operation-census"
       ]
