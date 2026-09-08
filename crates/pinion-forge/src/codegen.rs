@@ -232,12 +232,12 @@ pub enum __ERR_NAME__ {
     /// Vello renderer init or frame submission failed.
     Vello(::vello::Error),
     /// Swapchain surface acquisition did not yield a presentable
-    /// texture. The `&'static str` is the non-success
-    /// [`::vello::wgpu::CurrentSurfaceTexture`] state (timeout /
-    /// occluded / outdated / lost / validation) — a label rather than
-    /// the enum itself so the error type cannot represent the success
-    /// states (illegal-states-unrepresentable; wgpu 29 made
-    /// `get_current_texture` return a status enum, not a `Result`).
+    /// texture. The `&'static str` is the
+    /// [`::pinion_gpu::Missed`](::pinion_gpu::Missed) the recovery ladder
+    /// recorded (timeout / occluded / outdated / lost / validation /
+    /// unconfigured) — a label rather than the enum itself so the error
+    /// type cannot represent the success states
+    /// (illegal-states-unrepresentable).
     Surface(&'static str),
     /// R1537 §5.16 — the wgpu instance / adapter / device / surface could
     /// not be established. Distinct from [`Self::Vello`] because it
@@ -463,6 +463,16 @@ impl __NAME__ {
         // status match out here and again in the shell's capture path was
         // two chances to classify one status two ways on two routes to the
         // same screen.
+        //
+        // ★ R2088 §5.16 — `acquire` now answers `Result<SurfaceTexture,
+        // Missed>`, so the "which status is it" match and the "is there a
+        // texture" destructuring are ONE question asked once. The
+        // `unclassified` arm this used to carry — documented as unreachable
+        // because those two could disagree — is gone with the split that
+        // made it thinkable. `acquire` also refuses an UNCONFIGURED surface
+        // instead of asking wgpu for an image: that ask is reported through
+        // `handle_error_fatal`, which the uncaptured-error handler above
+        // cannot absorb, and it is what killed one demo per full sweep.
         let __acquire_start = ::std::time::Instant::now();
         let mut __acquired = self.surface.acquire();
         // Record BEFORE the error arms below return: a timeout/outdated
@@ -475,38 +485,26 @@ impl __NAME__ {
         )
         .unwrap_or(u64::MAX);
         let surface_texture = loop {
-            if let ::std::option::Option::Some(__missed) =
-                ::pinion_gpu::Missed::of(&__acquired)
-            {
+            match __acquired {
+                ::std::result::Result::Ok(t) => break t,
                 // A rung was earned: take it and try THIS frame again. Give
                 // up only when the ladder answers `Repeated` (everything
                 // known has been tried) or `None` (the window is waiting,
                 // not broken — retrying a tight loop on an occluded window
                 // is not a recovery).
-                match self.context.recover(&mut self.surface, __missed) {
-                    ::std::option::Option::Some(__rung)
-                        if __rung != ::pinion_gpu::Rung::Repeated =>
-                    {
-                        __acquired = self.surface.acquire();
-                        continue;
+                ::std::result::Result::Err(__missed) => {
+                    match self.context.recover(&mut self.surface, __missed) {
+                        ::std::option::Option::Some(__rung)
+                            if __rung != ::pinion_gpu::Rung::Repeated =>
+                        {
+                            __acquired = self.surface.acquire();
+                        }
+                        _ => {
+                            return ::std::result::Result::Err(
+                                __ERR_NAME__::Surface(__missed.as_str()),
+                            );
+                        }
                     }
-                    _ => {
-                        return ::std::result::Result::Err(
-                            __ERR_NAME__::Surface(__missed.as_str()),
-                        );
-                    }
-                }
-            }
-            match __acquired {
-                ::vello::wgpu::CurrentSurfaceTexture::Success(t)
-                | ::vello::wgpu::CurrentSurfaceTexture::Suboptimal(t) => break t,
-                // Unreachable: `Missed::of` returned `None`, which it does
-                // for exactly the two arms above. Spelled as an error rather
-                // than a panic because a template that can abort a
-                // consumer's process on a status it mis-classified is worse
-                // than one that skips a frame and says so.
-                _ => {
-                    return ::std::result::Result::Err(__ERR_NAME__::Surface("unclassified"));
                 }
             }
         };

@@ -408,25 +408,13 @@
       ]
     },
     {
-      "name": "debt-a-second-windows-surface-is-presented-before-it-is-configured",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "critical",
-      "why": [
-        "links analyzer-debt-repayment-loop"
-      ]
-    },
-    {
       "name": "debt-a-sub-pixel-face-is-drawn-but-never-looked-at",
       "substituted": false,
       "blocked_by": "unmeasured",
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
-      "rank": "ordinary",
+      "rank": "critical",
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype"
       ]

@@ -24,6 +24,13 @@ pub enum GpuError {
     /// intermediate target is `Rgba8Unorm` and the blit needs a
     /// byte-compatible swapchain, so an exotic-only surface is fatal.
     UnsupportedSurfaceFormat,
+    /// R2088 — `wgpu` refused to configure the surface for presentation,
+    /// rendered as `wgpu` writes it.
+    ///
+    /// A `String` because the refusal is a **dependency's** vocabulary
+    /// (`wgpu::Error` is not `Clone` and its causes are its own), and what
+    /// a reader needs from it is the sentence, not a match arm.
+    SurfaceConfigure(String),
 }
 
 impl core::fmt::Display for GpuError {
@@ -34,6 +41,9 @@ impl core::fmt::Display for GpuError {
             Self::SurfaceCreation(e) => write!(f, "wgpu surface creation failed: {e}"),
             Self::UnsupportedSurfaceFormat => {
                 write!(f, "surface offers no Rgba8Unorm/Bgra8Unorm format")
+            }
+            Self::SurfaceConfigure(e) => {
+                write!(f, "wgpu surface configure refused: {e}")
             }
         }
     }
@@ -292,17 +302,25 @@ impl GpuContext {
     /// reconfigure, and the case a reconfigure cannot fix is no longer
     /// silent — [`GpuSurface::health`] says how long the window has been
     /// dark, why, and what has been tried.
+    /// ★ R2088 — a rung whose `configure` is **refused** no longer looks
+    /// like one that worked. Each rung now records its outcome on the
+    /// surface ([`GpuSurface::is_presentable`]), so a failed recovery
+    /// leaves the surface refusing acquisition rather than handing the next
+    /// frame a surface `wgpu` will kill the process over. The rung is still
+    /// reported: what a rung *was taken* and what it *achieved* are two
+    /// facts, and collapsing them is how the old code lost the second one.
     pub fn recover(&self, surface: &mut GpuSurface, missed: Missed) -> Option<Rung> {
         let rung = surface.note_missed(missed)?;
         match rung {
-            Rung::Reconfigured | Rung::Repeated => surface.configure(&self.device),
+            Rung::Reconfigured | Rung::Repeated => drop(surface.configure(&self.device)),
             Rung::Rebuilt => {
                 if !surface.rebuild(&self.instance, &self.device) {
-                    // The replacement could not be made. Fall back to the
-                    // cheap rung rather than leaving the frame unanswered:
-                    // the ladder has already recorded that the heavy one
-                    // was owed, so this is visible rather than silent.
-                    surface.configure(&self.device);
+                    // The replacement could not be made, or was made and
+                    // refused configuration. Fall back to the cheap rung
+                    // rather than leaving the frame unanswered: the ladder
+                    // has already recorded that the heavy one was owed, so
+                    // this is visible rather than silent.
+                    drop(surface.configure(&self.device));
                 }
             }
         }

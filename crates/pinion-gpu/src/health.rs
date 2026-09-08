@@ -57,17 +57,33 @@ pub enum Missed {
     Timeout,
     /// Nothing is looking at this window. A wait, not a breakage.
     Occluded,
+    /// R2088 — the surface is **not configured for presentation**, so no
+    /// image was asked for at all.
+    ///
+    /// The one arm pinion raises itself rather than reading off a `wgpu`
+    /// status, and the reason it has to is that asking is what kills the
+    /// process: `wgpu`'s `get_current_texture()` on a surface whose
+    /// `configure` never succeeded reports through
+    /// `handle_error_fatal`, which consults no uncaptured-error handler
+    /// and panics. Every other arm here is a status `wgpu` was willing to
+    /// hand back.
+    ///
+    /// It is an invalidation ([`Self::is_invalidation`]), because a
+    /// surface in this state will never present again on its own — the
+    /// recovery ladder is exactly what gets it out.
+    Unconfigured,
 }
 
 impl Missed {
     /// Every arm, so a census or a doc table derives its rows instead of
     /// hand-listing them.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Outdated,
         Self::Lost,
         Self::Validation,
         Self::Timeout,
         Self::Occluded,
+        Self::Unconfigured,
     ];
 
     /// Whether this is the surface *breaking* — the case a recovery can act
@@ -79,29 +95,42 @@ impl Missed {
     #[must_use]
     pub fn is_invalidation(self) -> bool {
         match self {
-            Self::Outdated | Self::Lost | Self::Validation => true,
+            Self::Outdated | Self::Lost | Self::Validation | Self::Unconfigured => true,
             Self::Timeout | Self::Occluded => false,
         }
     }
 
-    /// The miss a non-presentable acquisition names, or `None` when the
-    /// acquisition handed over an image.
+    /// The image an acquisition handed over, or why it did not.
     ///
     /// Lives here so the mapping is written once. It had been written
     /// twice — the emitted renderer's `render` and the shell's screenshot
     /// capture each spelled all six arms out — which is two chances for a
     /// status to be classified differently on the two paths a frame can
     /// take to the same screen.
-    #[must_use]
-    pub fn of(status: &wgpu::CurrentSurfaceTexture) -> Option<Self> {
+    ///
+    /// ★ R2088 — it now takes the status **by value and hands the texture
+    /// back**, so the classification and the "was there an image?" question
+    /// are one `match` instead of two. Until this round it answered
+    /// `Option<Missed>` from a borrow, and each of the two callers then
+    /// re-destructured the same enum to reach the texture — which is why
+    /// both carried an arm labelled *unclassified* and documented as
+    /// unreachable. An arm that exists because two matches could disagree
+    /// is that disagreement, written down.
+    ///
+    /// # Errors
+    ///
+    /// The [`Missed`](Self) an acquisition that handed over no image names.
+    /// Never [`Self::Unconfigured`], which is not a status `wgpu` can
+    /// answer — see that variant.
+    pub fn split(status: wgpu::CurrentSurfaceTexture) -> Result<wgpu::SurfaceTexture, Self> {
         match status {
-            wgpu::CurrentSurfaceTexture::Success(_)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(_) => None,
-            wgpu::CurrentSurfaceTexture::Timeout => Some(Self::Timeout),
-            wgpu::CurrentSurfaceTexture::Occluded => Some(Self::Occluded),
-            wgpu::CurrentSurfaceTexture::Outdated => Some(Self::Outdated),
-            wgpu::CurrentSurfaceTexture::Lost => Some(Self::Lost),
-            wgpu::CurrentSurfaceTexture::Validation => Some(Self::Validation),
+            wgpu::CurrentSurfaceTexture::Success(texture)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => Ok(texture),
+            wgpu::CurrentSurfaceTexture::Timeout => Err(Self::Timeout),
+            wgpu::CurrentSurfaceTexture::Occluded => Err(Self::Occluded),
+            wgpu::CurrentSurfaceTexture::Outdated => Err(Self::Outdated),
+            wgpu::CurrentSurfaceTexture::Lost => Err(Self::Lost),
+            wgpu::CurrentSurfaceTexture::Validation => Err(Self::Validation),
         }
     }
 
@@ -114,6 +143,7 @@ impl Missed {
             Self::Validation => "validation",
             Self::Timeout => "timeout",
             Self::Occluded => "occluded",
+            Self::Unconfigured => "unconfigured",
         }
     }
 }
@@ -381,9 +411,9 @@ mod tests {
         // The five non-presentable statuses `wgpu` spells as unit variants can
         // be constructed here, so the mapping the render path and the capture
         // path share is checked rather than assumed. (`Success` / `Suboptimal`
-        // carry a texture that only a real device can produce; their `None` is
-        // covered by the two paths' own `unclassified` arm, which is
-        // unreachable exactly because of this table.)
+        // carry a texture that only a real device can produce, which is why
+        // R2088 made `split` hand it back instead of leaving each caller to
+        // re-destructure the enum for it.)
         for (status, expected) in [
             (wgpu::CurrentSurfaceTexture::Timeout, Missed::Timeout),
             (wgpu::CurrentSurfaceTexture::Occluded, Missed::Occluded),
@@ -391,8 +421,33 @@ mod tests {
             (wgpu::CurrentSurfaceTexture::Lost, Missed::Lost),
             (wgpu::CurrentSurfaceTexture::Validation, Missed::Validation),
         ] {
-            assert_eq!(Missed::of(&status), Some(expected), "{status:?}");
+            let named = format!("{status:?}");
+            assert_eq!(Missed::split(status).err(), Some(expected), "{named}");
         }
+    }
+
+    #[test]
+    fn the_arm_pinion_raises_itself_is_not_one_wgpu_can_answer() {
+        // R2088 — `Unconfigured` exists precisely because the status enum
+        // cannot carry it: reaching `get_current_texture()` on a surface that
+        // was never configured is fatal, so the answer has to be given before
+        // the call. Nothing `split` can be handed may produce it.
+        for status in [
+            wgpu::CurrentSurfaceTexture::Timeout,
+            wgpu::CurrentSurfaceTexture::Occluded,
+            wgpu::CurrentSurfaceTexture::Outdated,
+            wgpu::CurrentSurfaceTexture::Lost,
+            wgpu::CurrentSurfaceTexture::Validation,
+        ] {
+            assert_ne!(Missed::split(status).err(), Some(Missed::Unconfigured));
+        }
+        // And it is a breakage, not a wait: a surface in this state will not
+        // present again until a rung of the ladder puts it back.
+        assert!(Missed::Unconfigured.is_invalidation());
+        assert_eq!(
+            SurfaceHealth::default().missed(Missed::Unconfigured),
+            Some(Rung::Reconfigured)
+        );
     }
 
     #[test]
@@ -405,6 +460,7 @@ mod tests {
         assert_eq!(Missed::Validation.as_str(), "validation");
         assert_eq!(Missed::Timeout.as_str(), "timeout");
         assert_eq!(Missed::Occluded.as_str(), "occluded");
+        assert_eq!(Missed::Unconfigured.as_str(), "unconfigured");
         assert_eq!(Rung::Reconfigured.as_str(), "reconfigured");
         assert_eq!(Rung::Rebuilt.as_str(), "rebuilt");
         assert_eq!(Rung::Repeated.as_str(), "repeated");

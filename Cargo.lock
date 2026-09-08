@@ -6275,6 +6275,7 @@ dependencies = [
 name = "pinion-gpu"
 version = "0.0.1"
 dependencies = [
+ "pollster",
  "wgpu",
 ]
 

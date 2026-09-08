@@ -49,6 +49,18 @@ pub struct GpuSurface {
     source: SurfaceSource,
     /// R1709 — the recovery ladder's memory. See [`SurfaceHealth`].
     health: SurfaceHealth,
+    /// ★ R2088 — whether the most recent [`Self::configure`] **succeeded**,
+    /// i.e. whether `wgpu` will answer `get_current_texture()` at all.
+    ///
+    /// Owned here because `wgpu` will not answer it: `Surface::configure`
+    /// returns `()`, reports its failure only through the device's error
+    /// sink, and exposes no "is this configured" accessor. A surface whose
+    /// configure was refused is left *not configured for presentation*, and
+    /// the next acquisition on it is reported through `handle_error_fatal`,
+    /// which consults no uncaptured-error handler and **panics the
+    /// process**. So this is not bookkeeping — it is the only place the
+    /// invariant `get_current_texture()` requires can be held.
+    presentable: bool,
 }
 
 impl core::fmt::Debug for GpuSurface {
@@ -60,6 +72,7 @@ impl core::fmt::Debug for GpuSurface {
             .field("present_mode", &self.config.present_mode)
             .field("usage", &self.config.usage)
             .field("health", &self.health)
+            .field("presentable", &self.presentable)
             // Textures, views and the blitter are opaque handles; the
             // surface's geometry and negotiated format are the state.
             .finish_non_exhaustive()
@@ -71,6 +84,16 @@ impl GpuSurface {
     /// intermediate target. Called by
     /// [`GpuContext::new`](crate::GpuContext::new); the surface must have
     /// come from the same instance the adapter did.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuError::UnsupportedSurfaceFormat`] when the surface advertises
+    /// no format the blit can present, and — R2088 —
+    /// [`GpuError::SurfaceConfigure`] when the **first** configure is
+    /// refused. That second one is fatal on purpose: a surface whose
+    /// configure never succeeded cannot be acquired without killing the
+    /// process, so handing one back as if it were a window's renderer is
+    /// handing back a process-killer that has not gone off yet.
     pub(crate) fn new(
         adapter: &wgpu::Adapter,
         device: &wgpu::Device,
@@ -115,7 +138,7 @@ impl GpuSurface {
             view_formats: vec![],
         };
         let (target_texture, target_view) = create_target(device, width, height);
-        let out = Self {
+        let mut out = Self {
             surface,
             config,
             format,
@@ -124,8 +147,12 @@ impl GpuSurface {
             blitter: wgpu::util::TextureBlitter::new(device, format),
             source,
             health: SurfaceHealth::default(),
+            // Not yet: the configure below is what makes it true, and
+            // starting from `true` would mean an unmeasured claim is the
+            // default — which is the defect this field exists for.
+            presentable: false,
         };
-        out.configure(device);
+        out.configure(device)?;
         Ok(out)
     }
 
@@ -136,15 +163,40 @@ impl GpuSurface {
         &self.target_view
     }
 
-    /// Acquire the next presentable image.
+    /// Acquire the next presentable image, or say why there is none.
     ///
-    /// Returned raw (`wgpu`'s status enum, not a `Result`) because every
-    /// non-success status wants a *different* response — reconfigure,
-    /// retry, or skip — and flattening them into one error would erase the
-    /// distinction the caller has to act on (R1049).
+    /// The `Err` side is [`Missed`], not one flattened error, because every
+    /// non-success outcome wants a *different* response — reconfigure,
+    /// retry, or skip — and that distinction is what the recovery ladder
+    /// acts on (R1049).
+    ///
+    /// ★ R2088 — **an unconfigured surface is refused here rather than
+    /// asked.** `wgpu` answers `get_current_texture()` on a surface whose
+    /// `configure` never succeeded through `handle_error_fatal`, which
+    /// consults no uncaptured-error handler and panics the process; there
+    /// is no status to classify and no error to absorb, so the only place
+    /// this can be survived is *before the call*. The refusal is a
+    /// [`Missed::Unconfigured`], which is an invalidation, so the caller's
+    /// ladder is what puts the surface back — the frame is skipped, not the
+    /// window abandoned.
+    ///
+    /// # Errors
+    ///
+    /// The [`Missed`] this frame missed by: one of the statuses `wgpu`
+    /// answered with, or [`Missed::Unconfigured`] when the surface was not
+    /// asked at all.
+    pub fn acquire(&self) -> Result<wgpu::SurfaceTexture, Missed> {
+        if !self.presentable {
+            return Err(Missed::Unconfigured);
+        }
+        Missed::split(self.surface.get_current_texture())
+    }
+
+    /// R2088 — whether this surface is configured for presentation, i.e.
+    /// whether the most recent configure succeeded.
     #[must_use]
-    pub fn acquire(&self) -> wgpu::CurrentSurfaceTexture {
-        self.surface.get_current_texture()
+    pub fn is_presentable(&self) -> bool {
+        self.presentable
     }
 
     /// Record the copy from the intermediate target onto `destination`.
@@ -202,8 +254,35 @@ impl GpuSurface {
         self.health.missed(missed)
     }
 
-    pub(crate) fn configure(&self, device: &wgpu::Device) {
-        self.surface.configure(device, &self.config);
+    /// ★ R2088 — configure the swapchain **and read back whether it
+    /// worked**, recording that in [`Self::is_presentable`].
+    ///
+    /// `wgpu::Surface::configure` returns `()`. Its only failure channel is
+    /// the device's error sink, so "did that work?" is a question only an
+    /// error scope can answer — and a caller that does not ask reads
+    /// silence as success. Until this round nothing asked, on any of the
+    /// four paths that configure (construction, resize, and both rungs of
+    /// the recovery ladder).
+    ///
+    /// Measured on this host, deterministically, at R2088: a reconfigure
+    /// refused with "SurfaceOutput must be dropped before a new Surface is
+    /// made" left the surface *not configured for presentation*, and the
+    /// very next acquisition raised exactly the error the intermittent
+    /// sweep failures carried.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuError::SurfaceConfigure`] carrying `wgpu`'s own rendering of
+    /// the refusal. The surface is left marked not-presentable either way,
+    /// so a caller that discards this `Result` still cannot present through
+    /// it — the ladder answers the next frame instead.
+    pub(crate) fn configure(&mut self, device: &wgpu::Device) -> Result<(), GpuError> {
+        let refused = caught(device, || self.surface.configure(device, &self.config));
+        self.presentable = refused.is_none();
+        match refused {
+            None => Ok(()),
+            Some(e) => Err(GpuError::SurfaceConfigure(format!("{e}"))),
+        }
     }
 
     /// R1709 — the heavy rung: throw this window's surface away and make
@@ -219,19 +298,40 @@ impl GpuSurface {
     /// which its default handler turns into a process panic. The first
     /// draft of this did exactly that.
     ///
-    /// Returns whether a replacement was obtained. `false` leaves the
-    /// existing surface untouched — a surface that cannot be remade is
-    /// still better than none, and the caller's next frame will simply try
-    /// the cheap rung again.
+    /// Returns whether a **presentable** replacement was obtained. `false`
+    /// leaves the caller to fall back to the cheap rung — a surface that
+    /// cannot be remade is still better than none, and the next frame will
+    /// simply try again.
+    ///
+    /// ★ R2088 — `false` now also covers *the replacement was made and its
+    /// configure was refused*, which used to answer `true`. That state is
+    /// the worst one this type can be in and it was the one the old code
+    /// reported as success: the old surface has been dropped, the new one
+    /// has **never** been configured, and a never-configured surface is the
+    /// only shape whose acquisition `wgpu` reports through
+    /// `handle_error_fatal` — the one report an uncaptured-error handler
+    /// cannot absorb. This is the heavy rung of a ladder a freshly created
+    /// window climbs, which is why the failure was second-window-shaped.
     pub(crate) fn rebuild(&mut self, instance: &wgpu::Instance, device: &wgpu::Device) -> bool {
         let Ok(fresh) = (self.source)(instance) else {
             return false;
         };
         self.surface = fresh;
-        self.configure(device);
-        true
+        self.configure(device).is_ok()
     }
 
+    /// Resize the swapchain and its intermediate target.
+    ///
+    /// Infallible on purpose: a resize whose configure is refused is not
+    /// fatal to the window, it just leaves the surface not presentable —
+    /// and [`Self::acquire`] then answers [`Missed::Unconfigured`], which
+    /// is what puts the ladder to work on the next frame.
+    ///
+    /// # Panics
+    ///
+    /// If `width` or `height` is zero — a zero-sized swapchain is a `wgpu`
+    /// validation error, and the caller (which knows about minimised
+    /// windows) is the layer that can decide to skip instead.
     pub(crate) fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
         assert!(
             width > 0 && height > 0,
@@ -242,8 +342,37 @@ impl GpuSurface {
         self.target_view = view;
         self.config.width = width;
         self.config.height = height;
-        self.configure(device);
+        drop(self.configure(device));
     }
+}
+
+/// Run `f` and answer the `wgpu` error it raised, if any.
+///
+/// R2088 — the only way to learn whether a `()`-returning `wgpu` call
+/// succeeded. Errors that reach no scope go to the device's
+/// uncaptured-error handler, which prints and drops them; a caller reading
+/// that silence as success is exactly how a surface came to be presented
+/// before it was configured.
+///
+/// **All three filters are pushed**, because a scope catches its own filter
+/// and nothing else: one filter would pass the other two kinds straight to
+/// the uncaptured handler and this function would answer `None` for a call
+/// that failed. They nest, so they are popped in the reverse order they
+/// were pushed, and at most one can hold an error — an error is delivered
+/// to the innermost scope whose filter matches it.
+fn caught(device: &wgpu::Device, f: impl FnOnce()) -> Option<wgpu::Error> {
+    let out_of_memory = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+    let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
+    let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    f();
+    // Popped eagerly rather than through `or_else`, so the three pops
+    // happen in reverse push order whatever the outcome is: `wgpu` panics
+    // on a scope popped out of order, and a lazily-skipped pop would leave
+    // that ordering to drop-glue.
+    let validation = pollster::block_on(validation.pop());
+    let internal = pollster::block_on(internal.pop());
+    let out_of_memory = pollster::block_on(out_of_memory.pop());
+    validation.or(internal).or(out_of_memory)
 }
 
 /// The `Rgba8Unorm` storage texture the compute rasterizer writes.

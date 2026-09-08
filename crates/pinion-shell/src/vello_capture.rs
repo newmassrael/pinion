@@ -344,22 +344,23 @@ pub fn capture_surface_rgba8(
     // So a capture that arrives mid-outage reports it, and the next frame's
     // ladder is what restores the window. `scene/render_fidelity` says
     // which rung that was.
+    //
+    // ★ R2088 §5.16 — `acquire` answers `Result<SurfaceTexture, Missed>`, so
+    // the classification and the "is there a texture" destructuring are one
+    // question asked once; the `unclassified` arm that stood here existed
+    // only because they were two. It also refuses an UNCONFIGURED surface
+    // rather than asking wgpu for an image on one, which is the acquisition
+    // wgpu reports through `handle_error_fatal` — a report no
+    // uncaptured-error handler can absorb.
     let __acquire_start = std::time::Instant::now();
     let __acquired = surface.acquire();
     let acquire_us = u64::try_from(__acquire_start.elapsed().as_micros()).unwrap_or(u64::MAX);
-    if let Some(missed) = pinion_gpu::Missed::of(&__acquired) {
-        context.recover(surface, missed);
-        return Err(SurfaceCaptureError::SurfaceUnavailable(missed.as_str()));
-    }
-    // Unreachable `else`: `Missed::of` answers `None` for exactly the two
-    // arms bound here, so reaching it would mean the mapping and this
-    // destructuring disagree — which is why it is an error rather than a
-    // panic. A template that can abort a consumer's process over a status it
-    // mis-classified is worse than one that skips a frame and says so.
-    let (wgpu::CurrentSurfaceTexture::Success(surface_texture)
-    | wgpu::CurrentSurfaceTexture::Suboptimal(surface_texture)) = __acquired
-    else {
-        return Err(SurfaceCaptureError::SurfaceUnavailable("unclassified"));
+    let surface_texture = match __acquired {
+        Ok(texture) => texture,
+        Err(missed) => {
+            context.recover(surface, missed);
+            return Err(SurfaceCaptureError::SurfaceUnavailable(missed.as_str()));
+        }
     };
 
     // Blit the intermediate target into the swapchain texture (same as

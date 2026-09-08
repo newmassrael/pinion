@@ -299,6 +299,21 @@ jobs:
           sleep 3
           export DISPLAY=:99
           vulkaninfo --summary 2>/dev/null | head -30 || true
+          # ★ R2088 — the surface-presentability guard runs FIRST, on the
+          # display and adapter the sweep is about to use. It is the only
+          # test in the tree that needs BOTH a wgpu adapter and a real X
+          # display, so this is its only possible home: the gpu-tests job
+          # runs surfaceless (`display: None`, no Xvfb) and cannot create a
+          # window at all, and `cargo test --workspace` in lint-and-test has
+          # no display.
+          #
+          # It guards a defect that reached the sweep as ONE failed walk per
+          # run, a different walk each run — a renderer that panicked inside
+          # wgpu on a surface whose configure had been silently refused,
+          # which the harness could only see as an RPC timeout. Running it
+          # ahead of the sweep means that class is named directly instead of
+          # arriving as an unattributable red.
+          cargo test -p pinion-shell --test surface_presentability_gpu -- --ignored
           bash tools/sweep_headless.sh
 
   gpu-tests:

@@ -1166,12 +1166,17 @@ mod tests {
         // std::error::Error + Display impls (fully-qualified)
         assert!(rust.contains("impl ::std::fmt::Display for DemoError"));
         assert!(rust.contains("impl ::std::error::Error for DemoError"));
-        // From impl for ? propagation (vello::Error only; surface
-        // acquisition is a status-enum match, not a `?`-able Result).
+        // From impl for ? propagation (vello::Error only; a missed
+        // acquisition is not a `?`-able failure — it is a frame to skip,
+        // and which miss it was decides what the ladder does next).
         assert!(rust.contains("impl ::std::convert::From<::vello::Error> for DemoError"));
         assert!(!rust.contains("From<::vello::wgpu::SurfaceError>"));
-        // wgpu 29 surface acquisition match (status enum, not Result).
-        assert!(rust.contains("::vello::wgpu::CurrentSurfaceTexture::Success(t)"));
+        // R2088 — the acquisition is `Result<SurfaceTexture, Missed>` from
+        // `pinion_gpu`, whose `Err` side is pinion's own vocabulary. The
+        // template used to match wgpu's status enum here, which is what put
+        // the classification in two places.
+        assert!(rust.contains("let mut __acquired = self.surface.acquire();"));
+        assert!(!rust.contains("::vello::wgpu::CurrentSurfaceTexture::"));
     }
 
     #[test]
@@ -1425,9 +1430,28 @@ mod tests {
         // that took a rung sat unpresented for 3.2 s with no frame following
         // — an idle event loop is not its own retry, which is what the first
         // design assumed.
+        //
+        // R2088 — the `continue;` this used to require went away with the
+        // `Option`/destructure split it existed to jump over: the retry is
+        // now the loop body simply ending. What is asserted is the retry
+        // itself, which is the claim; the keyword was the shape of one way
+        // of writing it.
         assert!(
-            rust.contains("__acquired = self.surface.acquire();\n") && rust.contains("continue;"),
+            rust.contains("__acquired = self.surface.acquire();\n"),
             "a rung taken is followed by another acquire in the same frame",
+        );
+        // ★ R2088 §5.16 — the acquisition is ONE question. `acquire` answers
+        // `Result<SurfaceTexture, Missed>`, so the template no longer
+        // classifies a status and then re-destructures the same enum for
+        // the texture — the two matches that could disagree, and the
+        // `unclassified` arm that existed because they could.
+        assert!(
+            !rust.contains(r#"Surface("unclassified")"#),
+            "the arm that existed only because two matches could disagree is gone",
+        );
+        assert!(
+            !rust.contains("::vello::wgpu::CurrentSurfaceTexture::"),
+            "the backend's status enum is classified in one place, and it is not here",
         );
         // ...and the retry STOPS: `Repeated` is the ladder saying everything
         // known has been tried, and a loop that ignored it would spin a dark
