@@ -122,7 +122,49 @@ pub struct PresentHealth {
     /// here, because the ladder remakes a surface and cannot remake a
     /// device.
     pub repeated_total: u32,
+    /// R2099 — how many of [`Self::missed_total`] each reason accounts for,
+    /// over this window's whole life, in the producer's own order.
+    ///
+    /// # Why the totals were not enough
+    ///
+    /// Measured on three hosted sweeps (2026-09-09): each reported twenty
+    /// missed frames, all twenty of them breakages, and **not one reason**.
+    /// The reason a window missed is published by [`Self::last_missed`],
+    /// which resets the instant a frame reaches the screen — so a window
+    /// that broke and RECOVERED, which is the case a recovery ladder exists
+    /// to produce, says how often it broke and never says how. The fact the
+    /// rendering debt this instrument was built for pre-registered as
+    /// decisive is *a surviving device-lost*, and a surviving one is by
+    /// construction one that recovered ⇒ the instrument could not produce
+    /// its own decisive evidence.
+    ///
+    /// # Why every arm, zeros included
+    ///
+    /// "That reason happened zero times" is a different statement from
+    /// "that reason was not reported", and a reader judging whether a
+    /// repair worked needs the first one. A table that lists only the
+    /// non-zero rows cannot say which question it is answering.
+    ///
+    /// `None` ⟺ this window has no surface vocabulary to report — a
+    /// backend with no swapchain, or a reading whose producer predates this
+    /// field. It does **not** mean all zeros.
+    pub missed_by_reason: Option<[(&'static str, u32); MISSED_REASON_ARITY]>,
 }
+
+/// R2099 — how many arms the surface-health "why a frame missed" vocabulary
+/// has.
+///
+/// This crate does not own that vocabulary (see [`PresentHealth`]'s own
+/// note: a TUI backend has no swapchain, so the names arrive as strings
+/// rather than as a second enum that could drift). What it owns is the
+/// ARITY, and that is deliberate: the seam that fills
+/// [`PresentHealth::missed_by_reason`] annotates the producer's array with
+/// this constant, so an arm added in the GPU crate is a **compile error**
+/// at that seam rather than a table silently truncated to seven rows.
+///
+/// ⚠ A `zip` would have truncated instead, and silently — which is the
+/// failure this constant exists to make impossible.
+pub const MISSED_REASON_ARITY: usize = 7;
 
 /// Uncontaminated fingerprint of the frame a window last PRESENTED. Written only
 /// by the winit paint path, so it answers "what is actually displayed" without

@@ -2183,6 +2183,37 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         "repeated_total",
     )
 
+    @staticmethod
+    def _reason_column(health: dict) -> str:
+        """R2099 — the per-reason breakdown, as `name:count` pairs.
+
+        Self-describing on purpose: the vocabulary belongs to `pinion_gpu`,
+        so this column carries the names the wire handed over rather than a
+        fixed set of columns this file would have to keep in step. The
+        producer's order is preserved, and every reason it knows is here
+        including the zeros — "device-lost happened zero times" is a
+        different statement from "device-lost was not reported", and the
+        second is what this census printed for three whole hosted sweeps.
+
+        `-` when the answering build predates the field, which the reader
+        must show as *cannot say* rather than fold into a zero.
+        """
+        rows = health.get("missed_by_reason")
+        if not isinstance(rows, list) or not rows:
+            return "-"
+        pairs = []
+        for row in rows:
+            if not isinstance(row, dict):
+                return "-"
+            name = str(row.get("reason", "")).strip()
+            if not name or ":" in name or "," in name:
+                # A name that would break this encoding is a name this
+                # column cannot carry; say so rather than write a row a
+                # reader would silently mis-split.
+                return "-"
+            pairs.append(f"{name}:{int(row.get('count', 0))}")
+        return ",".join(pairs)
+
     def _note_present_health(self) -> None:
         """Say what every window's rendering went through over this demo.
 
@@ -2262,7 +2293,8 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                     )
                     out.write(
                         f"{self.example}\t{window}\t{counts}\t"
-                        f"{health.get('presenting')}\t{health.get('last_missed') or '-'}\n"
+                        f"{health.get('presenting')}\t{health.get('last_missed') or '-'}\t"
+                        f"{self._reason_column(health)}\n"
                     )
         except OSError:
             # The census is a side channel; losing it must not lose the demo.

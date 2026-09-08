@@ -41,6 +41,14 @@ What it asserts, and why each is a relation rather than a restatement:
 * **D** — across the whole run, no cumulative field ever DECREASES, while the
   "in a row" fields are free to. This is the property the old instrument could
   not have had, and it is checked at every generation for every window.
+* **E** (R2099) — the record says **why**, and the table of reasons is
+  complete: its rows sum to `missed_total`, its vocabulary is identical at
+  every reading and for every window, and no row ever decreases either. The
+  cumulative half above says how often something went wrong; until R2099 the
+  only reason published was `last_missed`, which resets when a frame reaches
+  the screen — so a window that broke and RECOVERED named nothing at all, and
+  a recovered breakage is precisely what a recovery ladder produces. Measured
+  on three hosted sweeps: twenty breakages, no reasons.
 
 ⚠ NON-VACUITY is reported rather than assumed: this host usually drives a whole
 run without a single missed frame, in which case every count stays 0 and D
@@ -91,6 +99,12 @@ MOVED: list[str] = []
 #: failure — see the module docstring — but a run that saw one judged a
 #: different thing from a run that did not.
 REPORTED: list[str] = []
+
+#: R2099 — the reason vocabulary, learned from the FIRST reading and then
+#: held to for the rest of the run. Not spelled here: the names belong to
+#: `pinion_gpu`, and a walk that restated them would go on passing while the
+#: two lists drifted. What it checks is that every reading agrees.
+VOCABULARY: list[str] = []
 
 
 def banner(text: str) -> None:
@@ -166,6 +180,38 @@ def judge(health: dict, window: str, when: str) -> None:
         f"{when}/{window}: `presenting` agrees with the miss count",
         health["presenting"] == (health["missed_in_a_row"] == 0),
     )
+    # E (R2099) — the record says WHY, and the table is complete.
+    rows = health.get("missed_by_reason")
+    ok(
+        f"{when}/{window}: the record names why frames missed, not only how "
+        f"often ({rows!r})",
+        isinstance(rows, list) and bool(rows),
+    )
+    names = [row.get("reason") for row in rows]
+    counts = [row.get("count") for row in rows]
+    ok(
+        f"{when}/{window}: every reason row is a name and a number ({rows!r})",
+        all(isinstance(n, str) and n for n in names)
+        and all(isinstance(c, int) and c >= 0 for c in counts),
+    )
+    ok(
+        f"{when}/{window}: no reason is listed twice ({names})",
+        len(set(names)) == len(names),
+    )
+    # The relation that makes the table an ANSWER rather than a decoration:
+    # it must account for every missed frame the total claims.
+    ok(
+        f"{when}/{window}: the reason rows sum to missed_total "
+        f"({sum(counts)} vs {health['missed_total']})",
+        sum(counts) == health["missed_total"],
+    )
+    if not VOCABULARY:
+        VOCABULARY.extend(names)
+    ok(
+        f"{when}/{window}: the vocabulary is the same at every reading and for "
+        f"every window ({names} vs {VOCABULARY})",
+        names == VOCABULARY,
+    )
     if any(health[field] for field in CUMULATIVE):
         MOVED.append(
             f"{when}/{window}: "
@@ -192,15 +238,22 @@ def body() -> None:
             health = health_of(app, window, when)
             judge(health, window, when)
             previous = seen.get(window)
+            # R2099 — the per-reason rows are cumulative too, so they belong
+            # in the same comparison. Keyed by NAME rather than by position:
+            # the walk must not be the thing that assumes an order.
+            current = {field: health[field] for field in CUMULATIVE}
+            current.update(
+                {f"why:{row['reason']}": row["count"] for row in health["missed_by_reason"]}
+            )
             if previous is not None:
-                for field in CUMULATIVE:
+                for field, value in current.items():
                     # D — the property the old instrument could not have.
                     ok(
                         f"{when}/{window}: `{field}` did not go backwards "
-                        f"({previous[field]} -> {health[field]})",
-                        health[field] >= previous[field],
+                        f"({previous.get(field)} -> {value})",
+                        value >= previous.get(field, 0),
                     )
-            seen[window] = {field: health[field] for field in CUMULATIVE}
+            seen[window] = current
             return health
 
         banner("A — the board answers for its whole life, not only for now")
@@ -240,6 +293,7 @@ def body() -> None:
             f"{MOVED or 'none -- this run was quiet, so D held trivially'}"
         )
         print(f"[demo] framework-reported outages: {REPORTED or 'none'}")
+        print(f"[demo] reason vocabulary published by the wire: {VOCABULARY}")
 
 
 def main() -> None:

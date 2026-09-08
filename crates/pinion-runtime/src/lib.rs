@@ -140,5 +140,5 @@ pub use pinion_asset::DecodedImage;
 /// `compute_layout*` call site across both backends, so it wants its own round
 /// rather than a drive-by.
 pub use pinion_text::LayoutCache;
-pub use render_fidelity::{GridFidelity, PresentHealth, RenderFidelity};
+pub use render_fidelity::{GridFidelity, MISSED_REASON_ARITY, PresentHealth, RenderFidelity};
 pub use window::WindowRouter;

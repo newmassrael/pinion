@@ -1733,6 +1733,58 @@ def test_no_demo_resizes_a_window_and_reads_without_waiting() -> None:
     )
 
 
+def test_the_census_column_carries_every_reason_the_wire_named() -> None:
+    """★★★★★ R2099 — the census records WHY, including the zeros.
+
+    Until this round the only reason it recorded was `last_missed`, and that
+    field resets the instant a frame reaches the screen. So a window that
+    broke and RECOVERED — the case a recovery ladder exists to produce —
+    contributed a count and no reason at all: three hosted sweeps each
+    reported twenty missed frames, all twenty breakages, and not one reason.
+    The rendering debt this census exists for pre-registered *a surviving
+    device-lost* as decisive, and a surviving one is one that recovered.
+
+    Encoded as `name:count` pairs rather than as fixed columns because the
+    vocabulary belongs to `pinion_gpu`: this file publishes the names the
+    wire handed it, and cannot go stale against a vocabulary it never
+    restates.
+    """
+    column = RpcSubprocess._reason_column(
+        {
+            "missed_by_reason": [
+                {"reason": "outdated", "count": 3},
+                {"reason": "device_lost", "count": 1},
+                {"reason": "lost", "count": 0},
+            ]
+        }
+    )
+    check(
+        column == "outdated:3,device_lost:1,lost:0",
+        f"the pairs keep the producer's order and its zeros, got {column!r}",
+    )
+    # ★ The zero is the half that makes the column answer a question. Spelled
+    # as its own check because dropping it would leave the line above passing
+    # on two of three rows and the summary saying nothing about the third.
+    check("lost:0" in column, "a reason that did not happen still says zero")
+
+    # A build older than the field says so, rather than being read as seven
+    # zeros — the inference this whole line of work exists to stop.
+    check(RpcSubprocess._reason_column({}) == "-", "an absent table is not zeros")
+    check(
+        RpcSubprocess._reason_column({"missed_by_reason": []}) == "-",
+        "an empty table is not a table",
+    )
+    # And a name that would break the encoding is refused whole rather than
+    # written as a row the reader would mis-split.
+    check(
+        RpcSubprocess._reason_column(
+            {"missed_by_reason": [{"reason": "a,b", "count": 1}]}
+        )
+        == "-",
+        "a name carrying the separator is not written",
+    )
+
+
 def main() -> int:
     # R1580 — the population is DERIVED from this module, not listed.
     #

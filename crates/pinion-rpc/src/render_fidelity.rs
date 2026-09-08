@@ -188,6 +188,42 @@ pub struct PresentHealthView {
     /// A window whose *device* was lost stays here: the ladder remakes a
     /// surface, and a device is not something it can remake.
     pub repeated_total: u32,
+    /// R2099 — how many of [`Self::missed_total`] each reason accounts for,
+    /// over this window's whole life, in the producer's own order.
+    ///
+    /// Every reason the producer knows is present, **zeros included**:
+    /// "device-lost happened zero times" is a different statement from
+    /// "device-lost was not reported", and an agent judging whether a
+    /// rendering repair worked needs the first one.
+    ///
+    /// The four totals above say how often something went wrong; this says
+    /// what. Without it, a window that broke and RECOVERED published no
+    /// reason at all — [`Self::last_missed`] resets the instant a frame
+    /// reaches the screen — so the one case a recovery ladder exists to
+    /// produce was the one case nothing could name. Measured on three
+    /// hosted sweeps: twenty breakages, no reasons.
+    ///
+    /// Omitted when the window has no surface vocabulary to report (a
+    /// backend with no swapchain). Absent is not "all zeros".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missed_by_reason: Option<Vec<MissedReasonRow>>,
+}
+
+/// R2099 — one row of [`PresentHealthView::missed_by_reason`].
+///
+/// A row rather than a key in an object: the vocabulary belongs to the
+/// backend crate, so this protocol publishes the names it was handed
+/// instead of declaring a fixed set of keys it would then have to keep in
+/// step. An array also keeps the producer's order, which is the order the
+/// reasons are worth reading in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct MissedReasonRow {
+    /// The reason's wire spelling: `outdated` / `lost` / `validation` /
+    /// `timeout` / `occluded` / `unconfigured` / `device_lost`.
+    pub reason: &'static str,
+    /// How many of this window's missed frames this reason accounts for,
+    /// over the window's whole life. May be `0`.
+    pub count: u32,
 }
 
 impl From<pinion_runtime::PresentHealth> for PresentHealthView {
@@ -203,6 +239,11 @@ impl From<pinion_runtime::PresentHealth> for PresentHealthView {
             broken_total: health.broken_total,
             reconfigured_total: health.reconfigured_total,
             repeated_total: health.repeated_total,
+            missed_by_reason: health.missed_by_reason.map(|rows| {
+                rows.into_iter()
+                    .map(|(reason, count)| MissedReasonRow { reason, count })
+                    .collect()
+            }),
         }
     }
 }
@@ -370,6 +411,21 @@ mod tests {
             broken_total: 6,
             reconfigured_total: 4,
             repeated_total: 1,
+            // R2099 — the rows sum to `missed_total`, and no two NON-ZERO
+            // counts are equal: a table whose counts are interchangeable
+            // cannot catch a projection that transposes two reasons, which
+            // is exactly the defect R2090's own fixture had until it was
+            // widened. `device_lost` is one of them on purpose — it is the
+            // reason this table was built to be able to report.
+            missed_by_reason: Some([
+                ("outdated", 5),
+                ("lost", 3),
+                ("validation", 0),
+                ("timeout", 0),
+                ("occluded", 0),
+                ("unconfigured", 0),
+                ("device_lost", 1),
+            ]),
         };
         let out = render_fidelity(Some(&rec), None).unwrap();
         assert!(
@@ -390,6 +446,35 @@ mod tests {
         assert_eq!(out.health.broken_total, 6);
         assert_eq!(out.health.reconfigured_total, 4);
         assert_eq!(out.health.repeated_total, 1);
+        // ★★ R2099 — and the cumulative half now says WHAT, not only how
+        // often. Asserted as the whole table rather than by picking the rows
+        // that happen to be non-zero: the zeros are the half that lets a
+        // reader say "device-lost did not happen" instead of "device-lost
+        // was not reported", and a check that skipped them would pass on a
+        // projection that dropped every empty row.
+        let rows = out
+            .health
+            .missed_by_reason
+            .as_ref()
+            .expect("a window with a surface publishes its reason table");
+        assert_eq!(
+            rows.iter().map(|r| (r.reason, r.count)).collect::<Vec<_>>(),
+            vec![
+                ("outdated", 5),
+                ("lost", 3),
+                ("validation", 0),
+                ("timeout", 0),
+                ("occluded", 0),
+                ("unconfigured", 0),
+                ("device_lost", 1),
+            ],
+            "the reason table crosses the seam in the producer's order, zeros kept"
+        );
+        assert_eq!(
+            rows.iter().map(|r| r.count).sum::<u32>(),
+            out.health.missed_total,
+            "the rows must sum to the total they are published beside"
+        );
     }
 
     #[test]
@@ -411,6 +496,15 @@ mod tests {
                 broken_total: 1,
                 reconfigured_total: 1,
                 repeated_total: 0,
+                missed_by_reason: Some([
+                    ("outdated", 0),
+                    ("lost", 0),
+                    ("validation", 1),
+                    ("timeout", 0),
+                    ("occluded", 0),
+                    ("unconfigured", 0),
+                    ("device_lost", 0),
+                ]),
             }))
             .expect("serializes");
         assert_eq!(serialized["last_missed"], "validation");
@@ -423,6 +517,25 @@ mod tests {
         assert_eq!(serialized["missed_total"], 1);
         assert_eq!(serialized["reconfigured_total"], 1);
         assert_eq!(serialized["repeated_total"], 0);
+        // ★★ R2099 — the reason table serializes as an ARRAY of rows, in the
+        // producer's order and with its zeros. An array rather than an object
+        // because the keys belong to the backend crate: this protocol
+        // publishes the names it was handed instead of declaring a fixed set
+        // it would then have to keep in step.
+        assert_eq!(serialized["missed_by_reason"][0]["reason"], "outdated");
+        assert_eq!(serialized["missed_by_reason"][0]["count"], 0);
+        assert_eq!(serialized["missed_by_reason"][2]["reason"], "validation");
+        assert_eq!(serialized["missed_by_reason"][2]["count"], 1);
+        assert_eq!(serialized["missed_by_reason"][6]["reason"], "device_lost");
+        assert_eq!(serialized["missed_by_reason"][6]["count"], 0);
+        assert_eq!(
+            serialized["missed_by_reason"]
+                .as_array()
+                .expect("an array")
+                .len(),
+            pinion_runtime::MISSED_REASON_ARITY,
+            "every reason the producer knows, zeros included"
+        );
         // ...and the absent case omits the keys rather than publishing nulls a
         // client would have to distinguish from a name.
         let quiet = serde_json::to_value(PresentHealthView::from(
@@ -432,6 +545,10 @@ mod tests {
         assert!(quiet.get("last_missed").is_none());
         assert!(quiet.get("last_rung").is_none());
         assert_eq!(quiet["presenting"], true);
+        // R2099 — a window with no surface vocabulary omits the table rather
+        // than publishing seven zeros, because "there is nothing here to
+        // break" and "nothing has broken" are different facts.
+        assert!(quiet.get("missed_by_reason").is_none());
     }
 
     #[test]

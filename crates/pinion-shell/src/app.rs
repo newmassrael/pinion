@@ -5062,6 +5062,21 @@ fn present_health_of(health: pinion_gpu::SurfaceHealth) -> pinion_runtime::Prese
         health.rebuilds(),
         "`rebuilds` is the heavy rung's row and cannot be a second count"
     );
+    // R2099 — the per-reason rows, carried across with the producer's own
+    // spellings and in the producer's own order. The type annotation is the
+    // gate: `MissTally::rows()` is `[_; Missed::ALL.len()]`, so an arm added
+    // in `pinion_gpu` makes this a COMPILE ERROR here, where the mapping
+    // lives. A `zip` would have truncated the table silently instead, which
+    // is the failure mode this seam is being repaired for in the first place.
+    let missed_by_reason: [(&'static str, u32); pinion_runtime::MISSED_REASON_ARITY] = health
+        .misses()
+        .rows()
+        .map(|(missed, count)| (missed.as_str(), count));
+    debug_assert_eq!(
+        missed_by_reason.iter().map(|&(_, n)| n).sum::<u32>(),
+        health.misses().total(),
+        "the per-reason rows must sum to the total they are published beside"
+    );
     pinion_runtime::PresentHealth {
         missed_in_a_row: health.missed_in_a_row(),
         broken_in_a_row: health.broken_in_a_row(),
@@ -5072,6 +5087,7 @@ fn present_health_of(health: pinion_gpu::SurfaceHealth) -> pinion_runtime::Prese
         broken_total: health.misses().breakages(),
         reconfigured_total,
         repeated_total,
+        missed_by_reason: Some(missed_by_reason),
     }
 }
 
@@ -8418,6 +8434,85 @@ mod r2090_present_health_seam {
         assert_eq!(
             view.reconfigured_total + view.rebuilds + view.repeated_total,
             view.broken_total,
+        );
+    }
+
+    #[test]
+    fn a_recovered_window_still_names_what_broke_it() {
+        // ★★★★★ R2099 — THE CASE THE INSTRUMENT COULD NOT REPORT.
+        // `last_missed` resets the instant a frame reaches the screen, so a
+        // window that broke and CAME BACK — the case a recovery ladder
+        // exists to produce — said how often it broke and never said how.
+        // Measured on three hosted sweeps (2026-09-09), each of which
+        // printed twenty missed frames, all twenty breakages, and not one
+        // reason. The rendering debt this instrument was built for
+        // pre-registered *a surviving device-lost* as its decisive
+        // evidence, and a surviving one is by construction one that
+        // recovered ⇒ the instrument could not produce its own evidence.
+        //
+        // ⚠ Three DIFFERENT counts on purpose (3 / 2 / 1). Equal counts
+        // make a transposition at the seam undetectable — the fixture
+        // defect the test above records, one round earlier.
+        let mut health = pinion_gpu::SurfaceHealth::default();
+        for _ in 0..3 {
+            health.missed(pinion_gpu::Missed::Outdated);
+        }
+        health.missed(pinion_gpu::Missed::Occluded);
+        health.missed(pinion_gpu::Missed::Occluded);
+        health.missed(pinion_gpu::Missed::DeviceLost);
+        health.presented();
+
+        let view = present_health_of(health);
+
+        // The window is healthy NOW, and the "in a row" half says nothing
+        // whatever about what it went through. That is not a bug in that
+        // half — it is why this one has to exist.
+        assert_eq!(view.missed_in_a_row, 0);
+        assert_eq!(
+            view.last_missed, None,
+            "the current half forgets, by design"
+        );
+
+        let rows = view
+            .missed_by_reason
+            .expect("a window with a surface publishes its reason table");
+
+        // ★ The names are the PRODUCER's, checked against its own roster
+        // rather than a second list spelled here: a list written twice is a
+        // list that can drift, and a new arm reaching the wire unnamed is
+        // precisely what this seam must not allow.
+        assert_eq!(
+            rows.iter().map(|&(name, _)| name).collect::<Vec<_>>(),
+            pinion_gpu::Missed::ALL
+                .iter()
+                .map(|m| m.as_str())
+                .collect::<Vec<_>>(),
+            "the table is the producer's vocabulary, in the producer's order"
+        );
+
+        let count_of = |name: &str| {
+            rows.iter()
+                .find(|&&(n, _)| n == name)
+                .unwrap_or_else(|| panic!("the table has a row for {name}"))
+                .1
+        };
+        assert_eq!(count_of("outdated"), 3);
+        assert_eq!(count_of("occluded"), 2, "a WAIT is counted here too");
+        assert_eq!(
+            count_of("device_lost"),
+            1,
+            "the reason this debt pre-registered as its decisive evidence"
+        );
+        assert_eq!(
+            count_of("lost"),
+            0,
+            "a reason that did not happen says ZERO rather than being absent — \
+             'it did not happen' and 'nobody reported it' are different facts"
+        );
+        assert_eq!(
+            rows.iter().map(|&(_, n)| n).sum::<u32>(),
+            view.missed_total,
+            "the rows must sum to the total they are published beside"
         );
     }
 }

@@ -1623,6 +1623,15 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "MissedReasonRow",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("reason", WireTy::String, None),
+                WireField::new("count", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
         name: "MnemonicEntry",
         shape: WireShape::Object {
             fields: &[
@@ -1849,6 +1858,8 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("broken_total", WireTy::Integer, None),
                 WireField::new("reconfigured_total", WireTy::Integer, None),
                 WireField::new("repeated_total", WireTy::Integer, None),
+                WireField::new("missed_by_reason", WireTy::Array, Some("MissedReasonRow"))
+                    .optional(),
             ],
         },
     },
