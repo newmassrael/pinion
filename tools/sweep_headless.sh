@@ -162,7 +162,42 @@ runner='
   # Baseline first: a developer box may legitimately have a pinion binary
   # running before the sweep starts, and only processes that appear AFTER a
   # demo are attributable to it.
-  residual() { pgrep -f "$PWD/target/" 2>/dev/null | sort -u | tr "\n" " "; }
+  #
+  # R2098 — ANCHORED. Before this it was pgrep -f "PWD/target/" with no anchor,
+  # which matches a command line that merely CONTAINS the path, and a compiler
+  # invocation does: every rustc --out-dir under a concurrent cargo clippy
+  # matched, was reported as a leak against whichever demo happened to be on
+  # screen, and was killed with -9.
+  #
+  # Measured twice in this repository rather than argued: R2088 attributed 25
+  # leak lines to r1893, which passed, when a local build was the real source;
+  # and R2098 reproduced it on purpose — a process started DURING a one-demo
+  # sweep, whose command line only mentions the path, was killed and blamed on
+  # r2061, while the same process started BEFORE the sweep survived as part of
+  # the baseline. The same mechanism killed a push clippy in that session and
+  # failed the push.
+  #
+  # A demo binary is launched by absolute path (rpc_verify resolves
+  # WORKSPACE_ROOT/target/<flavor>/<example>), so it is the FIRST token of its
+  # command line. Anchoring keeps every real demo and excludes every tool that
+  # merely names the directory.
+  #
+  # NOTE the constraint above: this whole runner is one single-quoted string,
+  # and the rule that matters is NO APOSTROPHE. An apostrophe here CLOSES the
+  # string, after which every following line is live code in THIS script --
+  # which is where a backtick then becomes command substitution. That is the
+  # failure the first draft of this note produced: the sweep died with
+  # "clippy: command not found" before running a demo. A backtick on its own,
+  # with the string still open, is inert (the R1570.3 comment above has
+  # carried a pair since it was written, and this sweep has always run).
+  #
+  # What this gives up, stated rather than discovered later: a helper a demo
+  # spawns that is NOT the demo binary, cargo test under r1447 for instance, is
+  # no longer caught here. rpc_verify still reaps the process GROUP and still
+  # fails a demo that leaks, which is the check that can tell the child of a
+  # demo from a stranger; this one exists to be independent of it, not broader
+  # than the truth.
+  residual() { pgrep -f "^$PWD/target/" 2>/dev/null | sort -u | tr "\n" " "; }
   baseline=" $(residual)"
   leaks=""
   # One number, named once: the kill and the message that reports it must not

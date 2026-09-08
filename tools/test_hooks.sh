@@ -2574,5 +2574,69 @@ ok "an empty radius runs nothing rather than everything" \
 ok "and it does not start the sweep" \
    "$(grep -c '^\[sweep  *1/' <<<"$radius_empty")" 0
 
+# ★★★★★ AND THE SWEEP'S LEAK BACKSTOP MUST NAME ONLY WHAT A DEMO LAUNCHED.
+# That backstop asks the operating system which processes under `target/`
+# outlived a demo. Until R2098 it asked with an UNANCHORED pattern, which
+# matches a command line that merely CONTAINS the path — and a compiler
+# invocation contains it (`--out-dir .../target/debug/deps`). Measured twice
+# in this repository rather than argued: R2088 reported 25 leaks against a
+# demo that had PASSED while a concurrent local build was the real source,
+# and R2098 reproduced it deliberately — a process started DURING a one-demo
+# sweep was killed with -9 and blamed on that demo, and the same mechanism
+# killed a push's clippy and failed the push.
+#
+# The property has two halves, and the fixture must be able to tell them
+# apart or BOTH halves pass against a matcher that finds nothing at all:
+#   - a process LAUNCHED from `target/` (the path is argv[0]) is still seen,
+#   - a process that only NAMES `target/` in its arguments is not,
+#   - and the pre-R2098 pattern DOES see the second one.
+# The third is the fixture's own proof; without it this case would stay green
+# if `residual` were deleted outright.
+#
+# The matcher is LIFTED from the shipped script rather than restated here: a
+# test that spells the rule a second time goes on passing when the rule under
+# it changes. Both stand-ins are `cat` blocked on opening a fifo nobody
+# writes, so each is ONE process with no child to orphan, and a plain `kill`
+# ends it.
+ok "the sweep defines its residual matcher exactly once" \
+   "$(grep -c 'residual() { pgrep' "$repo_root/tools/sweep_headless.sh")" 1
+eval "$(grep -o 'residual() {.*}' "$repo_root/tools/sweep_headless.sh")"
+
+anchor_dir="$(mktemp -d)"
+mkdir -p "$anchor_dir/target/release/examples"
+mkfifo "$anchor_dir/target/never-written" "$anchor_dir/never-written"
+cp "$(command -v cat)" "$anchor_dir/target/release/examples/fake-demo"
+cp "$(command -v cat)" "$anchor_dir/compiler-like"
+"$anchor_dir/target/release/examples/fake-demo" "$anchor_dir/never-written" &
+anchor_demo=$!
+"$anchor_dir/compiler-like" "$anchor_dir/target/never-written" &
+anchor_tool=$!
+anchor_cmdline() { tr '\0' ' ' < "/proc/$1/cmdline" 2>/dev/null; }
+anchor_ready=no
+for _ in $(seq 1 100); do
+    anchor_demo_cmd="$(anchor_cmdline "$anchor_demo")"
+    anchor_tool_cmd="$(anchor_cmdline "$anchor_tool")"
+    if [[ "$anchor_demo_cmd" == "$anchor_dir/target/"* \
+          && "$anchor_tool_cmd" == *"$anchor_dir/target/"* \
+          && "$anchor_tool_cmd" != "$anchor_dir/target/"* ]]; then
+        anchor_ready=yes
+        break
+    fi
+    sleep 0.02
+done
+ok "both stand-ins reached the command lines this case needs" "$anchor_ready" yes
+
+anchor_seen="$(cd "$anchor_dir" && residual)"
+case " $anchor_seen " in *" $anchor_demo "*) anchor_got_demo=yes ;; *) anchor_got_demo=no ;; esac
+case " $anchor_seen " in *" $anchor_tool "*) anchor_got_tool=yes ;; *) anchor_got_tool=no ;; esac
+anchor_old="$(pgrep -f "$anchor_dir/target/" 2>/dev/null | sort -u | tr '\n' ' ')"
+case " $anchor_old " in *" $anchor_tool "*) anchor_old_tool=yes ;; *) anchor_old_tool=no ;; esac
+kill "$anchor_demo" "$anchor_tool" 2>/dev/null
+wait "$anchor_demo" "$anchor_tool" 2>/dev/null
+rm -rf "$anchor_dir"
+ok "a process launched from target/ is still called residual" "$anchor_got_demo" yes
+ok "a process that only names target/ in its arguments is not" "$anchor_got_tool" no
+ok "and the unanchored pattern did see it, so this case can fail" "$anchor_old_tool" yes
+
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]
