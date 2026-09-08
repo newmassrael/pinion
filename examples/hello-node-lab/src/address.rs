@@ -291,6 +291,47 @@ pub fn role_swatch_named(name: &str) -> String {
     format!("{ROLE_SWATCH}{name}")
 }
 
+/// ★★★★★ R2085 — the prefix the control that COLOURS a palette group carries.
+///
+/// ⚠ Its own prefix and **not** a suffix under [`GROUP_HEAD`], which is this
+/// screen's own rule about prefixes speaking, recorded twice already (R1885's
+/// build seats, R1915's member pin, and the note on [`WAY_IN`]): an arm for
+/// `lab.palette.group.<label>` would swallow `<label>.ink`, look for a heading
+/// called that and answer nothing. The heading and its control are siblings.
+pub const GROUP_INK: &str = "lab.palette.ink.";
+
+/// [`GROUP_INK`] with the population's placeholder, for the specification table
+/// whose rows must be `&'static str`.
+///
+/// ⚠ Declared with the prefix rather than beside the voice row, which is
+/// R2078's finding: a table that spells its own address is a table free to
+/// drift from the paint, and `r1653_the_painted_screen_invented_nothing` is
+/// what turns that drift into a red — it did, on this family's first paint,
+/// naming all seven chips as marks no family accounts for.
+pub const GROUP_INK_TEMPLATE: &str = "lab.palette.ink.{}";
+
+/// The address of the control that colours the group headed `label`.
+#[must_use]
+pub fn group_ink(label: &str) -> String {
+    format!("{GROUP_INK}{label}")
+}
+
+/// The group a colour control's address names, or `None` when the tag is not
+/// one.
+///
+/// ★ The inverse of [`group_ink`], here rather than at the router, for
+/// [`role_of_row`]'s reason — and the label is checked against the declared
+/// partition rather than trusted as text, so a tag naming no heading resolves
+/// to nothing instead of to whichever heading sorted first.
+#[must_use]
+pub fn group_of_ink(tag: &str) -> Option<&'static str> {
+    let label = tag.strip_prefix(GROUP_INK)?;
+    crate::spec::palette_groups()
+        .iter()
+        .map(|run| run.label)
+        .find(|declared| *declared == label)
+}
+
 /// The role a palette row address names, or `None` when the tag is not one.
 ///
 /// ★ The inverse of [`role_row`], here rather than at the router, so the two

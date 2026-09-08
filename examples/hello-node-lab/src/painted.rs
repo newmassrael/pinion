@@ -2721,6 +2721,18 @@ fn r1653_the_painted_screen_invented_nothing() {
                 super::address::GROUP_HEAD,
                 Some(spec::palette_groups().len()),
             ),
+            // ★★★★★ R2085 — and the chip beside each heading, sized from the
+            // same run count for the same reason: a palette that grew a group
+            // grows a control, and one that lost a group must lose it.
+            //
+            // ⚠ Its own entry rather than a wider `lab.palette.` prefix, which
+            // is this table's own standing argument (R2047's three entries, and
+            // the rail-prefix debt it cites): one prefix over a heading and its
+            // control would let either stop being painted unremarked.
+            (
+                super::address::GROUP_INK,
+                Some(spec::palette_groups().len()),
+            ),
             ("lab.palette.pin.", Some(spec::PIN_LEGEND.len())),
             ("lab.palette.protocol.", Some(spec::PROTOCOLS.len())),
             ("lab.link.", None),

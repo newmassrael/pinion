@@ -58,6 +58,25 @@ mod merging;
 mod persist;
 mod scenario;
 
+/// ★★★★★ R2085 — **the owner-cache key this screen's store hangs off**,
+/// published so a HOST can keep it off a person's disk.
+///
+/// This screen resolves its storage with `use_app_storage`, which caches under
+/// this key — so seeding the key with an in-memory backend before the screen is
+/// built is what makes a test write nowhere. Its own suite does that through a
+/// `cfg(test)` arm, and that arm is the thing a host cannot reach: an
+/// application mounting this screen compiles it as a DEPENDENCY, where
+/// `cfg(test)` is off, so the mounted screen writes the real data directory
+/// however careful the host's own gates are with theirs.
+///
+/// Measured on this round's own gate: the shell's test seam had kept the
+/// shell's storage off disk since R2046 and counted that it did, and the count
+/// covered the shell's key alone — R2085's is the first gate there that WRITES
+/// a mounted screen's store, and it wrote a person's palette file. ⇒ ★ **a
+/// screen mounted inside another application needs its seams to be reachable
+/// from that application, not only from its own tests.**
+pub use persist::STORAGE_CACHE_KEY;
+
 /// ★ R2024 — what a scenario row's word-run adds to its row's tag, published
 /// for the same reason [`in_toolbar_overflow`] is: the ASSEMBLED tool's walk
 /// has to tell a row's BAR from a row's WORDS, and the only alternative is for
@@ -78,6 +97,7 @@ use pinion_a11y::{
 use pinion_core::availability::Unavailable;
 use pinion_core::composite_tag::split_send_payload;
 use pinion_core::containment::{band_in, line_box, line_rect_in};
+use pinion_core::contrast::contrast_ratio;
 use pinion_core::describe::{Descriptions, Resting};
 use pinion_core::edge_panel::{EdgePlacement, PanelAffordance, PanelControl};
 use pinion_core::external::{
@@ -86,6 +106,7 @@ use pinion_core::external::{
     ReadRefusal, RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::input::{DragLatch, PointerReading};
+use pinion_core::legibility::Floor;
 use pinion_core::reactive::{Signal, Tracked};
 use pinion_core::scene::{
     ContainerNode, PathCommand, PathNode, PathPoint, Rect, ScrollAxis, ScrollNode, TextNode,
@@ -1235,6 +1256,12 @@ const PAL_ROW_INSET: u32 = 6;
 /// content: `legend_top` is derived from this constant and follows it.
 const PAL_ROW_H: u32 = line_box(FONT_SMALL + 1) + line_box(10) + PAL_ROW_INSET * 2;
 const PAL_HEAD_H: u32 = 22;
+/// ★★★★★ R2085 — the side of the chip that colours a palette group, which sits
+/// at the right end of that group's heading strip.
+///
+/// Square, and smaller than the strip it is centred in, so the control cannot
+/// be the tallest thing on a heading line — a heading is not a toolbar.
+const PAL_INK_CHIP: u32 = 12;
 /// A pin's diameter.
 const PIN: u32 = 11;
 /// The zoom range, in percent, and the step a press moves it.
@@ -1289,11 +1316,26 @@ struct Ink {
     grid: Color,
 }
 
+/// ★★★★★ R2085 — **the two grounds a role's colour is painted on**, named
+/// once because two different readers now need them.
+///
+/// They were literals inside [`ink`], which was enough while the only consumer
+/// was the paint: a `Theme` is a reactive hook and the wire runs outside an
+/// owner scope, so a register asking *is this colour legible where it lands*
+/// could not have reached them at all without re-typing the hex. Re-typing it
+/// is what makes a measurement disagree with what a person sees — this
+/// screen's recurring class — so the paint and the measurement read one
+/// declaration. Both are literals of the reference's own dark surface, which
+/// is why they are not theme roles: see [`Ink`]'s note on the two that are.
+const SURFACE: Color = rgb(0x16_181D);
+/// The ground a palette row this graph will take is drawn on. See [`SURFACE`].
+const RAISED: Color = rgb(0x1E_2127);
+
 fn ink(theme: &Theme) -> Ink {
     Ink {
         bg: rgb(0x0E_0F12),
-        surface: rgb(0x16_181D),
-        raised: rgb(0x1E_2127),
+        surface: SURFACE,
+        raised: RAISED,
         outline: rgb(0x2A_2E36),
         outline_2: rgb(0x3A_404B),
         text: rgb(0xE8_EBEF),
@@ -1339,8 +1381,123 @@ const fn ink_of(tint: Tint) -> Color {
 /// had drifted: `Router` read `#EC5AA0`, this screen's accent pink, where the
 /// canon draws `#9A004F`. Exactly R1926's move for [`Transport::tint`], made
 /// for the kind axis.
-const fn role_ink(role: Role) -> Color {
-    ink_of(role.tint())
+/// ★★★★★ R2085 — and it takes the STATE now, because a role's colour is no
+/// longer only the taxonomy's.
+///
+/// The three marks that read this — the palette's swatch, a card's badge box
+/// and its badge letters — must show the colour a person chose, or the swatch
+/// in the palette and the card it places would disagree about what that role
+/// looks like. `card_faces` answers the same question for a card's BODY, and
+/// both go through [`chosen_tint`] so there is one answer.
+fn role_ink(state: &LabState, role: Role) -> Color {
+    ink_of(chosen_tint(state, role).unwrap_or_else(|| role.tint()))
+}
+
+/// ★★★★★ R2085 — one mark this screen paints in a role's colour, the ground it
+/// lands on, and the standard that mark is held to.
+///
+/// The point of the record is that the three are stated TOGETHER. A contrast
+/// number without its ground is not a measurement, and a ground without the
+/// floor its mark is held to cannot be judged: a colour band keying a row and
+/// the letters inside a badge are the same colour over the same ink and answer
+/// to different standards, `3.0` and `4.5`, because one is a graphic a person
+/// must find and the other is text a person must read.
+#[derive(Clone, Copy)]
+struct ColourMark {
+    /// The word this screen calls the mark by, on the wire.
+    mark: &'static str,
+    /// What it is painted on.
+    ground: Color,
+    /// The legibility standard it answers to.
+    floor: Floor,
+}
+
+impl ColourMark {
+    /// The WCAG ratio `paint` reaches on this mark's ground.
+    fn ratio(self, paint: Color) -> f32 {
+        contrast_ratio(paint, self.ground)
+    }
+
+    /// Whether `paint` clears this mark's floor here.
+    fn clears(self, paint: Color) -> bool {
+        self.ratio(paint) >= self.floor.ratio()
+    }
+}
+
+/// ★★★★★ R2085 — **every mark a role's colour is painted as**, with the ground
+/// and the floor of each.
+///
+/// Three, and they are the three [`role_ink`]'s own doc names — so a mark added
+/// to this screen in that colour lands here as well, and the register that
+/// publishes the measurement cannot fall behind the paint by one mark.
+///
+/// The swatch's ground is the row's own fill, which this screen dims for a role
+/// the open graph will not take (R1999). Asked of [`role_at_home`] rather than
+/// assumed, because a measurement against the ground the row does NOT have is
+/// the kind of number that reads as a fact and is not one.
+fn role_marks(state: &LabState, role: Role) -> [ColourMark; 3] {
+    [
+        ColourMark {
+            mark: "swatch",
+            ground: if role_at_home(state, role) {
+                RAISED
+            } else {
+                SURFACE
+            },
+            floor: Floor::Boundary,
+        },
+        ColourMark {
+            mark: "badge_border",
+            ground: SURFACE,
+            floor: Floor::Boundary,
+        },
+        ColourMark {
+            mark: "badge_text",
+            ground: SURFACE,
+            floor: Floor::Text,
+        },
+    ]
+}
+
+/// ★★★★★ R2085 — how a person is told that the colour they just chose is under
+/// the standard one of its marks answers to, or `None` when it is not.
+///
+/// ⚠ **A shortfall is REPORTED and never refused, and that is a measurement
+/// rather than a preference.** Held to the same two floors, this screen's own
+/// default palette — the ten colours the behaviour canon declares, which
+/// R2078's census holds us to hex for hex — clears neither: measured over the
+/// grounds [`role_marks`] names, **two of the ten** are under `3.0` (the
+/// canon's own accent `#9A004F` reaches `2.10` on the surface and `1.91` on a
+/// palette row) and **eight of the ten** are under `4.5`. A refusal at either
+/// floor would therefore refuse the colours the screen is already painted in,
+/// which is not a legibility gate but a contradiction — and it would refuse
+/// them while the standing order for this reproduction says the default must
+/// stay the canon's.
+///
+/// So the instrument is the one `persist::save`'s fault clause is: the act
+/// happens, [`Tone::Done`] is truthful, and the clause carries the trouble. The
+/// default palette's own shortfall is a defect of this screen's palette rather
+/// than of a person's choice, and it is registered as its own debt.
+fn legibility_clause(state: &LabState, roles: &[Role], paint: Color) -> Option<String> {
+    let mut short: BTreeSet<&'static str> = BTreeSet::new();
+    let mut floors: BTreeSet<&'static str> = BTreeSet::new();
+    for role in roles {
+        for mark in role_marks(state, *role) {
+            if !mark.clears(paint) {
+                short.insert(mark.mark);
+                floors.insert(mark.floor.name());
+            }
+        }
+    }
+    if short.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "under the {} {} at {}",
+        floors.iter().copied().collect::<Vec<_>>().join(" and "),
+        if floors.len() == 1 { "floor" } else { "floors" },
+        short.into_iter().collect::<Vec<_>>().join(" · "),
+    ))
 }
 
 // ── State ───────────────────────────────────────────────────────────────────
@@ -1968,6 +2125,19 @@ struct LabState {
     /// resolves through the shell's root owner and PANICS outside one, and this
     /// screen's pointer handlers and its wire both run outside an owner scope.
     storage: Rc<AppStorage>,
+    /// ★★★★★ R2085 — **the colours a person chose for this screen's roles**,
+    /// held here rather than read from storage where they are needed.
+    ///
+    /// `card_faces` runs once per card per paint and `role_ink` three times
+    /// more, so a read that went to the backend would put a file open on the
+    /// frame's path — the class R2076's own note calls a read pretending to be
+    /// a derivation. Loaded once when the screen opens, written through on the
+    /// gesture that changes it, and the store is the record rather than the
+    /// question.
+    ///
+    /// ⚠ Keyed by the role's NAME for the reason `persist::read_palette`
+    /// states: a map wants an ordering and the taxonomy has none to give.
+    chosen_tints: RefCell<BTreeMap<String, Tint>>,
     /// ★★★★★ R2008 — the two OTHER versions a merge needs, once a person has
     /// named them.
     ///
@@ -2248,26 +2418,7 @@ impl LabState {
         )
         .expect("the root tree exists");
         let mut ids = BTreeMap::new();
-        let mut frames = BTreeMap::new();
-        let mut frame_ids: BTreeMap<&str, NodeId> = BTreeMap::new();
-
-        for frame in spec::FRAMES {
-            let (x, y, _, _) = frame.rect;
-            let id = doc
-                .add_node(
-                    ROOT,
-                    NodeBody::Frame,
-                    i32::try_from(x).unwrap_or(0),
-                    i32::try_from(y).unwrap_or(0),
-                )
-                .expect("the root tree exists");
-            if let Some(node) = doc.tree_mut(ROOT).and_then(|t| t.node_mut(id)) {
-                node.label = Some(format!("{} · {}", frame.name, frame.gist));
-            }
-            frame_ids.insert(frame.name, id);
-            // ★ R2071 — the frames are built into the root, like the cards.
-            frames.insert(NodeAddress::new(ROOT, id), frame.name.to_owned());
-        }
+        let (frame_ids, frames) = seed_frames(&mut doc);
 
         let mut forms = BTreeMap::new();
         seed_nodes(&mut doc, &frame_ids, &mut ids, &mut forms);
@@ -2369,6 +2520,16 @@ impl LabState {
             palette_scroll: Rc::new(ScrollState::with_tag(PALETTE_SCROLL)),
             inspector_scroll: Rc::new(ScrollState::with_tag(INSPECTOR_SCROLL)),
             produced: RefCell::new(Produced::default()),
+            // ★★★★★ R2085 — the palette a person chose LAST time, read once as
+            // the screen opens. A `let` first because the field below borrows
+            // the same handle, and reading it here rather than lazily is what
+            // makes the opening paint the chosen one: a lazy load would show
+            // the canon's colours for a frame and then repaint, which is a
+            // flash a person did not ask for.
+            chosen_tints: {
+                let store = app_storage();
+                RefCell::new(persist::read_palette(store.as_ref()))
+            },
             storage: app_storage(),
             sides: RefCell::new(merging::Sides::default()),
         }
@@ -3307,6 +3468,46 @@ impl Finding {
             Self::Structural(violation) => violation.to_string(),
         }
     }
+}
+
+/// ★★★★★ R2085 — put every declared FRAME on the canvas, and answer both maps
+/// the rest of the opening needs: the frames by name, so a card can be built
+/// into the one its record names, and the screen's own reading of which frame
+/// holds which address.
+///
+/// Lifted out of `opening` beside [`seed_nodes`] and [`seed_links`], which are
+/// the same act for the other two populations — the function delegated two of
+/// its three seeds and inlined the third. What forced the lift is worth
+/// recording because it is not a style preference: `opening` passed the
+/// hundred-line bound the moment this round added one field to it, and the rule
+/// here is that such a bound is paid with STRUCTURE rather than with an
+/// `#[allow]`. The seam that already existed twice is where it goes.
+fn seed_frames(
+    doc: &mut Document<LabNode>,
+) -> (
+    BTreeMap<&'static str, NodeId>,
+    BTreeMap<NodeAddress, String>,
+) {
+    let mut frame_ids: BTreeMap<&'static str, NodeId> = BTreeMap::new();
+    let mut frames = BTreeMap::new();
+    for frame in spec::FRAMES {
+        let (x, y, _, _) = frame.rect;
+        let id = doc
+            .add_node(
+                ROOT,
+                NodeBody::Frame,
+                i32::try_from(x).unwrap_or(0),
+                i32::try_from(y).unwrap_or(0),
+            )
+            .expect("the root tree exists");
+        if let Some(node) = doc.tree_mut(ROOT).and_then(|t| t.node_mut(id)) {
+            node.label = Some(format!("{} · {}", frame.name, frame.gist));
+        }
+        frame_ids.insert(frame.name, id);
+        // ★ R2071 — the frames are built into the root, like the cards.
+        frames.insert(NodeAddress::new(ROOT, id), frame.name.to_owned());
+    }
+    (frame_ids, frames)
 }
 
 /// Put every declared node on the canvas, in its declared frame, holding the
@@ -5310,6 +5511,19 @@ enum Hit {
     Nothing,
     Rail(&'static str),
     Role(Role),
+    /// ★★★★★ R2085 — **the chip that colours a palette GROUP.**
+    ///
+    /// Its own hit rather than a state on [`Self::Role`], because it is a
+    /// different act on a different subject: a role row PLACES a card, and this
+    /// changes what every kind under one heading is drawn in. Folding it into
+    /// the row would make one of the two unreachable, whichever the router
+    /// resolved first — the reasoning [`Self::AdvancedFold`] carries for a
+    /// card's controls.
+    ///
+    /// Carries the heading's own word, which is what the roster declares and
+    /// what the wire publishes, so the pointer half and `tint_group` name a
+    /// group the same way.
+    GroupInk(&'static str),
     /// ★★★★★ R1885 — set which build the SELECTED node runs.
     ///
     /// Its own hit rather than a row of the configuration form, because the
@@ -5748,6 +5962,17 @@ impl Hit {
             // scrolled-to `Querier` row and the screen answered `Publisher`,
             // which is the R1656 class exactly.
             let (px, py) = in_pane(&state.palette_scroll, palette_rect(), px, py);
+            // ★★★★★ R2085 — the heading chips BEFORE the rows, which is the
+            // order this router uses wherever a smaller control sits inside a
+            // larger seat: a chip is inside its group's heading strip and no
+            // role row, so the two cannot actually collide, and asking the
+            // narrower rectangle first is what keeps that true if the strip
+            // ever grows.
+            for (g, run) in spec::palette_groups().iter().enumerate() {
+                if contains(group_ink_rect(g), px, py) {
+                    return Self::GroupInk(run.label);
+                }
+            }
             for (n, role) in Role::ALL.into_iter().enumerate() {
                 if contains(palette_row(n), px, py) {
                     return Self::Role(role);
@@ -5956,6 +6181,11 @@ impl Hit {
         if let Some(role) = address::role_of_row(tag) {
             return Self::Role(role);
         }
+        // ★★★★★ R2085 — the heading's colour chip, through its own inverse for
+        // the same reason: the prefix lives beside the address that spells it.
+        if let Some(label) = address::group_of_ink(tag) {
+            return Self::GroupInk(label);
+        }
         // ★★★★★ R2047 — a control of the definitions register. The VERB is the
         // discriminator and the definition is the remainder.
         // ★★★★★ R2048 — and the remainder is an ID. This round is what found
@@ -6091,6 +6321,11 @@ impl Hit {
             Self::Nothing => "nothing".into(),
             Self::Rail(name) => format!("rail:{name}"),
             Self::Role(role) => format!("role:{}", role.name()),
+            // ★★★★★ R2085 — the group, and not the colour: what the press does
+            // is *advance this heading's colour*, and the value it lands on is
+            // read from the `palette` register rather than spelled into the
+            // word for a press.
+            Self::GroupInk(label) => format!("group-ink:{label}"),
             Self::Definition(held, verb) => format!("definition:{}:{}", verb.word(), held.0),
             Self::Build(stack) => format!("build:{}", stack.word()),
             Self::DiscoveryToggle => "discovery".into(),
@@ -6914,6 +7149,24 @@ fn palette_group_top(g: usize) -> u32 {
         top += palette_group_h(run.len);
     }
     top
+}
+
+/// ★★★★★ R2085 — where the control that colours group `g` sits: the right end
+/// of that group's heading strip, on the strip's own centre line.
+///
+/// Stated in the same unscrolled window frame [`palette_row`] is, so the paint
+/// (which subtracts the body's origin) and the hit test (which folds the pane's
+/// scroll into the query) read ONE rectangle rather than two — the arrangement
+/// R1662 records after a press on a scrolled palette answered the wrong row.
+fn group_ink_rect(g: usize) -> Rect {
+    let (x, _) = palette_body_origin();
+    let strip = Rect::new(x + PAD, palette_group_top(g), palette_body_w(), PAL_HEAD_H);
+    pinion_core::containment::band_in(
+        strip,
+        strip.x + strip.w.saturating_sub(PAL_INK_CHIP),
+        PAL_INK_CHIP,
+        PAL_INK_CHIP,
+    )
 }
 
 fn palette_row(n: usize) -> Rect {
@@ -10015,7 +10268,26 @@ fn palette_body(state: &LabState, ink: Ink, rect: Rect) -> Scene {
             &address::group_head(run.label),
             run.label,
             palette_group_top(g).saturating_sub(palette_body_origin().1),
-            body_w,
+            // ★★★★★ R2085 — the room the heading's words have is what is LEFT
+            // beside the control that colours the group, so a long label clips
+            // rather than running under a chip a person can press. The two
+            // subtract from one width instead of each taking their own.
+            body_w.saturating_sub(PAL_INK_CHIP + PAL_ROW_INSET),
+            ink,
+        ));
+        // ★★★★★ R2085 — **the group's colour, as a thing a person can press.**
+        //
+        // The wire's `tint_group` takes any colour; this is the pointer half,
+        // and it is a CYCLE for R1988's reason, measured on this screen rather
+        // than assumed: the behaviour canon draws no menus, so a choice among a
+        // few values is made by a seat that shows where it is and announces what
+        // the next press does. The values are the distinct colours this group's
+        // own kinds declare, plus back-to-declared — a closed vocabulary the
+        // taxonomy owns, so nothing here invents a colour.
+        children.push(group_ink_chip(
+            state,
+            run.label,
+            local(group_ink_rect(g)),
             ink,
         ));
     }
@@ -10046,7 +10318,7 @@ fn palette_body(state: &LabState, ink: Ink, rect: Rect) -> Scene {
             box_at(
                 &address::role_swatch(role),
                 Rect::new(row.x + 9, inside.y, 3, inside.h),
-                role_ink(role),
+                role_ink(state, role),
                 None,
                 2,
             ),
@@ -10291,6 +10563,31 @@ fn palette_heading(tag: &str, text: &str, strip_top: u32, w: u32, ink: Ink) -> S
         10,
         ink.text_3,
     )
+}
+
+/// ★★★★★ R2085 — the chip at the right end of a group's heading, which is that
+/// group's colour and the control that changes it.
+///
+/// What it SHOWS is the state, never the next press: a swatch that displayed
+/// what pressing would do would be a control that lies about the screen it is
+/// on. So a heading whose kinds agree on a chosen colour is filled with it, and
+/// one whose kinds are drawn in what they declare is hollow — the ordinary
+/// idiom for *nothing is set here*, and honest for this palette in particular,
+/// because the behaviour canon's groups are NOT single-coloured (measured
+/// R2083: three of the five traffic kinds share a colour and two do not), so
+/// filling a hollow chip with one of them would name a colour the group does
+/// not have. `Mixed` takes a stronger edge rather than a fill for the same
+/// reason: something is set under that heading, but not one thing.
+///
+/// The state a chip cannot draw is carried by the announcement beside it, which
+/// is where [`GroupInk::word`] is read a second time.
+fn group_ink_chip(state: &LabState, label: &str, rect: Rect, ink: Ink) -> Scene {
+    let (fill, border) = match group_ink_now(state, label) {
+        GroupInk::Chosen(tint) => (ink_of(tint), ink.outline_2),
+        GroupInk::AsDeclared => (ink.surface, ink.outline_2),
+        GroupInk::Mixed => (ink.surface, ink.text_3),
+    };
+    box_at(&address::group_ink(label), rect, fill, Some(border), 3)
 }
 
 /// The pin legend and the transport chips: three appearances and what each one
@@ -12239,7 +12536,7 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
                 &format!("lab.node.{name}.badge"),
                 shape.badge,
                 ink.surface,
-                Some(role_ink(role)),
+                Some(role_ink(state, role)),
                 4,
             ),
             Silence::part_of(format!("lab.node.{name}")),
@@ -12248,7 +12545,7 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
             role.badge(),
             shape.badge_text,
             shape.badge_font,
-            role_ink(role),
+            role_ink(state, role),
         ));
         // ★★★★★ R1927 — **the behaviour canon's per-node issue dot**, which this
         // screen did not have. There the card carries a small round mark
@@ -14493,6 +14790,10 @@ const FIELDS: &[SchemaField] = &{
         // ★★★★★ R1921 — each card's authored colour and the faces derived from
         // it, published together so a client never re-derives the contrast rule.
         SchemaField::new("tints", "json"),
+        // ★★★★★ R2085 — the palette itself: declared beside chosen, and each
+        // mark's contrast against the ground it lands on. One level up from
+        // `tints` above, which is per CARD.
+        SchemaField::new("palette", "json"),
         // ★★★★★ R1922 — what this graph would ACCEPT, body by body, so an agent
         // deciding what to place reads the row before it places anything.
         SchemaField::new("accepts", "json"),
@@ -15023,6 +15324,27 @@ const FIELDS: &[SchemaField] = &{
             const {
                 &[
                     SchemaArg::open("card", "string"),
+                    SchemaArg::open("colour", "string"),
+                ]
+            },
+        ),
+        // ★★★★★ R2085 — **colour a palette GROUP.** `<group>,#rrggbb` or
+        // `<group>,none`, and the second is the other value the model holds
+        // rather than a clearing special case — R1921's reasoning for the
+        // per-card verb above, one level up the taxonomy.
+        //
+        // The group is drawn from `palette`, which is the register this round
+        // publishes: a heading is a value that EXISTS, so this is a `key` and
+        // not an open string, and the roster it comes from is the one the paint
+        // places its headings from. `colour` stays open for `tint`'s reason —
+        // what a person picks is not a member of anything this screen holds.
+        SchemaField::action_with(
+            "tint_group",
+            "string",
+            ArgForm::Scalar,
+            const {
+                &[
+                    SchemaArg::key("group", "string", "palette"),
                     SchemaArg::open("colour", "string"),
                 ]
             },
@@ -15691,6 +16013,7 @@ impl ExternalIntrospect for LabOracle {
             "editable" => Ok(IntrospectValue::Json(editable_wire(state))),
             // ★★★★★ R1921 — what colour each card is, and what that derives.
             "tints" => Ok(IntrospectValue::Json(tints_wire(state))),
+            "palette" => Ok(IntrospectValue::Json(palette_wire(state))),
             // ★★★★★ R1922 — what this graph would accept, before anything is put in it.
             "accepts" => Ok(IntrospectValue::Json(accepts_wire(state))),
             // ★★★★★ R1923 — what each card says about itself, and who said it.
@@ -16748,6 +17071,14 @@ impl ExternalIntrospect for LabOracle {
                     None => format!("{name} back to its kind's colour"),
                 }));
                 Ok(IntrospectValue::Text(shown))
+            }
+            // ★★★★★ R2085 — colour a whole palette GROUP, or put it back.
+            "tint_group" => {
+                let raw = Self::text(&args)?;
+                let (which, colour) = raw.split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(format!("{raw:?} is not <group>,<colour>"))
+                })?;
+                tint_group(&state, which.trim(), colour.trim()).map(IntrospectValue::Text)
             }
             "put_away_pins" => {
                 let raw = Self::text(&args)?;
@@ -17902,6 +18233,20 @@ fn spec_json() -> serde_json::Value {
             // declared — one of the remainders
             // `debt-a-paint-address-is-retyped-at-every-reader` names.
             "tag": address::group_head(run.label),
+            // ★★★★★ R2085 — and the address of the CONTROL beside the words,
+            // published here for the reason `tag` above is: the specification
+            // conformance walk builds its declared set out of this register, so
+            // a family whose address is not here reads to that walk as *the
+            // screen painted something nobody declared* — which is exactly how
+            // it refused this round's chips on their first sweep.
+            //
+            // ⚠ Beside `tag` rather than instead of it: a heading and its
+            // control are siblings (see `address::GROUP_INK`), and the walk
+            // checks BOTH directions over both, so one of them going missing
+            // cannot hide behind the other. The `palette` register publishes
+            // this same address as `chip` for a client that is choosing — one
+            // declaration, two readers, so they cannot drift.
+            "ink": address::group_ink(run.label),
             "roles": spec::ROLES[run.start..run.end()]
                 .iter().map(|r| r.name).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
@@ -22166,6 +22511,12 @@ fn release(state: &Rc<LabState>) {
     }
     match now {
         Hit::Role(role) => add_node(state, role),
+        // ★★★★★ R2085 — one press advances this heading's colour, through the
+        // same act the wire's verb performs. `next_group_ink` is what decides
+        // WHICH colour, so the two channels cannot write the store differently.
+        Hit::GroupInk(label) => {
+            apply_group_tint(state, label, next_group_ink(state, label));
+        }
         Hit::Build(stack) => set_build(state, stack),
         Hit::DiscoveryToggle => {
             let next = !state.discovery.get();
@@ -24501,6 +24852,24 @@ fn palette_access(state: &LabState) -> Vec<AccessNode> {
     for run in spec::palette_groups() {
         nodes.push(
             AccessNode::new(address::group_head(run.label), AriaRole::Heading).with_name(run.label),
+        );
+        // ★★★★★ R2085 — and the chip beside it, whose NAME carries what a
+        // hollow swatch cannot: which of the three states this heading is in,
+        // and what the next press lands on. R1988's rule for a seat with more
+        // than two positions, and the reason this control can be a cycle at all
+        // — a person who cannot see the colour is told it, and told where
+        // pressing goes, rather than having to press to find out.
+        let now = group_ink_now(state, run.label);
+        nodes.push(
+            AccessNode::new(address::group_ink(run.label), AriaRole::Button)
+                .with_name(format!(
+                    "{} colour — {}; press for {}",
+                    run.label,
+                    now.word(),
+                    next_group_ink(state, run.label)
+                        .map_or_else(|| "the colours these kinds declare".to_owned(), hex_of),
+                ))
+                .with_value(AccessValue::Text(now.word())),
         );
     }
     // ★★★★★ R1999 — over `Role::ALL`, which is what `palette_body` PAINTS.
@@ -26864,7 +27233,218 @@ fn parse_tint(raw: &str) -> Result<Option<Tint>, InvokeError> {
 /// property of the document rather than of each of the three sites below that
 /// paint with it.
 fn card_faces(state: &LabState, node: NodeId) -> Option<Faces> {
+    // ★★★★★ R2085 — **three tiers, and the middle one is this round's.**
+    //
+    // The reference implementation's own order, read at its source: a node's
+    // personal colour overrides the per-CLASS colour a person set in that
+    // editor's theme, which in turn overrides what the kind declares. The
+    // document already answers the first and the third — `Document::faces`
+    // ranks an authored tint above the kind's `drawn_as` — so the layer that
+    // was missing is the one in between, and it goes HERE rather than in the
+    // crate: a chosen palette is a fact about this screen's taxonomy, and the
+    // document is a graph, not a screen.
+    //
+    // ⚠ Telling tier ① from tier ③ is possible only because R1921 kept them
+    // askable apart. `Document::faces` answers ONE `Faces` and cannot say which
+    // rank produced it; `card_tint` answers the authored colour alone, and its
+    // own doc says why that distinction is published — *a client needs to tell
+    // "nobody chose" from "this is what it looks like"*. That sentence was
+    // written four years of rounds before this layer needed it.
+    if card_tint(state, node).is_some() {
+        return state.doc.borrow().faces(state.here(), node);
+    }
+    if let Some(chosen) = state
+        .role_of(node)
+        .and_then(|role| chosen_tint(state, role))
+    {
+        return Some(Faces::of(chosen));
+    }
     state.doc.borrow().faces(state.here(), node)
+}
+
+/// ★★★★★ R2085 — **give a palette GROUP a colour, or put it back to the one
+/// the taxonomy declares.**
+///
+/// The user's instruction is the group, not the role: *make the group colour
+/// choosable*. So the group is what the verb takes, and every role under that
+/// heading is what it writes — which is also the only honest way round, because
+/// the behaviour canon's groups are NOT single-coloured (measured R2083: of the
+/// five traffic roles, three share one colour and two do not), so a store keyed
+/// by group would flatten a distinction the canon draws. Keyed by role, a group
+/// gesture is a group gesture and the model still holds what the canon holds.
+///
+/// ⚠ The members come from each role's OWN `group()` rather than from the run's
+/// `start..end`, which is the same reasoning `spec::palette_groups` is built on:
+/// the partition is what the roles declare, and an index range is a second
+/// spelling of it that a re-ordered roster would silently invalidate.
+///
+/// `none` clears, and clearing is not a special case bolted on — it is the
+/// other value the map holds, exactly as R1921's per-card `tint` reads it.
+fn tint_group(state: &Rc<LabState>, group: &str, colour: &str) -> Result<String, InvokeError> {
+    let run = spec::palette_groups()
+        .iter()
+        .find(|run| run.label == group)
+        .ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "{group:?} is not one of this palette's headings; they are {}",
+                spec::palette_groups()
+                    .iter()
+                    .map(|run| run.label)
+                    .collect::<Vec<_>>()
+                    .join(" / ")
+            ))
+        })?;
+    let wanted = parse_tint(colour)?;
+    Ok(apply_group_tint(state, run.label, wanted))
+}
+
+/// ★★★★★ R2085 — **the act itself**, with the parsing left to whoever is
+/// asking.
+///
+/// One function because there are two channels: the wire's `tint_group`, which
+/// takes any colour a person can spell, and the heading's chip, which takes the
+/// next of the ones its kinds declare. The screen would be free to write the
+/// store one way and announce it another if each channel did its own — the
+/// class R1719 and R1720 each paid for on this very screen — so the write, the
+/// store and the sentence are here and the callers only choose the colour.
+fn apply_group_tint(state: &Rc<LabState>, label: &str, wanted: Option<Tint>) -> String {
+    let members = group_kinds(label);
+    {
+        let mut chosen = state.chosen_tints.borrow_mut();
+        for role in &members {
+            match wanted {
+                Some(tint) => {
+                    chosen.insert(role.name().to_owned(), tint);
+                }
+                None => {
+                    chosen.remove(role.name());
+                }
+            }
+        }
+        // ★ Written through on the gesture, so the store is the RECORD and the
+        // map in hand is the question — `LabState::chosen_tints` says why the
+        // read cannot be the other way round.
+        persist::write_palette(state.storage.as_ref(), &chosen);
+    }
+    let said = match wanted {
+        Some(tint) => {
+            let shown = hex_of(tint);
+            let mut clauses = vec![format!("{} kinds now {shown}", members.len())];
+            clauses.extend(legibility_clause(state, &members, ink_of(tint)));
+            format!("{label} · {}", clauses.join(" · "))
+        }
+        None => format!(
+            "{label} · {} kinds back to the palette's own colours",
+            members.len()
+        ),
+    };
+    state.say(Utterance::done(said.clone()));
+    said
+}
+
+/// ★★★★★ R2085 — what one palette heading's kinds say their colour is.
+///
+/// Three answers and not `Option<Tint>`, because the third is a real state
+/// rather than a hole: a heading whose kinds carry DIFFERENT chosen colours has
+/// no colour, and saying it has one — the first member's, say — would be
+/// publishing a fact about the roster's order. R1928's reasoning for `Drawn`'s
+/// three arms, on the group axis.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GroupInk {
+    /// Every kind under the heading carries this chosen colour.
+    Chosen(Tint),
+    /// No kind under it carries one, so each is drawn in what it declares.
+    AsDeclared,
+    /// The kinds disagree — some carry a chosen colour and some do not, or they
+    /// carry different ones. Reachable from a store a person edited by hand,
+    /// which is exactly why it is a state and not an assertion.
+    Mixed,
+}
+
+impl GroupInk {
+    /// The words an announcement uses for this state.
+    fn word(self) -> String {
+        match self {
+            Self::Chosen(tint) => hex_of(tint),
+            Self::AsDeclared => "as declared".to_owned(),
+            Self::Mixed => "mixed".to_owned(),
+        }
+    }
+}
+
+/// The kinds under one palette heading, in palette order.
+///
+/// ⚠ From each role's OWN `group()` rather than from the run's `start..end`,
+/// which is what `spec::palette_groups` is itself built on: the partition is
+/// what the roles declare, and an index range is a second spelling of it that a
+/// re-ordered roster would silently invalidate.
+fn group_kinds(label: &str) -> Vec<Role> {
+    Role::ALL
+        .into_iter()
+        .filter(|role| role.group() == label)
+        .collect()
+}
+
+/// ★★★★★ R2085 — [`GroupInk`] for the heading `label`.
+fn group_ink_now(state: &LabState, label: &str) -> GroupInk {
+    let mut picked = group_kinds(label)
+        .into_iter()
+        .map(|role| chosen_tint(state, role));
+    let first = picked.next().flatten();
+    let agreed = picked.all(|held| held == first);
+    match (agreed, first) {
+        (false, _) => GroupInk::Mixed,
+        (true, Some(tint)) => GroupInk::Chosen(tint),
+        (true, None) => GroupInk::AsDeclared,
+    }
+}
+
+/// ★★★★★ R2085 — the colours a heading's chip offers, in palette order: the
+/// distinct colours its own kinds DECLARE.
+///
+/// The vocabulary the pointer half cycles through, and the taxonomy owns every
+/// value in it — so a person pressing the chip can only ever land on a colour
+/// this palette already contains, and the round invents no colour of its own.
+/// An arbitrary colour is the wire's to give (`tint_group`), which is the same
+/// split the per-card verb has: R1921 gave a card any colour over the wire and
+/// no pointer chose one.
+fn group_ink_ring(label: &str) -> Vec<Tint> {
+    let mut ring: Vec<Tint> = Vec::new();
+    for role in group_kinds(label) {
+        if !ring.contains(&role.tint()) {
+            ring.push(role.tint());
+        }
+    }
+    ring
+}
+
+/// ★★★★★ R2085 — what the chip's next press would set, `None` being *back to
+/// the colours the kinds declare*.
+///
+/// The ring's order is the palette's, and the state after the last entry is the
+/// cleared one — so a person who presses past the end is where they started
+/// rather than stuck in a colour they have to know a verb to undo. A colour the
+/// ring does not contain (the wire gave it one) and a heading whose kinds
+/// disagree both go to the ring's first entry, which is the press that makes
+/// the heading say one thing again.
+fn next_group_ink(state: &LabState, label: &str) -> Option<Tint> {
+    let ring = group_ink_ring(label);
+    match group_ink_now(state, label) {
+        GroupInk::Chosen(now) => match ring.iter().position(|tint| *tint == now) {
+            Some(at) => ring.get(at + 1).copied(),
+            None => ring.first().copied(),
+        },
+        GroupInk::AsDeclared | GroupInk::Mixed => ring.first().copied(),
+    }
+}
+
+/// ★★★★★ R2085 — the colour a person chose for this ROLE, if they chose one.
+///
+/// The one reader of [`LabState::chosen_tints`], so every mark that takes a
+/// role's colour — the palette swatch, a card's badge, a card's body — asks the
+/// same question and cannot answer it differently.
+fn chosen_tint(state: &LabState, role: Role) -> Option<Tint> {
+    state.chosen_tints.borrow().get(role.name()).copied()
 }
 
 /// ★★★★★ R1921 — the colour a person gave this card, if any.
@@ -27543,6 +28123,102 @@ fn drawn_wire(state: &Rc<LabState>, node: NodeId) -> serde_json::Value {
 /// client to re-derive, because re-deriving them is exactly the duplication
 /// `Faces` exists to remove: a second implementation of the contrast rule
 /// would be free to disagree with the one the screen paints with.
+/// ★★★★★ R2085 — **the palette a person is looking at**: what each role is
+/// declared as, what was chosen over it, and whether the choice is legible
+/// where this screen paints it.
+///
+/// Three things a client could not ask before this round, each for its own
+/// reason:
+///
+/// * **the choice**, because until now there was none. The `roles` row of the
+///   specification publishes `tint`, which is what the TAXONOMY declares — a
+///   constant — and a screen whose palette can be re-coloured needs to say
+///   *what it looks like now* somewhere a constant cannot.
+/// * **"nobody chose" told apart from "this is what it looks like"**, which is
+///   R1921's rule for a card's colour applied to a kind's. `declared` and
+///   `chosen` are published beside each other and `ink` is the outcome, so no
+///   reader has to re-derive the ranking that decides it.
+/// * **the measurement**, which is this screen's first. `contrast_ratio` has
+///   been in the tree since R1546 and `legibility::Floor` since R1807, and
+///   nothing on this screen had ever put one of its colours to either — the
+///   defect [`legibility_clause`] records the numbers for.
+///
+/// ⚠ The group rows and the role rows both key the group by `group`, so the
+/// `tint_group` argument declared against this register expands to the same
+/// seven values whichever half a client reads. `head` is the address the
+/// heading is painted under, published for R2049's reason: a walk is Python and
+/// cannot call the declaration that builds it.
+fn palette_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let members = |label: &str| -> Vec<Role> {
+        Role::ALL
+            .into_iter()
+            .filter(|role| role.group() == label)
+            .collect()
+    };
+    let groups: Vec<serde_json::Value> = spec::palette_groups()
+        .iter()
+        .map(|run| {
+            let kinds = members(run.label);
+            let picked: Vec<Option<Tint>> =
+                kinds.iter().map(|role| chosen_tint(state, *role)).collect();
+            // ★ One colour for the heading only when the heading's kinds AGREE.
+            // A group half of whose kinds were re-coloured one at a time has no
+            // colour, and saying it has one — the first member's, say — would be
+            // a fact about the roster's order.
+            let agreed = picked.iter().all(|held| *held == picked[0]);
+            serde_json::json!({
+                "group": run.label,
+                "head": address::group_head(run.label),
+                // ★★★★★ R2085 — and the address of the CONTROL, which is the
+                // one a client presses. Published for R2049's reason and with
+                // its own measurement behind it: this round's chip is a mark a
+                // walk cannot reach by calling the declaration, and the
+                // heading's address is not it — they are siblings on purpose.
+                "chip": address::group_ink(run.label),
+                "kinds": kinds.iter().map(|role| role.name()).collect::<Vec<_>>(),
+                // ★★★★★ R2085 — the colours the chip's presses walk through, so
+                // a client can predict the cycle instead of pressing to find
+                // out — and so a walk asserting where a press lands reads the
+                // vocabulary from the taxonomy rather than typing a hex.
+                "ring": group_ink_ring(run.label).iter().copied()
+                    .map(hex_of).collect::<Vec<_>>(),
+                "chosen": agreed.then_some(picked[0]).flatten().map(hex_of),
+                "mixed": !agreed,
+            })
+        })
+        .collect();
+    let roles: Vec<serde_json::Value> = Role::ALL
+        .into_iter()
+        .map(|role| {
+            let paint = role_ink(state, role);
+            serde_json::json!({
+                "role": role.name(),
+                "group": role.group(),
+                "declared": hex_of(role.tint()),
+                "chosen": chosen_tint(state, role).map(hex_of),
+                // ★ The OUTCOME, through the one function the paint uses, so a
+                // client comparing this with the swatch it is about cannot find
+                // them unequal. `hex_of` takes a `Tint`, and this is a scene
+                // `Color`, so the channels are named rather than converted
+                // through a second spelling of the format.
+                "ink": format!("#{:02X}{:02X}{:02X}", paint.r, paint.g, paint.b),
+                "marks": role_marks(state, role).iter().map(|mark| serde_json::json!({
+                    "mark": mark.mark,
+                    "ground": format!(
+                        "#{:02X}{:02X}{:02X}",
+                        mark.ground.r, mark.ground.g, mark.ground.b
+                    ),
+                    "floor": mark.floor.name(),
+                    "asks": f64::from(mark.floor.ratio()),
+                    "ratio": f64::from(mark.ratio(paint)),
+                    "clears": mark.clears(paint),
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    serde_json::json!({ "groups": groups, "roles": roles })
+}
+
 fn tints_wire(state: &Rc<LabState>) -> serde_json::Value {
     let rows: Vec<serde_json::Value> = state
         .cards()

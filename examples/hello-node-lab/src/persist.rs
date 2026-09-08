@@ -48,15 +48,100 @@ use pinion_core::Storage;
 use pinion_core::selection::Selection;
 use pinion_core::utterance::{Tone, Utterance};
 use pinion_core::widgets::config_form::ConfigForm;
-use pinion_node_graph::{Archive, Condition, Document, NodeAddress, NodeId, ROOT, Violation};
+use pinion_node_graph::{Archive, Condition, Document, NodeAddress, NodeId, ROOT, Tint, Violation};
 use serde::{Deserialize, Serialize};
 
 use crate::graph::LabNode;
 use crate::{LabState, Placement};
 
-/// The one [`Storage`] key the whole graph is written under — one blob, so the
+/// The [`Storage`] key the whole graph is written under — one blob, so the
 /// file backend's tempfile-and-rename covers the whole save.
 pub const STORAGE_KEY: &str = "node_lab.graph";
+
+/// ★★★★★ R2085 — **the colours a person chose for this screen's roles**, and
+/// the reason they are a SECOND key rather than part of the graph.
+///
+/// # Why not in the graph
+///
+/// A chosen colour is a fact about **this screen's taxonomy**, not about the
+/// document on the canvas. Written into the graph it would travel with a saved
+/// file, so opening somebody else's topology would repaint the palette — and
+/// closing that file would take the choice away again. Measured against the
+/// three other places it could live (R2083, R2084): the theme is the reference
+/// implementation's home for exactly this, and `use_theme` here is already
+/// per-tag so the old objection that another screen would inherit it is false;
+/// but our `Theme` is a closed `ColorRole` vocabulary and this screen's roles
+/// are not roles of it. `Storage` already takes any key and this screen used
+/// exactly one, so a second key is the seam that exists.
+///
+/// ⚠ **A different key, not a bigger blob.** The graph key is written on a
+/// person's SAVE and read on their OPEN; this one is written the moment a
+/// colour is chosen and read when the screen opens. Folding them would tie a
+/// palette choice to the save button, which is not what a person means by
+/// choosing a colour.
+pub const PALETTE_KEY: &str = "node_lab.palette";
+
+/// ★★★★★ R2085 — the chosen colours, read back as the roles they belong to.
+///
+/// One line per role, `Name=#RRGGBB`, in the ONE hex spelling this wire already
+/// uses ([`crate::hex_of`]) — R1940 measured the cost of a second: one colour
+/// had two spellings and a client comparing a card with the pin it takes its
+/// colour from found them unequal.
+///
+/// ⚠ **A line this screen cannot resolve is DROPPED, not an error.** The store
+/// outlives the roster: a role renamed or retired leaves a line naming nobody,
+/// and refusing the whole document over it would lose every other choice a
+/// person made. What it must never do is guess — an unresolvable name is not
+/// "the nearest role", it is a choice that no longer has anywhere to go.
+/// ⚠ Keyed by the role's NAME and not by [`crate::Role`], which is a decision
+/// rather than a workaround: a `BTreeMap` wants `Ord`, and giving the taxonomy
+/// an ordering would be inventing "this role is less than that one" — a
+/// sentence the domain does not have — so that a container could sort. The name
+/// is what the store already writes, what [`crate::Role::from_name`] resolves,
+/// and what the published roster is keyed by, so it is the key that exists.
+#[must_use]
+pub fn read_palette(storage: &dyn Storage) -> std::collections::BTreeMap<String, Tint> {
+    let Some(text) = storage
+        .load(PALETTE_KEY)
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+    else {
+        return std::collections::BTreeMap::new();
+    };
+    text.lines()
+        .filter_map(|line| {
+            let (name, hex) = line.split_once('=')?;
+            // Resolved through the taxonomy rather than trusted as text: a line
+            // naming nobody is dropped here, so nothing downstream has to ask
+            // whether a key is a role.
+            let role = crate::Role::from_name(name.trim())?;
+            parse_hex(hex.trim()).map(|tint| (role.name().to_owned(), tint))
+        })
+        .collect()
+}
+
+/// The inverse of [`crate::hex_of`], and the only place this screen reads a
+/// colour back out of text.
+fn parse_hex(hex: &str) -> Option<Tint> {
+    let digits = hex.strip_prefix('#')?;
+    if digits.len() != 6 || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let byte = |at: usize| u8::from_str_radix(&digits[at..at + 2], 16).ok();
+    Some(Tint::rgb(byte(0)?, byte(2)?, byte(4)?))
+}
+
+/// ★★★★★ R2085 — write the chosen colours back, sorted by the role's own name.
+///
+/// Sorted so the bytes are a function of the choices and not of the order they
+/// were made in: a store that reshuffles itself on every write is one nobody
+/// can diff, and this screen's walks read files.
+pub fn write_palette(storage: &dyn Storage, chosen: &std::collections::BTreeMap<String, Tint>) {
+    let lines: Vec<String> = chosen
+        .iter()
+        .map(|(name, tint)| format!("{name}={}", crate::hex_of(*tint)))
+        .collect();
+    storage.save(PALETTE_KEY, lines.join("\n").as_bytes());
+}
 
 /// The per-OS data directory this screen's saves live in.
 ///

@@ -1066,6 +1066,29 @@ fn r2049_a_role_address_is_typed_in_one_place() {
         super::address::GROUP_HEAD_TEMPLATE,
         format!("{}{{}}", super::address::GROUP_HEAD)
     );
+    // ★ R2085 — and the heading's colour chip, whose family the paint census
+    // demanded on its first run.
+    assert_eq!(
+        super::address::GROUP_INK_TEMPLATE,
+        format!("{}{{}}", super::address::GROUP_INK)
+    );
+    // ★★ The chip's address and its inverse, over every heading — the pair
+    // that decides whether a press lands at all.
+    for run in spec::palette_groups() {
+        assert_eq!(
+            super::address::group_of_ink(&super::address::group_ink(run.label)),
+            Some(run.label),
+            "★ {}'s chip does not round-trip",
+            run.label,
+        );
+    }
+    assert_eq!(
+        super::address::group_of_ink(&super::address::group_head("traffic")),
+        None,
+        "★★★★★ a heading is not its own chip — the two are siblings for exactly \
+         this reason, and a prefix that swallowed the suffix would resolve a \
+         press on the words to the control beside them",
+    );
     // ★★ The address and its inverse are one pair, driven over every role: a
     // parse written against a different prefix is a press that lands on nothing
     // and a screen that simply does not respond.
@@ -7485,9 +7508,9 @@ fn r1980_a_reported_seat_is_not_taken_by_a_re_aimed_wire() {
 /// A prose rule saying "read `here()`, not the constant" is a rule nobody
 /// performs — this repository's own recurring finding. The number may fall and
 /// may not rise: a new site is either construction, and belongs in one of the
-/// three functions below, or it is a screen read that has quietly gone back to
-/// assuming there is one graph. The failure message says which is which so the
-/// next author does not have to work it out.
+/// builder functions below, or it is a screen read that has quietly gone back
+/// to assuming there is one graph. The failure message says which is which so
+/// the next author does not have to work it out.
 ///
 /// ⚠ It reads THIS FILE'S SIBLING and not the built binary, so it is a check on
 /// what was written. That is the point: the defect it guards is authorial.
@@ -7498,13 +7521,26 @@ fn r1980_a_reported_seat_is_not_taken_by_a_re_aimed_wire() {
 /// one hand-written constant is the whole of a gate, the constant is not the
 /// gate, it is the accomplice. What is asserted instead is a PROPERTY with no
 /// number in it — every site that names the root outright is inside one of the
-/// three functions that BUILD the root — so a new read cannot be admitted by
-/// editing a figure, and a new construction site needs no edit at all.
+/// functions that BUILD the root — so a new read cannot be admitted by editing
+/// a figure, and a new construction site needs no edit at all.
+///
+/// ⚠ R2085 — "needs no edit at all" is the one sentence here that is not quite
+/// true, and the round that lifted a builder OUT of a builder is what measured
+/// it: `BUILDERS` is a list of names, so an extraction has to say so. That is
+/// still not a budget — the list is the property's population and a wrong
+/// entry admits nothing beyond one function — but a reader landing here from
+/// this gate's own refusal should know the edit is legitimate.
 #[test]
 fn r1981_the_screen_names_the_root_only_where_it_builds_it() {
     /// The functions that build the opening graph INTO the root, where naming
     /// it is the answer rather than an assumption.
-    const BUILDERS: [&str; 3] = ["opening", "seed_nodes", "seed_links"];
+    /// ★ R2085 — `seed_frames` is the FOURTH, and it joined by extraction
+    /// rather than by a new claim: the frame loop was inside `opening`, which
+    /// is on this list, and moved out when `opening` passed the hundred-line
+    /// lint. A builder lifted out of a builder is still a builder — and this
+    /// gate is what said so, in the same run, which is the difference between
+    /// a list and a comment.
+    const BUILDERS: [&str; 4] = ["opening", "seed_nodes", "seed_links", "seed_frames"];
     /// The reads whose subject is the WHOLE DOCUMENT rather than the tree on
     /// screen, where the root is the answer and not an assumption.
     ///
@@ -7584,8 +7620,8 @@ fn r1981_the_screen_names_the_root_only_where_it_builds_it() {
 
     assert!(
         stray.is_empty(),
-        "★★★★★ {} site(s) name the root tree outright OUTSIDE the three \
-         functions that build it ({BUILDERS:?}). A read this screen makes has \
+        "★★★★★ {} site(s) name the root tree outright OUTSIDE the functions \
+         that build it ({BUILDERS:?}). A read this screen makes has \
          to ask `LabState::here()`, or the tool can only ever show one graph — \
          which is the defect R1981 repaired at 185 sites. {stray:#?}",
         stray.len()
@@ -9276,4 +9312,588 @@ fn r2078_the_wire_carries_every_fact_a_role_declares() {
             );
         }
     });
+}
+
+/// ★★★★★ R2085 — **a palette group takes a colour a person chose, and gives it
+/// back.**
+///
+/// Driven through the wire, because a declaration has been a precondition of
+/// dispatch since R1637: a verb reachable only from a pointer handler would
+/// answer `UnknownIntrospectPath` here, so this proves the declaration as well
+/// as the act.
+///
+/// The register is read through `super::palette_wire` rather than through the
+/// oracle, which is how this file reads every other published value: what it
+/// asserts is that the screen's own derivation says these things, and the
+/// oracle's arm is one line over it.
+#[test]
+fn r2085_a_palette_group_takes_a_colour_and_gives_it_back() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let mut oracle = super::LabOracle::new();
+        oracle.attach(std::rc::Rc::clone(&state));
+
+        nobody_has_chosen_a_palette_colour_yet(&state);
+        let kinds = a_heading_takes_a_colour_and_keeps_it(&state, &mut oracle);
+        the_word_none_gives_the_heading_back(&state, &mut oracle, &kinds);
+        a_heading_or_a_colour_this_screen_has_not_is_refused(&mut oracle);
+    });
+}
+
+/// The palette register's row for one heading.
+fn palette_group_row(published: &serde_json::Value, label: &str) -> serde_json::Value {
+    published["groups"]
+        .as_array()
+        .expect("the palette publishes its headings")
+        .iter()
+        .find(|row| row["group"] == serde_json::json!(label))
+        .unwrap_or_else(|| panic!("no heading called {label:?}"))
+        .clone()
+}
+
+/// The palette register's row for one kind.
+fn palette_role_row(published: &serde_json::Value, name: &str) -> serde_json::Value {
+    published["roles"]
+        .as_array()
+        .expect("the palette publishes its kinds")
+        .iter()
+        .find(|row| row["role"] == serde_json::json!(name))
+        .unwrap_or_else(|| panic!("no kind called {name:?}"))
+        .clone()
+}
+
+/// Phase 1 — **the opening screen**: nobody has chosen anything, and the
+/// register says so in the two ways R1921's rule needs kept apart — `chosen` is
+/// absent, and `ink` is what the taxonomy declares.
+fn nobody_has_chosen_a_palette_colour_yet(state: &std::rc::Rc<LabState>) {
+    let before = super::palette_wire(state);
+    for role in Role::ALL {
+        let row = palette_role_row(&before, role.name());
+        assert!(
+            row["chosen"].is_null(),
+            "{} opens with nobody having chosen a colour: {row}",
+            role.name(),
+        );
+        assert_eq!(
+            row["ink"],
+            row["declared"],
+            "{} opens drawn in the colour it declares",
+            role.name(),
+        );
+    }
+    for run in spec::palette_groups() {
+        let row = palette_group_row(&before, run.label);
+        assert!(
+            row["chosen"].is_null() && row["mixed"] == serde_json::json!(false),
+            "{} opens with no chosen colour and no disagreement: {row}",
+            run.label,
+        );
+        assert_eq!(
+            row["head"],
+            serde_json::json!(super::address::group_head(run.label)),
+            "{}'s heading publishes the address it is painted under",
+            run.label,
+        );
+    }
+}
+
+/// Phase 2 — **the heading takes a colour**, every kind under it takes it, no
+/// kind under another heading moves, and the store holds it.
+///
+/// Hands back the kinds it coloured. The answer the verb gives is asserted to
+/// name what moved: a caller told only `ok` has to re-query to find out whether
+/// the verb did anything.
+fn a_heading_takes_a_colour_and_keeps_it(
+    state: &std::rc::Rc<LabState>,
+    oracle: &mut super::LabOracle,
+) -> Vec<Role> {
+    use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+
+    let kinds: Vec<Role> = Role::ALL
+        .into_iter()
+        .filter(|role| role.group() == "traffic")
+        .collect();
+    let said = match oracle
+        .invoke(
+            "tint_group",
+            IntrospectValue::Text("traffic,#2D6CDF".to_owned()),
+        )
+        .expect("traffic is one of this palette's headings")
+    {
+        IntrospectValue::Text(text) => text,
+        other => panic!("the verb answers text: {other:?}"),
+    };
+    for clause in ["traffic", &format!("{} kinds", kinds.len()), "#2D6CDF"] {
+        assert!(
+            said.contains(clause),
+            "the answer must carry {clause:?}: {said}"
+        );
+    }
+
+    let after = super::palette_wire(state);
+    assert_eq!(
+        palette_group_row(&after, "traffic")["chosen"],
+        serde_json::json!("#2D6CDF"),
+        "the heading carries the colour its kinds agree on",
+    );
+    assert_eq!(
+        palette_group_row(&after, "traffic")["mixed"],
+        serde_json::json!(false),
+        "and they agree",
+    );
+    for role in Role::ALL {
+        let row = palette_role_row(&after, role.name());
+        if role.group() == "traffic" {
+            assert_eq!(
+                row["chosen"],
+                serde_json::json!("#2D6CDF"),
+                "{} is under the heading that was coloured",
+                role.name(),
+            );
+            assert_eq!(row["ink"], row["chosen"], "{} is drawn in it", role.name());
+        } else {
+            assert!(
+                row["chosen"].is_null(),
+                "{} is under another heading and must not have moved: {row}",
+                role.name(),
+            );
+        }
+    }
+
+    // It is on the STORE, not only in the screen — read back through the reader
+    // the screen opens with, so what is asserted is a round trip rather than
+    // the bytes' shape.
+    let kept = super::persist::read_palette(state.storage.as_ref());
+    assert_eq!(
+        kept.len(),
+        kinds.len(),
+        "the store holds one line per coloured kind: {kept:?}",
+    );
+    for role in &kinds {
+        assert_eq!(
+            kept.get(role.name()).copied().map(super::hex_of),
+            Some("#2D6CDF".to_owned()),
+            "{} survives the store",
+            role.name(),
+        );
+    }
+    kinds
+}
+
+/// Phase 3 — **`none` gives it back**: the other value the map holds, not a
+/// clearing special case bolted on.
+fn the_word_none_gives_the_heading_back(
+    state: &std::rc::Rc<LabState>,
+    oracle: &mut super::LabOracle,
+    kinds: &[Role],
+) {
+    use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+
+    oracle
+        .invoke(
+            "tint_group",
+            IntrospectValue::Text("traffic,none".to_owned()),
+        )
+        .expect("a heading can be put back");
+    let back = super::palette_wire(state);
+    for role in kinds {
+        let row = palette_role_row(&back, role.name());
+        assert!(
+            row["chosen"].is_null(),
+            "{} is back to nobody having chosen: {row}",
+            role.name(),
+        );
+        assert_eq!(
+            row["ink"],
+            row["declared"],
+            "{} is drawn in what it declares again",
+            role.name(),
+        );
+    }
+    assert!(
+        super::persist::read_palette(state.storage.as_ref()).is_empty(),
+        "and the store is empty again — a put-back that left a file behind is \
+         one a reload undoes",
+    );
+}
+
+/// Phase 4 — **a heading nobody has offers the seven that exist**, and a colour
+/// this screen cannot read is refused by the same reader the per-card verb uses
+/// rather than approximated.
+fn a_heading_or_a_colour_this_screen_has_not_is_refused(oracle: &mut super::LabOracle) {
+    use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+
+    let refused = format!(
+        "{:?}",
+        oracle
+            .invoke(
+                "tint_group",
+                IntrospectValue::Text("cats,#000000".to_owned())
+            )
+            .expect_err("there is no heading called cats"),
+    );
+    for run in spec::palette_groups() {
+        assert!(
+            refused.contains(run.label),
+            "the refusal must offer {}: {refused}",
+            run.label,
+        );
+    }
+    assert!(
+        oracle
+            .invoke(
+                "tint_group",
+                IntrospectValue::Text("traffic,bright red".to_owned()),
+            )
+            .is_err(),
+        "a colour this screen cannot read is refused",
+    );
+}
+
+/// ★★★★★ R2085 — **a person presses the heading's chip and the whole group
+/// takes a colour**, through the colours its own kinds declare and back.
+///
+/// The pointer half of the group gesture. It is a CYCLE because the behaviour
+/// canon draws no menus (R1988's rule for a seat with more than two positions),
+/// and what it cycles through is the taxonomy's own colours — so this test's
+/// population is `group_ink_ring`, never a colour written here.
+///
+/// ⚠ The chip is asked for at the point it is PAINTED at, through `Hit::at`,
+/// which is the half R2047 found a round could miss: a control can be drawn,
+/// declared and announced and still be inert to a cursor, because the by-name
+/// router and the point router are two answers.
+#[test]
+fn r2085_the_headings_chip_walks_the_colours_its_kinds_declare() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        // The pane derives its extent from its children, so a press cannot be
+        // asked before one paint has happened.
+        super::painted::render_so_a_press_can_be_asked(&state);
+        state.scroll_palette_to(0);
+
+        // The first heading, which is in view with the pane parked, and whose
+        // kinds declare more than one colour — a single-colour group would make
+        // every assertion below pass on a two-state cycle.
+        let label = spec::palette_groups()[0].label;
+        let ring = super::group_ink_ring(label);
+        assert!(
+            ring.len() >= 2,
+            "★ this fixture needs a heading whose kinds declare several colours; \
+             {label} declares {}",
+            ring.len(),
+        );
+
+        let chip = super::group_ink_rect(0);
+        let (cx, cy) = (chip.x + chip.w / 2, chip.y + chip.h / 2);
+        assert_eq!(
+            Hit::at(&state, cx, cy),
+            Hit::GroupInk(label),
+            "★★★★★ the chip is pressable at the point it is painted at",
+        );
+        assert_eq!(
+            Hit::of_tag(&state, &super::address::group_ink(label)),
+            Hit::GroupInk(label),
+            "★ and by the address it is painted under — a control needs both \
+             halves, which is what R2047's walk said",
+        );
+
+        let press = |state: &std::rc::Rc<LabState>| {
+            super::move_cursor(state, cx, cy);
+            super::press(state);
+            super::release(state);
+        };
+        let kinds: Vec<Role> = Role::ALL
+            .into_iter()
+            .filter(|role| role.group() == label)
+            .collect();
+        let chosen = |state: &std::rc::Rc<LabState>| -> Vec<Option<String>> {
+            kinds
+                .iter()
+                .map(|role| super::chosen_tint(state, *role).map(super::hex_of))
+                .collect()
+        };
+
+        assert!(
+            chosen(&state).iter().all(Option::is_none),
+            "the screen opens with nobody having chosen",
+        );
+        for (step, want) in ring.iter().enumerate() {
+            press(&state);
+            let want = Some(super::hex_of(*want));
+            assert_eq!(
+                chosen(&state),
+                vec![want.clone(); kinds.len()],
+                "press {} puts every kind under {label} in {want:?}",
+                step + 1,
+            );
+        }
+        // One press past the end is where a person started. A cycle that
+        // stopped on its last colour would leave a person who pressed once too
+        // often needing a verb they cannot see to undo it.
+        press(&state);
+        assert!(
+            chosen(&state).iter().all(Option::is_none),
+            "★★★★★ the press after the last colour is back to the ones these \
+             kinds declare: {:?}",
+            chosen(&state),
+        );
+        assert!(
+            super::persist::read_palette(state.storage.as_ref()).is_empty(),
+            "and the store came back with it",
+        );
+    });
+}
+
+/// ★★★★★ R2085 — **the ranking: a card a person coloured beats the heading its
+/// kind sits under, which beats what the kind declares.**
+///
+/// Three tiers, and the middle one is this round's. Asserted through the faces
+/// the canvas actually paints with, because that register is what R1940 made
+/// the one answer to *what is this card drawn as* — a test reading the chosen
+/// map directly would be asserting the store rather than the screen.
+#[test]
+fn r2085_a_card_beats_its_heading_and_a_heading_beats_the_kind() {
+    use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let mut oracle = super::LabOracle::new();
+        oracle.attach(std::rc::Rc::clone(&state));
+
+        // A card of a traffic kind, so the heading gesture below reaches it.
+        let subject = Role::Publisher;
+        assert_eq!(
+            subject.group(),
+            "traffic",
+            "this fixture needs a kind under the heading it colours",
+        );
+        let standing: BTreeSet<NodeId> = state.cards().into_iter().collect();
+        super::add_node(&state, subject);
+        let node = *state
+            .cards()
+            .iter()
+            .rev()
+            .find(|node| !standing.contains(node))
+            .expect("the palette put a card on the canvas");
+        let title = |state: &std::rc::Rc<LabState>| -> String {
+            super::tints_wire(state)["nodes"]
+                .as_array()
+                .expect("the register publishes its cards")
+                .iter()
+                .find(|row| row["node"] == serde_json::json!(state.name_of(node)))
+                .expect("the card we just placed")["faces"]["title"]
+                .as_str()
+                .expect("a placed card has faces")
+                .to_owned()
+        };
+
+        // ③ the kind's own colour, which is where this screen has always been.
+        assert_eq!(
+            title(&state),
+            super::hex_of(subject.tint()),
+            "a card nobody has coloured is drawn in what its kind declares",
+        );
+
+        // ② the heading's chosen colour, which is what this round adds.
+        oracle
+            .invoke(
+                "tint_group",
+                IntrospectValue::Text("traffic,#1F8A4C".to_owned()),
+            )
+            .expect("traffic is a heading");
+        assert_eq!(
+            title(&state),
+            "#1F8A4C",
+            "a card whose kind's heading was coloured is drawn in that colour",
+        );
+
+        // ① the card's own colour, which was already above the kind (R1921) and
+        // must stay above the heading too: a person who coloured ONE card did
+        // not ask for a palette.
+        oracle
+            .invoke(
+                "tint",
+                IntrospectValue::Text(format!("{},#C77800", state.name_of(node))),
+            )
+            .expect("a card takes a colour");
+        assert_eq!(
+            title(&state),
+            "#C77800",
+            "the card a person coloured outranks the heading its kind sits under",
+        );
+
+        // And taking the card's colour away falls back to the HEADING and not
+        // to the kind — the assertion that fails if the middle tier is reached
+        // only where a card has never been coloured.
+        oracle
+            .invoke(
+                "tint",
+                IntrospectValue::Text(format!("{},none", state.name_of(node))),
+            )
+            .expect("a card gives its colour back");
+        assert_eq!(
+            title(&state),
+            "#1F8A4C",
+            "with the card's own colour gone the heading's is what is left",
+        );
+    });
+}
+
+/// ★★★★★ R2085 — **a chosen colour is measured against the ground it lands on,
+/// and the screen says when it is under the standard.**
+///
+/// This screen's first legibility measurement of any kind: `contrast_ratio` has
+/// been in the tree since R1546 and `legibility::Floor` since R1807, and nothing
+/// here had ever put one of its own colours to either.
+///
+/// ⚠ Asserted as BEHAVIOUR rather than by re-deriving WCAG. A second
+/// implementation of the ratio in the test would be free to disagree with the
+/// one the screen reports, which is the duplication `Faces` exists to remove
+/// one axis over. So the fixture uses the two colours whose verdict needs no
+/// arithmetic — black on a dark screen clears nothing, white clears
+/// everything — plus the internal consistency every row must have.
+#[test]
+fn r2085_a_chosen_colour_is_measured_where_it_lands() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let mut oracle = super::LabOracle::new();
+        oracle.attach(std::rc::Rc::clone(&state));
+
+        every_mark_is_judged_by_its_own_two_numbers(&state);
+        a_colour_under_the_floor_is_taken_and_said(&state, &mut oracle);
+        a_colour_that_clears_every_floor_is_said_without_a_clause(&state, &mut oracle);
+    });
+}
+
+/// The marks one kind's colour is painted as, off the register.
+fn palette_marks(state: &std::rc::Rc<LabState>, role: Role) -> Vec<serde_json::Value> {
+    palette_role_row(&super::palette_wire(state), role.name())["marks"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{} publishes no marks", role.name()))
+        .clone()
+}
+
+/// Phase 1 — **every kind, every mark**: the three marks `role_ink`'s own doc
+/// names, each held to a floor, each verdict agreeing with its own two numbers.
+fn every_mark_is_judged_by_its_own_two_numbers(state: &std::rc::Rc<LabState>) {
+    for role in Role::ALL {
+        let rows = palette_marks(state, role);
+        let named: Vec<&str> = rows
+            .iter()
+            .map(|row| row["mark"].as_str().expect("a mark has a name"))
+            .collect();
+        assert_eq!(
+            named,
+            vec!["swatch", "badge_border", "badge_text"],
+            "{} publishes the three marks this screen paints in its colour",
+            role.name(),
+        );
+        for row in &rows {
+            let ratio = row["ratio"].as_f64().expect("a measured ratio");
+            let asks = row["asks"].as_f64().expect("the floor's own threshold");
+            assert_eq!(
+                row["clears"],
+                serde_json::json!(ratio >= asks),
+                "{}'s {} verdict must be its own two numbers: {row}",
+                role.name(),
+                row["mark"],
+            );
+            assert!(
+                (1.0..=21.0).contains(&ratio),
+                "{}'s {} ratio is outside what a ratio can be: {row}",
+                role.name(),
+                row["mark"],
+            );
+        }
+        // The two floors, and which mark answers to which: letters are text a
+        // person must read, the other two graphics a person must find.
+        assert_eq!(rows[0]["floor"], serde_json::json!("boundary"));
+        assert_eq!(rows[1]["floor"], serde_json::json!("boundary"));
+        assert_eq!(rows[2]["floor"], serde_json::json!("text"));
+    }
+}
+
+/// Phase 2 — **black on this screen's dark grounds clears nothing, and the
+/// screen SAYS so rather than refusing the choice.**
+///
+/// The reasoning is on `legibility_clause` and it is a measurement: two of the
+/// ten colours the canon itself declares are under the boundary floor here, so
+/// a refusal would refuse the palette this screen is already painted in.
+fn a_colour_under_the_floor_is_taken_and_said(
+    state: &std::rc::Rc<LabState>,
+    oracle: &mut super::LabOracle,
+) {
+    use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+
+    let said = match oracle
+        .invoke(
+            "tint_group",
+            IntrospectValue::Text("presence,#000000".to_owned()),
+        )
+        .expect("a colour under the floor is still a colour a person chose")
+    {
+        IntrospectValue::Text(text) => text,
+        other => panic!("the verb answers text: {other:?}"),
+    };
+    for clause in ["under the", "floor", "swatch", "badge_text"] {
+        assert!(
+            said.contains(clause),
+            "the answer must carry {clause:?} so a person can act on it: {said}",
+        );
+    }
+    for role in Role::ALL.into_iter().filter(|r| r.group() == "presence") {
+        for row in palette_marks(state, role) {
+            assert_eq!(
+                row["clears"],
+                serde_json::json!(false),
+                "{}'s {} cannot clear a floor in black: {row}",
+                role.name(),
+                row["mark"],
+            );
+        }
+    }
+}
+
+/// Phase 3 — **white clears both floors on every mark, and the sentence carries
+/// no clause at all** — an instrument that warned about every colour would be
+/// one nobody reads.
+fn a_colour_that_clears_every_floor_is_said_without_a_clause(
+    state: &std::rc::Rc<LabState>,
+    oracle: &mut super::LabOracle,
+) {
+    use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+
+    let said = match oracle
+        .invoke(
+            "tint_group",
+            IntrospectValue::Text("presence,#FFFFFF".to_owned()),
+        )
+        .expect("white is a colour a person may choose")
+    {
+        IntrospectValue::Text(text) => text,
+        other => panic!("the verb answers text: {other:?}"),
+    };
+    assert!(
+        !said.contains("floor"),
+        "a colour that clears every floor is reported without a clause: {said}",
+    );
+    for role in Role::ALL.into_iter().filter(|r| r.group() == "presence") {
+        for row in palette_marks(state, role) {
+            assert_eq!(
+                row["clears"],
+                serde_json::json!(true),
+                "{}'s {} clears its floor in white: {row}",
+                role.name(),
+                row["mark"],
+            );
+        }
+    }
 }

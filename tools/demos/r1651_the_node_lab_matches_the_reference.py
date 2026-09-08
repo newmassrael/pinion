@@ -298,10 +298,15 @@ def body() -> None:
         # a wrong letter would have read as *the screen did not paint the
         # heading*. The roster expansion is what made it worth fixing — two
         # headings became the canon's seven.
+        # ★★★★★ R2085 — the heading AND the chip that colours the group, both
+        # addresses off the wire. The chip is a control, so the forward
+        # direction matters more than for the words: a heading that stopped
+        # being painted is a reading a person loses, and a control that stopped
+        # being painted is an act they lose.
         for run in spec["role_groups"]:
-            tag = run["tag"]
-            if tag not in painted:
-                missing.append(tag)
+            for tag in (run["tag"], run["ink"]):
+                if tag not in painted:
+                    missing.append(tag)
         # ★★★★★ R2049 — the ADDRESSES the screen publishes, not ones spelled
         # here. A walk cannot call the declaration those come from, so it is
         # handed them: before this round a wrong letter here looked for a mark
@@ -460,6 +465,9 @@ def body() -> None:
             declared.add(f"lab.rail.{seat['name']}")
         for run in spec["role_groups"]:
             declared.add(run["tag"])
+            # ★ R2085 — and its colour chip, from the same row. Seven marks
+            # arrived with this round and this backward check is what said so.
+            declared.add(run["ink"])
         declared.add("lab.palette.legend")
         # ⚠ `lab.palette.discovery.head` is NOT declared here — it falls under
         # the `lab.palette.discovery` family below, whose member count is the

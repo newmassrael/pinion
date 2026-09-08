@@ -1528,6 +1528,17 @@ pub const VOICES: &[VoiceSpec] = &[
         role: "heading",
         population: Population::RoleGroups,
     },
+    // ★★★★★ R2085 — the chip beside each heading, which is that group's colour
+    // and the control that changes it. A BUTTON: it does one thing per press
+    // and its position is a colour rather than an on/off, so it is not the
+    // switch the determinism control is — and what a reader who never sees the
+    // drawing is told is carried by the node's name, which says the state and
+    // where the next press goes.
+    VoiceSpec {
+        tag: crate::address::GROUP_INK_TEMPLATE,
+        role: "button",
+        population: Population::RoleGroups,
+    },
     VoiceSpec {
         // ★ R2049 — the address, from the one place that declares it.
         tag: crate::address::ROLE_ROW_TEMPLATE,

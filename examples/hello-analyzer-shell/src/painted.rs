@@ -15032,6 +15032,311 @@ fn saying_where_a_card_listens_opens_its_pin(state: &std::rc::Rc<ShellState>, cl
         .expect("★★★★★ and the same wire lands, once the card has somewhere to listen");
 }
 
+/// ★★★★★ R2085 — **on the assembled tool, one press colours a whole palette
+/// group, a card of that group follows, and the screen says what the colour
+/// costs** — driven on the shell, over one walk.
+///
+/// # What this reproduces, and where it passes the reference
+///
+/// The behaviour canon keeps a kind's colour as a CONSTANT: its palette is
+/// grouped, the groups are mostly one colour, and nothing there lets a person
+/// change one — the owner's instruction is what put a chooser on this axis
+/// (*make the group colour choosable*), so this is a second-phase improvement
+/// over the reproduction rather than a gap in it. The reference editor this
+/// screen is judged against does keep a per-class colour a person can set, in
+/// its own theme, which is where the ranking phase 3 asserts comes from.
+///
+/// **What is proven HERE and nowhere else** is that a person on the assembled
+/// tool meets all of it: the mounted lab publishes the palette, the chip beside
+/// a heading is a mark a press reaches through the host's own router, one press
+/// moves every kind under that heading, a card the palette places is drawn in
+/// it, and a colour that fails the legibility floor is TAKEN and reported
+/// rather than refused.
+///
+/// ⚠ That last phase is a measurement rather than a preference: held to the
+/// same two floors, two of the ten colours the canon itself declares are under
+/// `3.0` on this screen's grounds and eight are under `4.5`, so a refusal would
+/// refuse the palette the tool is already painted in.
+///
+/// # Which screen this lands on
+///
+/// Screen A, the node lab, as it is assembled in this shell.
+#[test]
+fn r2085_the_assembled_palette_colours_a_group_and_says_what_it_costs() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        let heading = the_mounted_lab_publishes_a_palette_nobody_has_chosen(&state);
+        let chosen = one_press_colours_every_kind_under_that_heading(&state, &heading);
+        a_card_of_that_heading_is_repainted_in_it(&state, &heading, &chosen);
+        a_colour_under_the_floor_is_taken_and_reported(&state, &heading);
+    });
+}
+
+/// Phase 1 — **the mounted lab publishes its palette, and nobody has chosen
+/// anything yet.** Hands back a heading whose kinds declare more than one
+/// colour, so the phases after it cannot pass on a one-state cycle.
+fn the_mounted_lab_publishes_a_palette_nobody_has_chosen(
+    state: &std::rc::Rc<ShellState>,
+) -> serde_json::Value {
+    let palette = lab_slot(state, "palette");
+    let roles = palette["roles"]
+        .as_array()
+        .expect("the mounted lab publishes its kinds' colours")
+        .clone();
+    for row in &roles {
+        assert!(
+            row["chosen"].is_null(),
+            "★ the tool opens with nobody having chosen a colour: {row}"
+        );
+        assert_eq!(
+            row["ink"], row["declared"],
+            "★★★★★ and every kind is drawn in the colour the taxonomy declares, \
+             which is what keeps the opening screen the canon's pixel for \
+             pixel: {row}"
+        );
+    }
+    let groups = palette["groups"]
+        .as_array()
+        .expect("the mounted lab publishes its headings")
+        .clone();
+    for row in &groups {
+        let label = row["group"].as_str().expect("a heading has a word");
+        assert!(
+            roles.iter().any(|role| role["group"] == row["group"]),
+            "★ {label} is a heading with no kinds under it: {row}"
+        );
+        assert!(
+            row["chosen"].is_null() && row["mixed"] == serde_json::json!(false),
+            "★ {label} opens with no chosen colour and no disagreement: {row}"
+        );
+    }
+    let picked = groups
+        .iter()
+        .find(|row| row["ring"].as_array().is_some_and(|ring| ring.len() >= 2))
+        .expect(
+            "★ this walk needs a heading whose kinds declare several colours; \
+             with one colour every press below would be the same press",
+        )
+        .clone();
+    assert!(
+        picked["chip"]
+            .as_str()
+            .is_some_and(|tag| Some(tag) != picked["head"].as_str()),
+        "★★★★★ a heading and its control are separate addresses — a press on \
+         the words must not be a press on the chip: {picked}"
+    );
+    picked
+}
+
+/// Phase 2 — **one press on the chip beside the heading colours every kind
+/// under it**, through the host's own router. Hands back the colour it landed
+/// on.
+fn one_press_colours_every_kind_under_that_heading(
+    state: &std::rc::Rc<ShellState>,
+    heading: &serde_json::Value,
+) -> String {
+    let chip = heading["chip"]
+        .as_str()
+        .expect("the heading publishes its control");
+    let label = heading["group"].as_str().expect("a heading has a word");
+    let ring: Vec<String> = heading["ring"]
+        .as_array()
+        .expect("the heading publishes the colours its presses walk")
+        .iter()
+        .map(|hex| hex.as_str().expect("a colour is a word").to_owned())
+        .collect();
+
+    let shot = painted();
+    press_tag(state, &shot, chip);
+
+    let palette = lab_slot(state, "palette");
+    let row = palette["groups"]
+        .as_array()
+        .expect("the headings")
+        .iter()
+        .find(|row| row["group"] == heading["group"])
+        .unwrap_or_else(|| panic!("no heading called {label:?} after the press"))
+        .clone();
+    let chosen = row["chosen"]
+        .as_str()
+        .unwrap_or_else(|| {
+            panic!(
+                "★★★★★ one press must leave the heading saying ONE colour, and \
+                 it says {row}"
+            )
+        })
+        .to_owned();
+    assert_eq!(
+        chosen, ring[0],
+        "★ the first press lands on the first colour these kinds declare, which \
+         is the order the palette itself is in",
+    );
+    assert_eq!(
+        row["mixed"],
+        serde_json::json!(false),
+        "★ and the kinds under it agree: {row}"
+    );
+    for kind in palette["roles"]
+        .as_array()
+        .expect("the kinds")
+        .iter()
+        .filter(|kind| kind["group"] == heading["group"])
+    {
+        assert_eq!(
+            kind["chosen"].as_str(),
+            Some(chosen.as_str()),
+            "★★★★★ every kind under {label} takes the colour, which is what \
+             makes this ONE gesture rather than one per kind: {kind}"
+        );
+        assert_eq!(kind["ink"], kind["chosen"], "★ and is drawn in it: {kind}");
+    }
+    chosen
+}
+
+/// Phase 3 — **a card of that heading's kind is drawn in the chosen colour** on
+/// the assembled canvas.
+///
+/// The middle tier of the ranking, and the half no register can stand in for:
+/// `tints` publishes the faces the canvas paints with, so a card still drawn in
+/// its kind's declared colour after the press would be this whole round not
+/// reaching the drawing.
+fn a_card_of_that_heading_is_repainted_in_it(
+    state: &std::rc::Rc<ShellState>,
+    heading: &serde_json::Value,
+    chosen: &str,
+) {
+    let kind = heading["kinds"]
+        .as_array()
+        .expect("the heading publishes its kinds")
+        .first()
+        .and_then(|name| name.as_str())
+        .expect("a heading has at least one kind")
+        .to_owned();
+    let before: BTreeSet<String> = lab_cards(state).into_iter().collect();
+    let shot = painted();
+    press_tag(
+        state,
+        &shot,
+        &hello_node_lab::address::role_row_named(&kind),
+    );
+    let card = lab_cards(state)
+        .into_iter()
+        .find(|name| !before.contains(name))
+        .unwrap_or_else(|| panic!("★ pressing the {kind} row put no card on the assembled canvas"));
+
+    let drawn = lab_slot(state, "tints");
+    let row = drawn["nodes"]
+        .as_array()
+        .expect("the mounted lab publishes its cards' colours")
+        .iter()
+        .find(|row| row["node"] == serde_json::json!(card.clone()))
+        .unwrap_or_else(|| panic!("no colour row for {card}"))
+        .clone();
+    assert!(
+        row["tint"].is_null(),
+        "★ nobody coloured this card itself, which is what makes the next \
+         assertion about the HEADING's colour: {row}"
+    );
+    assert_eq!(
+        row["faces"]["title"],
+        serde_json::json!(chosen),
+        "★★★★★ the card the palette just placed is drawn in the colour its \
+         heading was given — the tier between *this card* and *what the kind \
+         declares*, reaching the assembled canvas: {row}"
+    );
+}
+
+/// Phase 4 — **a colour under the legibility floor is taken, and the screen
+/// says so.**
+///
+/// The instrument this round gives the screen, driven through the assembled
+/// tool: `contrast_ratio` has been in the tree since R1546 and
+/// `legibility::Floor` since R1807, and until now nothing on any of these
+/// screens had put one of its own colours to either.
+fn a_colour_under_the_floor_is_taken_and_reported(
+    state: &std::rc::Rc<ShellState>,
+    heading: &serde_json::Value,
+) {
+    let label = heading["group"].as_str().expect("a heading has a word");
+    let said = lab_invoke(state, "tint_group", &format!("{label},#000000"))
+        .expect("★★★★★ a colour under the floor is still a colour a person chose");
+    for clause in ["under the", "floor"] {
+        assert!(
+            said.contains(clause),
+            "★★★★★ the sentence a person reads must carry {clause:?}, or the \
+             screen took a colour nobody can see and said nothing: {said}"
+        );
+    }
+
+    let palette = lab_slot(state, "palette");
+    let mut judged = 0usize;
+    for kind in palette["roles"]
+        .as_array()
+        .expect("the kinds")
+        .iter()
+        .filter(|kind| kind["group"] == heading["group"])
+    {
+        for mark in kind["marks"]
+            .as_array()
+            .expect("a kind publishes its marks")
+        {
+            let ratio = mark["ratio"].as_f64().expect("a measured ratio");
+            let asks = mark["asks"].as_f64().expect("the floor's own threshold");
+            assert_eq!(
+                mark["clears"],
+                serde_json::json!(ratio >= asks),
+                "★ a verdict must be its own two numbers: {mark}"
+            );
+            assert_eq!(
+                mark["clears"],
+                serde_json::json!(false),
+                "★★★★★ black on this screen's dark grounds clears nothing, and \
+                 this register is where an agent reads that: {mark}"
+            );
+            judged += 1;
+        }
+    }
+    assert!(
+        judged > 0,
+        "★ no mark was judged at all, so this phase asserted nothing"
+    );
+
+    // And the way back, on the same channel: `none` is the other value the
+    // model holds rather than a clearing special case.
+    lab_invoke(state, "tint_group", &format!("{label},none"))
+        .expect("a heading can be put back on the assembled tool");
+    let back = lab_slot(state, "palette");
+    for kind in back["roles"]
+        .as_array()
+        .expect("the kinds")
+        .iter()
+        .filter(|kind| kind["group"] == heading["group"])
+    {
+        assert!(
+            kind["chosen"].is_null(),
+            "★ every kind is back to nobody having chosen: {kind}"
+        );
+        assert_eq!(
+            kind["ink"], kind["declared"],
+            "★ and drawn in what it declares: {kind}"
+        );
+    }
+}
+
 #[test]
 fn r1875_no_run_in_the_decode_tree_sits_in_a_box_too_short_for_its_face() {
     /// The pane whose content this gate judges, as it appears in a run's path.

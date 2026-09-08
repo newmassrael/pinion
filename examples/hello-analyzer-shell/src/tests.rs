@@ -7461,13 +7461,30 @@ use pinion_core::storage::Storage as _;
 /// `r2046_no_test_of_this_application_builds_the_persons_own_storage` counts
 /// it, and the count is over the files rather than over a list of gates.
 pub(crate) fn use_shell_state_off_disk() -> std::rc::Rc<super::ShellState> {
-    let _: std::rc::Rc<pinion_platform_storage::AppStorage> = Owner::current()
-        .expect("an Owner scope, as use_shell_state itself requires")
-        .cache(super::STORAGE_CACHE_KEY, || {
-            pinion_platform_storage::AppStorage::new(Box::new(
-                pinion_core::storage::InMemoryStorage::new(),
-            ))
-        });
+    let in_memory = |key: &'static str| {
+        let _: std::rc::Rc<pinion_platform_storage::AppStorage> = Owner::current()
+            .expect("an Owner scope, as use_shell_state itself requires")
+            .cache(key, || {
+                pinion_platform_storage::AppStorage::new(Box::new(
+                    pinion_core::storage::InMemoryStorage::new(),
+                ))
+            });
+    };
+    in_memory(super::STORAGE_CACHE_KEY);
+    // ★★★★★ R2085 — **and the store of the screen this application MOUNTS**,
+    // which R2046's count did not cover and could not have: it counted this
+    // binary's two test modules for the on-disk spelling, and the mounted
+    // screen's storage is resolved inside that screen, in a crate compiled as a
+    // dependency where its own `cfg(test)` isolation is off.
+    //
+    // Found by a gate rather than by reading: R2085's is the first gate here
+    // that WRITES a mounted screen's store — one press on the node lab's
+    // palette — and it wrote a real palette file into the data directory of
+    // whoever ran the suite. Everything R2046 says about why this is a seed
+    // rather than an exemption list applies unchanged; what moved is the
+    // POPULATION, from *this application's store* to *every store the assembled
+    // application has*.
+    in_memory(hello_node_lab::STORAGE_CACHE_KEY);
     // ⚠ The ONE call to the on-disk spelling in either test module, and the
     // gate below counts on it being one: the slot is already seeded above, so
     // this builds the state against in-memory storage. Spelled through
@@ -7501,6 +7518,10 @@ pub(crate) fn use_shell_state_off_disk() -> std::rc::Rc<super::ShellState> {
 fn r2046_no_test_of_this_application_builds_the_persons_own_storage() {
     const PAINTED: &str = include_str!("painted.rs");
     const TESTS: &str = include_str!("tests.rs");
+    // ★ R2085 — and the MOUNTED screen's source, because the population this
+    // gate is about is every store the assembled application has. See the
+    // assertion at the end for what is read off it and why.
+    const LAB: &str = include_str!("../../hello-node-lab/src/lib.rs");
 
     // ⚠ The needle is ASSEMBLED, and that is not a flourish: this file reads
     // ITSELF, so a literal here would be an occurrence of the thing being
@@ -7538,6 +7559,33 @@ fn r2046_no_test_of_this_application_builds_the_persons_own_storage() {
         "only {off_disk} test(s) build shell state off disk — this suite had \
          131 such call sites when the count was written, and a floor far below \
          that is what keeps this from passing on an empty file",
+    );
+
+    // ★★★★★ R2085 — **and the count covers the stores of the screens this
+    // application MOUNTS, which is where it was wrong.**
+    //
+    // Everything above is about this binary's own store. A mounted screen
+    // resolves its own, inside a crate compiled as a dependency where that
+    // crate's `cfg(test)` isolation is off — so R2046's guarantee stopped at
+    // the application's edge while the assembled application had two stores.
+    // R2085's gate is what found it, by being the first one here to WRITE
+    // through a mounted screen.
+    //
+    // The population is READ from the mounted screen's source rather than
+    // listed here: one `use_app_storage` call is one store, and a screen that
+    // grows a second turns this red instead of quietly writing a person's disk.
+    let lab_stores = LAB.matches(concat!("use_app_", "storage(")).count();
+    assert_eq!(
+        lab_stores, 1,
+        "the mounted node lab resolves {lab_stores} store(s); \
+         `use_shell_state_off_disk` seeds one key for it, so a second one needs \
+         seeding there before any gate here can write through that screen",
+    );
+    assert!(
+        TESTS.contains(concat!("hello_node_lab::", "STORAGE_CACHE_KEY")),
+        "the seam must seed the mounted lab's store key, or every gate that \
+         writes through that screen writes the data directory of whoever ran \
+         the suite",
     );
 }
 
