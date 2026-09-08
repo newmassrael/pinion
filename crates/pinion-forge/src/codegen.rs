@@ -234,7 +234,7 @@ pub enum __ERR_NAME__ {
     /// Swapchain surface acquisition did not yield a presentable
     /// texture. The `&'static str` is the [`::pinion_gpu::Missed`] the
     /// recovery ladder recorded (timeout / occluded / outdated / lost /
-    /// validation / unconfigured / device_lost) — a label rather than the
+    /// validation / unconfigured / `device_lost`) — a label rather than the
     /// enum itself so the error type cannot represent the success states
     /// (illegal-states-unrepresentable).
     Surface(&'static str),
