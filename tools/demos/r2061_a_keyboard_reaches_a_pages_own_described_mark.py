@@ -106,7 +106,49 @@ def js(value):
     return json.loads(value) if isinstance(value, str) else value
 
 
+#: R2093 — how many times this walk has read the whole announced tree.
+#:
+#: The shell publishes several hundred regions, so a tree read is this walk's
+#: unit of cost and its wall clock is very nearly this number times the
+#: round-trip. It is printed at the end rather than budgeted: R2076 cut a
+#: sibling walk by counting its reads instead of guessing at what was slow,
+#: and a count that is visible every run is what makes the next regression
+#: obvious rather than mysterious.
+READS = 0
+
+#: R2093 — the same count, BROKEN DOWN BY THE LINE THAT ASKED. A total says a
+#: walk is expensive; only the breakdown says where, and the first collapse
+#: this round made (two reads of one moment, at three sites) bought 8% because
+#: it was aimed at sites the total could not rank. ⇒ COUNT PER SITE BEFORE
+#: CUTTING, not after.
+READ_SITES: dict[str, int] = {}
+
+#: Frames that are pass-throughs rather than askers: the site a reader wants
+#: named is the clause, not the helper it went through.
+_WRAPPERS = frozenset({"access", "announced", "shown", "tooltips"})
+
+#: R2093 — the OTHER round-trip this walk spends, and the one the read counter
+#: cannot see: walking the Tab ring costs three requests per step and nothing
+#: about it touches the announced tree. Counted because the first cut this
+#: round was aimed by a number that ranked only half the cost.
+RING_WALKS = 0
+RING_STEPS = 0
+
+
+def _asked_from() -> str:
+    frame = sys._getframe(1)  # noqa: SLF001 - a private frame walk is the instrument
+    while frame is not None and frame.f_code.co_name in _WRAPPERS:
+        frame = frame.f_back
+    if frame is None:
+        return "?"
+    return f"{frame.f_code.co_name}:{frame.f_lineno}"
+
+
 def access(app: RpcSubprocess) -> list[dict]:
+    global READS  # noqa: PLW0603 - one counter for one instrument
+    READS += 1
+    where = _asked_from()
+    READ_SITES[where] = READ_SITES.get(where, 0) + 1
     resp = app.request("scene/access", {})
     assert resp is not None and resp.result is not None, "scene/access must answer"
     return resp.result.get("nodes", [])
@@ -142,24 +184,36 @@ def page_register(app: RpcSubprocess, row: dict) -> dict[str, str]:
     return {m["tag"]: m["sentence"] for m in theirs["marks"]}
 
 
+def announced(app: RpcSubprocess) -> tuple[str | None, str | None, dict[str, dict]]:
+    """`(the mark being described, the sentence, the tree by tag)`.
+
+    ★ ONE read of the tree, THREE derivations from it — R2093 added the third.
+    R2076 had already collapsed two reads here (the tooltip and the anchor are
+    facts about the same announcement), and the callers then asked AGAIN for
+    the same tree a line later, to read one stop's `navigation` off it. A tree
+    read is this walk's unit of cost, so handing back what was already read is
+    the whole optimisation: nothing is asked twice about one moment.
+    """
+    nodes = access(app)
+    by_tag = {n.get("tag"): n for n in nodes}
+    tips = [n for n in nodes if n.get("role") == "tooltip"]
+    if len(tips) != 1:
+        return None, None, by_tag
+    region = tips[0].get("tag")
+    anchor = next((n for n in nodes if n.get("described_by") == region), None)
+    return (anchor or {}).get("tag"), tips[0].get("name"), by_tag
+
+
 def shown(app: RpcSubprocess) -> tuple[str | None, str | None]:
     """`(the mark being described, the sentence)` — from the ANNOUNCEMENT.
 
     Read out of the accessibility tree rather than from the register, because
     the register is what the screen *could* say and this walk is about what a
-    reader *is told*.
+    reader *is told*. The narrow face of [`announced`], for the callers that
+    do not need the tree it came from.
     """
-    # ★ ONE read of the tree, two derivations from it. This asked twice — once
-    # through `tooltips` and once for the anchor — and the two answers are
-    # facts about the SAME announcement, so a second read can only be the same
-    # tree again or a different one, and neither is what the caller wants.
-    nodes = access(app)
-    tips = [n for n in nodes if n.get("role") == "tooltip"]
-    if len(tips) != 1:
-        return None, None
-    region = tips[0].get("tag")
-    anchor = next((n for n in nodes if n.get("described_by") == region), None)
-    return (anchor or {}).get("tag"), tips[0].get("name")
+    mark, sentence, _ = announced(app)
+    return mark, sentence
 
 
 def press(app: RpcSubprocess, stop: str, chord: str) -> None:
@@ -177,8 +231,15 @@ def press(app: RpcSubprocess, stop: str, chord: str) -> None:
     and the instrument was moving the thing it measured. A single arrow step
     could not see it, because the frozen answer was a legal one.
     """
+    # R2093 — ONE tick for the pair, not one each. Measured: the press is this
+    # walk's unit of cost (208 of them, four requests apiece = the largest term
+    # by far, with the announced-tree reads a distant second), and the two
+    # events are ordered on the wire, so a single frame processes the key and
+    # then the leave. What the caller needs is the state AFTER both, which is
+    # exactly what one tick delivers. ⚠ The leave itself is load-bearing and
+    # stays: `path=` puts the cursor on the row, and this walk's whole premise
+    # is a reader with none.
     app.key(path=stop, name=chord)
-    app.tick_ms(16)
     app.pointer_leave()
     app.tick_ms(16)
 
@@ -214,8 +275,11 @@ def ring_of(app: RpcSubprocess) -> set[str]:
 
 def walk_ring(app: RpcSubprocess, limit: int = 40) -> list[str]:
     """Every stop the keyboard reaches from here, in Tab order."""
+    global RING_WALKS, RING_STEPS  # noqa: PLW0603 - the second instrument
+    RING_WALKS += 1
     ring: list[str] = []
     for _ in range(limit):
+        RING_STEPS += 1
         app.request("focus/next")
         app.tick_ms(16)
         here = focused(app)
@@ -258,7 +322,7 @@ def repay(app: RpcSubprocess, page: str) -> tuple[dict, str]:
     for stop in ring:
         app.request("focus/set", {"tag": stop})
         app.tick_ms(16)
-        mark, sentence = shown(app)
+        mark, sentence, nodes_here = announced(app)
         # ★★★★★ A composite may hold its described marks ONE LEVEL DOWN, and a
         # survey that only lands on stops cannot see them. The node lab is the
         # case that forced this: its canvas holds cards and a card holds the
@@ -266,7 +330,11 @@ def repay(app: RpcSubprocess, page: str) -> tuple[dict, str]:
         # nothing and the page read as zero of eighteen. A reader does not stop
         # there either — they press the key the stop PUBLISHES as its way in.
         if mark not in marks:
-            nav = {n.get("tag"): n for n in access(app)}.get(stop, {}).get("navigation") or {}
+            # R2093 — off the tree `announced` just read, not a second one of
+            # the same moment. This was the walk's largest repeated cost: one
+            # extra whole-tree read at every stop that says nothing, and most
+            # stops say nothing.
+            nav = (nodes_here.get(stop) or {}).get("navigation") or {}
             # ⚠ Only a stop whose MEMBERS are composites, and only then. A first
             # draft pressed the entry key at every silent stop and the walk
             # broke three clauses later on a page it had already left — pressing
@@ -324,28 +392,31 @@ def repay(app: RpcSubprocess, page: str) -> tuple[dict, str]:
     # first draft did exactly that and reported the mark unreferenced.
     app.request("focus/set", {"tag": stop})
     app.tick_ms(16)
-    anchor = next((n for n in access(app) if n.get("tag") == mark), None)
+    # R2093 — one read, both halves of the question. The anchor and the tooltip
+    # it points at are facts about the SAME announcement, and asking twice can
+    # only return the same tree or a different one.
+    standing = access(app)
+    anchor = next((n for n in standing if n.get("tag") == mark), None)
+    tips_standing = [n for n in standing if n.get("role") == "tooltip"]
     ok(f"F {page}: the mark itself is announced — {mark}", anchor is not None)
     ok(
         f"F {page}: ★ and it POINTS AT the description; a region nothing "
         "references is a region an assistive technology never reads out",
-        anchor.get("described_by") == tooltips(app)[0].get("tag"),
+        bool(tips_standing) and anchor.get("described_by") == tips_standing[0].get("tag"),
     )
 
     # (C) the row is WALKABLE — one door is not a row.
     banner(f"{page} C — the arrows move along the row and the sentence follows")
     app.request("focus/set", {"tag": stop})
     app.tick_ms(16)
-    before = shown(app)
+    mark_before, sentence_before, nodes_before = announced(app)
+    before = (mark_before, sentence_before)
     # ⚠ The keys the stop PUBLISHES, not `ArrowRight` assumed. Three of these
     # pages hold their marks in a horizontal row and the fourth holds them in a
     # vertical one inside a card, so a walk that named one arrow reported the
     # lab's cursor as not moving at all. Ask; the roving says which keys it
-    # navigates by.
-    arrows = (
-        {n.get("tag"): n for n in access(app)}.get(stop, {}).get("navigation", {}).get("keys")
-        or ["ArrowRight"]
-    )
+    # navigates by. R2093 — off the tree just read, for the reason above.
+    arrows = (nodes_before.get(stop) or {}).get("navigation", {}).get("keys") or ["ArrowRight"]
     after = before
     for key in arrows:
         press(app, stop, key)
@@ -432,10 +503,25 @@ def repay(app: RpcSubprocess, page: str) -> tuple[dict, str]:
             before and after each press, and the state after one press is the
             state before the next, so it is carried rather than re-read.
             """
+            # R2093 — the state is CARRIED across keys, not re-read for each.
+            # When the inner loop stops it stops because the cursor did not
+            # move, so `here` is where the cursor is, and that is exactly where
+            # the next key starts from. R2076 carried it across presses; this
+            # carries it across the keys, which was the second-largest asker in
+            # the per-site count (120 of 457 reads).
+            here, sentence = shown(app)
             for key in arrows:
-                here, sentence = shown(app)
                 for _ in range(limit + 2):
                     collect(here, sentence)
+                    # R2093 — stop when the question is answered. The clause
+                    # this feeds asks whether EVERY leaf is reachable, so once
+                    # every leaf has been seen there is nothing a further press
+                    # can add: the loop was walking to the end of the row for
+                    # its own sake. Bounded by the ANSWER rather than by the
+                    # row's length, which is the same shape as the outer loop's
+                    # "stop when a pass adds nothing new".
+                    if len(seen) == len(leaves):
+                        return
                     press(app, at, key)
                     moved_to, moved_sentence = shown(app)
                     if moved_to == here:
@@ -593,6 +679,19 @@ def body() -> None:
             f"G: ★★★★★ the arrow CHOOSES — {chosen!r} -> {moved!r}",
             moved != chosen,
         )
+        # 🟥 R2093 — ONE read, hoisted out of the comprehension below.
+        #
+        # It used to sit INSIDE the generator's `if`, which is evaluated once
+        # per candidate node, so this single clause read the whole announced
+        # tree 54 times. Nothing about the answer wanted 54 trees: the members
+        # and the roles are facts about one moment. Found by counting reads PER
+        # ASKING SITE rather than in total — the total had been visible for a
+        # round and ranked nothing.
+        announced_now = access(app)
+        member_tags = {
+            m["tag"]
+            for m in ({n.get("tag"): n for n in announced_now}.get(severity, {}).get("navigation", {}).get("members") or [])
+        }
         ok(
             f"G: and the row that did it is {severity}, whose members the tree "
             "announces as a choice rather than as places to visit",
@@ -602,22 +701,15 @@ def body() -> None:
             # reported zero on a screen that was publishing three.
             all(
                 n.get("role") == "radio"
-                for n in access(app)
-                if n.get("tag")
-                in {
-                    m["tag"]
-                    for m in (
-                        {k.get("tag"): k for k in access(app)}
-                        .get(severity, {})
-                        .get("navigation", {})
-                        .get("members")
-                        or []
-                    )
-                }
+                for n in announced_now
+                if n.get("tag") in member_tags
             ),
         )
 
-    print(f"\n{len(CHECKS)} check(s) held.")
+    print(f"\n{len(CHECKS)} check(s) held over {READS} read(s) of the announced tree.")
+    worst = sorted(READ_SITES.items(), key=lambda kv: -kv[1])[:6]
+    print("    reads by asker: " + ", ".join(f"{where} x{n}" for where, n in worst))
+    print(f"    ring walks: {RING_WALKS} walk(s), {RING_STEPS} step(s) at 3 request(s) each")
 
 
 sys.exit(run_demo("r2061_a_keyboard_reaches_a_pages_own_described_mark", body))
