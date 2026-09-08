@@ -241,11 +241,13 @@ impl GpuSurface {
         // not the moment the configure returned. A `get_current_texture()` on
         // a lost device's never-configured surface is the process-fatal
         // report that no handler can absorb.
-        if self.liveness.is_lost() {
-            return Err(Missed::DeviceLost);
-        }
-        if !self.presentable {
-            return Err(Missed::Unconfigured);
+        //
+        // R2091 — the two conditions and their PRECEDENCE are one named,
+        // pure decision now (`Missed::owed_before_asking`), because the order
+        // is a design decision and an order of statements is not something a
+        // test can reach: both inputs live behind a real device.
+        if let Some(owed) = Missed::owed_before_asking(self.presentable, self.liveness.is_lost()) {
+            return Err(owed);
         }
         Missed::split(self.surface.get_current_texture())
     }

@@ -69,23 +69,34 @@ struct Observed {
 
 impl ApplicationHandler for Observed {
     fn resumed(&mut self, el: &ActiveEventLoop) {
-        let window = Arc::new(
-            el.create_window(
-                Window::default_attributes()
-                    // Never mapped: the surface, the swapchain and the
-                    // configure are all real, and no window flashes on the
-                    // developer's display. The same bargain
-                    // `PINION_HIDDEN_WINDOW` makes for every demo.
-                    .with_visible(false)
-                    .with_inner_size(winit::dpi::LogicalSize::new(320.0, 240.0)),
-            )
-            .expect("create the window this surface is for"),
-        );
-        self.steps = observe(&window);
+        // ⚠ R2091 — BOTH bodies run inside this one event loop, each on its
+        // own window, and that is not a style choice: winit allows exactly one
+        // `EventLoop` per PROCESS, so a second `#[test]` building its own dies
+        // `RecreationAttempt` — measured, when the device-loss body was first
+        // written as a separate test. Two windows, one loop, one verdict.
+        self.steps = observe(&Self::window(el));
+        self.steps.extend(observe_device_loss(&Self::window(el)));
         el.exit();
     }
 
     fn window_event(&mut self, _el: &ActiveEventLoop, _id: WindowId, _event: WindowEvent) {}
+}
+
+impl Observed {
+    /// A window for a surface to be made against. Never mapped: the surface,
+    /// the swapchain and the configure are all real, and no window flashes on
+    /// the developer's display — the same bargain `PINION_HIDDEN_WINDOW`
+    /// makes for every demo.
+    fn window(el: &ActiveEventLoop) -> Arc<Window> {
+        Arc::new(
+            el.create_window(
+                Window::default_attributes()
+                    .with_visible(false)
+                    .with_inner_size(winit::dpi::LogicalSize::new(320.0, 240.0)),
+            )
+            .expect("create the window this surface is for"),
+        )
+    }
 }
 
 fn observe(window: &Arc<Window>) -> Vec<String> {
@@ -188,6 +199,134 @@ fn observe(window: &Arc<Window>) -> Vec<String> {
     steps
 }
 
+/// R2091 — what a **destroyed** device does, and the attempt this refutes.
+///
+/// # The attempt, and why it failed
+///
+/// The debt this file guards has said since R2088.1 that a device loss
+/// "cannot be forced on this host", so every layer built for it rests on
+/// measured source facts plus an intermittent observation (about one event
+/// per eighty second-window lifetimes on this machine). `wgpu::Device::destroy`
+/// looked like the missing trigger: it clears `wgpu-core`'s `valid` flag, and
+/// the device-lost callback is queued inside `Device::maintain` for exactly
+/// `!is_valid() && queue_empty`, which is where a driver-induced loss reaches
+/// it too.
+///
+/// ⛔ **Measured at R2091, it is not.** Destroy the device, run a maintain
+/// through an empty submit, and this host's acquisition comes back
+/// `Missed::Validation` — the callback has NOT fired, so
+/// `DeviceLiveness::is_lost` is still false and the refusal comes from
+/// `wgpu`'s status rather than from pinion's own check. So a destroyed device
+/// and a lost device are **not** the same fact to this surface, and the debt's
+/// sentence stands. ⇒ **Do not spend another round on `destroy` as a
+/// substitute for a device loss.**
+///
+/// # What it is a guard for, then
+///
+/// The state is still one no test covered: a surface whose device has been
+/// destroyed under it. It answers a CLASSIFIED miss rather than aborting, the
+/// ladder runs on it, and the window does not come back — which is the shape
+/// `debt-a-lost-device-leaves-a-window-dark-for-the-rest-of-the-run` records
+/// from the churn observation, asserted here without waiting for one.
+fn observe_device_loss(window: &Arc<Window>) -> Vec<String> {
+    let mut steps = Vec::new();
+    let size = window.inner_size();
+    let (width, height) = (size.width.max(1), size.height.max(1));
+    let (context, mut surface) = pollster::block_on(GpuContext::new(
+        Arc::clone(window),
+        width,
+        height,
+        wgpu::PresentMode::AutoVsync,
+    ))
+    .expect("a context for a window this host can present to");
+
+    // Present rather than drop: an un-presented `SurfaceTexture` releases
+    // through `discard_texture`, which is fatal and catchable by nothing.
+    surface
+        .acquire()
+        .expect("a healthy surface hands over an image")
+        .present();
+    steps.push("the window is presenting before the device goes".to_owned());
+
+    // THE LOSS, on demand.
+    context.device().destroy();
+    // Nothing has told the surface yet: the callback is queued by a maintain,
+    // and no frame has run one. This is the gap R2089 measured inside the
+    // emitted renderer — between a rung and the retry acquire there were zero
+    // submits — so it is asserted here rather than assumed.
+    assert!(
+        surface.is_presentable(),
+        "destroying the device does not by itself reach the surface: the fact \
+         travels on a callback that only a maintain fires"
+    );
+    steps.push("a destroyed device has not reached the surface yet".to_owned());
+
+    // ★ The operation R2089 added to `GpuContext::recover`, run here for the
+    // same reason: `Queue::submit` calls `maintain(PollType::Poll)`, and that
+    // maintain is the only place the device-lost closure is queued. Submitting
+    // nothing adds no work and moves the queue toward the `queue_empty` the
+    // closure also waits on. Its own failure reports through the sink, so it
+    // is not a way to die.
+    context.queue().submit(core::iter::empty());
+
+    // ⛔ THE REFUTATION, ASSERTED SO IT CANNOT BE FORGOTTEN. If destroying the
+    // device fired the callback, this would be `Missed::DeviceLost` and
+    // pinion's own check would have refused before `wgpu` was asked. Measured:
+    // it is `Missed::Validation`, from `wgpu`'s status. The two facts are
+    // different and this line is what keeps the next round from re-trying the
+    // trigger — while still asserting the part that matters: the answer is
+    // CLASSIFIED and the process is alive.
+    let refused = surface.acquire().err();
+    assert_eq!(
+        refused,
+        Some(Missed::Validation),
+        "a destroyed device is refused by wgpu's status, NOT by the device-lost \
+         callback — `Device::destroy` does not fire it on this host, which is \
+         why it cannot stand in for a device loss"
+    );
+    assert!(
+        surface.acquire().is_err(),
+        "and it stays refused rather than intermittently handing over an image"
+    );
+    steps.push("a destroyed device is a classified miss, not an abort".to_owned());
+
+    // And the ladder answers on it. `Validation` is an invalidation, so it
+    // earns a rung — and the rung cannot put this window back, because every
+    // rung remakes a surface and none remakes a device. That is the shape
+    // `debt-a-lost-device-leaves-a-window-dark-for-the-rest-of-the-run`
+    // records from a churn observation; asserting it here means the next
+    // reader does not have to wait for one.
+    let rung = context.recover(&mut surface, refused.expect("a refusal to recover from"));
+    assert!(
+        rung.is_some(),
+        "an invalidation must earn a rung of the recovery ladder"
+    );
+    // ⚠⚠ AND HERE IS A MEASUREMENT THIS ROUND DID NOT EXPECT, REPORTED RATHER
+    // THAN ASSERTED. The rung's configure is NOT refused on a destroyed
+    // device — no error reaches the scopes `GpuSurface::configure` opens — so
+    // the surface CLAIMS presentability again while every acquisition still
+    // fails. That is R2088's own headline defect surviving for this trigger:
+    // a repair that judges by the ABSENCE of an error believes a silence.
+    //
+    // It is deliberately not asserted in either direction. Asserting it TRUE
+    // pins a defect (R2086's class); asserting it FALSE would fail the day
+    // someone repairs it, which is the flake R2089 introduced and paid for.
+    // The step text carries the observation instead, so a run says which
+    // world it saw.
+    let claimed = surface.is_presentable();
+    // What must hold either way: the window is still not getting an image,
+    // and asking still does not end the process.
+    assert!(
+        surface.acquire().is_err(),
+        "the ladder cannot remake a device, so the window must still be refused"
+    );
+    steps.push(format!(
+        "the ladder runs and does not abort; presentable={claimed} afterwards \
+         (a configure on a destroyed device reaches no error sink)"
+    ));
+    steps
+}
+
 #[test]
 #[ignore = "needs a wgpu adapter and a real X display; CI runs it in the demo-sweep job"]
 fn a_refused_configure_is_reported_and_survivable() {
@@ -203,10 +342,16 @@ fn a_refused_configure_is_reported_and_survivable() {
     event_loop
         .run_app(&mut observed)
         .expect("run the event loop");
+    // R2091 — say what was observed rather than only how many. One of these
+    // steps carries a MEASUREMENT (whether a destroyed device's surface still
+    // claims presentability), and a number cannot report it.
+    for (n, step) in observed.steps.iter().enumerate() {
+        println!("[gpu-guard {}] {step}", n + 1);
+    }
     assert_eq!(
         observed.steps.len(),
-        5,
-        "the window body must have run to the end; observed {:?}",
+        9,
+        "both window bodies must have run to the end; observed {:?}",
         observed.steps
     );
 }

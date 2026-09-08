@@ -102,6 +102,40 @@ impl Missed {
         Self::DeviceLost,
     ];
 
+    /// R2091 — what a surface owes a caller **before** it asks `wgpu` for an
+    /// image, given what it knows about itself: `None` when there is nothing
+    /// in the way and the acquisition may go ahead.
+    ///
+    /// # Why this is a function rather than two `if`s
+    ///
+    /// The order matters and it is a DESIGN DECISION: when both are true —
+    /// a configure refused *because* the device went away — the fact a reader
+    /// needs is that the device is gone, not that the surface is
+    /// unconfigured. A lost device is not something the recovery ladder can
+    /// undo, and an "unconfigured" answer would send that reader down the
+    /// ladder instead.
+    ///
+    /// Until this round that precedence existed only as the ORDER OF TWO
+    /// STATEMENTS inside `GpuSurface::acquire`, where nothing tested it and
+    /// nothing could: the inputs live behind a real `wgpu` device. Pure, all
+    /// four combinations are one table.
+    ///
+    /// ⚠ Deliberately not called `refusal`: `GpuSurface` already uses that
+    /// word for the *reason a configure was refused* (`take_refusal`, which
+    /// answers `wgpu`'s own sentence). This is a different fact — what the
+    /// surface owes before asking — and one type with two "refusal"s makes
+    /// every reader re-derive which is which.
+    #[must_use]
+    pub const fn owed_before_asking(presentable: bool, device_lost: bool) -> Option<Self> {
+        if device_lost {
+            return Some(Self::DeviceLost);
+        }
+        if presentable {
+            return None;
+        }
+        Some(Self::Unconfigured)
+    }
+
     /// Where this reason's count lives in a [`MissTally`].
     ///
     /// Written as a wildcard-free match rather than a search through
@@ -548,6 +582,44 @@ mod tests {
             held_by_a_surface.is_lost(),
             "the callback's handle and the surface's handle must be one fact"
         );
+    }
+
+    #[test]
+    fn what_a_surface_owes_before_asking_is_a_table_of_four() {
+        // ★★★★★ R2091 — the precedence `GpuSurface::acquire` applies, made
+        // assertable. It used to be the ORDER OF TWO STATEMENTS behind a real
+        // `wgpu` device, so the interesting row — BOTH true — could not be
+        // reached by any test this crate can run, and the design decision it
+        // encodes was documented in a comment and checked by nobody.
+        assert_eq!(
+            Missed::owed_before_asking(true, false),
+            None,
+            "nothing owed"
+        );
+        assert_eq!(
+            Missed::owed_before_asking(false, false),
+            Some(Missed::Unconfigured),
+            "a surface whose configure was refused is refused before wgpu is asked"
+        );
+        assert_eq!(
+            Missed::owed_before_asking(true, true),
+            Some(Missed::DeviceLost),
+            "a configured surface on a dead device still cannot be asked"
+        );
+        // ⇒ THE ROW THE PRECEDENCE EXISTS FOR. Both are true whenever a
+        // configure was refused BECAUSE the device went away, and the fact a
+        // reader needs is the device — `Unconfigured` would send them down a
+        // recovery ladder that cannot remake a device.
+        assert_eq!(
+            Missed::owed_before_asking(false, true),
+            Some(Missed::DeviceLost),
+            "with both true the device is the more fundamental fact"
+        );
+        // And both answers are invalidations, so either one moves the ladder
+        // rather than being mistaken for a window that is merely waiting.
+        for owed in [Missed::Unconfigured, Missed::DeviceLost] {
+            assert!(owed.is_invalidation(), "{owed} must move the ladder");
+        }
     }
 
     /// R2088.1 — the COMPILER's check that `GpuSurface::configure` opens a
