@@ -1062,7 +1062,32 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         )
         self._stdout_thread.start()
         self._stderr_thread.start()
-        time.sleep(self.boot_grace)
+        # ★★★★★ R2094 — WAIT FOR THE ANSWER, NOT FOR A CONSTANT.
+        #
+        # This was `time.sleep(self.boot_grace)`: every launch paid 0.8-1.5s
+        # whether the app was ready in 200ms or not ready at all. Readiness is
+        # "answers RPC", and the first request already waits `boot_timeout` for
+        # exactly that (R881.1 made that deadline generous for the cold-shader
+        # case). So the constant bought nothing the handshake does not.
+        #
+        # Measured: `r1684_the_specification_is_driven_in_a_window` opens the
+        # screen 59 times — one per operation, deliberately, so each is driven
+        # from a clean state — and at 1.5s apiece that is ~88s of its 141s.
+        # It is the walk sitting 4% under the sweep's budget on CI.
+        #
+        # What remains is one short pause and the fast-exit check below: a
+        # child that dies on exec is worth catching HERE, with its stderr,
+        # rather than through a confusing first-request failure. 10ms is for
+        # that check and nothing else — the waiting for readiness is the
+        # handshake's, which is bounded by `boot_timeout`.
+        #
+        # ⚠ `boot_grace` is therefore no longer a sleep. It is kept on the
+        # constructor because ~200 walks pass it, and because a caller that
+        # genuinely needs the old behaviour has somewhere to say so — but
+        # nothing reads it now, and a round that finds a demo needing a real
+        # settle should make THAT explicit rather than restoring a constant
+        # every launch pays.
+        time.sleep(0.01)
         if self._proc.poll() is not None:
             raise RpcError(
                 -32099,
