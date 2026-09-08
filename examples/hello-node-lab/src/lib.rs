@@ -2852,9 +2852,9 @@ impl LabState {
                 // **no** finding for *this card listens nowhere* — and it does
                 // consult what a node IS elsewhere (its client arm warns when a
                 // client listens at all). So role knowledge in a GATE is the
-                // canon's way; what `Role::accepts` did wrong was gate the
-                // PIN's existence. The two are different questions and only one
-                // of them was the defect.
+                // canon's way; what the removed per-role declaration did wrong
+                // was gate the PIN's existence. The two are different questions
+                // and only one of them was the defect.
                 //
                 // So the trigger is [`opens_listening`] — *a card of a kind
                 // that opens listening, which is not listening* — and that is
@@ -4093,7 +4093,8 @@ fn opening_listen(id: &str, role: Role, fresh_at_port: Option<u32>) -> String {
 ///
 /// # Why this is not the field this round removed
 ///
-/// `RoleSpec::accepts` said what a role could EVER do: it gated the accepting
+/// The per-role accepting declaration this round removed said what a role could
+/// EVER do: it gated the accepting
 /// pin's existence, so a card of a role that did not accept could never be
 /// dialled however it was configured. This decides ONE VALUE in a fresh card's
 /// form. Nothing reads it afterwards — the pin, the landing rule and the `pins`

@@ -1879,9 +1879,10 @@ impl NodeKind for LabNode {
     /// blocked here would refuse to start a deployment that is perfectly
     /// legitimate.
     fn warning(&self, around: &pinion_node_graph::Surroundings) -> Option<Objection> {
-        // ★ R2084 — the role's half of this is gone with `Role::accepts`: what
-        // matters is that this card LISTENS and nothing here dials it, and a
-        // card that listens is a card that listens whatever its role is called.
+        // ★ R2084 — the role's half of this is gone with the per-role accepting
+        // declaration itself: what matters is that this card LISTENS and
+        // nothing here dials it, and a card that listens is a card that listens
+        // whatever its role is called.
         if self.listening && !around.any_wired(Side::Input) {
             return Some(Objection::Warns(
                 "listening, and nothing on this canvas dials it — the drawing is \
