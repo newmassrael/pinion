@@ -89,6 +89,50 @@ pub type Plan = pinion_node_graph::Plan<Value>;
 /// ⚠ The neutral names are this screen's, per role, and the pattern is the
 /// existing one: a role's own program is its name in lower case. The canon's
 /// binary names are protocol vocabulary and are not written here.
+/// ★★★★★ R2086 — the program that runs a role which has none of its own, named
+/// once because two things now read it: the program a plan row names, and the
+/// decision about whether that row needs TELLING.
+pub const DRIVER: &str = "driver";
+
+/// ★★★★★ R2086 — **what a role's program is told, beyond its configuration.**
+///
+/// Empty for all but two, and that is the whole shape of it: a program of one's
+/// own is told everything by the configuration file the plan writes, because
+/// this screen's rows ARE configuration paths (see this module's header for why
+/// there is no second kind of row here).
+///
+/// The two exceptions are the roles with no program of their own. [`DRIVER`]
+/// runs whichever traffic role it is told to be, and **nothing in a
+/// configuration says which**:
+///
+/// * `RoleSpec::mode` is a different axis — it is the SESSION mode a node runs
+///   in (`router` / `peer` / `client`), it reaches the program through the
+///   configuration document, and it is `None` for both of these roles. Deriving
+///   the telling from it would hand the driver an empty argument and conflate
+///   two facts, which is R1716's class exactly.
+/// * so the telling is derived from the ROLE, as its own name in lower case —
+///   the form every other word this screen puts on a wire takes (`deployment`,
+///   `pattern`, `reference`, `locator`), where the badge is the three or four
+///   letters a small box wears and not a word a person reads in a command.
+///
+/// ⚠ Measured before it was built, and the second measurement is the sharper
+/// one. The crate that renders the script had **no** assertion about that line
+/// at all; this screen had **one**, per node, since R1788 — and it was blind by
+/// construction of its fixture. It built the expected line as *program then
+/// `-c`*, which is exactly the broken form for a role whose program needs
+/// telling, and the opening graph places no such role, so the shape it pinned
+/// was always the shape it got. ⇒ ★ **an assertion can pin a defect instead of
+/// catching it, and what decides which is the population its fixture creates.**
+/// It derives the line from the row now, arguments included.
+#[must_use]
+pub fn arguments_of(role: Role) -> Vec<String> {
+    if program_of(role) == DRIVER {
+        vec!["--mode".to_owned(), role.name().to_lowercase()]
+    } else {
+        Vec::new()
+    }
+}
+
 #[must_use]
 pub const fn program_of(role: Role) -> &'static str {
     match role {
@@ -98,7 +142,7 @@ pub const fn program_of(role: Role) -> &'static str {
         // the harness driver is what runs them. Sharing a program with each
         // other is not the infrastructure case above — those share a program
         // and differ by configuration, and these two ARE the driver.
-        Role::Scanner | Role::Member => "driver",
+        Role::Scanner | Role::Member => DRIVER,
         // Fifteen roles, fifteen programs.
         Role::Publisher => "publisher",
         Role::Subscriber => "subscriber",

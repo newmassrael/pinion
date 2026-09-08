@@ -15032,6 +15032,92 @@ fn saying_where_a_card_listens_opens_its_pin(state: &std::rc::Rc<ShellState>, cl
         .expect("★★★★★ and the same wire lands, once the card has somewhere to listen");
 }
 
+/// ★★★★★ R2086 — **on the assembled tool, the plan says what STARTS each node,
+/// and the one role with no program of its own is told which one to be** —
+/// driven on the shell, over one walk.
+///
+/// # What this reproduces, and what it repairs
+///
+/// The behaviour canon's own run builder routes the kinds its example programs
+/// cannot express through a driver, and tells that driver WHICH kind to be. Two
+/// of this screen's roles have no program of their own for the same reason
+/// (`deploy::program_of` has answered `driver` for them since R2078) — and the
+/// plan named that program with no argument beside it, so every rendered script
+/// has carried a line that cannot run since R1788.
+///
+/// **What is proven HERE and nowhere else** is that a person on the ASSEMBLED
+/// tool gets a runnable artifact: they place the card through the host's own
+/// router, press the screen's own produce-script seat, and the script the tool
+/// hands back names the driver AND what it is told.
+///
+/// ⚠ Two things kept this quiet. The crate that renders the script asserted
+/// nothing about that line; the lab asserted it per node and was blind by
+/// construction of its fixture — it built the expected line as *program then
+/// `-c`*, the broken form for a role that needs telling, and the opening graph
+/// places neither driven role, so the shape it pinned was always the shape it
+/// got. ⇒ ★ **an assertion can pin a defect instead of catching it.**
+///
+/// # Which screen this lands on
+///
+/// Screen A, the node lab, as it is assembled in this shell.
+#[test]
+fn r2086_the_assembled_tool_hands_back_a_script_whose_driver_is_told_what_to_be() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        state.go("lab").expect("the node lab section is open");
+
+        // (1) The opening plan tells nothing, because the opening graph places
+        // no role that needs telling. Asserted first, so the press below is
+        // what makes the difference rather than the fixture.
+        let before = lab_invoke(&state, "script", "").expect("the screen produces a launch script");
+        assert!(
+            before.contains("launch script"),
+            "the produce-script act answers with what it did: {before}"
+        );
+        let opening = lab_slot(&state, "produced")["script"]
+            .as_str()
+            .expect("the produced script is latched where an agent can read it")
+            .to_owned();
+        assert!(
+            !opening.contains("\"$BIN/driver\""),
+            "★ the opening graph starts no driven role: {opening}"
+        );
+
+        // (2) A person places one, through the host's own router.
+        //
+        // ⚠ The row has to be SCROLLED TO first, and that is a fact about this
+        // roster rather than a convenience: the palette carries the behaviour
+        // canon's twenty-one kinds (R2078) and the driven pair sits in the
+        // discovery group, below the fold at every size this shell mounts the
+        // lab at. `lab_palette_scrolled_to` parks it mid-pane, because the
+        // first offset where a row is PRESENT is not the first where it is
+        // whole — the lesson that helper's own doc records.
+        let row = hello_node_lab::address::role_row_named("Scanner");
+        let (shot, _) = lab_palette_scrolled_to(&row, (WIN_W, WIN_H));
+        press_tag(&state, &shot, &row);
+
+        // (3) And the script the tool hands back can run.
+        lab_invoke(&state, "script", "").expect("the script is produced again");
+        let script = lab_slot(&state, "produced")["script"]
+            .as_str()
+            .expect("the produced script is latched")
+            .to_owned();
+        assert!(
+            script.contains("\"$BIN/driver\" \"--mode\" \"scanner\" -c \""),
+            "★★★★★ the line that starts the driven card names the driver AND \
+             what it is told, each word its own argument, with the \
+             configuration path last:\n{script}"
+        );
+    });
+}
+
 /// ★★★★★ R2085 — **on the assembled tool, one press colours a whole palette
 /// group, a card of that group follows, and the screen says what the colour
 /// costs** — driven on the shell, over one walk.

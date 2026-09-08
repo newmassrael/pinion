@@ -3678,7 +3678,27 @@ fn r1687_the_document_and_the_script_are_the_same_plan() {
             );
         }
         for entry in plan.nodes() {
-            let start = format!("\"$BIN/{}\" -c \"$OUT/{}.json\"", entry.program, entry.name);
+            // ★★★★★ R2086 — the line is DERIVED from the row, arguments
+            // included, and that is a repair rather than a widening. This
+            // assertion has pinned the command line since R1788 and could not
+            // see the defect that round left: it built the line as
+            // *program then `-c`*, which is exactly the broken form for a role
+            // whose program needs telling — and the opening graph places no
+            // such role, so the shape it pinned was always the shape it got.
+            // ⇒ ★ **an assertion can be blind by construction of its fixture,
+            // and then it pins the defect instead of catching it.**
+            // `write!` into one buffer rather than a `format!` per word, which
+            // is `clippy::format_collect`'s ask and the same shape the renderer
+            // uses — so the expected line is built the way the real one is.
+            let told = entry.arguments.iter().fold(String::new(), |mut out, word| {
+                use std::fmt::Write as _;
+                let _ = write!(out, " \"{word}\"");
+                out
+            });
+            let start = format!(
+                "\"$BIN/{}\"{told} -c \"$OUT/{}.json\"",
+                entry.program, entry.name
+            );
             assert_eq!(
                 script.matches(start.as_str()).count(),
                 1,
@@ -9311,6 +9331,93 @@ fn r2078_the_wire_carries_every_fact_a_role_declares() {
                 role.name,
             );
         }
+    });
+}
+
+/// ★★★★★ R2086 — **a role with no program of its own is told which one to be.**
+///
+/// # Why no gate had met this
+///
+/// `program_of` has answered `driver` for two roles since R2078 — they exist to
+/// be driven and the harness driver is what runs them — and the plan named that
+/// program with **no argument beside it**, so every rendered script has carried
+/// a line that cannot run since R1788.
+///
+/// Two things kept it quiet, and the second is the one worth keeping. The crate
+/// that renders the script asserted nothing about that line; this screen
+/// asserted it per node — and **the opening graph places neither driven role**,
+/// so that assertion built the expected line as *program then `-c`* and got
+/// exactly that, every time. ⇒ ★★★★★ **an assertion can pin a defect instead
+/// of catching it, and what decides which is the population its fixture
+/// creates.** This test is what puts such a card on the canvas.
+///
+/// ⚠ The telling is derived from the ROLE and not from `RoleSpec::mode`: that
+/// field is the session mode a node runs in, it reaches the program through the
+/// configuration document, and it is `None` for both of these roles — see
+/// `deploy::arguments_of` for the whole of why those are two axes.
+#[test]
+fn r2086_a_role_with_no_program_of_its_own_is_told_which_one_to_be() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+
+        let opening = state.plan();
+        assert!(
+            opening
+                .nodes()
+                .iter()
+                .all(|row| row.program != deploy::DRIVER),
+            "★ the opening graph places no driven role, which is why this \
+             defect could only appear after a person placed one",
+        );
+        assert!(
+            opening.nodes().iter().all(|row| row.arguments.is_empty()),
+            "★ and every card it does place is told nothing beyond its \
+             configuration file",
+        );
+
+        super::add_node(&state, Role::Scanner);
+        let plan = state.plan();
+        let driven: Vec<_> = plan
+            .nodes()
+            .iter()
+            .filter(|row| row.program == deploy::DRIVER)
+            .collect();
+        assert_eq!(
+            driven.len(),
+            1,
+            "the palette placed one card whose role has no program of its own",
+        );
+        assert_eq!(
+            driven[0].arguments,
+            vec!["--mode".to_owned(), "scanner".to_owned()],
+            "★★★★★ it is told WHICH role to perform, in the words this screen \
+             puts on a wire (its own name, lower case) rather than the badge a \
+             small box wears",
+        );
+        for row in plan
+            .nodes()
+            .iter()
+            .filter(|row| row.program != deploy::DRIVER)
+        {
+            assert!(
+                row.arguments.is_empty(),
+                "★ a program of its own is told everything by its configuration \
+                 file: {} carries {:?}",
+                row.name,
+                row.arguments,
+            );
+        }
+
+        // And the artifact a person runs carries it, word by word, before the
+        // configuration path — which is the half a register cannot stand in
+        // for, because a script is what actually starts the processes.
+        let script = plan.to_script().expect("the plan renders");
+        assert!(
+            script.contains("\"$BIN/driver\" \"--mode\" \"scanner\" -c \""),
+            "★★★★★ the line that starts it can run:\n{script}",
+        );
     });
 }
 

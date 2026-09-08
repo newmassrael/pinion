@@ -2566,6 +2566,16 @@ impl LabState {
                 self.role_of(node)
                     .map(|role| deploy::program_of(role).to_owned())
             },
+            // ★★★★★ R2086 — and what that program is TOLD. Beside the program
+            // because they are one answer, and asked of the ROLE for the reason
+            // `deploy::arguments_of` states: the two roles with no program of
+            // their own need telling which traffic role to perform, and no
+            // configuration path says it.
+            |node| {
+                self.role_of(node)
+                    .map(deploy::arguments_of)
+                    .unwrap_or_default()
+            },
             // 🟥★★★★★ R1716 — the form the screen SHOWS, and this line is the
             // round's own defect caught in its own terms. It read the STORED
             // form, which is the authored half: the plan a person exports would

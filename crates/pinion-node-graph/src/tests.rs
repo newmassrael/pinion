@@ -15740,6 +15740,11 @@ fn deployment(document: &Document<Op>) -> crate::Plan<serde_json::Value> {
         ROOT,
         |_| "h1".to_string(),
         |_| Some("node".to_string()),
+        // ★ R2086 — nothing told, which is the ordinary answer: a program with
+        // a configuration file of its own needs no argument beyond it.
+        // `r2086_a_plan_says_what_starts_each_node` is where the other answer
+        // is driven.
+        |_| Vec::new(),
         |node| crate::Configured {
             document: serde_json::json!({ "id": node.0 }),
             uncarried: Vec::new(),
@@ -15791,6 +15796,7 @@ fn r1788_a_node_with_no_program_is_left_out_of_the_plan() {
         ROOT,
         |_| "h1".to_string(),
         |node| (node != fixture.add).then(|| "node".to_string()),
+        |_| Vec::new(),
         |_| crate::Configured {
             document: serde_json::json!({}),
             uncarried: Vec::new(),
@@ -15879,6 +15885,7 @@ fn r1788_an_unwritable_configuration_names_the_node_rather_than_going_quiet() {
         ROOT,
         |_| "h1".to_string(),
         |_| Some("node".to_string()),
+        |_| Vec::new(),
         |node| crate::Configured {
             document: if node == fixture.add {
                 std::collections::BTreeMap::from([((1, 2), 3)])
@@ -15924,6 +15931,7 @@ fn r1788_an_uncarried_row_is_in_the_document_and_in_the_script() {
         ROOT,
         |_| "h1".to_string(),
         |_| Some("node".to_string()),
+        |_| Vec::new(),
         |node| crate::Configured {
             document: serde_json::json!({ "id": node.0 }),
             uncarried: if node == fixture.sink {
@@ -15976,6 +15984,7 @@ fn r1788_a_plan_across_two_hosts_branches_and_says_so() {
             }
         },
         |_| Some("node".to_string()),
+        |_| Vec::new(),
         |_| crate::Configured {
             document: serde_json::json!({}),
             uncarried: Vec::new(),
@@ -16020,6 +16029,81 @@ fn r1788_the_document_carries_the_order_the_nodes_and_the_hosts() {
     assert_eq!(document["order"][0]["standing"], "first");
 }
 
+/// ★★★★★ R2086 — **a plan says what STARTS each node, and not only which
+/// program.**
+///
+/// # The gate that was missing, measured before it was written
+///
+/// The command a plan starts was spelled inside [`Plan::to_script`] and
+/// published nowhere, and **no test in this crate looked at that line** — a
+/// grep for the script's own `$BIN` found zero assertions. So an application
+/// whose program needs telling (a driver told which role to perform) rendered a
+/// line that cannot run, and every gate in the tree was green: the document
+/// could not carry the telling, the script did not show it, and nothing asked.
+///
+/// Three claims, and the third is the one a joined string would break:
+///
+/// * the document carries the arguments per node, beside the program;
+/// * the script puts them BEFORE the configuration path, which is this
+///   module's own and stays last;
+/// * each word is quoted SEPARATELY, because a shell hands `"--mode sink"` to
+///   the program as one argument and the program has never heard of it.
+#[test]
+fn r2086_a_plan_says_what_starts_each_node() {
+    let fixture = labelled();
+    let told = |node: NodeId| {
+        if node == fixture.sink {
+            vec!["--mode".to_owned(), "sink".to_owned()]
+        } else {
+            Vec::new()
+        }
+    };
+    let plan = fixture.document.deployment(
+        ROOT,
+        |_| "h1".to_string(),
+        |_| Some("driver".to_string()),
+        told,
+        |_| crate::Configured {
+            document: serde_json::json!({}),
+            uncarried: Vec::new(),
+        },
+    );
+
+    // (A) the document, per node, in the order it is brought up
+    let text = plan.to_document().expect("writable");
+    let document: serde_json::Value = serde_json::from_str(&text).expect("json");
+    let rows = document["order"].as_array().expect("an order");
+    let mut carried = 0usize;
+    for row in rows {
+        let arguments = row["arguments"]
+            .as_array()
+            .unwrap_or_else(|| panic!("every row says what it is told: {row}"));
+        if arguments.is_empty() {
+            continue;
+        }
+        assert_eq!(
+            arguments,
+            &vec![serde_json::json!("--mode"), serde_json::json!("sink")],
+            "the row that is told carries exactly what the application said: {row}"
+        );
+        carried += 1;
+    }
+    assert_eq!(carried, 1, "one node was told something: {document}");
+
+    // (B) and (C) — the script's line, quoted word by word, before `-c`
+    let script = plan.to_script().expect("renders");
+    assert!(
+        script.contains("\"$BIN/driver\" \"--mode\" \"sink\" -c \""),
+        "★★★★★ each word is its own argument and the configuration path stays \
+         last:\n{script}"
+    );
+    assert!(
+        script.contains("\"$BIN/driver\" -c \""),
+        "★ and a node told nothing renders with no gap where an argument would \
+         be:\n{script}"
+    );
+}
+
 /// ★ R1788 — a tree that is not there deploys to an empty plan whose renderings
 /// are still well formed, rather than to a panic or to a script with no `wait`.
 #[test]
@@ -16029,6 +16113,7 @@ fn r1788_a_tree_that_is_not_there_deploys_to_an_empty_plan() {
         TreeId(97),
         |_| "h1".to_string(),
         |_| Some("node".to_string()),
+        |_| Vec::new(),
         |_| crate::Configured {
             document: serde_json::json!({}),
             uncarried: Vec::new(),

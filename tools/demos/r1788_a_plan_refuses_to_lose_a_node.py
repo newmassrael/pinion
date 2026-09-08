@@ -161,6 +161,21 @@ def body() -> None:
                 f"{row['node']} says where it starts, what it runs and why it is here",
                 bool(row["host"]) and bool(row["program"]) and bool(row["standing"]),
             )
+            # ★★★★★ R2086 — and WHAT IT IS TOLD, which this row could not carry
+            # until that round: the command a plan starts was spelled inside the
+            # script renderer and published nowhere, so a program that needs
+            # telling read on the wire as one that did not. The key is asserted
+            # on every row (the wire carries the fact) and its words are checked
+            # wherever there are any; the driven case — a role with no program of
+            # its own, told which one to be — is driven in the lab's own
+            # `r2086_a_role_with_no_program_of_its_own_is_told_which_one_to_be`
+            # and on the assembled tool, because the opening graph deliberately
+            # places no such role.
+            ok(
+                f"and {row['node']} says what it is TOLD beyond its config",
+                isinstance(row["arguments"], list)
+                and all(isinstance(word, str) and word for word in row["arguments"]),
+            )
             ok(
                 f"and {row['node']}'s host is one the plan lists",
                 row["host"] in plan["hosts"],

@@ -81,6 +81,9 @@
 //! the graph.
 
 use core::fmt;
+// ★ R2086 — `write!` into a `String`, which is what `clippy::format_collect`
+// asks for when a line is built from an iterator of words.
+use core::fmt::Write as _;
 
 use serde::Serialize;
 
@@ -201,6 +204,29 @@ pub struct Deployed<D> {
     pub host: String,
     /// The program it runs.
     pub program: String,
+    /// ★★★★★ R2086 — **what that program is told, beyond its configuration
+    /// file.**
+    ///
+    /// The arguments the APPLICATION supplies, in order, and nothing else: the
+    /// `-c <file>` that hands a node its configuration is this module's own,
+    /// because this module is what names the file and writes it, and a caller
+    /// that spelled it too would be the second author of one convention.
+    ///
+    /// # Why this exists, measured
+    ///
+    /// Until this round the command a plan starts was spelled INSIDE
+    /// [`to_script`](Plan::to_script) and published nowhere — so *what starts
+    /// this node* had no answer on the wire, no second renderer could exist,
+    /// and no test asserted it (measured: zero tests in this crate looked at
+    /// that line). The behaviour reference this screen family reproduces keeps
+    /// the same split — a per-kind argument table in the application, the
+    /// configuration path at the exporter — and routes the kinds its example
+    /// programs cannot express through a driver told WHICH kind to be. That
+    /// telling is an argument, and it is the one thing a plan could not carry.
+    ///
+    /// Empty is the ordinary answer and not a hole: most programs here take
+    /// their configuration and nothing more.
+    pub arguments: Vec<String>,
     /// Why it sits where it does in the order.
     pub standing: Bringup,
     /// Its configuration, and what that configuration could not carry.
@@ -446,8 +472,21 @@ impl<D: Serialize> Plan<D> {
             lines.push(String::new());
             lines.push(format!("if [ \"$HOST\" = \"{host}\" ]; then"));
             for entry in self.nodes.iter().filter(|entry| &entry.host == host) {
+                // ★★★★★ R2086 — the application's arguments, then the
+                // configuration path this module owns. Quoted one at a time
+                // rather than joined into one word, because a shell would take
+                // `"--mode pub"` as a single argument and hand the program a
+                // parameter it has never heard of.
+                let told = entry.arguments.iter().fold(String::new(), |mut out, word| {
+                    // `write!` into the buffer rather than a `format!` per
+                    // word, which is what `clippy::format_collect` asks for and
+                    // what it is right about: one allocation for the line
+                    // instead of one per argument.
+                    let _ = write!(out, " \"{word}\"");
+                    out
+                });
                 lines.push(format!(
-                    "  \"$BIN/{}\" -c \"$OUT/{}.json\" & echo $! >> \"$OUT/pids\"",
+                    "  \"$BIN/{}\"{told} -c \"$OUT/{}.json\" & echo $! >> \"$OUT/pids\"",
                     entry.program, entry.name
                 ));
                 // The wait the ordering cannot supply — see the module header.
@@ -490,6 +529,11 @@ impl<D: Serialize> Plan<D> {
                     "node": entry.name,
                     "host": entry.host,
                     "program": entry.program,
+                    // ★★★★★ R2086 — and what that program is TOLD. An agent
+                    // reading this document could see which executable starts a
+                    // node and not what it is started with, so a node whose
+                    // program needs telling read as one that did not.
+                    "arguments": entry.arguments,
                     "standing": entry.standing.wire(),
                 })
             })
@@ -654,6 +698,7 @@ impl<K: NodeKind> Document<K> {
         tree: TreeId,
         host_of: impl Fn(NodeId) -> String,
         program_of: impl Fn(NodeId) -> Option<String>,
+        arguments_of: impl Fn(NodeId) -> Vec<String>,
         config_of: impl Fn(NodeId) -> Configured<D>,
     ) -> Plan<D> {
         let nodes = self
@@ -665,6 +710,12 @@ impl<K: NodeKind> Document<K> {
                     name: placed.name,
                     host: host_of(placed.node),
                     program,
+                    // ★★★★★ R2086 — asked of the application, beside the
+                    // program, because the two are one answer: *what runs, and
+                    // what it is told*. A closure rather than a field on the
+                    // node for `program_of`'s reason — which program a node
+                    // runs is the application's taxonomy and not the graph's.
+                    arguments: arguments_of(placed.node),
                     standing: placed.standing,
                     config: config_of(placed.node),
                 })
