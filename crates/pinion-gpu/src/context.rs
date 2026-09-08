@@ -349,6 +349,39 @@ impl GpuContext {
                 }
             }
         }
+        // ★ R2089 §5.16 — run a `maintain` so a device loss can REACH
+        // [`DeviceLiveness`] before the caller's next acquire.
+        //
+        // R2088.1 read liveness at the acquire, which closed the gap
+        // *between* frames and left the one *inside* a frame open: the
+        // emitted `render` retries immediately after this call, with no
+        // submit and no maintain in between, so a rung whose configure was
+        // refused with `DeviceError::Lost` left `presentable` true (that
+        // error class reaches no error scope) and the liveness flag unset
+        // (its callback is queued only by `maintain`, and
+        // `configure_surface` skips `user_callbacks.fire()` on every one of
+        // its failure paths). The next `get_current_texture()` was then the
+        // process-fatal report that no handler can absorb.
+        //
+        // An empty submit is the one closer that costs nothing it should
+        // not, and all three constraints were measured in `wgpu` 29's
+        // source rather than assumed:
+        //
+        // - `Queue::submit` calls `.maintain(…, PollType::Poll, …)` and
+        //   hands back the closures its caller fires, and that `maintain`
+        //   is the ONLY place the device-lost closure is queued;
+        // - `PollType::Poll` does not block;
+        // - submitting nothing adds no work, so it moves the queue toward
+        //   the `queue_empty` condition that closure also waits on.
+        //
+        // `Device::poll` was the obvious alternative and is unusable: on a
+        // lost device it reports through `handle_error_fatal`, so probing
+        // liveness that way would be a third way to abort rather than a way
+        // to avoid one.
+        //
+        // Only on a rung — `note_missed` has already returned `None` for a
+        // window that is merely waiting, so a healthy frame never gets here.
+        self.queue.submit(core::iter::empty());
         Some(rung)
     }
 

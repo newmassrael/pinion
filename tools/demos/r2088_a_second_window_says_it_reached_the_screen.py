@@ -117,6 +117,13 @@ CHECKS: list[str] = []
 #: difference between a quiet gate and a vacuous one.
 OBSERVED: list[str] = []
 
+#: R2089 — windows whose presentability could NOT be judged because the
+#: framework reported a state that used to be a process abort (`device_lost` /
+#: `unconfigured`). Printed at the end: a run that skipped some has proved less
+#: than a run that skipped none, and the difference has to be visible rather
+#: than folded into a green tick.
+SKIPPED: list[str] = []
+
 
 def banner(text: str) -> None:
     print(f"\n=== {text} ===")
@@ -189,11 +196,36 @@ def reached_the_screen(app: RpcSubprocess, window: str, when: str) -> dict:
     )
     if reason is not None or rung is not None:
         OBSERVED.append(f"{when}/{window}: {reason}/{rung}")
-    ok(
-        f"D/{when}/{window}: the window is not sitting in a state whose "
-        f"acquisition used to abort the process ({reason!r})",
-        reason not in ("unconfigured", "device_lost"),
-    )
+    # ★★★★★ R2089 — a REPORTED `device_lost` / `unconfigured` is the repair
+    # working, not a failure, and this assertion used to say the opposite.
+    #
+    # The defect this walk exists for is a process that DIED: `wgpu` answers
+    # `get_current_texture()` on a surface whose configure was refused through
+    # `handle_error_fatal`, which no handler can absorb. R2088/R2089 made that
+    # state something the framework *names* — so seeing the name here is the
+    # evidence, and refusing it would fail the walk precisely when the repair
+    # did its job.
+    #
+    # Observed on this host: ONE occurrence in NINE runs of this walk, during
+    # tear-off churn. ⚠ That is a count, not a rate — the first draft of this
+    # comment said "about one run in four" after seeing it once in four runs,
+    # which is a rate inferred from a single event and was wrong within the
+    # hour. What the count does establish is enough: it happens, it is
+    # intermittent, and a refusal here therefore makes this walk flaky
+    # ([[zero-flake-policy]]) for doing the right thing.
+    #
+    # So it is a LOUD SKIP instead, which is the idiom this tree already uses
+    # for an adapter-dependent half (the R806 canaries name the adapter and
+    # skip rather than lie). A window whose device is gone cannot be judged on
+    # whether it is presenting; saying that out loud is honest, and saying
+    # nothing would be the silence this whole debt is about.
+    if reason in ("unconfigured", "device_lost"):
+        SKIPPED.append(f"{when}/{window}: {reason}")
+        print(
+            f"[demo] ★ SKIP {when}/{window}: the framework REPORTED {reason!r} "
+            f"-- on the pre-R2088 tree this was a process abort, not a report. "
+            f"Presentability is not judged for a window whose device is gone."
+        )
     return report
 
 
@@ -293,6 +325,10 @@ def body() -> None:
 
     print(f"\n[demo] {len(CHECKS)} named check(s)")
     print(f"[demo] published misses observed: {OBSERVED or 'none — nothing broke on this host'}")
+    print(
+        f"[demo] presentability NOT judged for: "
+        f"{SKIPPED or 'nothing — every window answered'}"
+    )
 
 
 run_demo("R2088 a second window says it reached the screen", body)
