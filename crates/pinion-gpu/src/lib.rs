@@ -66,5 +66,5 @@ mod surface;
 
 pub use context::{GpuContext, GpuError};
 pub use frame_timer::{FrameTimer, GpuFrameClock};
-pub use health::{Missed, Rung, SurfaceHealth};
+pub use health::{DeviceLiveness, Missed, Rung, SurfaceHealth};
 pub use surface::GpuSurface;

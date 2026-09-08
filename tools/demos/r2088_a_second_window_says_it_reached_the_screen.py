@@ -9,10 +9,19 @@ paints, where it sits. None of them ever asked the new window the one
 question a second window can answer differently from the first — **are your
 frames actually reaching the screen?**
 
-That gap is not academic. It is exactly where a defect lived for 154 rounds:
+That gap is not academic. It is exactly where a defect has lived since R1934,
+and — measured at R2088, by running the full sweep rather than assuming —
+where it STILL lives: the round below repaired one layer of it and the class
+survived, so this walk is a standing question rather than a victory lap. See
+`debt-a-second-windows-surface-is-presented-before-it-is-configured`, which is
+open.
 
 * a full sweep failed ONE walk per run and a DIFFERENT walk each run, always
-  one of the twenty-nine that detach a panel into a second window;
+  one that detaches a panel into a second window — a population that is a
+  command rather than a number (`grep -lE "tear_off|undock|detach"
+  tools/demos/*.py`: 29 of 109 when the defect was registered, 47 of 725 at
+  R2088), because a count written into prose is stale from the moment it is
+  written;
 * the harness saw `timeout waiting for response to scene/tick`, so it read as
   a slow machine;
 * the log said the renderer had panicked inside `wgpu` with `Surface is not
@@ -40,8 +49,8 @@ walk is the half that reads it from the assembled application:
   which is the churn the defect lived in. Every generation is asked, and the
   process is still answering at the end — which, for a defect whose signature
   was a dead renderer, is itself the assertion.
-* **D** — the vocabulary. A published miss is one of the six the framework
-  names, `unconfigured` among them; and no window ends this walk sitting in
+* **D** — the vocabulary. A published miss is one the framework names,
+  `unconfigured` and `device_lost` among them; and no window ends this walk in
   it. The set is checked in the direction that fails loudly: a name this walk
   does not know makes it red rather than quiet.
 
@@ -79,9 +88,20 @@ TORN = f"torn-{CARD}"
 #: acceptable only because of the DIRECTION it rots in: a name added there and
 #: not here makes section D fail loudly, never pass quietly.
 #:
-#: `unconfigured` is R2088's addition and is the one arm pinion raises itself,
-#: before asking `wgpu` — because asking is what aborted the process.
-MISSED_NAMES = {"outdated", "lost", "validation", "timeout", "occluded", "unconfigured"}
+#: `unconfigured` and `device_lost` are R2088's additions and are the two arms
+#: pinion raises itself, before asking `wgpu` — because asking is what aborted
+#: the process. `device_lost` is separate from `lost` on purpose: a lost
+#: swapchain is remade by the recovery ladder and a lost device is not remade
+#: by anything, and a reader who cannot tell them apart cannot act on either.
+MISSED_NAMES = {
+    "outdated",
+    "lost",
+    "validation",
+    "timeout",
+    "occluded",
+    "unconfigured",
+    "device_lost",
+}
 RUNG_NAMES = {"reconfigured", "rebuilt", "repeated"}
 
 #: How many tear-off / redock generations section C drives. Each one is a
@@ -170,9 +190,9 @@ def reached_the_screen(app: RpcSubprocess, window: str, when: str) -> dict:
     if reason is not None or rung is not None:
         OBSERVED.append(f"{when}/{window}: {reason}/{rung}")
     ok(
-        f"D/{when}/{window}: the window is not sitting unconfigured -- the state "
-        f"whose acquisition used to abort the process ({reason!r})",
-        reason != "unconfigured",
+        f"D/{when}/{window}: the window is not sitting in a state whose "
+        f"acquisition used to abort the process ({reason!r})",
+        reason not in ("unconfigured", "device_lost"),
     )
     return report
 

@@ -1453,6 +1453,15 @@ mod tests {
             !rust.contains("::vello::wgpu::CurrentSurfaceTexture::"),
             "the backend's status enum is classified in one place, and it is not here",
         );
+        // ★ R2088.1 — and a refused rung SAYS SO. An error scope captures the
+        // refusal, so the uncaptured-error handler this template installs
+        // never sees it and the ladder drops the `Result`; without this the
+        // round would have made the tree quieter about the very thing it was
+        // repairing.
+        assert!(
+            rust.contains("self.surface.take_refusal()"),
+            "a rung whose configure was refused reports the reason",
+        );
         // ...and the retry STOPS: `Repeated` is the ladder saying everything
         // known has been tried, and a loop that ignored it would spin a dark
         // window at 100% CPU.

@@ -359,6 +359,13 @@ pub fn capture_surface_rgba8(
         Ok(texture) => texture,
         Err(missed) => {
             context.recover(surface, missed);
+            // R2088.1 — the same sentence the emitted renderer prints, on the
+            // capture route. An error scope captures a refused configure, so
+            // this is the only place it can still be read; taken, so a dark
+            // window says it once rather than once per request.
+            if let Some(why) = surface.take_refusal() {
+                tracing::warn!(target: "pinion::shell", reason = %why, "surface configure refused");
+            }
             return Err(SurfaceCaptureError::SurfaceUnavailable(missed.as_str()));
         }
     };

@@ -5,8 +5,11 @@
 //! # The defect this is the guard for
 //!
 //! A full demo sweep failed one walk per run, and a *different* walk each
-//! run — always one of the twenty-nine that detach a panel into a second
-//! window. The harness saw an RPC timeout; the log said the renderer had
+//! run — always one that detaches a panel into a second window (that
+//! population is a command, not a number: `grep -lE "tear_off|undock|detach"
+//! tools/demos/*.py`, which answered 29 of 109 when the defect was
+//! registered and 47 of 725 at R2088 — do not copy either figure forward).
+//! The harness saw an RPC timeout; the log said the renderer had
 //! panicked inside `wgpu` with `Surface is not configured for
 //! presentation`. So the timeout was the symptom and the cause was a dead
 //! process, which is why re-running "fixed" it and why no walk owned it.
@@ -34,8 +37,8 @@
 //!
 //! It does not reproduce the race. It reproduces the **state** the race
 //! reaches, by the shortest refusal `wgpu` documents: hold an acquired
-//! swapchain image and reconfigure. `wgpu` answers "SurfaceOutput must be
-//! dropped before a new Surface is made", and everything downstream is the
+//! swapchain image and reconfigure. `wgpu` answers `SurfaceOutput must be
+//! dropped before a new Surface is made`, and everything downstream is the
 //! same. Run against the pre-R2088 tree this file does not fail — it
 //! *aborts*, with the sweep's own panic text.
 //!
@@ -121,6 +124,25 @@ fn observe(window: &Arc<Window>) -> Vec<String> {
     );
     steps.push("a refused reconfigure is reported, not swallowed".to_owned());
 
+    // ★ R2088.1 — and the REASON survives. R2088 replaced the
+    // uncaptured-error handler's printout with an error scope, which captures
+    // the refusal, while the recovery ladder discards the `Result` — so the
+    // one sentence saying why a window is dark had no channel left. It is
+    // held on the surface until read.
+    let why = surface
+        .take_refusal()
+        .expect("the refusal is kept for a reader, not only returned to a caller who drops it");
+    assert!(
+        why.contains("SurfaceOutput"),
+        "the kept reason is wgpu's own sentence, not a summary of it: {why}"
+    );
+    assert_eq!(
+        surface.take_refusal(),
+        None,
+        "taken, so a dark window says it once per refusal and not once per frame"
+    );
+    steps.push("the reason a configure was refused survives to a reader".to_owned());
+
     // ★ The assertion the sweep was dying on. Before R2088 this line was
     // `get_current_texture()` on an unconfigured surface, which panics the
     // process — so on the pre-R2088 tree the run ABORTS here rather than
@@ -183,7 +205,7 @@ fn a_refused_configure_is_reported_and_survivable() {
         .expect("run the event loop");
     assert_eq!(
         observed.steps.len(),
-        4,
+        5,
         "the window body must have run to the end; observed {:?}",
         observed.steps
     );

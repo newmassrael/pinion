@@ -72,18 +72,34 @@ pub enum Missed {
     /// surface in this state will never present again on its own — the
     /// recovery ladder is exactly what gets it out.
     Unconfigured,
+    /// R2088.1 — the **device** behind this surface has been lost, so
+    /// nothing on it can present and nothing here can ask.
+    ///
+    /// A separate arm from [`Self::Lost`], which is the *swapchain* going
+    /// away on a device that is still working. Collapsing them would erase
+    /// the only distinction that matters to a reader: a lost swapchain is
+    /// remade by the ladder's heavy rung, and a lost device is not remade
+    /// by anything this type can do.
+    ///
+    /// ★ It is also the one arm that arrives on a channel an error scope
+    /// **cannot** see. `wgpu`'s `handle_error_inner` matches
+    /// `ErrorType::DeviceLost => return` — no sink, so no scope and no
+    /// uncaptured handler — and says why beside it: *will be surfaced via
+    /// callback*. See [`crate::DeviceLiveness`].
+    DeviceLost,
 }
 
 impl Missed {
     /// Every arm, so a census or a doc table derives its rows instead of
     /// hand-listing them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Outdated,
         Self::Lost,
         Self::Validation,
         Self::Timeout,
         Self::Occluded,
         Self::Unconfigured,
+        Self::DeviceLost,
     ];
 
     /// Whether this is the surface *breaking* — the case a recovery can act
@@ -95,7 +111,11 @@ impl Missed {
     #[must_use]
     pub fn is_invalidation(self) -> bool {
         match self {
-            Self::Outdated | Self::Lost | Self::Validation | Self::Unconfigured => true,
+            Self::Outdated
+            | Self::Lost
+            | Self::Validation
+            | Self::Unconfigured
+            | Self::DeviceLost => true,
             Self::Timeout | Self::Occluded => false,
         }
     }
@@ -144,6 +164,7 @@ impl Missed {
             Self::Timeout => "timeout",
             Self::Occluded => "occluded",
             Self::Unconfigured => "unconfigured",
+            Self::DeviceLost => "device_lost",
         }
     }
 }
@@ -151,6 +172,60 @@ impl Missed {
 impl core::fmt::Display for Missed {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// ★ R2088.1 §5.16 — whether the device behind a surface is still usable.
+///
+/// # Why this type exists at all
+///
+/// R2088 made a refused `Surface::configure` a *measured* fact by running it
+/// inside `wgpu` error scopes. Measured again against `wgpu` 29's source, that
+/// is not a complete failure channel:
+///
+/// ```text
+/// // wgpu-29.0.3/src/backend/wgpu_core.rs, handle_error_inner
+/// ErrorType::DeviceLost => return, // will be surfaced via callback
+/// ```
+///
+/// That arm never touches the error sink, so **no scope and no
+/// uncaptured-error handler can see it** — and `configure_surface` reaches it
+/// whenever the failure is a `DeviceError::Lost` (its `check_is_valid()` and
+/// its `maintain()`, and `hal::DeviceError::Unexpected` maps to `Lost` too).
+/// So a scope that caught nothing does **not** mean the configure worked, and
+/// R2088's first draft read that silence as success — which is the very
+/// inference this debt is about, moved one layer up.
+///
+/// This is the callback's landing place, which is the channel `wgpu`'s own
+/// comment points at. There is no second opinion available: `Device::poll`
+/// cannot serve as a liveness probe, because a lost device makes it call
+/// `handle_error_fatal` (measured, same file) — a probe would be a *third*
+/// way to abort rather than a way to avoid one.
+///
+/// # Shape
+///
+/// Shared, not copied: the callback holds one handle and every surface on that
+/// device holds another, and they must be **one fact**. That is what
+/// [`Self::is_lost`] is asserted on without a GPU.
+#[derive(Debug, Clone, Default)]
+pub struct DeviceLiveness(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl DeviceLiveness {
+    /// Record that the device has been lost. Called from `wgpu`'s
+    /// device-lost callback, which may fire on any thread.
+    pub(crate) fn lose(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Whether the device has been lost.
+    ///
+    /// Read at the **acquire**, not cached from configure time: the callback
+    /// fires from `wgpu`'s maintain, and `configure_surface` does not fire its
+    /// user callbacks on the path where it fails — so the honest moment to ask
+    /// is the moment before asking `wgpu` for an image.
+    #[must_use]
+    pub fn is_lost(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
     }
 }
 
@@ -302,7 +377,42 @@ impl SurfaceHealth {
 
 #[cfg(test)]
 mod tests {
-    use super::{Missed, Rung, SurfaceHealth};
+    use super::{DeviceLiveness, Missed, Rung, SurfaceHealth};
+
+    #[test]
+    fn a_lost_device_is_one_fact_seen_through_every_handle() {
+        // ★ R2088.1 — the load-bearing property, and the reason this is a
+        // shared handle rather than a `Copy` flag: `wgpu`'s device-lost
+        // callback holds one clone and every surface on that device holds
+        // another. A value type here would leave the surfaces reading a
+        // liveness that never changes, which is indistinguishable from a
+        // healthy device and is exactly the silence this type exists to end.
+        let held_by_the_callback = DeviceLiveness::default();
+        let held_by_a_surface = held_by_the_callback.clone();
+        assert!(!held_by_the_callback.is_lost());
+        assert!(!held_by_a_surface.is_lost());
+        held_by_the_callback.lose();
+        assert!(
+            held_by_a_surface.is_lost(),
+            "the callback's handle and the surface's handle must be one fact"
+        );
+    }
+
+    /// R2088.1 — the COMPILER's check that `GpuSurface::configure` opens a
+    /// scope for every filter an error scope can be opened for.
+    ///
+    /// The failing path is the BUILD, not an assertion: this match has no
+    /// wildcard, so a `wgpu` that grows a fourth `ErrorFilter` stops
+    /// compiling here rather than letting that kind escape to the uncaptured
+    /// handler — which is this round's own defect, one layer up.
+    #[allow(dead_code)]
+    fn every_error_filter_has_a_scope(filter: wgpu::ErrorFilter) -> &'static str {
+        match filter {
+            wgpu::ErrorFilter::OutOfMemory => "out-of-memory",
+            wgpu::ErrorFilter::Validation => "validation",
+            wgpu::ErrorFilter::Internal => "internal",
+        }
+    }
 
     #[test]
     fn a_fresh_surface_is_presenting_and_owes_no_recovery() {
@@ -461,6 +571,7 @@ mod tests {
         assert_eq!(Missed::Timeout.as_str(), "timeout");
         assert_eq!(Missed::Occluded.as_str(), "occluded");
         assert_eq!(Missed::Unconfigured.as_str(), "unconfigured");
+        assert_eq!(Missed::DeviceLost.as_str(), "device_lost");
         assert_eq!(Rung::Reconfigured.as_str(), "reconfigured");
         assert_eq!(Rung::Rebuilt.as_str(), "rebuilt");
         assert_eq!(Rung::Repeated.as_str(), "repeated");

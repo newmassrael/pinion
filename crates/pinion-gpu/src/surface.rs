@@ -2,7 +2,7 @@
 //! compute rasterizer draws into.
 
 use crate::context::GpuError;
-use crate::health::{Missed, Rung, SurfaceHealth};
+use crate::health::{DeviceLiveness, Missed, Rung, SurfaceHealth};
 
 /// How to make this window's surface **again**.
 ///
@@ -16,6 +16,25 @@ use crate::health::{Missed, Rung, SurfaceHealth};
 /// that a reconfigure cannot restore would be dead for the window's life.
 type SurfaceSource =
     Box<dyn Fn(&wgpu::Instance) -> Result<wgpu::Surface<'static>, wgpu::CreateSurfaceError>>;
+
+/// What a swapchain is being asked to be: its size in physical pixels and how
+/// it should hand frames to the compositor.
+///
+/// R2088.1 — the three travel together (a size without a present mode
+/// configures nothing) and they are the only part of [`GpuSurface::new`]'s
+/// arguments that describes the *request* rather than the *device*. Grouping
+/// them is what pays the argument-count lint with structure instead of an
+/// allow, and it makes the call site read as one thing being asked for.
+///
+/// `Copy` because it is three plain numbers and a mode: taking it by
+/// reference would make the caller name a lifetime for a value smaller than
+/// the pointer to it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SurfaceRequest {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) present_mode: wgpu::PresentMode,
+}
 
 /// The presentable surface for one window, its configuration, the
 /// intermediate storage texture the rasterizer writes, and the blitter
@@ -60,7 +79,29 @@ pub struct GpuSurface {
     /// which consults no uncaptured-error handler and **panics the
     /// process**. So this is not bookkeeping — it is the only place the
     /// invariant `get_current_texture()` requires can be held.
+    ///
+    /// ⚠ R2088.1 — necessary but **not sufficient**, and that is measured:
+    /// the error scope this is derived from cannot see a device-lost
+    /// refusal, so [`Self::liveness`] is the other half. See
+    /// [`DeviceLiveness`].
     presentable: bool,
+    /// R2088.1 — the device this surface presents on, and whether it is
+    /// still there. Read at the acquire rather than cached at configure
+    /// time, because the callback that writes it fires from `wgpu`'s
+    /// maintain and not from the configure that failed.
+    liveness: DeviceLiveness,
+    /// ★ R2088.1 — why the most recent configure was refused, held until
+    /// somebody reads it ([`Self::take_refusal`]).
+    ///
+    /// It exists because R2088 took an observability channel away without
+    /// replacing it. Before that round a refused configure at least reached
+    /// the embedder's uncaptured-error handler, which printed it; an error
+    /// scope **captures** the error instead, and
+    /// [`GpuContext::recover`](crate::GpuContext::recover) discards the
+    /// `Result` it gets back. So the sentence `wgpu` wrote about why a window
+    /// went dark had nowhere left to go — a quieter tree than the one the
+    /// round set out to fix.
+    last_refusal: Option<String>,
 }
 
 impl core::fmt::Debug for GpuSurface {
@@ -99,10 +140,14 @@ impl GpuSurface {
         device: &wgpu::Device,
         surface: wgpu::Surface<'static>,
         source: SurfaceSource,
-        width: u32,
-        height: u32,
-        present_mode: wgpu::PresentMode,
+        liveness: DeviceLiveness,
+        request: SurfaceRequest,
     ) -> Result<Self, GpuError> {
+        let SurfaceRequest {
+            width,
+            height,
+            present_mode,
+        } = request;
         let capabilities = surface.get_capabilities(adapter);
         let format = capabilities
             .formats
@@ -151,6 +196,8 @@ impl GpuSurface {
             // starting from `true` would mean an unmeasured claim is the
             // default — which is the defect this field exists for.
             presentable: false,
+            liveness,
+            last_refusal: None,
         };
         out.configure(device)?;
         Ok(out)
@@ -183,9 +230,20 @@ impl GpuSurface {
     /// # Errors
     ///
     /// The [`Missed`] this frame missed by: one of the statuses `wgpu`
-    /// answered with, or [`Missed::Unconfigured`] when the surface was not
-    /// asked at all.
+    /// answered with, [`Missed::DeviceLost`] when the device is gone, or
+    /// [`Missed::Unconfigured`] when the surface was not asked at all.
     pub fn acquire(&self) -> Result<wgpu::SurfaceTexture, Missed> {
+        // ★ R2088.1 — the device first, and READ HERE rather than cached at
+        // configure time. `wgpu` reports a lost device only through a
+        // callback (see [`DeviceLiveness`]), and `configure_surface` does not
+        // fire its user callbacks on the path where it fails — so the moment
+        // the answer is trustworthy is the moment before asking for an image,
+        // not the moment the configure returned. A `get_current_texture()` on
+        // a lost device's never-configured surface is the process-fatal
+        // report that no handler can absorb.
+        if self.liveness.is_lost() {
+            return Err(Missed::DeviceLost);
+        }
         if !self.presentable {
             return Err(Missed::Unconfigured);
         }
@@ -265,8 +323,8 @@ impl GpuSurface {
     /// the recovery ladder).
     ///
     /// Measured on this host, deterministically, at R2088: a reconfigure
-    /// refused with "SurfaceOutput must be dropped before a new Surface is
-    /// made" left the surface *not configured for presentation*, and the
+    /// refused with `SurfaceOutput must be dropped before a new Surface is
+    /// made` left the surface *not configured for presentation*, and the
     /// very next acquisition raised exactly the error the intermittent
     /// sweep failures carried.
     ///
@@ -276,13 +334,39 @@ impl GpuSurface {
     /// the refusal. The surface is left marked not-presentable either way,
     /// so a caller that discards this `Result` still cannot present through
     /// it — the ladder answers the next frame instead.
+    /// ⚠ R2088.1 — `Ok` here means *no scope-visible refusal*, which is
+    /// weaker than *it worked*: a device-lost refusal reaches no scope at
+    /// all. [`Self::acquire`] asks [`DeviceLiveness`] as well, and that
+    /// second question is not optional.
     pub(crate) fn configure(&mut self, device: &wgpu::Device) -> Result<(), GpuError> {
         let refused = caught(device, || self.surface.configure(device, &self.config));
-        self.presentable = refused.is_none();
+        self.presentable = refused.is_none() && !self.liveness.is_lost();
         match refused {
             None => Ok(()),
-            Some(e) => Err(GpuError::SurfaceConfigure(format!("{e}"))),
+            Some(e) => {
+                let why = format!("{e}");
+                // R2088.1 — kept for a reader even when the caller discards
+                // the `Result`, which both rungs of the recovery ladder do.
+                self.last_refusal = Some(why.clone());
+                Err(GpuError::SurfaceConfigure(why))
+            }
         }
+    }
+
+    /// ★ R2088.1 — take the reason the most recent configure was refused, if
+    /// one has not been reported yet.
+    ///
+    /// Taken rather than borrowed so each refusal is reported **once**: this
+    /// is called every frame that misses, and a borrow would print the same
+    /// sentence for as long as the window stayed dark.
+    ///
+    /// This exists to undo an observability regression R2088 introduced. An
+    /// error scope captures the refusal, so the uncaptured-error handler that
+    /// used to print it never sees it, and the recovery ladder throws the
+    /// `Result` away — leaving no channel at all for the one sentence that
+    /// says why a window is dark.
+    pub fn take_refusal(&mut self) -> Option<String> {
+        self.last_refusal.take()
     }
 
     /// R1709 — the heavy rung: throw this window's surface away and make

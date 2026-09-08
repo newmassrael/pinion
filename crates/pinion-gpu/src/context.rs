@@ -1,6 +1,6 @@
 //! R1537 §5.16 — the wgpu instance / adapter / device / queue pinion owns.
 
-use crate::health::{Missed, Rung};
+use crate::health::{DeviceLiveness, Missed, Rung};
 use crate::surface::GpuSurface;
 
 /// Why a [`GpuContext`] could not be built.
@@ -98,6 +98,10 @@ pub struct GpuContext {
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
+    /// R2088.1 — the one channel a device-lost failure arrives on. See
+    /// [`DeviceLiveness`]; the callback that writes it is installed in
+    /// [`Self::new`], and every surface made here holds a handle to it.
+    liveness: DeviceLiveness,
 }
 
 impl core::fmt::Debug for GpuContext {
@@ -198,14 +202,29 @@ impl GpuContext {
             .await
             .map_err(|e| GpuError::NoDevice(format!("{e}")))?;
 
+        // ★ R2088.1 §5.16 — listen on the channel a device-lost failure
+        // actually arrives on, BEFORE the first configure. `wgpu` routes that
+        // error class past every sink (`handle_error_inner`'s
+        // `ErrorType::DeviceLost => return`), so an error scope answers "no
+        // error" for a call that failed, and a caller reading that silence as
+        // success is how R2088's first repair still let a never-configured
+        // surface reach `get_current_texture()`. See [`DeviceLiveness`].
+        let liveness = DeviceLiveness::default();
+        {
+            let lost = liveness.clone();
+            device.set_device_lost_callback(move |_reason, _message| lost.lose());
+        }
         let surface = GpuSurface::new(
             &adapter,
             &device,
             surface,
             Box::new(source),
-            width,
-            height,
-            present_mode,
+            liveness.clone(),
+            crate::surface::SurfaceRequest {
+                width,
+                height,
+                present_mode,
+            },
         )?;
         Ok((
             Self {
@@ -213,9 +232,20 @@ impl GpuContext {
                 adapter,
                 device,
                 queue,
+                liveness,
             },
             surface,
         ))
+    }
+
+    /// R2088.1 — whether this context's device has been lost.
+    ///
+    /// Published because "why is this window dark" has a fourth answer that
+    /// none of the swapchain statuses can carry, and an embedder that can see
+    /// it can say so instead of reporting a surface problem.
+    #[must_use]
+    pub fn liveness(&self) -> &DeviceLiveness {
+        &self.liveness
     }
 
     /// ★ R1754 — **which adapter this window is actually rendering on.**

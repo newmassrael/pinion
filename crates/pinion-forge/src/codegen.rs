@@ -497,6 +497,20 @@ impl __NAME__ {
                         ::std::option::Option::Some(__rung)
                             if __rung != ::pinion_gpu::Rung::Repeated =>
                         {
+                            // R2088.1 §5.16 — say why the rung was refused.
+                            // An error scope CAPTURES a refused configure, so
+                            // the uncaptured-error handler installed above no
+                            // longer sees it; without this line the one
+                            // sentence explaining a dark window has nowhere
+                            // to go. Taken, so it is said once per refusal
+                            // rather than once per dark frame.
+                            if let ::std::option::Option::Some(__why) =
+                                self.surface.take_refusal()
+                            {
+                                ::std::eprintln!(
+                                    "pinion renderer: surface configure refused: {__why}"
+                                );
+                            }
                             __acquired = self.surface.acquire();
                         }
                         _ => {

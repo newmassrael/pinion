@@ -137,7 +137,15 @@ DELTAS = [(+180, +90), (+60, +40)]
 #: aborts the process when it is asked. The set rots loudly (an unknown name
 #: fails section E rather than passing it), which is why it can be hand-kept
 #: against `pinion_gpu::Missed::as_str`.
-MISSED_NAMES = {"outdated", "lost", "validation", "timeout", "occluded", "unconfigured"}
+MISSED_NAMES = {
+    "outdated",
+    "lost",
+    "validation",
+    "timeout",
+    "occluded",
+    "unconfigured",
+    "device_lost",
+}
 RUNG_NAMES = {"reconfigured", "rebuilt", "repeated"}
 
 #: ★★★★★ R1711 — R1710's `FLOOR_LOSS` table lived here, naming five regions of
