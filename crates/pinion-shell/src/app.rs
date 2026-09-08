@@ -5043,12 +5043,35 @@ fn adapter_facts_of(info: &vello::wgpu::AdapterInfo) -> pinion_runtime::AdapterF
 }
 
 fn present_health_of(health: pinion_gpu::SurfaceHealth) -> pinion_runtime::PresentHealth {
+    // R2090 — the ladder's cumulative rows, placed by a wildcard-free match
+    // over `Rung::ALL`. Written this way rather than as three field reads so
+    // that a new rung in `pinion_gpu` cannot reach the wire unplaced: the
+    // match is what refuses to compile, here, where the mapping lives.
+    let mut reconfigured_total = 0;
+    let mut rebuilt_total = 0;
+    let mut repeated_total = 0;
+    for (rung, taken) in health.rungs().rows() {
+        match rung {
+            pinion_gpu::Rung::Reconfigured => reconfigured_total = taken,
+            pinion_gpu::Rung::Rebuilt => rebuilt_total = taken,
+            pinion_gpu::Rung::Repeated => repeated_total = taken,
+        }
+    }
+    debug_assert_eq!(
+        rebuilt_total,
+        health.rebuilds(),
+        "`rebuilds` is the heavy rung's row and cannot be a second count"
+    );
     pinion_runtime::PresentHealth {
         missed_in_a_row: health.missed_in_a_row(),
         broken_in_a_row: health.broken_in_a_row(),
         last_missed: health.last_missed().map(pinion_gpu::Missed::as_str),
         last_rung: health.last_rung().map(pinion_gpu::Rung::as_str),
-        rebuilds: health.rebuilds(),
+        rebuilds: rebuilt_total,
+        missed_total: health.misses().total(),
+        broken_total: health.misses().breakages(),
+        reconfigured_total,
+        repeated_total,
     }
 }
 
@@ -8334,6 +8357,67 @@ mod r1364_termination_map_tests {
              {actual:#?}\nEvery `event_loop.exit()` / `std::process::exit` in \
              production code is a way this app ends, and the map is the only \
              place they are collected. R1363 proved a stale one is silent."
+        );
+    }
+}
+
+#[cfg(test)]
+mod r2090_present_health_seam {
+    //! R2090 §5.16 — the projection from `pinion_gpu::SurfaceHealth` onto the
+    //! record the wire publishes, held to a window's WHOLE history.
+
+    use super::present_health_of;
+
+    #[test]
+    fn the_seam_carries_a_windows_whole_history_not_only_its_present() {
+        // ★★★★★ The mapping this seam performs cannot be judged from a demo
+        // on this host: a walk drives a whole run without a single missed
+        // frame, so every count it reads is 0 and every relation holds
+        // trivially (measured — `r2090_a_window_says_what_it_has_been_through`
+        // reports "this run was quiet"). A breakage cannot be summoned on
+        // demand, so the non-trivial values are built here, where the ladder
+        // can simply be driven.
+        // ⚠ FOUR breakages, not three, and the reason is a fixture defect
+        // this test had in draft: three of them make the cheap rung and the
+        // exhausted rung BOTH 1, so transposing their destinations at the
+        // seam is undetectable — the assertion would pin the mapping rather
+        // than check it (R2086's lesson, one layer down). A fourth breakage
+        // makes `repeated_total` 2, and the transposition fails.
+        let mut health = pinion_gpu::SurfaceHealth::default();
+        for _ in 0..4 {
+            health.missed(pinion_gpu::Missed::Lost);
+        }
+        health.presented();
+        health.missed(pinion_gpu::Missed::Occluded);
+
+        let view = present_health_of(health);
+
+        // The current half is what it always was: a wait is a miss with no
+        // rung, and the breakage counters reset when the frame landed.
+        assert_eq!(view.missed_in_a_row, 1);
+        assert_eq!(view.broken_in_a_row, 0);
+        assert_eq!(view.last_missed, Some("occluded"));
+        assert_eq!(view.last_rung, None);
+
+        // R2090 — and the cumulative half remembers the outage the current
+        // half has forgotten. This is the whole point: a reader arriving now
+        // still learns that this window broke three times and climbed the
+        // ladder to its top.
+        assert_eq!(view.missed_total, 5, "four breakages and one wait");
+        assert_eq!(view.broken_total, 4, "the wait is not a breakage");
+        assert_eq!(view.reconfigured_total, 1, "the cheap rung, taken once");
+        assert_eq!(view.rebuilds, 1, "the heavy rung, taken once");
+        assert_eq!(view.repeated_total, 2, "and the ladder ran out twice");
+
+        // Every breakage earns exactly one rung, and the two tallies are
+        // written on independent paths — the miss tally filters by
+        // `Missed::is_invalidation`, the rung tally is written by the ladder.
+        // A drift between them is a defect neither can report about itself,
+        // which is why the seam is asserted on their agreement rather than on
+        // either one alone.
+        assert_eq!(
+            view.reconfigured_total + view.rebuilds + view.repeated_total,
+            view.broken_total,
         );
     }
 }

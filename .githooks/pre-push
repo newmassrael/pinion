@@ -191,6 +191,14 @@ if ! python3 "$repo_root/tools/analyzer_census.py" --selftest >&2; then
     echo "pre-push: the analysis-tool census failed its own tests" >&2
     exit 1
 fi
+# R2090 — the sweep's present-health summary. It is the only reader of the
+# rows every demo teardown appends, so a wrong total here is a wrong
+# DENOMINATOR for the open rendering defect, reported with a straight face.
+step "present-health census selftest"
+if ! python3 "$repo_root/tools/present_census.py" --selftest >&2; then
+    echo "pre-push: the present-health census failed its own tests" >&2
+    exit 1
+fi
 # ★★★★★ R2028 — and the ORACLE every one of those selftests rests on.
 #
 # `debt-a-pure-rules-oracle-is-a-second-gate-nobody-tests`: a gate tool here is

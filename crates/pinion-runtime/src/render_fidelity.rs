@@ -96,6 +96,32 @@ pub struct PresentHealth {
     /// window that is healthy now having needed four rebuilds to get there
     /// is a different fact from one that has needed none.
     pub rebuilds: u32,
+    /// R2090 — every frame this window has missed over its whole life,
+    /// waits included.
+    ///
+    /// The cumulative twin of [`Self::missed_in_a_row`], and the field a
+    /// reader arriving *after* a recovery needs: the "in a row" counters
+    /// reset the moment a frame reaches the screen, so a window that broke
+    /// and came back used to look exactly like one that had never had a
+    /// bad frame. Judging an intermittent rendering defect needs to know
+    /// how often anything went wrong at all, and nothing published that.
+    pub missed_total: u32,
+    /// R2090 — of [`Self::missed_total`], the ones that were the surface
+    /// breaking rather than the window waiting. The cumulative twin of
+    /// [`Self::broken_in_a_row`].
+    pub broken_total: u32,
+    /// R2090 — how many times the ladder's cheap rung (re-establish the
+    /// swapchain) has been taken over this window's whole life.
+    ///
+    /// The common case, and until this round the one rung nothing counted:
+    /// [`Self::rebuilds`] counts the heavy rung only, so a window that
+    /// recovered cheaply left no record of having recovered at all.
+    pub reconfigured_total: u32,
+    /// R2090 — how many times the ladder has had nothing new left to try
+    /// over this window's whole life. A window with a lost *device* stays
+    /// here, because the ladder remakes a surface and cannot remake a
+    /// device.
+    pub repeated_total: u32,
 }
 
 /// Uncontaminated fingerprint of the frame a window last PRESENTED. Written only

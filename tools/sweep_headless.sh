@@ -256,6 +256,13 @@ runner='
     echo "[sweep] LEAKED A PROCESS:$leaks" >&2
     echo "[sweep] every demo after one of these ran against a poisoned machine" >&2
   fi
+  # R2090 — what every window went through, totalled. The harness appended one
+  # row per window at each demo teardown; this is the denominator the open
+  # rendering defect needs, and it is printed BEFORE the exits below so a red
+  # sweep reports it too. A summary is not a verdict: the tool never fails.
+  if [ -n "${PINION_PRESENT_CENSUS:-}" ]; then
+    python3 tools/present_census.py "$PINION_PRESENT_CENSUS" || true
+  fi
   if [ -n "$failures" ]; then echo "[sweep] FAILURES:$failures" >&2; exit 1; fi
   if [ -n "$leaks" ]; then exit 1; fi
   exit 0
@@ -281,6 +288,17 @@ if [ "$#" -eq 0 ] && [ "${PINION_SWEEP_NO_BUILD:-0}" != "1" ]; then
 elif [ "${PINION_SWEEP_NO_BUILD:-0}" = "1" ]; then
   export PINION_ASSUME_BUILT=1
 fi
+
+# R2090 — collect what every window went through. The harness appends one row
+# per window at each demo's teardown when this names a file; the runner totals
+# it at the end. Started EMPTY each sweep, because a census that accumulates
+# across runs answers a question nobody asked ("since when?").
+#
+# A caller may point it somewhere else to keep a run's rows; the default lives
+# under `target/`, which is already this tree's scratch.
+export PINION_PRESENT_CENSUS="${PINION_PRESENT_CENSUS:-$ROOT/target/present-census.tsv}"
+mkdir -p "$(dirname "$PINION_PRESENT_CENSUS")" 2>/dev/null || true
+: > "$PINION_PRESENT_CENSUS" 2>/dev/null || true
 
 case "$PINION_SWEEP_MODE" in
   realgpu)

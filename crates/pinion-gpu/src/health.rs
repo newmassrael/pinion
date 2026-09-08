@@ -102,6 +102,26 @@ impl Missed {
         Self::DeviceLost,
     ];
 
+    /// Where this reason's count lives in a [`MissTally`].
+    ///
+    /// Written as a wildcard-free match rather than a search through
+    /// [`Self::ALL`], so a new arm cannot be added without the compiler
+    /// asking where it is counted. The two declarations are held together
+    /// by a test that walks `ALL` and asserts each arm indexes back to
+    /// itself — neither can drift without something failing.
+    #[must_use]
+    const fn slot(self) -> usize {
+        match self {
+            Self::Outdated => 0,
+            Self::Lost => 1,
+            Self::Validation => 2,
+            Self::Timeout => 3,
+            Self::Occluded => 4,
+            Self::Unconfigured => 5,
+            Self::DeviceLost => 6,
+        }
+    }
+
     /// Whether this is the surface *breaking* — the case a recovery can act
     /// on — rather than the window waiting.
     ///
@@ -260,6 +280,17 @@ impl Rung {
     /// Every arm, in ladder order.
     pub const ALL: [Self; 3] = [Self::Reconfigured, Self::Rebuilt, Self::Repeated];
 
+    /// Where this rung's count lives in a [`RungTally`]. See
+    /// [`Missed::slot`] for why this is a match rather than a search.
+    #[must_use]
+    const fn slot(self) -> usize {
+        match self {
+            Self::Reconfigured => 0,
+            Self::Rebuilt => 1,
+            Self::Repeated => 2,
+        }
+    }
+
     /// The wire spelling.
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -268,6 +299,100 @@ impl Rung {
             Self::Rebuilt => "rebuilt",
             Self::Repeated => "repeated",
         }
+    }
+}
+
+/// R2090 — how many frames this window has missed for each reason, over its
+/// whole life.
+///
+/// # Why a cumulative tally exists at all
+///
+/// Measured against this file before R2090: [`SurfaceHealth::presented`]
+/// resets `missed_in_a_row`, `broken_in_a_row`, `last_missed` and
+/// `last_rung`, so a window that broke and then recovered leaves **no trace
+/// a later reader can find**. The single survivor was the rebuild count,
+/// and it is incremented on one rung only — so the cheap rung, which is the
+/// common one, had never been counted anywhere.
+///
+/// That is a defect of the instrument rather than of the renderer, and it is
+/// the one that matters here: the open defect this vocabulary exists for is
+/// intermittent, so judging a repair needs a **denominator** — how often a
+/// window came near the fatal path at all — and a counter that forgets on
+/// recovery cannot supply one. A run can now be counted after it ends
+/// instead of only watched while it happens.
+///
+/// Rows are keyed by [`Missed::ALL`] order, so a reader derives the table
+/// rather than hand-listing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MissTally([u32; Missed::ALL.len()]);
+
+impl MissTally {
+    /// Count one missed frame.
+    pub fn note(&mut self, missed: Missed) {
+        let slot = &mut self.0[missed.slot()];
+        *slot = slot.saturating_add(1);
+    }
+
+    /// How many frames this window has missed for `missed`.
+    #[must_use]
+    pub fn of(self, missed: Missed) -> u32 {
+        self.0[missed.slot()]
+    }
+
+    /// Every frame this window has missed, for any reason.
+    #[must_use]
+    pub fn total(self) -> u32 {
+        self.0.iter().fold(0u32, |sum, n| sum.saturating_add(*n))
+    }
+
+    /// Of those, the ones that were the surface *breaking* rather than the
+    /// window waiting — the cumulative twin of
+    /// [`SurfaceHealth::broken_in_a_row`].
+    ///
+    /// Derived from [`Missed::is_invalidation`], the same predicate the
+    /// ladder is built on, so the two can never disagree about what counts
+    /// as a breakage.
+    #[must_use]
+    pub fn breakages(self) -> u32 {
+        self.rows()
+            .into_iter()
+            .filter(|(missed, _)| missed.is_invalidation())
+            .fold(0u32, |sum, (_, n)| sum.saturating_add(n))
+    }
+
+    /// Every reason paired with its count, in [`Missed::ALL`] order.
+    ///
+    /// The rows a publisher writes out — derived here so no consumer has to
+    /// spell the vocabulary a second time.
+    #[must_use]
+    pub fn rows(self) -> [(Missed, u32); Missed::ALL.len()] {
+        Missed::ALL.map(|missed| (missed, self.of(missed)))
+    }
+}
+
+/// R2090 — how many times each rung of the recovery ladder has been taken
+/// over this window's whole life. See [`MissTally`] for why the cumulative
+/// form is the one a reader needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RungTally([u32; Rung::ALL.len()]);
+
+impl RungTally {
+    /// Count one rung taken.
+    pub fn note(&mut self, rung: Rung) {
+        let slot = &mut self.0[rung.slot()];
+        *slot = slot.saturating_add(1);
+    }
+
+    /// How many times `rung` has been taken.
+    #[must_use]
+    pub fn of(self, rung: Rung) -> u32 {
+        self.0[rung.slot()]
+    }
+
+    /// Every rung paired with its count, in ladder order.
+    #[must_use]
+    pub fn rows(self) -> [(Rung, u32); Rung::ALL.len()] {
+        Rung::ALL.map(|rung| (rung, self.of(rung)))
     }
 }
 
@@ -290,7 +415,14 @@ pub struct SurfaceHealth {
     broken_in_a_row: u32,
     last_missed: Option<Missed>,
     last_rung: Option<Rung>,
-    rebuilds: u32,
+    // R2090 — the two cumulative halves. Every field above resets when a
+    // frame reaches the screen; these do not, so a reader arriving after a
+    // recovery can still say what this window has been through. The rebuild
+    // count that used to live here is now `rungs.of(Rung::Rebuilt)`: it was
+    // one rung's tally written out a second time, and two counts of one fact
+    // can disagree.
+    misses: MissTally,
+    rungs: RungTally,
 }
 
 impl SurfaceHealth {
@@ -328,12 +460,33 @@ impl SurfaceHealth {
     ///
     /// Cumulative on purpose — it does NOT reset when the window recovers.
     /// A window that is healthy *now* having needed four rebuilds to get
-    /// there is a different fact from one that has needed none, and it is
-    /// the only fact that survives to say the heavy rung is load-bearing on
-    /// this host.
+    /// there is a different fact from one that has needed none.
+    ///
+    /// R2090 — derived from [`Self::rungs`] rather than counted separately.
+    /// Until this round it was its own field incremented beside the rung it
+    /// names, which is one fact with two writers; it is now the heavy rung's
+    /// row, and [`Self::misses`] answers the questions it used to be the
+    /// only survivor of.
     #[must_use]
     pub fn rebuilds(&self) -> u32 {
-        self.rebuilds
+        self.rungs.of(Rung::Rebuilt)
+    }
+
+    /// Every frame this window has missed, by reason, over its whole life.
+    ///
+    /// The cumulative half of this type: see [`MissTally`] for why an
+    /// instrument that forgets on recovery cannot supply the denominator
+    /// this vocabulary's open defect needs.
+    #[must_use]
+    pub fn misses(&self) -> MissTally {
+        self.misses
+    }
+
+    /// Every rung of the recovery ladder this window has taken, over its
+    /// whole life.
+    #[must_use]
+    pub fn rungs(&self) -> RungTally {
+        self.rungs
     }
 
     /// Whether the window is currently presenting.
@@ -357,6 +510,7 @@ impl SurfaceHealth {
     /// because nothing is broken.
     pub fn missed(&mut self, missed: Missed) -> Option<Rung> {
         self.missed_in_a_row = self.missed_in_a_row.saturating_add(1);
+        self.misses.note(missed);
         self.last_missed = Some(missed);
         if !missed.is_invalidation() {
             return None;
@@ -367,9 +521,7 @@ impl SurfaceHealth {
             2 => Rung::Rebuilt,
             _ => Rung::Repeated,
         };
-        if rung == Rung::Rebuilt {
-            self.rebuilds = self.rebuilds.saturating_add(1);
-        }
+        self.rungs.note(rung);
         self.last_rung = Some(rung);
         Some(rung)
     }
@@ -585,5 +737,124 @@ mod tests {
         let rungs: std::collections::BTreeSet<&str> =
             Rung::ALL.into_iter().map(Rung::as_str).collect();
         assert_eq!(rungs.len(), Rung::ALL.len());
+    }
+
+    #[test]
+    fn every_reason_and_rung_indexes_back_to_itself() {
+        // R2090 — the tallies are arrays keyed by a `slot()` match, and the
+        // rows are derived from `ALL`. Two declarations of one order, so
+        // this is what keeps them from drifting: the compiler makes `slot`
+        // exhaustive, and this makes it AGREE with `ALL`. A duplicated or
+        // transposed slot silently merges two reasons' counts, which is the
+        // failure a tally cannot report about itself.
+        for missed in Missed::ALL {
+            assert_eq!(
+                Missed::ALL[missed.slot()],
+                missed,
+                "{missed} does not index back to itself"
+            );
+        }
+        for rung in Rung::ALL {
+            assert_eq!(
+                Rung::ALL[rung.slot()],
+                rung,
+                "{rung} does not index back to itself"
+            );
+        }
+    }
+
+    #[test]
+    fn a_window_that_recovered_still_says_what_it_went_through() {
+        // ★★★★★ R2090 — the property the whole tally exists for, and the one
+        // this type could not answer before: after a recovery every "in a
+        // row" counter is 0, so a reader arriving afterwards saw a window
+        // that looked as if nothing had ever happened to it. Measured on
+        // this host, a churn probe drove 40 tear-off generations and the
+        // only cumulative field (the rebuild count) stayed 0 through runs
+        // where frames HAD been missed — because they recovered on the
+        // cheap rung, which nothing counted.
+        let mut health = SurfaceHealth::default();
+        health.missed(Missed::Outdated);
+        health.missed(Missed::Occluded);
+        health.presented();
+
+        assert_eq!(health.missed_in_a_row(), 0, "the window is presenting");
+        assert_eq!(health.broken_in_a_row(), 0);
+        assert_eq!(health.last_missed(), None);
+        assert!(health.is_presenting());
+
+        assert_eq!(health.misses().total(), 2, "and it still remembers both");
+        assert_eq!(health.misses().of(Missed::Outdated), 1);
+        assert_eq!(health.misses().of(Missed::Occluded), 1);
+        assert_eq!(health.misses().of(Missed::DeviceLost), 0);
+        assert_eq!(
+            health.rungs().of(Rung::Reconfigured),
+            1,
+            "the cheap rung was taken once, and is now counted"
+        );
+        assert_eq!(health.rungs().of(Rung::Rebuilt), 0);
+    }
+
+    #[test]
+    fn a_wait_is_tallied_but_earns_no_rung() {
+        // The two counters answer different questions (this module's header
+        // says so), and the tallies must keep that separation: an occluded
+        // window has missed frames a viewer did not see, and nothing about
+        // it is broken.
+        let mut health = SurfaceHealth::default();
+        health.missed(Missed::Occluded);
+        health.missed(Missed::Timeout);
+        assert_eq!(health.misses().total(), 2);
+        assert_eq!(
+            health.rungs().rows().iter().map(|(_, n)| *n).sum::<u32>(),
+            0,
+            "waiting is not evidence that anything needs rebuilding"
+        );
+    }
+
+    #[test]
+    fn the_rebuild_count_is_the_heavy_rungs_row() {
+        // R2090 — `rebuilds()` used to be its own field incremented beside
+        // the rung it names: one fact with two writers, which can disagree.
+        // It is now derived, and this walks the ladder far enough to reach
+        // the heavy rung twice over two breakages.
+        let mut health = SurfaceHealth::default();
+        for _ in 0..3 {
+            health.missed(Missed::Lost);
+        }
+        assert_eq!(health.last_rung(), Some(Rung::Repeated));
+        assert_eq!(health.rebuilds(), health.rungs().of(Rung::Rebuilt));
+        assert_eq!(health.rebuilds(), 1, "the heavy rung was reached once");
+        assert_eq!(health.rungs().of(Rung::Reconfigured), 1);
+        assert_eq!(health.rungs().of(Rung::Repeated), 1);
+
+        health.presented();
+        for _ in 0..2 {
+            health.missed(Missed::DeviceLost);
+        }
+        assert_eq!(
+            health.rebuilds(),
+            2,
+            "a second breakage climbs to the heavy rung again"
+        );
+        assert_eq!(health.misses().of(Missed::DeviceLost), 2);
+        assert_eq!(health.misses().of(Missed::Lost), 3, "and the first is kept");
+        assert_eq!(health.misses().total(), 5);
+    }
+
+    #[test]
+    fn the_rows_are_derived_from_the_vocabulary() {
+        // A publisher writes the rows out; deriving them here is what keeps
+        // a consumer from spelling the vocabulary a second time (the class
+        // this repository has paid for at every census).
+        let mut health = SurfaceHealth::default();
+        health.missed(Missed::Unconfigured);
+        let rows = health.misses().rows();
+        assert_eq!(rows.len(), Missed::ALL.len());
+        for (i, (missed, count)) in rows.into_iter().enumerate() {
+            assert_eq!(missed, Missed::ALL[i], "rows follow ALL order");
+            assert_eq!(count, health.misses().of(missed));
+        }
+        assert_eq!(health.rungs().rows().len(), Rung::ALL.len());
     }
 }

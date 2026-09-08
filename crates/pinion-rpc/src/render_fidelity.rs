@@ -167,6 +167,27 @@ pub struct PresentHealthView {
     /// this object exists to answer, and a client deriving it from a count
     /// is a client that can derive it wrongly.
     pub presenting: bool,
+    /// R2090 — every frame this window has missed over its whole life,
+    /// waits included.
+    ///
+    /// The field an agent needs to judge a window it did not watch: every
+    /// counter above except `rebuilds` resets the instant a frame reaches
+    /// the screen, so a window that broke and recovered was indisting-
+    /// uishable from one that never broke. A client counting how often
+    /// rendering went wrong — across a window, a session or a whole sweep —
+    /// reads these four rather than having to be watching when it happened.
+    pub missed_total: u32,
+    /// R2090 — of [`Self::missed_total`], the ones where the surface was
+    /// breaking rather than the window waiting.
+    pub broken_total: u32,
+    /// R2090 — how many times the recovery ladder's cheap rung has been
+    /// taken over this window's whole life. The common case, and the one
+    /// nothing counted before this round.
+    pub reconfigured_total: u32,
+    /// R2090 — how many times the ladder has had nothing new left to try.
+    /// A window whose *device* was lost stays here: the ladder remakes a
+    /// surface, and a device is not something it can remake.
+    pub repeated_total: u32,
 }
 
 impl From<pinion_runtime::PresentHealth> for PresentHealthView {
@@ -178,6 +199,10 @@ impl From<pinion_runtime::PresentHealth> for PresentHealthView {
             last_rung: health.last_rung,
             rebuilds: health.rebuilds,
             presenting: health.missed_in_a_row == 0,
+            missed_total: health.missed_total,
+            broken_total: health.broken_total,
+            reconfigured_total: health.reconfigured_total,
+            repeated_total: health.repeated_total,
         }
     }
 }
@@ -341,6 +366,10 @@ mod tests {
             last_missed: Some("outdated"),
             last_rung: Some("rebuilt"),
             rebuilds: 2,
+            missed_total: 9,
+            broken_total: 6,
+            reconfigured_total: 4,
+            repeated_total: 1,
         };
         let out = render_fidelity(Some(&rec), None).unwrap();
         assert!(
@@ -352,6 +381,15 @@ mod tests {
         assert_eq!(out.health.last_missed, Some("outdated"));
         assert_eq!(out.health.last_rung, Some("rebuilt"));
         assert_eq!(out.health.rebuilds, 2);
+        // ★ R2090 — the cumulative half reaches the wire beside the "in a
+        // row" half, and the two are DIFFERENT numbers here on purpose: a
+        // window with five missed frames right now has missed nine over its
+        // life, which is exactly the distinction a reader arriving after a
+        // recovery had no way to make.
+        assert_eq!(out.health.missed_total, 9);
+        assert_eq!(out.health.broken_total, 6);
+        assert_eq!(out.health.reconfigured_total, 4);
+        assert_eq!(out.health.repeated_total, 1);
     }
 
     #[test]
@@ -369,11 +407,22 @@ mod tests {
                 last_missed: Some("validation"),
                 last_rung: Some("reconfigured"),
                 rebuilds: 0,
+                missed_total: 1,
+                broken_total: 1,
+                reconfigured_total: 1,
+                repeated_total: 0,
             }))
             .expect("serializes");
         assert_eq!(serialized["last_missed"], "validation");
         assert_eq!(serialized["last_rung"], "reconfigured");
         assert_eq!(serialized["presenting"], false);
+        // R2090 — the cumulative counts are published as numbers rather than
+        // omitted when zero: a zero here is a fact ("this window has never
+        // missed a frame"), and a client cannot tell an omitted key from a
+        // field its server does not have.
+        assert_eq!(serialized["missed_total"], 1);
+        assert_eq!(serialized["reconfigured_total"], 1);
+        assert_eq!(serialized["repeated_total"], 0);
         // ...and the absent case omits the keys rather than publishing nulls a
         // client would have to distinguish from a name.
         let quiet = serde_json::to_value(PresentHealthView::from(

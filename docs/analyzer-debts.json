@@ -227,6 +227,18 @@
       ]
     },
     {
+      "name": "debt-a-lost-device-leaves-a-window-dark-for-the-rest-of-the-run",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
       "name": "debt-a-node-graphs-only-state-is-a-delay",
       "substituted": false,
       "blocked_by": "spec-round",

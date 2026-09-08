@@ -73,6 +73,19 @@ _DRIVEN: list[tuple[str, Optional[Path]]] = []
 # binary. See `tools/build_gate.py`.
 _ASSUME_BUILT_ENV = "PINION_ASSUME_BUILT"
 
+#: R2090 — where to append one row per window per demo, saying what that
+#: window's rendering went through. Set by `tools/sweep_headless.sh`, which
+#: totals the file when the sweep ends; unset for a one-off run, where the
+#: printed line is the whole answer.
+#:
+#: Why the harness asks rather than each walk: the counts are published by
+#: EVERY pinion process (`scene/render_fidelity` answered for
+#: `hello-checkbox`, a demo written years before this field existed), and two
+#: of the tree's walks ask for them. Widening that to every walk would be the
+#: population this repository has twice paid for copying; asking once, here,
+#: where every demo already passes, is the same move R2087 made for schemas.
+_PRESENT_CENSUS_ENV = "PINION_PRESENT_CENSUS"
+
 
 @contextmanager
 def isolated_storage_dir(prefix: str) -> Iterator[Path]:
@@ -2111,6 +2124,11 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         )
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        # R2090 — ask every window what its rendering went through, while the
+        # process is still there to answer. Before the shutdown on purpose:
+        # the counts live in the running app, and after `shutdown()` there is
+        # nothing to ask.
+        self._note_present_health()
         leak = self.shutdown()
         # ★ R1899 — and the store this harness minted goes with it. Only that
         # one: a root the CALLER chose is the caller's to remove, which is what
@@ -2129,6 +2147,101 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                 f"A demo that leaves a process behind poisons every demo the "
                 f"sweep runs after it — see R1570.3"
             )
+
+    #: The cumulative half of `PresentHealthView` (R2090). Named once, so the
+    #: line, the census row and its header derive from one list.
+    PRESENT_CENSUS_FIELDS = (
+        "missed_total",
+        "broken_total",
+        "reconfigured_total",
+        "rebuilds",
+        "repeated_total",
+    )
+
+    def _note_present_health(self) -> None:
+        """Say what every window's rendering went through over this demo.
+
+        R2090 — `scene/render_fidelity` publishes cumulative counts that
+        survive a recovery, and this is the one place every demo passes
+        through, so asking here gives a sweep a DENOMINATOR: how often
+        anything went wrong at all, across 725 walks nobody was watching.
+        The alternative was to widen the question to every walk, which is the
+        copying this repository has already paid for twice.
+
+        ⚠ It is a REPORT, never a verdict. Every failure mode here — a demo
+        with no window, a window that never painted, a process already gone,
+        a binary older than the fields — returns quietly, because a census
+        that can fail a demo is a census that changes what the sweep measures.
+        The one thing it must not do is stay silent about being unable to
+        answer, so that case says so in the line.
+        """
+        if self._proc is None or self._proc.poll() is not None:
+            return
+        try:
+            resp = self.request("scene/windows", {})
+            if resp is None or resp.result is None:
+                return
+            ids = [w.get("id") for w in resp.result.get("windows", [])]
+            rows: list[tuple[str, dict]] = []
+            for window in ids:
+                if not window:
+                    continue
+                answer = self.request("scene/render_fidelity", {"window": window})
+                if answer is None or answer.result is None:
+                    # A window that has never painted has no record. That is a
+                    # state, not a defect — it is what the field's own error
+                    # says — so it is counted as unanswered rather than as 0.
+                    rows.append((window, {}))
+                    continue
+                rows.append((window, answer.result.get("health") or {}))
+        except Exception:  # noqa: BLE001 - see the docstring: never a verdict
+            return
+
+        answered = [(w, h) for w, h in rows if h]
+        unanswered = [w for w, h in rows if not h]
+        # A binary built before R2090 answers the record without these keys.
+        # Reading a missing key as 0 would publish "nothing ever went wrong"
+        # about a window that simply cannot say — the exact inference this
+        # whole line of work exists to stop.
+        stale = [w for w, h in answered if "missed_total" not in h]
+        totals = {
+            field: sum(h.get(field, 0) for w, h in answered if w not in stale)
+            for field in self.PRESENT_CENSUS_FIELDS
+        }
+        dark = [w for w, h in answered if not h.get("presenting", True)]
+        note = ""
+        if unanswered:
+            note += f", {len(unanswered)} never painted"
+        if stale:
+            note += f", {len(stale)} cannot say (build predates the fields)"
+        if dark:
+            note += f", NOT PRESENTING: {', '.join(dark)}"
+        print(
+            f"[present-health] {self.example}: {len(rows)} window(s) — "
+            f"missed {totals['missed_total']} ({totals['broken_total']} broken), "
+            f"rungs {totals['reconfigured_total']}/{totals['rebuilds']}/"
+            f"{totals['repeated_total']}{note}"
+        )
+
+        census = os.environ.get(_PRESENT_CENSUS_ENV)
+        if not census:
+            return
+        try:
+            with open(census, "a", encoding="utf-8") as out:
+                for window, health in rows:
+                    if not health or "missed_total" not in health:
+                        out.write(f"{self.example}\t{window}\tunanswered\n")
+                        continue
+                    counts = "\t".join(
+                        str(health.get(field, 0)) for field in self.PRESENT_CENSUS_FIELDS
+                    )
+                    out.write(
+                        f"{self.example}\t{window}\t{counts}\t"
+                        f"{health.get('presenting')}\t{health.get('last_missed') or '-'}\n"
+                    )
+        except OSError:
+            # The census is a side channel; losing it must not lose the demo.
+            pass
 
     def shutdown(self) -> Optional[str]:
         """Reap the driven binary. Return `None`, or why it survived.
