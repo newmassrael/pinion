@@ -220,6 +220,33 @@ impl GpuContext {
             let lost = liveness.clone();
             device.set_device_lost_callback(move |_reason, _message| lost.lose());
         }
+        // ★★★★★ R2097 §5.16 — a maintain between installing that callback and
+        // the FIRST configure, for the shape a full sweep's census pointed at.
+        //
+        // Measured (CI run 34272724132, 1283 windows over 220 examples):
+        // `rungs 20/0/0` — the ladder's cheap rung ran twenty times and the
+        // HEAVY rung, whose fresh surface R2088 named as the fatal shape, ran
+        // ZERO times. So the process abort this debt exists for cannot have
+        // come through the ladder at all. What is left is the surface a
+        // WINDOW'S CREATION makes: every window builds its own `wgpu`
+        // instance, adapter and device here (adapter choice depends on this
+        // window's surface — see this function's doc), so tearing panels off
+        // in a churn is DEVICE churn, and a device that is already gone by
+        // the time it is handed back leaves the first configure to fail
+        // silently (that error class reaches no sink) with `presentable`
+        // going true and the first `get_current_texture()` fatal.
+        //
+        // The callback is the only channel that names a lost device, and it
+        // is queued inside `Device::maintain`, which `Queue::submit` runs.
+        // Submitting nothing costs nothing and gives a device born lost a
+        // chance to say so BEFORE `GpuSurface::new` decides presentability.
+        //
+        // ⚠ It narrows rather than closes, exactly as the two around the rung
+        // do: a loss landing between this submit and the configure below is
+        // still a silence. And the sibling debt R1758 records the case one
+        // step earlier — `request_device` itself failing with `Parent device
+        // is lost` — which `GpuError::NoDevice` already reports loudly.
+        queue.submit(core::iter::empty());
         let surface = GpuSurface::new(
             &adapter,
             &device,
@@ -460,6 +487,43 @@ mod tests {
              them: they carry the three constraints measured in wgpu 29's own \
              source, and `Device::poll` is NOT an alternative (it is fatal on \
              a lost device)."
+        );
+    }
+
+    /// ★★★★★ R2097 — and the THIRD maintain, at the constructor, which the
+    /// test above is blind to by construction.
+    ///
+    /// ⚠ That blindness is a measurement, not a guess: the constructor's call
+    /// is on the local `queue` binding rather than on `self`, so the needle
+    /// `self.queue.submit(…)` does not match it — adding the third submit left
+    /// `a_rung_is_bracketed_by_two_maintains` GREEN. A guard written for one
+    /// site is a guard for that site, and the round that adds a second site
+    /// has to say so or leave it unguarded, which is the exact class R2095
+    /// repaired one round earlier.
+    ///
+    /// Counting the BARE form catches all three; subtracting the self-form
+    /// isolates the constructor's, so each failure message can name what
+    /// actually went missing.
+    #[test]
+    fn a_new_context_maintains_before_its_first_configure() {
+        let source = include_str!("context.rs");
+        let bare = source
+            .matches(&format!("queue.{}(core::iter::empty())", "submit"))
+            .count();
+        let on_self = source
+            .matches(&format!("self.queue.{}(core::iter::empty())", "submit"))
+            .count();
+        assert_eq!(
+            bare - on_self,
+            1,
+            "`GpuContext::new` must run a maintain between installing the \
+             device-lost callback and the FIRST configure — found {} such \
+             call(s). Measured at R2096 across a full sweep (1283 windows, \
+             `rungs 20/0/0`): the ladder's heavy rung never runs, so the fatal \
+             shape is not the rung's fresh surface but the one a WINDOW'S \
+             CREATION makes, on a device this function has just requested. \
+             Read the comment at that site before removing it.",
+            bare - on_self
         );
     }
 }
