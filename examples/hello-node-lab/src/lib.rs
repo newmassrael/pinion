@@ -76,6 +76,7 @@ use pinion_a11y::{
     WidgetA11y, navigation_link_nodes,
 };
 use pinion_core::availability::Unavailable;
+use pinion_core::composite_tag::split_send_payload;
 use pinion_core::containment::{band_in, line_box, line_rect_in};
 use pinion_core::describe::{Descriptions, Resting};
 use pinion_core::edge_panel::{EdgePlacement, PanelAffordance, PanelControl};
@@ -1352,6 +1353,52 @@ const fn role_ink(role: Role) -> Color {
 /// is what every reader of it below does; a float-free `Eq` would have to be a
 /// hand-written impl restating what the derive already says, and a second
 /// spelling of equality is exactly the drift this file keeps refusing.
+/// ★★★★★ R2082 — what an **alt** drag carries: where the card stood when it was
+/// picked up.
+///
+/// # This one number IS the canon's freeze
+///
+/// The canon freezes every frame's rectangle at pick-up and says why in its own
+/// comment: a frame is derived from its members' live bounding box, so while a
+/// member is being dragged the frame FOLLOWS it, and *crossing the boundary
+/// cannot occur as an event at all*. The freeze is what makes the event exist.
+///
+/// It does not have to be a copy of that geometry. A single-node drag moves
+/// exactly one member, so the frame rectangles as they stood at pick-up are the
+/// rectangles derived **with this card put back where it started** — and that is
+/// one position, not a list. So the freeze is a DERIVATION here
+/// ([`frozen_frame_at`]), and it is exact.
+///
+/// ⚠ The alternative was measured rather than dismissed, and the first version
+/// of this paragraph was wrong about it: it said a `Vec` of frozen rectangles
+/// "cannot live in a `Copy` enum", and [`Drag`] lives in a
+/// `Signal<Option<Drag>>` whose bound is `Clone + PartialEq + Serialize +
+/// DeserializeOwned` — not `Copy`. It could have lived there. What it would
+/// COST is the reason to derive instead: `Signal::get` answers by value, and
+/// [`frame_rect_at`] asks it once per frame per paint to know whether a card is
+/// on its way out, so the snapshot would be cloned on every frame of every
+/// gesture; `Drag` would stop being `Copy`, which this screen passes around by
+/// value everywhere; and a copy of geometry beside a gesture is a second record
+/// of one moment, free to part from the first and owed a clear-up at each of
+/// the three sites that end a drag.
+/// # And it says whether the hand actually travelled
+///
+/// The canon's alt gesture is TWO gestures told apart by that: alt+drag
+/// re-parents to where the card landed, alt+click (no movement) **toggles** —
+/// out of the frame that holds it, or into whichever frame could enclose it.
+/// The discriminant is [`DragLatch`], the framework's own click-versus-drag
+/// determination, and not a comparison of positions: R2023 put the same latch
+/// on this screen's pan *precisely* so that no consumer re-derives what a click
+/// is, and a hand-rolled `moved != from` here would answer differently from
+/// every other press in the window the moment a mouse jitters by a pixel.
+#[derive(Clone, Copy, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+struct Rehost {
+    /// The card's position when the alt press landed, in canvas units.
+    from: (i32, i32),
+    /// Whether this press has become a drag, by the framework's rule.
+    latch: DragLatch,
+}
+
 #[derive(Clone, Copy, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 enum Drag {
     /// The canvas is being panned: where the canvas was when the press landed,
@@ -1378,7 +1425,18 @@ enum Drag {
     /// off each MOVE, so the grid is taken and released mid-gesture — so the
     /// gesture holds no chord at all and
     /// [`move_cursor_with_chord`] reads the one that arrived with the move.
-    Node { node: NodeId, grab: (i32, i32) },
+    ///
+    /// ★★★★★ R2082 — `rehost` IS latched, and the difference from `snap` is the
+    /// whole of why one is a field and the other was not. Alt says WHICH
+    /// GESTURE this is: with it the drop changes which host holds the card,
+    /// without it the drop moves the card and nothing else. A gesture cannot
+    /// change identity half-way through, so it is read once, on the press,
+    /// exactly where the canon reads `altKey`.
+    Node {
+        node: NodeId,
+        grab: (i32, i32),
+        rehost: Option<Rehost>,
+    },
     /// A link is being authored out of this node's dial pin.
     ///
     /// ★★★★★ R1915 — `port` is WHICH dial pin, because a split one is several.
@@ -4906,9 +4964,28 @@ fn frame_rect_of(state: &LabState, frame: NodeId) -> Rect {
 /// from its members' *painted* rectangles and its padding is a scaled quantity,
 /// so it has no size of its own to ask for — the scale has to be stated.
 fn frame_rect_at(state: &LabState, frame: NodeId, zoom: u32) -> Rect {
+    // ★★★★★ R2082 — a card being dragged OUT is left out of its old frame's
+    // box while the gesture runs, which is the canon's own design and it says
+    // why in its own words: *"Alt drag: the gesture that changes membership.
+    // While it runs the node is taken out of the frame calculation so that
+    // «on the way out» is visible."* Without it the frame stretches to follow
+    // the card and a reader watching the screen cannot see the card leave.
+    //
+    // Only under an ALT drag. A plain drag moves a card inside its frame and
+    // the frame is supposed to grow and shrink with it — that is R1654's
+    // repair, and shrinking away from a card that is staying would undo it.
+    let leaving = match state.drag.get() {
+        Some(Drag::Node {
+            node,
+            rehost: Some(_),
+            ..
+        }) => Some(node),
+        _ => None,
+    };
     let members = members_of(state, frame);
     let boxes: Vec<Rect> = members
         .iter()
+        .filter(|n| Some(**n) != leaving)
         .filter_map(|n| card_shape_at(state, *n, zoom).map(|shape| shape.rect))
         .collect();
     if boxes.is_empty() {
@@ -4926,6 +5003,16 @@ fn frame_rect_at(state: &LabState, frame: NodeId, zoom: u32) -> Rect {
             scaled_by(90, zoom).max(FRAME_TAB),
         );
     }
+    frame_box_around(&boxes, zoom)
+}
+
+/// The padded box a frame draws around the member rectangles it was given.
+///
+/// Its own function since R2082, because there are now two populations of
+/// member rectangles for one frame — the live ones, and the ones a rehosting
+/// drop is judged against ([`frozen_frame_at`]) — and the padding rule must not
+/// be stated twice.
+fn frame_box_around(boxes: &[Rect], zoom: u32) -> Rect {
     let pad = scaled_by(FRAME_PAD, zoom).max(4);
     let tab = scaled_by(FRAME_TAB, zoom).max(10);
     let left = boxes.iter().map(|r| r.x).min().unwrap_or(0);
@@ -4940,6 +5027,45 @@ fn frame_rect_at(state: &LabState, frame: NodeId, zoom: u32) -> Rect {
     )
 }
 
+/// ★★★★★ R2082 — the frame box a **rehosting drop is judged against**: the
+/// geometry as it stood when the card was picked up.
+///
+/// The canon calls this freezing and gives the reason in place — a frame
+/// derived from its members follows the member being dragged, so *crossing its
+/// boundary cannot occur as an event*. Here it is DERIVED rather than copied,
+/// from the one position [`Rehost`] carries: a single-card drag moves exactly
+/// one member, so putting that card back where it started reproduces every
+/// frame rectangle of the moment the gesture began. See [`Rehost`] for why the
+/// list this replaces could not have lived in the gesture at all.
+fn frozen_frame_at(
+    state: &LabState,
+    frame: NodeId,
+    carried: NodeId,
+    from: (i32, i32),
+    zoom: u32,
+) -> Rect {
+    let boxes: Vec<Rect> = members_of(state, frame)
+        .iter()
+        .filter_map(|n| {
+            let shape = card_shape_at(state, *n, zoom)?;
+            if *n != carried {
+                return Some(shape.rect);
+            }
+            // The same card, at the position it was picked up from. Its SIZE
+            // does not depend on where it is, so the pick-up rectangle is the
+            // live one translated — no second shape derivation, and none of the
+            // level-of-detail rules `card_shape_at` applies can disagree
+            // between the two.
+            let (fx, fy) = to_content_at(from.0, from.1, zoom);
+            Some(Rect::new(fx, fy, shape.rect.w, shape.rect.h))
+        })
+        .collect();
+    if boxes.is_empty() {
+        return frame_rect_at(state, frame, zoom);
+    }
+    frame_box_around(&boxes, zoom)
+}
+
 /// The frame whose box holds this content-space point, innermost first.
 fn frame_at(state: &LabState, cx: i64, cy: i64) -> Option<NodeId> {
     frames_of(state)
@@ -4947,6 +5073,33 @@ fn frame_at(state: &LabState, cx: i64, cy: i64) -> Option<NodeId> {
         .filter(|(id, _)| holds(frame_rect_of(state, *id), cx, cy))
         .min_by_key(|(id, _)| {
             let r = frame_rect_of(state, *id);
+            u64::from(r.w) * u64::from(r.h)
+        })
+        .map(|(id, _)| id)
+}
+
+/// ★★★★★ R2082 — the frame a rehosting drop would land in, judged against the
+/// **frozen** boxes rather than the live ones.
+///
+/// [`frame_at`]'s peer, and deliberately not a parameter on it: the live
+/// question ("which frame is under this point right now") has readers all over
+/// this screen — the hover description, the insert target, the paint — and none
+/// of them is asking about a gesture. Threading a `Option<(NodeId, (i32, i32))>`
+/// through every one of them to serve this caller would put the drag inside
+/// every derivation that does not care.
+fn frozen_frame_under(
+    state: &LabState,
+    carried: NodeId,
+    from: (i32, i32),
+    cx: i64,
+    cy: i64,
+) -> Option<NodeId> {
+    let zoom = state.zoom.get();
+    frames_of(state)
+        .into_iter()
+        .filter(|(id, _)| holds(frozen_frame_at(state, *id, carried, from, zoom), cx, cy))
+        .min_by_key(|(id, _)| {
+            let r = frozen_frame_at(state, *id, carried, from, zoom);
             u64::from(r.w) * u64::from(r.h)
         })
         .map(|(id, _)| id)
@@ -16881,8 +17034,26 @@ impl ExternalIntrospect for LabOracle {
             }
             "send" => {
                 let event = Self::text(&args)?;
-                match event.trim() {
-                    "PointerDown" => press(&state),
+                // ★★★★★ R2082 — decoded through the send wire's own grammar,
+                // because this screen now opts into the R880 bare-target
+                // modifier wire ([`Self::wants_bare_send_modifiers`]): with a
+                // chord held, a background press arrives as the three-segment
+                // `":PointerDown:<token>"` with an EMPTY key. Every consumer of
+                // that wire decodes through `split_send_payload`, so this one
+                // does too rather than splitting on `:` a second time.
+                //
+                // The chord is what the behaviour canon reads at PICK-UP: alt
+                // is the gesture that changes a card's membership, and it is
+                // read once, on the press, not per move (ctrl is the per-move
+                // one — see `move_cursor_with_chord`). An empty state gives the
+                // back-compat bare word, so nothing that drove this wire before
+                // reads differently.
+                let (event, chord) = match split_send_payload(event.trim()) {
+                    Some(sent) if sent.key.is_empty() => (sent.event, sent.modifiers),
+                    _ => (event.trim(), Modifiers::empty()),
+                };
+                match event {
+                    "PointerDown" => press_with_chord(&state, chord),
                     "PointerUp" => release(&state),
                     "PointerLeave" | "PointerCancel" => {
                         state.pressed.borrow_mut().take();
@@ -17184,6 +17355,11 @@ fn frames_wire() -> Vec<serde_json::Value> {
                 "name": f.name,
                 "gist": f.gist,
                 "rect": [f.rect.0, f.rect.1, f.rect.2, f.rect.3],
+                // ★★★★★ R2082 — the ADDRESS this frame is painted under, for the
+                // reason R2049 published a role row's: a walk cannot call the
+                // declaration, so spelling it there is a wrong letter away from
+                // looking for a mark that is not there.
+                "tag": address::frame(f.name),
             })
         })
         .collect()
@@ -17377,6 +17553,10 @@ fn spec_json() -> serde_json::Value {
         "nodes": spec::NODES.iter().map(|n| serde_json::json!({
             "id": n.id, "role": n.role, "badge": n.badge, "frame": n.frame,
             "rect": [n.rect.0, n.rect.1, n.rect.2],
+            // ★★★★★ R2082 — the ADDRESS this card is painted under. Same reason
+            // as the frame's above, and the same remainder closed: R2078's walk
+            // recorded that this family had no declaration to derive from.
+            "tag": address::card(n.id),
             "rows": n.rows.iter().map(|(k, v)| serde_json::json!([k, v])).collect::<Vec<_>>(),
             // ★★★★★ R1848 — DERIVED from the node's rows and its role's
             // declaration, not recorded a third time. `stated` is what this
@@ -20875,7 +21055,24 @@ fn move_cursor_with_chord(state: &Rc<LabState>, px: u32, py: u32, chord: Modifie
                 }));
             }
         }
-        Drag::Node { node, grab } => {
+        Drag::Node { node, grab, rehost } => {
+            // ★★★★★ R2082 — an alt press advances the framework's click-versus-
+            // drag latch on every move, the same way the pan arm above does and
+            // for the same reason: what tells alt+click from alt+drag is that
+            // determination and not this screen's opinion. Written back into
+            // the gesture, because the latch is sticky — a hand that travels
+            // and comes home has still dragged (the W3C rule).
+            let rehost = rehost.map(|mut held| {
+                held.latch.advance((f64::from(px), f64::from(py)));
+                held
+            });
+            if let Some(held) = rehost {
+                state.drag.set(Some(Drag::Node {
+                    node,
+                    grab,
+                    rehost: Some(held),
+                }));
+            }
             let (ux, uy) = to_canvas(state, px, py);
             let mut cx = ux - grab.0;
             let mut cy = uy - grab.1;
@@ -20986,7 +21183,48 @@ fn choose_on_canvas(state: &Rc<LabState>, tag: &str) -> bool {
     }
 }
 
+/// ★★★★★ R2082 — the chord this screen's membership gesture is made with, in
+/// one place.
+///
+/// Declared here rather than in each gate module because there are two of them
+/// and both drive the same gesture: a `Modifiers { … }` written out per site is
+/// four booleans a reader has to re-check, and two of those literals are one
+/// typo away from asserting a gesture nobody performs.
+#[cfg(test)]
+const ALT_CHORD: Modifiers = Modifiers {
+    shift: false,
+    ctrl: false,
+    alt: true,
+    meta: false,
+};
+
+/// A press made with **no chord held**.
+///
+/// The zero-chord half of the pair, mirroring [`move_cursor`] and the
+/// framework's own `pointer_up` / `pointer_up_with_modifiers`.
+///
+/// ⚠ `cfg(test)` and not a public convenience: every press this screen answers
+/// arrives through the wire, which now always says what was held, so the only
+/// callers left that have no chord to pass are the gates. A non-test wrapper
+/// here would be a second entry point nothing reaches — the class R2080 spent a
+/// round paying off one floor down.
+#[cfg(test)]
 fn press(state: &Rc<LabState>) {
+    press_with_chord(state, Modifiers::empty());
+}
+
+/// ★★★★★ R2082 — a press, and **this** is what was held when it landed.
+///
+/// The chord is latched into the gesture here rather than read per move, and
+/// that is the canon's own split: it reads `altKey` on the pointerdown, because
+/// alt selects WHICH GESTURE this is (place the card, or change what holds it),
+/// and a gesture cannot change identity half-way through. `ctrl` is the other
+/// one and it is read per move ([`move_cursor_with_chord`]), because it selects
+/// the STEP a gesture takes and a person may take or release the grid mid-flight.
+///
+/// ⇒ Two modifiers, two lifetimes, and reading either one at the other's moment
+/// would be a different screen.
+fn press_with_chord(state: &Rc<LabState>, chord: Modifiers) {
     let (px, py) = state.cursor.get();
     let hit = Hit::at(state, px, py);
     match &hit {
@@ -21013,6 +21251,14 @@ fn press(state: &Rc<LabState>) {
             state.drag.set(Some(Drag::Node {
                 node: *node,
                 grab: (ux - cx, uy - cy),
+                // ★★★★★ R2082 — alt, read HERE and nowhere else, because it
+                // says which gesture this press began. `from` is where the card
+                // stood at this instant, and it is the whole of the canon's
+                // freeze (see `Rehost`).
+                rehost: chord.alt.then(|| Rehost {
+                    from: (cx, cy),
+                    latch: DragLatch::new((f64::from(px), f64::from(py))),
+                }),
             }));
         }
         Hit::Pin {
@@ -21126,9 +21372,27 @@ enum Reparent {
 /// Returns the clause a [`Reparent::Quiet`] re-parent did **not** say, so the
 /// caller can join it to what is already on screen. [`Reparent::Announced`]
 /// says its own and answers [`None`].
-fn apply_frame(state: &Rc<LabState>, node: NodeId, voice: Reparent) -> Option<String> {
-    let landed = card_rect(state, node)
-        .and_then(|r| frame_at(state, i64::from(r.x + r.w / 2), i64::from(r.y + r.h / 2)));
+fn apply_frame(
+    state: &Rc<LabState>,
+    node: NodeId,
+    held: Rehost,
+    voice: Reparent,
+) -> Option<String> {
+    // ★★★★★ R2082 — judged against the FROZEN boxes, which is what makes the
+    // landing a fact about where the hand took the card rather than about where
+    // the frames ended up. Live boxes cannot answer it: the frame the card came
+    // from follows it (that is what being derived from its members means), so
+    // the card is inside its old frame at every moment of the gesture and a
+    // live test would answer *nothing changed* however far it was carried.
+    let landed = card_rect(state, node).and_then(|r| {
+        frozen_frame_under(
+            state,
+            node,
+            held.from,
+            i64::from(r.x + r.w / 2),
+            i64::from(r.y + r.h / 2),
+        )
+    });
     let held = state
         .doc
         .borrow()
@@ -21151,13 +21415,86 @@ fn apply_frame(state: &Rc<LabState>, node: NodeId, voice: Reparent) -> Option<St
         Some(frame) => format!("{name} now starts on {frame}"),
         None => format!("{name} is not on any host"),
     };
+    // Handed back rather than said under `Quiet`, so the caller can join it to
+    // the sentence that is already there instead of replacing it.
+    say_or_hand_back(state, clause, voice)
+}
+
+/// ★★★★★ R2082 — **alt+click: in or out, without moving the card.**
+///
+/// The behaviour canon's other alt gesture, and its own words say what it is
+/// for: a card that is on a host leaves it; a card that is on none joins
+/// whichever frame *could enclose it*, and if none can, the person is told so.
+///
+/// # Why this cannot be the drag's code path
+///
+/// The drag judges *where the card was carried to*. This judges *where the
+/// card already is*, and the two differ exactly where it matters: a card
+/// sitting inside a frame's box but not a member of it can never be joined by
+/// dragging, because there is nowhere to carry it that it is not already at.
+/// Without this gesture the only way in is to drag out and back.
+///
+/// # A no-op exclusion, said rather than copied
+///
+/// The canon judges the enclosing frame with the card itself *excluded* from
+/// every frame's derivation, and states the reason: the question is who could
+/// enclose this node. Here that exclusion is provably vacuous — the branch
+/// above has already returned for a card that is a member of anything, so this
+/// card contributes to no frame's rectangle and removing it changes none. The
+/// live derivation is therefore the same answer, and re-deriving the frames a
+/// second way to reach it would be a second spelling of one rule.
+fn alt_toggle_frame(state: &Rc<LabState>, node: NodeId, voice: Reparent) -> Option<String> {
+    let held = state
+        .doc
+        .borrow()
+        .tree(state.here())
+        .and_then(|t| t.node(node).and_then(|n| n.parent));
+    let name = state.name_of(node);
+    if held.is_some() {
+        if state
+            .doc
+            .borrow_mut()
+            .set_parent(state.here(), node, None)
+            .is_err()
+        {
+            return None;
+        }
+        return say_or_hand_back(state, format!("{name} is not on any host"), voice);
+    }
+    let Some(into) = card_rect(state, node)
+        .and_then(|r| frame_at(state, i64::from(r.x + r.w / 2), i64::from(r.y + r.h / 2)))
+    else {
+        // The canon says so too rather than doing nothing: a gesture that
+        // silently declines is indistinguishable from one that did not arrive.
+        state.say(Utterance::refused(&format!(
+            "no host frame encloses {name}"
+        )));
+        return None;
+    };
+    if state
+        .doc
+        .borrow_mut()
+        .set_parent(state.here(), node, Some(into))
+        .is_err()
+    {
+        return None;
+    }
+    let clause = match state.frames.borrow().get(&state.address_of(into)).cloned() {
+        Some(frame) => format!("{name} now starts on {frame}"),
+        None => format!("{name} is not on any host"),
+    };
+    say_or_hand_back(state, clause, voice)
+}
+
+/// Say the clause, or hand it back for the caller to join to a sentence that is
+/// already on screen — the [`Reparent`] split, applied at the second site that
+/// now needs it.
+fn say_or_hand_back(state: &Rc<LabState>, clause: String, voice: Reparent) -> Option<String> {
     match voice {
         Reparent::Announced => {
             state.say(Utterance::done(clause));
             None
         }
-        // Handed back rather than said, so the caller can join it to the
-        // sentence that is already there instead of replacing it.
         Reparent::Quiet => Some(clause),
     }
 }
@@ -21265,7 +21602,7 @@ fn finish_drag(state: &Rc<LabState>, drag: Drag, now: &Hit) {
         // `insert_target_for` and not the release `Hit`: the carried card is
         // painted under the cursor, so the hit test answers the card itself and
         // could never see the wire beneath it.
-        Drag::Node { node, .. } => {
+        Drag::Node { node, rehost, .. } => {
             // A refusal is spoken by `insert_on_link`, in the crate's own
             // sentence — which is why a target that says no is still aimed at
             // and still dropped on. The person hears why.
@@ -21276,7 +21613,33 @@ fn finish_drag(state: &Rc<LabState>, drag: Drag, now: &Hit) {
             } else {
                 Reparent::Announced
             };
-            let host = apply_frame(state, node, voice);
+            // ★★★★★ R2082 — **only an ALT drag changes which host holds the
+            // card**, and that is the behaviour canon's rule read off its own
+            // release handler: `labApplyFrame` is called inside `if(alt)` and
+            // nowhere else. A plain drag is *position only* — the frame is the
+            // live bounding box of what it holds, so it grows and shrinks with
+            // a member that moves inside it and takes on nothing new.
+            //
+            // ⚠ This screen re-parented on EVERY drop from R1654 until here,
+            // which is why the change is a repair and not a feature: dropping a
+            // card anywhere over a frame's box silently changed which machine
+            // it starts on, and there was no gesture that could decline. The
+            // declared operation table said `drag a node onto a frame`; it now
+            // says what the canon's does.
+            //
+            // ★★★★★ And alt has TWO gestures, told apart by the latch: a drag
+            // re-parents to where the card landed, a CLICK toggles. The canon's
+            // release handler is the same shape — `if(alt){ if(!moved) toggle;
+            // else apply }` — and the toggle is not a shortcut for the drag: it
+            // answers "who could enclose this card" without moving it, which is
+            // the only way to join a frame the card is already sitting inside.
+            let host = rehost.and_then(|held| {
+                if held.latch.live() {
+                    apply_frame(state, node, held, voice)
+                } else {
+                    alt_toggle_frame(state, node, voice)
+                }
+            });
             // ★★★★★ **Both facts when both happened, in one sentence.**
             //
             // ⚠ Measured, not anticipated. The re-parent used to speak LAST and
@@ -23107,6 +23470,25 @@ impl External for LabOracle {
     /// A drag that strays off a pin must keep previewing rather than being
     /// cancelled by a stray pixel.
     fn wants_pointer_capture(&self) -> bool {
+        true
+    }
+
+    /// ★★★★★ R2082 §5.35 §5.49 — opt into the R880 bare-target modifier wire,
+    /// so a press on this surface says which chord it was made with.
+    ///
+    /// The behaviour canon's membership gesture is `alt` read AT PICK-UP: with
+    /// it, a drag changes which host a card starts on and the frame rectangles
+    /// are frozen so that crossing a boundary is an event; without it, a drag
+    /// moves the card and nothing else. A press that cannot say whether alt was
+    /// held cannot tell those two gestures apart, and this surface's press
+    /// carries no coordinates either — it acts on the cursor the last move
+    /// recorded — so the chord has to ride the press wire.
+    ///
+    /// Gated behind this opt-in for the reason the default states: the bare
+    /// payload doubles as the SCXML event name for the whole statechart-driven
+    /// catalogue, so a screen that decodes its own send wire says so. This one
+    /// decodes through `split_send_payload`, the same grammar SSOT.
+    fn wants_bare_send_modifiers(&self) -> bool {
         true
     }
 

@@ -183,6 +183,37 @@ pub fn form_control_key(tag: &str) -> Option<&str> {
 /// Declared once. [`ROLE_ROW_TEMPLATE`] is the same address in the form the
 /// voice specification's population expansion takes, and a test holds the two
 /// together so they cannot drift.
+/// ★★★★★ R2082 — the address a **card** is painted under, as a template.
+///
+/// Declared for the reason [`ROLE_ROW_TEMPLATE`] was (R2049) and the group
+/// heading's was (R2078): a walk is Python and cannot call the declaration, so
+/// every walk that wants a card's rectangle re-types this prefix, and a wrong
+/// letter reads as *the screen did not paint it* rather than as a typo. R2078's
+/// own walk recorded the absence in place — "the card family has no declaration
+/// to derive from either, spelled inline in three places" — and this is that
+/// declaration, one of the remainders
+/// [[debt-a-paint-address-is-retyped-at-every-reader]] names.
+///
+/// ⚠ `lab.node.build.<word>` is a DIFFERENT family that shares this prefix (the
+/// build seat, R1885), which is why the screen's own router reads that one
+/// first and why a reader must not treat the prefix as "cards".
+pub const CARD_TEMPLATE: &str = "lab.node.{}";
+
+/// The address a **host frame** is painted under, as a template.
+pub const FRAME_TEMPLATE: &str = "lab.frame.{}";
+
+/// That card's address.
+#[must_use]
+pub fn card(name: &str) -> String {
+    CARD_TEMPLATE.replace("{}", name)
+}
+
+/// That frame's address.
+#[must_use]
+pub fn frame(name: &str) -> String {
+    FRAME_TEMPLATE.replace("{}", name)
+}
+
 pub const ROLE_ROW: &str = "lab.palette.role.";
 
 /// The prefix every palette role swatch carries.

@@ -1192,8 +1192,17 @@ def body() -> None:
 
         # ── (I) The gestures the hint strip advertises ──────────────────────
         # Every gesture the screen tells a person about has to work, or the
-        # hint is a lie. There are four, and this drives all four.
-        assert_eq(len(spec["gestures"]), 4)
+        # hint is a lie, and this drives all of them.
+        #
+        # ★★★★★ R2082 — the COUNT is derived and printed, not pinned. It was
+        # `assert_eq(len(spec["gestures"]), 4)` with "there are four" written
+        # beside it, and the round that gave this screen its membership
+        # gestures made both false — the number and the sentence, in one edit.
+        # A demo's number goes stale exactly the way prose does (R1730 broke
+        # five demos on this), so what is asserted here is the SHAPE: the strip
+        # advertises something, and every one of them is driven below.
+        advertised = [tuple(g) for g in spec["gestures"]]
+        assert advertised, "the canvas advertises at least one gesture"
 
         # 1. drag empty space = pan
         before = q(tf, "pan")
@@ -1236,8 +1245,75 @@ def body() -> None:
             "a drag from a dial pin to an accept pin authors a link",
         )
         assert any(l["from"] == "T-01" and l["to"] == "P-03" for l in links_after), links_after
-        print(f"[I] all {len(spec['gestures'])} advertised gesture(s) answer: pan, "
-              f"zoom, place, and author")
+
+        # 5. alt-drag a node = move it to another host
+        #    ★★★★★ R2082 — driven over the SEND WIRE with the chord spelled into
+        #    it (`":PointerDown:a"`, the R781 token on the empty-key R880 wire
+        #    this screen opts into). That is the agent's half of the gesture: a
+        #    person holds alt, and an agent says so on the press it sends.
+        #    ★ Both addresses come from the specification, which publishes them
+        #    since R2082 — this walk spells its other tags because it predates
+        #    that declaration, and a new one should not add to the tally
+        #    `tools/painted_addresses.py` keeps.
+        hosts_before = json.loads(q(tf, "frames"))
+        chosen_before = q(tf, "selected")
+        carried = next(name for name, host in hosts_before.items() if host)
+        elsewhere = next(
+            name for name in {h for h in hosts_before.values() if h}
+            if name != hosts_before[carried]
+        )
+        card_tag = next(n["tag"] for n in spec["nodes"] if n["id"] == carried)
+        home_tag = next(f["tag"] for f in spec["frames"] if f["name"] == hosts_before[carried])
+        stood_at = centre(window_of(tf, card_tag))
+        into = window_of(tf, next(f["tag"] for f in spec["frames"] if f["name"] == elsewhere))
+        inv(tf, "point", stood_at)
+        inv(tf, "send", ":PointerDown:a")
+        inv(tf, "point", f"{into['x'] + into['w'] // 2},{into['y'] + into['h'] - 40}")
+        inv(tf, "send", "PointerUp")
+        assert_eq(
+            json.loads(q(tf, "frames"))[carried],
+            elsewhere,
+            f"an alt drag moved {carried} to {elsewhere}",
+        )
+
+        # 6. alt-click a node = put it on a host, or take it off
+        #    Pressed and released where it stands, so the framework's
+        #    click-versus-drag latch never latches and the toggle arm runs.
+        inv(tf, "point", centre(window_of(tf, card_tag)))
+        inv(tf, "send", ":PointerDown:a")
+        inv(tf, "send", "PointerUp")
+        assert_eq(
+            json.loads(q(tf, "frames"))[carried],
+            None,
+            f"an alt click took {carried} off the host it was on",
+        )
+        print(f"[I] all {len(advertised)} advertised gesture(s) answer: "
+              + ", ".join(name for name, _ in advertised))
+
+        #    ★★★★★ AND THIS SECTION PUTS THE SCREEN BACK. The two gestures above
+        #    move a card between hosts and change what is selected, and the
+        #    sections after this one read a form that belongs to the selected
+        #    card — the first run of this repair left `carried` on no host with
+        #    the inspector showing its form, and a later section failed looking
+        #    for a control that is not on it. R2079 wrote the rule down after
+        #    paying it in a different walk: a section that changes shared state
+        #    puts it back, or the walk's ORDER becomes part of its meaning.
+        inv(tf, "point", centre(window_of(tf, card_tag)))
+        inv(tf, "send", ":PointerDown:a")
+        inv(tf, "point", stood_at)
+        inv(tf, "send", "PointerUp")
+        assert_eq(
+            json.loads(q(tf, "frames"))[carried],
+            hosts_before[carried],
+            f"and {carried} is back on the host it started on",
+        )
+        if chosen_before:
+            inv(tf, "point", centre(window_of(tf, next(
+                n["tag"] for n in spec["nodes"] if n["id"] == chosen_before
+            ))))
+            inv(tf, "send", "PointerDown")
+            inv(tf, "send", "PointerUp")
+        assert_eq(q(tf, "selected"), chosen_before, "and the selection is as it was")
 
         # ── (J) A link the model cannot hold is refused BY NAME ─────────────
         # The crate refuses it, not this screen: `Document::connect` is the one

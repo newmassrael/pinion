@@ -886,6 +886,13 @@ pub const GESTURES: &[(&str, &str)] = &[
     ("drag empty space", "pan"),
     ("wheel", "zoom"),
     ("drag a node", "place it, hold ctrl to snap"),
+    // ★★★★★ R2082 — the membership gesture, declared, because until this round
+    // it did not exist and the screen changed membership on EVERY drop without
+    // being asked. The canon calls `apply frame` inside its alt branch and
+    // nowhere else, so a plain drag is placement alone; alt+drag carries a card
+    // to another host, and alt+CLICK toggles the one it is on without moving it.
+    ("alt-drag a node", "move it to another host"),
+    ("alt-click a node", "put it on a host, or take it off"),
     ("drag a pin", "author a link"),
 ];
 

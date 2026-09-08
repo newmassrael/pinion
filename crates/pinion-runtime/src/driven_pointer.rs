@@ -186,6 +186,27 @@ impl DrivenPointer {
         });
     }
 
+    /// ★★★★★ R2082 §5.35 §5.41 — **hold a keyboard chord** for the presses that
+    /// follow, until it is set again.
+    ///
+    /// Written into the router's absolute modifier cache, which R1619 declared
+    /// the single writer for every dispatched pointer event and which the shell
+    /// feeds from `ModifiersChanged` / `scene/modifiers`. So a chord held here
+    /// reaches a surface by the same route it reaches one in a real window, and
+    /// a driver cannot invent a delivery path of its own.
+    ///
+    /// # Why a driver needs it at all
+    ///
+    /// A gesture can be a function of the chord it was made with — the
+    /// behaviour canon this workspace reproduces has a drag that changes what
+    /// holds a card only when alt is down, and a grid-snapping drag that reads
+    /// ctrl on every move. Without this, an assembled application's in-process
+    /// gates could drive the *plain* half of such a pair and nothing else,
+    /// which is how a screen comes to have a gesture only its walks can reach.
+    pub fn holding(&mut self, modifiers: pinion_core::Modifiers) {
+        self.router.set_held_modifiers(modifiers);
+    }
+
     /// Press the primary button where the pointer is.
     pub fn press(&mut self) {
         let Self {

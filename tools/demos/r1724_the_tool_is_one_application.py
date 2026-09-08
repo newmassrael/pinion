@@ -632,6 +632,135 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             f"released {settled} (grid {grid}, {nudges} nudge(s) to get off it)"
         )
 
+        # ── (J) membership is a gesture now, not a side effect ────────────
+        # ★★★★★ R2082 — from R1654 until this round, dropping a card anywhere
+        # over a host frame's box silently changed which machine it starts on,
+        # and no gesture could decline. The behaviour canon calls its `apply
+        # frame` inside `if(alt)` and nowhere else: a plain drag is placement
+        # alone, alt-drag carries a card to another host, and alt-CLICK toggles
+        # the one it is on without moving it — the only way INTO a frame the
+        # card is already sitting inside, since a drag has nowhere to carry it.
+        #
+        # Driven here, in the assembled application, because the chord has to
+        # cross a real wire to arrive: the shell's absolute modifier cache
+        # (`scene/modifiers`), the router's press, this screen's opt-in to the
+        # bare-target modifier wire, and its decode. Every one of those is a
+        # place the chord can be dropped, and the in-process gates next door
+        # reach none of them.
+        banner("J — a card changes host only when it is asked to")
+        spec = lab_spec(app)
+        gestures = dict(spec["gestures"])
+        for named in ("alt-drag a node", "alt-click a node"):
+            ok(f"J: the screen declares {named!r}: {gestures.get(named)!r}", named in gestures)
+
+        def hosts() -> dict:
+            """Which host each card starts on, ASKED OF THE SCREEN."""
+            return json.loads(str(app.query(f"/{LAB_ROOT}{EXT}/frames")))
+
+        def seat(tag: str) -> tuple:
+            box = abs_rects_of(app.snapshot(source="paint"))[tag]
+            return (box[0] + box[2] // 2, box[1] + box[3] // 2)
+
+        def band(tag: str) -> tuple:
+            """A card's own IDENTITY BAND — its top strip.
+
+            ★ Not the centre, and the reason was measured here: a card carried
+            onto a wire has that wire's act chip drawn ON it, and this screen
+            reads a chip BEFORE the card underneath it (R2001, deliberately —
+            otherwise a press would pick the card up and the control could
+            never fire). Aimed at the centre, this section's alt click landed on
+            `unlinked P-01 -> R-01` and the walk reported the toggle as broken.
+            """
+            box = abs_rects_of(app.snapshot(source="paint"))[tag]
+            return (box[0] + box[2] // 2, box[1] + 5)
+
+        def inside_of(frame_tag: str, carried: str) -> tuple:
+            """Where to LET GO so the carried card lands inside that frame.
+
+            ★ Inset by the CARD's own size and not by a constant, because the
+            drop is judged on the card's CENTRE while the cursor holds it by the
+            band it was picked up from. Measured: a 24-pixel inset from the
+            frame's bottom-left corner put the cursor inside the box and the
+            card's centre one pixel below it, and the walk read a successful
+            re-parent as *the card is on no host*.
+            """
+            shot = abs_rects_of(app.snapshot(source="paint"))
+            frame, card_box = shot[frame_tag], shot[carried]
+            return (
+                frame[0] + card_box[2],
+                frame[1] + frame[3] - card_box[3],
+            )
+
+        def with_alt(act) -> None:
+            app.modifiers(alt=True)
+            try:
+                act()
+            finally:
+                app.modifiers()
+            app.tick_ms(16)
+
+        started = hosts()
+        card = next(name for name, host in started.items() if host)
+        home = started[card]
+        # ★ Both addresses come FROM the screen: R2082 published the card and
+        # frame templates for the reason R2049 published the role row's, and
+        # this walk is the first consumer.
+        card_tag = next(n["tag"] for n in spec["nodes"] if n["id"] == card)
+        away = next(f for f in spec["frames"] if f["name"] != home)
+        back = next(f for f in spec["frames"] if f["name"] == home)
+        print(f"[demo] {card} starts on {home}; carrying it to {away['name']}")
+
+        # ① alt-drag: it moves AND changes host.
+        with_alt(
+            lambda: app.drag(
+                from_at=band(card_tag), to_at=inside_of(away["tag"], card_tag)
+            )
+        )
+        assert_eq(
+            hosts()[card],
+            away["name"],
+            f"J: ★★★★★ an ALT drag carried {card} onto {away['name']}",
+        )
+        # ② a plain drag back: it moves and changes NOTHING about what holds it.
+        # This is the half that was impossible before the round.
+        app.drag(from_at=band(card_tag), to_at=inside_of(back["tag"], card_tag))
+        assert_eq(
+            hosts()[card],
+            away["name"],
+            f"J: ★★★★★ and a PLAIN drag back into {home} left it on "
+            f"{away['name']} -- position and membership are separate facts",
+        )
+        # ③ alt-click: off the host it is on, without moving.
+        #
+        # ★ The message carries what the screen SAID and what it thinks is
+        # selected, because a press that missed its card and a toggle that
+        # declined are the same silence from out here.
+        before_click = band(card_tag)
+        was_at = seat(card_tag)
+        with_alt(lambda: app.click(at=before_click))
+        ok(
+            f"J: ★★★★★ an ALT click took {card} off its host: {hosts()[card]!r} "
+            f"(said {app.query(f'/{LAB_ROOT}{EXT}/said')!r}, "
+            f"selected {app.query(f'/{LAB_ROOT}{EXT}/selected')!r}, at {before_click})",
+            hosts()[card] is None,
+        )
+        # ④ and again: back onto whichever frame encloses where it stands. It is
+        # sitting inside `home`'s box after ②, so that is the answer — and no
+        # drag could have produced it, because there is nowhere to carry a card
+        # that is already there.
+        with_alt(lambda: app.click(at=band(card_tag)))
+        assert_eq(
+            hosts()[card],
+            home,
+            "J: ★★★★★ a second ALT click put it on the host it is standing in "
+            "-- the arm no drag can reach",
+        )
+        assert_eq(
+            seat(card_tag),
+            was_at,
+            "J: ★ and neither click moved the card one pixel",
+        )
+
         print(f"\n[demo] {len(CHECKS)} named check(s)")
         ok("the tool is one application at three of its seven seats", True)
 

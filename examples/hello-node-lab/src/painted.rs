@@ -4069,7 +4069,12 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     ("re-parent a node between frames", |state, shot| {
         // Onto the other host's frame, which is where a drop changes whose
         // machine the node starts on.
-        drag_between(state, shot, "lab.node.P-03", "lab.frame.host-b");
+        //
+        // ★★★★★ R2082 — with ALT, because that is the gesture now. A plain drag
+        // onto a frame moves the card and changes nothing about what holds it,
+        // which is the canon's rule (`apply frame` lives inside its alt branch)
+        // and was this screen's silent default for 428 rounds.
+        alt_drag_between(state, shot, "lab.node.P-03", "lab.frame.host-b");
     }),
     ("move a frame and its members", |state, shot| {
         drag_tag(state, shot, "lab.frame.host-b.caption", (30, 0));
@@ -4407,6 +4412,40 @@ fn drag_from(state: &std::rc::Rc<LabState>, from: (u32, u32), by: (i32, i32)) {
     super::release(state);
 }
 
+/// An **alt** drag between two painted marks — the canon's membership gesture.
+fn alt_drag_between(state: &std::rc::Rc<LabState>, shot: &Painted, from: &str, to: &str) {
+    let a = centre(
+        *shot
+            .tags
+            .get(from)
+            .unwrap_or_else(|| panic!("{from} is painted")),
+    );
+    let b = centre(
+        *shot
+            .tags
+            .get(to)
+            .unwrap_or_else(|| panic!("{to} is painted")),
+    );
+    super::move_cursor(state, a.0, a.1);
+    super::press_with_chord(state, super::ALT_CHORD);
+    super::move_cursor(state, b.0, b.1);
+    super::release(state);
+}
+
+/// An **alt** click on a painted mark: pressed and let go where it stands, so
+/// the framework's click-versus-drag latch never latches.
+fn alt_click_tag(state: &std::rc::Rc<LabState>, shot: &Painted, tag: &str) {
+    let at = centre(
+        *shot
+            .tags
+            .get(tag)
+            .unwrap_or_else(|| panic!("{tag} is painted, so a person can aim at it")),
+    );
+    super::move_cursor(state, at.0, at.1);
+    super::press_with_chord(state, super::ALT_CHORD);
+    super::release(state);
+}
+
 /// ★★ R1678 — bring the screen to the state an operation needs before it can
 /// be caused at all.
 ///
@@ -4652,6 +4691,29 @@ const HINT_GESTURES: &[HintDriver] = &[
         "place it, hold ctrl to snap",
         |state, shot| {
             drag_tag(state, shot, "lab.node.P-03", (40, 24));
+        },
+    ),
+    // ★★★★★ R2082 — the two the strip gained when membership stopped happening
+    // by itself. Both are driven through this screen's own press entry with the
+    // chord the wire now carries, which is the only way to prove the claim: a
+    // driver that called `apply_frame` would pass in every round where no alt
+    // press could reach it — R1703's own lesson about the wheel, one gesture
+    // over.
+    (
+        "alt-drag a node",
+        "move it to another host",
+        |state, shot| {
+            alt_drag_between(state, shot, "lab.node.P-03", "lab.frame.host-b");
+        },
+    ),
+    (
+        "alt-click a node",
+        "put it on a host, or take it off",
+        |state, shot| {
+            // A card that IS on a host, so the click takes it off — the arm
+            // that needs no frame under the cursor and therefore cannot be
+            // satisfied by luck.
+            alt_click_tag(state, shot, "lab.node.P-01");
         },
     ),
     ("drag a pin", "author a link", |state, shot| {

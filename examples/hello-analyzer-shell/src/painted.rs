@@ -54,6 +54,19 @@ use super::{Hit, ShellOracle, ShellState, WIN_H, WIN_W, spec};
 // gates it knew wrote; this module had 72 call sites and none of them.
 use super::tests::use_shell_state_off_disk;
 
+/// ★★★★★ R2082 — the chord the mounted lab's membership gesture is made with.
+///
+/// Held through `DrivenPointer::holding`, which writes the router's absolute
+/// modifier cache — the one writer R1619 declared for every dispatched pointer
+/// event, and the same cache a real window's `ModifiersChanged` feeds. So these
+/// gates drive the gesture by the route a person's chord takes.
+const ALT_CHORD: pinion_core::Modifiers = pinion_core::Modifiers {
+    shift: false,
+    ctrl: false,
+    alt: true,
+    meta: false,
+};
+
 /// One swept state: what to call it, and the edit that reaches it.
 type SweptState = (&'static str, fn(&std::rc::Rc<ShellState>));
 
@@ -13204,6 +13217,16 @@ fn carrying_a_card_over_a_host_says_it_would_be_taken(state: &std::rc::Rc<ShellS
         .to_owned();
 
     let mut drag = hand_on(scene);
+    // ★★★★★ R2082 — with ALT held, because the gesture this gate is about is
+    // the one that changes what holds a card, and that is the canon's alt drag
+    // now: `apply frame` lives inside its `if(alt)` and a plain drop moves the
+    // card and nothing else. The permit this reads (R1996's "what the frame
+    // under a carried card would do") is a reading about THAT gesture, so the
+    // gate drives it. Held through the framework's own absolute cache
+    // (`DrivenPointer::holding`), which is the route a real window's chord
+    // takes — a driver that reached into the screen would be proving the
+    // gesture against a delivery nothing else uses.
+    drag.holding(ALT_CHORD);
     drag.cursor(aim(&shot, &format!("lab.node.{card}")));
     drag.press();
 
@@ -14434,6 +14457,13 @@ fn a_card_that_cannot_listen_is_aimed_and_says_it_would_not_be_taken(
 
     let (shot, scene) = painted_at((WIN_W, WIN_H));
     let mut drag = hand_on(scene);
+    // ★★★★★ R2082 — with ALT, because this phase's headline is the JOINED
+    // sentence: a splice that refuses, and the host change that happened
+    // anyway, in one line. The host half only exists under the gesture that
+    // changes membership, so a plain drag would leave this gate asserting a
+    // join of one clause — and it did, for exactly as long as it took the
+    // canon's rule to be reproduced.
+    drag.holding(ALT_CHORD);
     drag.cursor(aim(&shot, &format!("lab.node.{card}")));
     drag.press();
     let mut refused = serde_json::Value::Null;

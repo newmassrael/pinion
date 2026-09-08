@@ -1989,6 +1989,247 @@ fn r1654_a_node_drags_above_and_left_of_the_opening_graph() {
     });
 }
 
+/// ★★★★★ R2082 — **the freeze, and what it is for.**
+///
+/// The behaviour canon freezes every frame rectangle when an alt drag picks a
+/// card up, and its own comment gives the reason: a frame is derived from its
+/// members' live bounding box, so while a member is being dragged *the frame
+/// follows it* — and the boundary the gesture is about moves out of the way of
+/// the gesture. Crossing it cannot occur as an event at all.
+///
+/// Both halves are asserted against measured rectangles, because they pull in
+/// opposite directions and a screen with one and not the other is worse than a
+/// screen with neither:
+///
+/// * the LIVE box changes while the drag runs — the card is taken out of its
+///   old frame's calculation, which is what makes "on the way out" visible;
+/// * the FROZEN box does NOT — it is still the rectangle of the moment the
+///   hand went down, which is what the drop is judged against.
+///
+/// ⇒ A card nudged a few units inside its own host therefore stays on it,
+/// however far the shrunken live box has moved away from it.
+#[test]
+fn r2082_an_alt_drag_freezes_the_boundary_it_is_crossing() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        crate::painted::render_so_a_press_can_be_asked(&state);
+        let frames = super::frames_of(&state);
+        let host = frames.first().map(|(id, _)| *id).expect("hosts on opening");
+        let members = super::members_of(&state, host);
+        assert!(
+            members.len() > 1,
+            "the freeze is about a frame that has other members to shrink onto: {members:?}",
+        );
+        let moving = members[0];
+        let zoom = state.zoom.get();
+        let before = super::frame_rect_of(&state, host);
+        let seat = super::card_rect(&state, moving).expect("a card");
+        let at = super::content_to_window(
+            &state,
+            i64::from(seat.x + seat.w / 2),
+            i64::from(seat.y + seat.h / 2),
+        )
+        .expect("on screen");
+
+        // Where the card is being carried: past the frame's OWN corner, taken
+        // from the frame's own box rather than as a delta somebody guessed.
+        // ⚠ Measured: two drafts used `at + (90, 70)` and `at + (260, 200)` and
+        // both landed the card INSIDE the box, because this graph's cards are
+        // laid out in columns and the frame is wider than either guess. A
+        // destination derived from the boundary cannot be inside it.
+        let out = super::content_to_window(
+            &state,
+            i64::from(before.x + before.w) + 80,
+            i64::from(before.y + before.h) + 80,
+        )
+        .expect("the frame's far corner is on screen");
+        let centre_now = |state: &LabState| -> (i64, i64) {
+            let r = super::card_rect(state, moving).expect("a card");
+            (i64::from(r.x + r.w / 2), i64::from(r.y + r.h / 2))
+        };
+
+        // ⓪ THE CONTRAST FIRST, because it is what makes the rest mean
+        // anything: a PLAIN drag to that same point drags the frame WITH it.
+        // The box grows, and the card is still inside it — which is R1654's
+        // repair working, and is exactly why a live box cannot be the boundary
+        // an alt drag is judged against.
+        super::move_cursor(&state, at.0, at.1);
+        super::press(&state);
+        super::move_cursor(&state, out.0, out.1);
+        let stretched = super::frame_rect_at(&state, host, zoom);
+        let (cx, cy) = centre_now(&state);
+        assert_ne!(
+            stretched, before,
+            "a PLAIN drag stretches the frame around the card it is carrying",
+        );
+        assert!(
+            super::holds(stretched, cx, cy),
+            "so the card never leaves it: box {stretched:?} still holds ({cx},{cy})",
+        );
+        super::release(&state);
+
+        // ① THE EXCLUSION: with alt, the frame lets go. Same card, same
+        // journey, and the box a reader watches does NOT follow it.
+        crate::painted::render_so_a_press_can_be_asked(&state);
+        let seat = super::card_rect(&state, moving).expect("a card");
+        let at = super::content_to_window(
+            &state,
+            i64::from(seat.x + seat.w / 2),
+            i64::from(seat.y + seat.h / 2),
+        )
+        .expect("on screen");
+        let from = state
+            .doc
+            .borrow()
+            .tree(super::ROOT)
+            .and_then(|t| t.node(moving).map(|n| (n.x, n.y)))
+            .expect("the card");
+        let held_box = super::frame_rect_of(&state, host);
+        super::move_cursor(&state, at.0, at.1);
+        super::press_with_chord(&state, super::ALT_CHORD);
+        super::move_cursor(&state, out.0, out.1);
+        let live = super::frame_rect_at(&state, host, zoom);
+        let (cx, cy) = centre_now(&state);
+        assert!(
+            !super::holds(live, cx, cy),
+            "the LIVE box let the carried card go, so a reader sees it leaving: \
+             box {live:?} no longer holds ({cx},{cy})",
+        );
+        // ② THE FREEZE: and the boundary the drop is judged against has not
+        // moved at all. Two rectangles, same members, same instant, different
+        // answers — which is the whole design and is what one live derivation
+        // cannot express.
+        assert_eq!(
+            super::frozen_frame_at(&state, host, moving, from, zoom),
+            held_box,
+            "the FROZEN box is still the boundary the gesture began against",
+        );
+        super::release(&state);
+        assert!(
+            !super::members_of(&state, host).contains(&moving),
+            "carried out past its own host's boundary, the card left it",
+        );
+    });
+}
+
+/// ★★★★★ R2082 — **alt+click: in or out, without moving the card.**
+///
+/// The canon's other alt gesture, and the only way INTO a frame a card is
+/// already sitting inside: a drag judges where the card was carried to, and
+/// there is nowhere to carry a card that is already there.
+///
+/// Driven as a click — pressed and released where the card stands — so the
+/// framework's click-versus-drag latch never latches. That is the discriminant
+/// the screen uses, and asserting the two arms of one press proves it: the same
+/// chord, the same seat, and the answer differs only by whether the hand moved.
+#[test]
+fn r2082_an_alt_click_puts_a_card_on_a_host_or_takes_it_off() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        crate::painted::render_so_a_press_can_be_asked(&state);
+        let host = super::frames_of(&state)
+            .first()
+            .map(|(id, _)| *id)
+            .expect("the graph opens with hosts");
+        let on_it = super::members_of(&state, host)[0];
+        let click = |node| {
+            crate::painted::render_so_a_press_can_be_asked(&state);
+            let seat = super::card_rect(&state, node).expect("a card");
+            let at = super::content_to_window(
+                &state,
+                i64::from(seat.x + seat.w / 2),
+                i64::from(seat.y + seat.h / 2),
+            )
+            .expect("on screen");
+            super::move_cursor(&state, at.0, at.1);
+            super::press_with_chord(&state, super::ALT_CHORD);
+            super::release(&state);
+        };
+
+        // OFF: it is on a host, so the click takes it off.
+        click(on_it);
+        assert!(
+            !super::members_of(&state, host).contains(&on_it),
+            "an alt click on a card that is on a host takes it off",
+        );
+        // ON: it has not moved, so it is still inside that host's box — and
+        // this is the arm no drag can reach.
+        click(on_it);
+        assert!(
+            super::members_of(&state, host).contains(&on_it),
+            "and a second one puts it back on the host it is sitting inside",
+        );
+        // ★ NON-VACUITY: the card never moved, so a screen that answered by
+        // POSITION would give the same answer twice.
+        let after = state
+            .doc
+            .borrow()
+            .tree(super::ROOT)
+            .and_then(|t| t.node(on_it).map(|n| (n.x, n.y)))
+            .expect("the card");
+        click(on_it);
+        let still = state
+            .doc
+            .borrow()
+            .tree(super::ROOT)
+            .and_then(|t| t.node(on_it).map(|n| (n.x, n.y)))
+            .expect("the card");
+        assert_eq!(after, still, "and it moves the card not one unit");
+
+        // ★★★★★ AND THE THIRD ARM: a card that is on no host and stands over no
+        // frame is TOLD SO. The canon says it too rather than doing nothing,
+        // for the reason this tree keeps writing down — a gesture that silently
+        // declines is indistinguishable from one that never arrived.
+        //
+        // ⚠ Reached by carrying the card clear of every frame first, because
+        // that is the only state this arm exists for: the two above cover "on a
+        // host" and "standing inside one", and an arm nothing reaches is an arm
+        // nothing checks (R1930). Found by this round's own closing audit —
+        // the arm was written and left undriven.
+        crate::painted::render_so_a_press_can_be_asked(&state);
+        let clear = super::frames_of(&state)
+            .iter()
+            .map(|(id, _)| super::frame_rect_of(&state, *id))
+            .fold((0_u32, 0_u32), |(x, y), r| {
+                (x.max(r.x + r.w), y.max(r.y + r.h))
+            });
+        let out =
+            super::content_to_window(&state, i64::from(clear.0) + 60, i64::from(clear.1) + 60)
+                .expect("the canvas reaches past its frames");
+        let seat = super::card_rect(&state, on_it).expect("a card");
+        let at = super::content_to_window(
+            &state,
+            i64::from(seat.x + seat.w / 2),
+            i64::from(seat.y + seat.h / 2),
+        )
+        .expect("on screen");
+        super::move_cursor(&state, at.0, at.1);
+        super::press_with_chord(&state, super::ALT_CHORD);
+        super::move_cursor(&state, out.0, out.1);
+        super::release(&state);
+        assert!(
+            super::frames_of(&state)
+                .iter()
+                .all(|(id, _)| !super::members_of(&state, *id).contains(&on_it)),
+            "carried clear of every frame, the card is on no host",
+        );
+        click(on_it);
+        let said = state
+            .toast
+            .showing()
+            .map(|utterance| utterance.sentence().clone())
+            .unwrap_or_default();
+        assert!(
+            said.contains(&state.name_of(on_it)),
+            "an alt click with nothing to join SAYS so, naming the card: {said:?}",
+        );
+    });
+}
+
 /// ★★★★★ R2080 — **the grid this screen has advertised since it was built.**
 ///
 /// "hold ctrl to snap" is written in the module header and in this screen's own
@@ -2079,6 +2320,94 @@ fn r2080_the_chord_of_each_move_decides_whether_the_card_lands_on_the_grid() {
     });
 }
 
+/// ★★★★★ R2082 — R1654's second act: **membership follows the GESTURE**, and
+/// the same journey without the gesture changes nothing.
+///
+/// The change here is to the reproduction target rather than to the claim.
+/// R1654 drove this with a plain drag and it passed, because this screen
+/// re-parented on every release. The behaviour canon does not: its release
+/// handler calls `apply frame` inside `if(alt)` and nowhere else, so a plain
+/// drag is *position only* and the frame simply re-derives around a member that
+/// moved inside it. What the plain drag proved — that membership follows the
+/// gesture and both boxes re-derive — is still proved; it is proved of the
+/// gesture the canon gives it. A test left on the plain drag would have gone on
+/// describing a screen this project is reproducing away from.
+///
+/// Answers the card it carried, so the acts after it read the arrangement this
+/// one made.
+fn membership_follows_the_alt_gesture(
+    state: &std::rc::Rc<LabState>,
+    host_a: NodeId,
+    host_b: NodeId,
+) -> NodeId {
+    let moving = state.node_of("T-01").expect("on host-b");
+    assert!(super::members_of(state, host_b).contains(&moving));
+    // ★★★★★ R1736 — painted before the drag, because the press that starts it
+    // is resolved from the paint. Re-painted rather than painted once at the
+    // top: this test moves cards between its acts, and a press aimed with a
+    // frame the screen has since redrawn is aimed at history.
+    crate::painted::render_so_a_press_can_be_asked(state);
+    let target =
+        super::card_rect(state, state.node_of("P-02").expect("on host-a")).expect("a card");
+    let from = super::card_rect(state, moving).expect("a card");
+    let start = super::content_to_window(
+        state,
+        i64::from(from.x + from.w / 2),
+        i64::from(from.y + from.h / 2),
+    )
+    .expect("on screen");
+    let onto = super::content_to_window(
+        state,
+        i64::from(target.x + target.w / 2),
+        i64::from(target.y + target.h + 30),
+    )
+    .expect("on screen");
+    super::move_cursor(state, start.0, start.1);
+    super::press_with_chord(state, super::ALT_CHORD);
+    super::move_cursor(state, onto.0, onto.1);
+    super::release(state);
+    assert!(
+        super::members_of(state, host_a).contains(&moving),
+        "the card joined the host the ALT drag carried it to"
+    );
+    assert!(
+        !super::members_of(state, host_b).contains(&moving),
+        "and left the one it came from"
+    );
+    // ⚠ And the SAME JOURNEY BACK without alt must change nothing, or this act
+    // cannot tell "alt re-parents" from "any drag re-parents" — which is the
+    // whole distinction. Carried right back into the box it came from, the card
+    // stays on the host it now belongs to: position and membership are separate
+    // facts, which is what the canon means by *Alt-less drag: position only*.
+    let back_to = |state: &std::rc::Rc<LabState>, at: (u32, u32)| {
+        crate::painted::render_so_a_press_can_be_asked(state);
+        let here = super::card_rect(state, moving).expect("a card");
+        let grip = super::content_to_window(
+            state,
+            i64::from(here.x + here.w / 2),
+            i64::from(here.y + here.h / 2),
+        )
+        .expect("on screen");
+        super::move_cursor(state, grip.0, grip.1);
+        super::press(state);
+        super::move_cursor(state, at.0, at.1);
+        super::release(state);
+    };
+    back_to(state, start);
+    assert!(
+        super::members_of(state, host_a).contains(&moving),
+        "a PLAIN drag moves the card and leaves what holds it alone"
+    );
+    assert!(
+        !super::members_of(state, host_b).contains(&moving),
+        "so the frame it was carried back into did not take it"
+    );
+    // Put it back where the alt drag had left it, so the acts after this one
+    // read the arrangement it made rather than an undo of it.
+    back_to(state, onto);
+    moving
+}
+
 /// R1654 — the group behaviour the reference has: a frame's box is DERIVED from
 /// what it holds, a card dropped inside joins it, and dragging the frame takes
 /// its members along.
@@ -2121,42 +2450,12 @@ fn r1654_a_frame_is_derived_from_its_members_and_moves_them() {
             );
         }
 
-        // (2) MEMBERSHIP FOLLOWS THE DROP: drag a card from one host to the
-        // other and the two boxes re-derive.
-        let moving = state.node_of("T-01").expect("on host-b");
-        assert!(super::members_of(&state, host_b).contains(&moving));
-        // ★★★★★ R1736 — painted before the drag, because the press that starts
-        // it is resolved from the paint. Re-painted rather than painted once at
-        // the top: this test moves cards between the two acts, and a press
-        // aimed with a frame the screen has since redrawn is aimed at history.
-        crate::painted::render_so_a_press_can_be_asked(&state);
-        let target =
-            super::card_rect(&state, state.node_of("P-02").expect("on host-a")).expect("a card");
-        let from = super::card_rect(&state, moving).expect("a card");
-        let start = super::content_to_window(
-            &state,
-            i64::from(from.x + from.w / 2),
-            i64::from(from.y + from.h / 2),
-        )
-        .expect("on screen");
-        let onto = super::content_to_window(
-            &state,
-            i64::from(target.x + target.w / 2),
-            i64::from(target.y + target.h + 30),
-        )
-        .expect("on screen");
-        super::move_cursor(&state, start.0, start.1);
-        super::press(&state);
-        super::move_cursor(&state, onto.0, onto.1);
-        super::release(&state);
-        assert!(
-            super::members_of(&state, host_a).contains(&moving),
-            "the card joined the host it was dropped on"
-        );
-        assert!(
-            !super::members_of(&state, host_b).contains(&moving),
-            "and left the one it came from"
-        );
+        // (2) MEMBERSHIP FOLLOWS THE GESTURE — its own act, and its own
+        // function since R2082 grew it past this file's hundred-line refusal.
+        // Paid with structure rather than an `allow`, which is this tree's
+        // standing answer to that lint, and the extraction earns its keep: the
+        // act now has a name that says which of R1654's three claims it is.
+        membership_follows_the_alt_gesture(&state, host_a, host_b);
 
         // (3) THE FRAME IS A HANDLE: dragging its tab moves every member.
         // ★ R1736 — repainted again, for the reason above: act (2) moved a card

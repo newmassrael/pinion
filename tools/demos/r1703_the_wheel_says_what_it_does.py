@@ -148,8 +148,21 @@ def hint_strip_gestures(tf: RpcSubprocess) -> int:
     checks = 0
     spec = json.loads(tf.query(f"{EXT}/spec"))
     advertised = [tuple(g) for g in spec["gestures"]]
-    assert_eq(len(advertised), 4, "the canvas advertises four gestures")
+    # ★★★★★ R2082 — the count is DERIVED and printed, not pinned at four. It
+    # was `assert_eq(len(advertised), 4, "the canvas advertises four gestures")`,
+    # and the round that gave this screen its membership gestures made the
+    # number and the sentence beside it false in one edit. What this gate is
+    # about survives that: every advertised gesture must move something, and the
+    # dispatch below refuses a name it cannot drive — so the list's LENGTH is
+    # the one thing here that never needed to be written down.
+    assert advertised, "the canvas advertises at least one gesture"
+    print(f"  [strip] the canvas advertises {len(advertised)} gesture(s)")
     checks += 1
+    # ★ R2082 — ASKED rather than spelled. The specification publishes each
+    # card's painted address since this round, and every site below that needed
+    # one is new — `tools/painted_addresses.py` refused the first draft, which
+    # had typed the family three more times.
+    moved_card = next(node["tag"] for node in spec["nodes"] if node["id"] == "P-03")
 
     # ★ The WHOLE published surface, minus the pointer position — a hint strip
     # claims an effect in prose ("pan", "author a link"), and choosing a slot
@@ -174,9 +187,39 @@ def hint_strip_gestures(tf: RpcSubprocess) -> int:
                 from_at=centre(shot["lab.pin.Q-01.dial"]),
                 to_at=centre(shot["lab.pin.P-02.accept"]),
             )
+        # ★★★★★ R2082 — the two membership gestures. Held through
+        # `scene/modifiers`, the shell's absolute cache, which is how a chord
+        # really arrives; released afterwards so it does not leak into the
+        # gesture this loop drives next.
+        # ⚠ On the card THIS SECTION ALREADY MOVES, and that is not a detail:
+        # the anchored-zoom check below aims at `P-01`'s painted origin and
+        # holds it to a pixel over four zoom steps, so a card left one rounding
+        # away from where it started fails a check about the CAMERA. Measured —
+        # the first draft drove these two on `P-01` and the drift went to 2px.
+        elif name == "alt-drag a node":
+            here = centre(shot[moved_card])
+            tf.modifiers(alt=True)
+            try:
+                tf.drag(from_at=here, to_at=(here[0] + 60, here[1] + 40))
+            finally:
+                tf.modifiers()
+        elif name == "alt-click a node":
+            tf.modifiers(alt=True)
+            try:
+                tf.click(at=centre(shot[moved_card]))
+            finally:
+                tf.modifiers()
         else:  # pragma: no cover - the assertion below is the real guard
             raise AssertionError(f"the strip advertises {name!r} and nothing drives it")
         tf.tick(0.016)
+
+    # ★★★★★ R2082 — what the membership gestures will disturb, read BEFORE the
+    # loop so this section can put it back after. The gestures below are the
+    # first here that change a fact OTHER sections read: which host a card
+    # starts on, and where it stands. R2079 wrote the rule after paying it in
+    # another walk — a section that changes shared state puts it back, or the
+    # walk's ORDER becomes part of its meaning — and this round paid it twice.
+    hosts_before = json.loads(tf.query(f"{EXT}/frames"))
 
     for gesture, effect in advertised:
         before = whole_surface(tf, watched)
@@ -187,6 +230,38 @@ def hint_strip_gestures(tf: RpcSubprocess) -> int:
             f"reads it, and driving it through the wire moved nothing"
         )
         checks += 1
+
+    # MEMBERSHIP is the shared fact to put back; the card's POSITION is not, and
+    # this section already moves that card ("drag a node") without restoring it.
+    #
+    # ⚠ Carried back with an ALT DRAG rather than a click, and the difference is
+    # the gesture's own rule: by now the card has been dragged twice and is
+    # outside every frame's box, and an alt click on a card standing over no
+    # frame correctly REFUSES — there is nothing to join. The drag is what puts
+    # it somewhere a host encloses, and it re-parents on arrival.
+    if json.loads(tf.query(f"{EXT}/frames")) != hosts_before:
+        shot = abs_rects_of(tf.snapshot(source="paint"))
+        home = next(
+            f["tag"] for f in spec["frames"] if f["name"] == hosts_before["P-03"]
+        )
+        box, card = shot[home], shot[moved_card]
+        # Inset by the CARD's own size: the drop is judged on its centre while
+        # the cursor holds it where it was grabbed (the r1724 measurement).
+        tf.modifiers(alt=True)
+        try:
+            tf.drag(
+                from_at=centre(card),
+                to_at=(box[0] + card[2], box[1] + box[3] - card[3]),
+            )
+        finally:
+            tf.modifiers()
+        tf.tick_ms(16)
+    assert_eq(
+        json.loads(tf.query(f"{EXT}/frames")),
+        hosts_before,
+        "and this section put the hosts back the way it found them",
+    )
+    checks += 1
     return checks
 
 

@@ -178,6 +178,29 @@ def drag_onto(tf, frm: str, to: str) -> None:
     tf.drag(from_at=centre(painted[frm]), to_at=centre(painted[to]))
 
 
+def alt_drag_onto(tf, frm: str, to: str) -> None:
+    """★★★★★ R2082 — the same journey with **alt held at pick-up**.
+
+    The membership gesture. Held out of band through `scene/modifiers`, which
+    is how a chord really arrives — the shell's absolute cache, read by the
+    press the drag makes — and released afterwards so the chord does not leak
+    into the operation this table drives next.
+
+    Until R2082 this table drove a PLAIN drag and the screen re-parented on
+    every drop. The behaviour canon calls its `apply frame` inside `if(alt)`
+    and nowhere else, so the declared gesture for this operation is the chorded
+    one now, and this recipe is what keeps the declaration and the drive one
+    fact — `r1684` fails on a declared gesture with no recipe in either
+    direction.
+    """
+    painted = rects(tf)
+    tf.modifiers(alt=True)
+    try:
+        tf.drag(from_at=centre(painted[frm]), to_at=centre(painted[to]))
+    finally:
+        tf.modifiers()
+
+
 def type_keys(tf, text: str) -> None:
     """One key event per character, aimed at the field itself."""
     for ch in text:
@@ -219,7 +242,7 @@ GESTURES = {
         press(tf, "lab.inspector.disable"),
     ),
     # a frame's life
-    "re-parent a node between frames": lambda tf: drag_onto(
+    "re-parent a node between frames": lambda tf: alt_drag_onto(
         tf, "lab.node.P-03", "lab.frame.host-b"
     ),
     "move a frame and its members": lambda tf: drag_by(
