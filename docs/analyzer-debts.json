@@ -590,18 +590,6 @@
       ]
     },
     {
-      "name": "debt-the-node-lab-reproduces-the-first-release-palette-not-the-behaviour-canon",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "critical",
-      "why": [
-        "links analyzer-behaviour-canon-is-the-standalone-prototype, analyzer-debt-repayment-loop, screen-a-vs-canon-operation-census"
-      ]
-    },
-    {
       "name": "debt-the-palettes-own-parts-sit-behind-the-whole-roster",
       "substituted": false,
       "blocked_by": "buildable",
