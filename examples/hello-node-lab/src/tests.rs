@@ -2051,24 +2051,9 @@ fn r2082_an_alt_drag_freezes_the_boundary_it_is_crossing() {
         };
 
         // ⓪ THE CONTRAST FIRST, because it is what makes the rest mean
-        // anything: a PLAIN drag to that same point drags the frame WITH it.
-        // The box grows, and the card is still inside it — which is R1654's
-        // repair working, and is exactly why a live box cannot be the boundary
-        // an alt drag is judged against.
-        super::move_cursor(&state, at.0, at.1);
-        super::press(&state);
-        super::move_cursor(&state, out.0, out.1);
-        let stretched = super::frame_rect_at(&state, host, zoom);
-        let (cx, cy) = centre_now(&state);
-        assert_ne!(
-            stretched, before,
-            "a PLAIN drag stretches the frame around the card it is carrying",
-        );
-        assert!(
-            super::holds(stretched, cx, cy),
-            "so the card never leaves it: box {stretched:?} still holds ({cx},{cy})",
-        );
-        super::release(&state);
+        // anything — its own function since R2083 grew this test past the
+        // hundred-line refusal, and the extraction names the claim.
+        a_plain_drag_takes_the_frame_with_it(&state, host, moving, at, out, before);
 
         // ① THE EXCLUSION: with alt, the frame lets go. Same card, same
         // journey, and the box a reader watches does NOT follow it.
@@ -2089,13 +2074,34 @@ fn r2082_an_alt_drag_freezes_the_boundary_it_is_crossing() {
         let held_box = super::frame_rect_of(&state, host);
         super::move_cursor(&state, at.0, at.1);
         super::press_with_chord(&state, super::ALT_CHORD);
+        // ★★★★★ R2083 — PICKING IT UP CHANGES NOTHING, which is the canon's own
+        // sentence beside this condition and what R2082 got wrong by leaving
+        // the card out of the calculation from the moment of the press. The
+        // frame lets go when the card has GONE, not when a hand touches it: a
+        // box that twitched on every press would be reporting the gesture, not
+        // the crossing.
+        assert_eq!(
+            super::frame_rect_at(&state, host, zoom),
+            before,
+            "the frame is unchanged while the card is merely picked up",
+        );
+        super::move_cursor(&state, at.0 + 6, at.1 + 4);
+        assert_eq!(
+            super::frame_rect_at(&state, host, zoom),
+            before,
+            "and unchanged while it moves INSIDE the boundary it began in",
+        );
         super::move_cursor(&state, out.0, out.1);
         let live = super::frame_rect_at(&state, host, zoom);
         let (cx, cy) = centre_now(&state);
         assert!(
             !super::holds(live, cx, cy),
             "the LIVE box let the carried card go, so a reader sees it leaving: \
-             box {live:?} no longer holds ({cx},{cy})",
+             box {live:?} no longer holds ({cx},{cy}) -- frozen {:?}, held {:?}, \
+             drag {:?}",
+            super::frozen_frame_at(&state, host, moving, from, zoom),
+            held_box,
+            state.drag.get(),
         );
         // ② THE FREEZE: and the boundary the drop is judged against has not
         // moved at all. Two rectangles, same members, same instant, different
@@ -2110,6 +2116,160 @@ fn r2082_an_alt_drag_freezes_the_boundary_it_is_crossing() {
         assert!(
             !super::members_of(&state, host).contains(&moving),
             "carried out past its own host's boundary, the card left it",
+        );
+    });
+}
+
+/// ★★★★★ R2083 — R2082's freeze gate, act ⓪: **a PLAIN drag takes the frame
+/// with it**, and the card never leaves the box.
+///
+/// The contrast that makes the freeze mean anything, and R1654's repair still
+/// working: a frame is the live bounding box of what it holds, so a member
+/// moving inside it — or right out past where it was — drags the box along.
+/// That is exactly why a live box cannot be the boundary an alt drag is judged
+/// against.
+///
+/// ⚠ It carries the card HOME again before returning, and that is not tidiness:
+/// the frozen geometry is derived from where the card stood at pick-up, so a
+/// card left outside would have its own host's frozen box stretched over that
+/// ground and the act after this one would be asking a different question.
+/// Measured — when R2083 made the exclusion conditional, this test began
+/// passing for the wrong reason and then failing for the right one.
+fn a_plain_drag_takes_the_frame_with_it(
+    state: &std::rc::Rc<LabState>,
+    host: NodeId,
+    moving: NodeId,
+    at: (u32, u32),
+    out: (u32, u32),
+    before: pinion_core::scene::Rect,
+) {
+    let zoom = state.zoom.get();
+    super::move_cursor(state, at.0, at.1);
+    super::press(state);
+    super::move_cursor(state, out.0, out.1);
+    let stretched = super::frame_rect_at(state, host, zoom);
+    let carried = super::card_rect(state, moving).expect("a card");
+    let (cx, cy) = (
+        i64::from(carried.x + carried.w / 2),
+        i64::from(carried.y + carried.h / 2),
+    );
+    assert_ne!(
+        stretched, before,
+        "a PLAIN drag stretches the frame around the card it is carrying",
+    );
+    assert!(
+        super::holds(stretched, cx, cy),
+        "so the card never leaves it: box {stretched:?} still holds ({cx},{cy})",
+    );
+    super::move_cursor(state, at.0, at.1);
+    super::release(state);
+    assert_eq!(
+        super::frame_rect_at(state, host, zoom),
+        before,
+        "the frame is back to the box it opened with",
+    );
+}
+
+/// ★★★★★ R2083 — **the promise and the drop are one rule.**
+///
+/// R1996 gave this screen a reading a person acts on: the frame under a carried
+/// card says, before the hand lets go, whether it will take it. Its own doc
+/// states the principle — *the hover and the drop are one rule, not a hook
+/// beside a drop that nothing makes agree*.
+///
+/// R2082 then split them, and neither half was wrong on its own: the drop
+/// became a thing only an ALT drag does, judged against the FROZEN boxes, and
+/// the reading went on firing for every node drag against the LIVE ones. So the
+/// screen could mark a frame *would take it* under a plain drag that was never
+/// going to re-parent — a promise the gesture could not keep.
+///
+/// Both halves are asserted here because a gate for either alone passes on the
+/// split: the plain drag must promise NOTHING, and the alt drag must promise
+/// the frame its own drop then chooses.
+#[test]
+fn r2083_only_the_gesture_that_can_rehost_promises_a_host() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        crate::painted::render_so_a_press_can_be_asked(&state);
+        let frames = super::frames_of(&state);
+        let host_a = frames
+            .iter()
+            .find(|(_, name)| name == "host-a")
+            .map(|(id, _)| *id)
+            .expect("declared");
+        let host_b = frames
+            .iter()
+            .find(|(_, name)| name == "host-b")
+            .map(|(id, _)| *id)
+            .expect("declared");
+        let moving = super::members_of(&state, host_b)[0];
+        let onto = super::frame_rect_of(&state, host_a);
+        let seat = super::card_rect(&state, moving).expect("a card");
+        let at = super::content_to_window(
+            &state,
+            i64::from(seat.x + seat.w / 2),
+            i64::from(seat.y + seat.h / 2),
+        )
+        .expect("on screen");
+        // Inside the other host, inset by the card's own size so its CENTRE
+        // lands inside too — the drop is judged on the centre while the cursor
+        // holds the card where it was grabbed.
+        let over = super::content_to_window(
+            &state,
+            i64::from(onto.x + seat.w),
+            i64::from(onto.y + onto.h) - i64::from(seat.h),
+        )
+        .expect("on screen");
+
+        // A PLAIN drag promises nothing, because it will do nothing.
+        super::move_cursor(&state, at.0, at.1);
+        super::press(&state);
+        super::move_cursor(&state, over.0, over.1);
+        let said = super::holding_report(&state);
+        assert!(
+            said.is_null(),
+            "a plain drag over another host says nothing about being taken: {said}",
+        );
+        // ⚠ AND CARRY IT HOME, or the act below asks a different question: the
+        // frozen geometry is derived from where the card stood at PICK-UP, so a
+        // card left inside the other host stretches its OWN host's frozen box
+        // over that ground and the drop resolves to the frame it is already on
+        // — which reports as *no promise* and reads as this repair not working.
+        // Measured; the first draft of this gate failed exactly so.
+        super::move_cursor(&state, at.0, at.1);
+        super::release(&state);
+
+        // The ALT drag promises, and names the host its own drop then chooses.
+        crate::painted::render_so_a_press_can_be_asked(&state);
+        super::move_cursor(&state, at.0, at.1);
+        super::press_with_chord(&state, super::ALT_CHORD);
+        super::move_cursor(&state, over.0, over.1);
+        let said = super::holding_report(&state);
+        let promised = said
+            .get("over")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        assert_eq!(promised, "host-a", "the alt drag promises a host: {said}");
+        assert_eq!(
+            said.get("admitted").and_then(serde_json::Value::as_bool),
+            Some(true),
+            "and says it would be taken: {said}",
+        );
+        super::release(&state);
+        // ⇒ AND THE DROP KEPT IT. This is the assertion the split would have
+        // survived on either side alone.
+        let landed = state
+            .doc
+            .borrow()
+            .tree(super::ROOT)
+            .and_then(|t| t.node(moving).and_then(|n| n.parent));
+        assert_eq!(
+            landed,
+            Some(host_a),
+            "the card is on the host the reading had promised",
         );
     });
 }

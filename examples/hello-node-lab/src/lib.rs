@@ -4974,12 +4974,24 @@ fn frame_rect_at(state: &LabState, frame: NodeId, zoom: u32) -> Rect {
     // Only under an ALT drag. A plain drag moves a card inside its frame and
     // the frame is supposed to grow and shrink with it — that is R1654's
     // repair, and shrinking away from a card that is staying would undo it.
+    //
+    // ★★★★★ R2083 — AND ONLY ONCE IT HAS ACTUALLY LEFT, which R2082 got wrong
+    // by leaving the card out from the moment it was picked up. The canon says
+    // so in its own comment, beside this exact condition: *"During an alt drag
+    // the original frame lets go only when the node has crossed its boundary
+    // (it shrinks). Otherwise it shows the frozen boundary as it was — merely
+    // picking a card up changes nothing."* Measured against the pristine canon,
+    // which computes `leaving` as `alt && frame is the source && the card is
+    // NOT over this frame`.
+    //
+    // ⇒ Three states, not two: over another frame or over none, the source
+    // shrinks; still inside its own frozen box, the source is unchanged.
     let leaving = match state.drag.get() {
         Some(Drag::Node {
             node,
-            rehost: Some(_),
+            rehost: Some(held),
             ..
-        }) => Some(node),
+        }) if !still_inside(state, frame, node, held) => Some(node),
         _ => None,
     };
     let members = members_of(state, frame);
@@ -5025,6 +5037,32 @@ fn frame_box_around(boxes: &[Rect], zoom: u32) -> Rect {
         right - left + pad * 2,
         bottom - top + pad * 2 + tab,
     )
+}
+
+/// ★★★★★ R2083 — is the carried card still inside THIS frame's frozen box?
+///
+/// The condition the canon draws its source frame with: while a card is being
+/// carried and has not yet crossed the boundary it was picked up inside, the
+/// frame it came from is drawn exactly as it was. It lets go — shrinks around
+/// the members that remain — only once the card is genuinely somewhere else.
+/// Merely picking a card up changes nothing about the screen, which is what
+/// makes the shrink READ as leaving rather than as a twitch.
+///
+/// Judged against the frozen geometry, like everything else in this gesture, so
+/// the box a reader watches and the landing the drop will choose cannot come
+/// from two different rectangles.
+fn still_inside(state: &LabState, frame: NodeId, carried: NodeId, held: Rehost) -> bool {
+    let Some(rect) = card_rect(state, carried) else {
+        return false;
+    };
+    let over = frozen_frame_under(
+        state,
+        carried,
+        held.from,
+        i64::from(rect.x + rect.w / 2),
+        i64::from(rect.y + rect.h / 2),
+    );
+    over == Some(frame)
 }
 
 /// ★★★★★ R2082 — the frame box a **rehosting drop is judged against**: the
@@ -6491,12 +6529,32 @@ fn holding_report(state: &Rc<LabState>) -> serde_json::Value {
 /// *over nothing* from *over something that will not have me* — the same
 /// argument R1992 made for the aimed wire.
 fn hover_holder(state: &LabState) -> Option<(NodeId, NodeId, Result<(), ParentError>)> {
-    let Some(Drag::Node { node, .. }) = state.drag.get() else {
+    // ★★★★★ R2083 — **the reading and the drop are ONE RULE, and R2082 split
+    // them without noticing.** This function is R1996's promise: the frame a
+    // carried card is over says, before the hand lets go, whether it will take
+    // it. R2082 then made the drop happen only under alt and judged it against
+    // the FROZEN boxes — and left this reading firing on every node drag,
+    // against the LIVE ones. So the screen could mark a frame `would take it`
+    // through a plain drag that was never going to re-parent, and could mark a
+    // frame the frozen judgement would not choose.
+    //
+    // ⇒ Same gate, same geometry: only a rehosting drag has a landing to
+    // promise, and the promise is made against the boundary the drop is judged
+    // against. R1996's own doc says why this matters — *the hover and the drop
+    // are one rule, not a hook beside a drop that nothing makes agree*.
+    let Some(Drag::Node {
+        node,
+        rehost: Some(held),
+        ..
+    }) = state.drag.get()
+    else {
         return None;
     };
     let rect = card_rect(state, node)?;
-    let over = frame_at(
+    let over = frozen_frame_under(
         state,
+        node,
+        held.from,
         i64::from(rect.x + rect.w / 2),
         i64::from(rect.y + rect.h / 2),
     )?;
