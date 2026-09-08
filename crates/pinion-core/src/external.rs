@@ -1392,6 +1392,89 @@ pub enum SchemaChannel {
 /// `set_float_policy` both render as bare `string`. A template string would fix
 /// arity and have to be redone for that. Const constructors + defaulted fields
 /// mean the next dimension lands additively.
+/// ★★★★★ R2087 — the four byte operations [`SchemaField::addresses`] needs in
+/// order to be a `const fn`.
+///
+/// # Why these exist at all
+///
+/// `str::find`, `str::strip_prefix` and `==` on `&str` are not const on this
+/// toolchain, so a matcher written with them can only run once a program is
+/// already going. That was fine while the matcher only served lookups, and it
+/// stopped being fine when [`IntrospectSchema::new`] began asking the matcher
+/// whether a schema shadows itself: a check the *compiler* can run covers every
+/// declaration in the tree, and a check only a run can perform covers whatever
+/// that run happened to construct.
+///
+/// # What they may not become
+///
+/// A second definition of *addressing*. These four answer questions about
+/// bytes — equality, prefix, first occurrence, split — and know nothing about
+/// templates, placeholders or arguments. The template walk stays in
+/// [`SchemaField::addresses`], which is the single place this tree spells what
+/// it means for a path to be addressed; see that function's own doc for why a
+/// second spelling would be a defect rather than a duplicate.
+///
+/// `str::as_bytes` is const and UTF-8 is self-synchronising, so comparing the
+/// encoded bytes of two `&str` decides the same question comparing the strings
+/// does. The walk only ever splits at a byte it found by searching for an ASCII
+/// delimiter or at a boundary it was handed, so no split lands mid-codepoint.
+mod schema_bytes {
+    /// Are these the same bytes?
+    pub(super) const fn eq(a: &[u8], b: &[u8]) -> bool {
+        if a.len() != b.len() {
+            return false;
+        }
+        let mut at = 0;
+        while at < a.len() {
+            if a[at] != b[at] {
+                return false;
+            }
+            at += 1;
+        }
+        true
+    }
+
+    /// Does `hay` open with `prefix`?
+    pub(super) const fn starts_with(hay: &[u8], prefix: &[u8]) -> bool {
+        if prefix.len() > hay.len() {
+            return false;
+        }
+        eq(head(hay, prefix.len()), prefix)
+    }
+
+    /// Where `needle` first occurs in `hay`, if it does.
+    ///
+    /// An empty needle occurs at 0, which is what `str::find` answers and what
+    /// the walk above relies on when a template's next literal is empty.
+    pub(super) const fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+        if needle.len() > hay.len() {
+            return None;
+        }
+        let mut at = 0;
+        while at + needle.len() <= hay.len() {
+            if starts_with(tail(hay, at), needle) {
+                return Some(at);
+            }
+            at += 1;
+        }
+        None
+    }
+
+    /// The first `at` bytes.
+    pub(super) const fn head(bytes: &[u8], at: usize) -> &[u8] {
+        // `split_at` rather than `&bytes[..at]`, because slice range indexing
+        // goes through `Index` and that trait is not const on this toolchain.
+        let (head, _) = bytes.split_at(at);
+        head
+    }
+
+    /// Everything from `at` on.
+    pub(super) const fn tail(bytes: &[u8], at: usize) -> &[u8] {
+        let (_, tail) = bytes.split_at(at);
+        tail
+    }
+}
+
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SchemaField {
@@ -1688,42 +1771,54 @@ impl SchemaField {
     /// argument's domain. A consumer that publishes `find.` as "a search for
     /// nothing" was told its own declared family had no such address.
     #[must_use]
-    pub fn addresses(&self, probe: &str) -> bool {
+    pub const fn addresses(&self, probe: &str) -> bool {
+        // ★★★★★ R2087 — the same walk it has always been, spelled on bytes so
+        // it is a `const fn`. The rewrite is not a taste:
+        // [`IntrospectSchema::new`] asks this question of every schema this
+        // tree builds, and a `new` that could not ask it in a *const* context
+        // would have checked only the schemas some run happened to construct —
+        // which is the narrow population this round exists to widen. See
+        // [`schema_bytes`] for why the helpers exist and what they may not be
+        // used for.
+        //
         // R1638 — only a PATH-form field's arguments are part of its address.
         // An action's are carried by `scene/invoke`, so its path is exact
         // however many it declares; keying this off `args.is_empty()` (as it did
         // before actions could declare any) would have started template-matching
         // `arrange` the moment it said what it takes.
-        if self.form != ArgForm::Path || self.args.is_empty() {
-            return self.path == probe;
+        if !matches!(self.form, ArgForm::Path) || self.args.is_empty() {
+            return schema_bytes::eq(self.path.as_bytes(), probe.as_bytes());
         }
         // Walk the template's literal segments across `probe`, requiring a
         // non-empty run wherever a placeholder sits.
-        let mut rest = probe;
-        let mut tmpl = self.path;
+        let mut rest = probe.as_bytes();
+        let mut tmpl = self.path.as_bytes();
         let mut first = true;
-        while let Some(open) = tmpl.find('<') {
-            let literal = &tmpl[..open];
-            let Some(after) = rest.strip_prefix(literal) else {
+        while let Some(open) = schema_bytes::find(tmpl, b"<") {
+            let literal = schema_bytes::head(tmpl, open);
+            if !schema_bytes::starts_with(rest, literal) {
                 return false;
-            };
+            }
             if !first && literal.is_empty() {
                 // Two placeholders with no literal between them cannot be
                 // delimited; such a template is malformed, not matchable.
                 return false;
             }
-            rest = after;
-            let Some(close) = tmpl[open..].find('>') else {
+            rest = schema_bytes::tail(rest, literal.len());
+            let Some(close) = schema_bytes::find(schema_bytes::tail(tmpl, open), b">") else {
                 return false;
             };
-            tmpl = &tmpl[open + close + 1..];
+            tmpl = schema_bytes::tail(tmpl, open + close + 1);
             // The argument runs until the template's next literal (or the end).
-            let next_lit_end = tmpl.find('<').unwrap_or(tmpl.len());
-            let next_lit = &tmpl[..next_lit_end];
+            let next_lit_end = match schema_bytes::find(tmpl, b"<") {
+                Some(at) => at,
+                None => tmpl.len(),
+            };
+            let next_lit = schema_bytes::head(tmpl, next_lit_end);
             let arg_len = if next_lit.is_empty() {
                 rest.len()
             } else {
-                match rest.find(next_lit) {
+                match schema_bytes::find(rest, next_lit) {
                     Some(i) => i,
                     None => return false,
                 }
@@ -1731,10 +1826,10 @@ impl SchemaField {
             // R1667 — an empty run is a member with an empty argument, not a
             // non-member. See the doc above for why this is not the matcher's
             // call to make.
-            rest = &rest[arg_len..];
+            rest = schema_bytes::tail(rest, arg_len);
             first = false;
         }
-        rest == tmpl
+        schema_bytes::eq(rest, tmpl)
     }
 
     /// R1642 — the first way this field's conditional declaration is malformed,
@@ -1849,8 +1944,98 @@ pub struct IntrospectSchema {
 }
 
 impl IntrospectSchema {
+    /// ★★★★★ R2087 — the schema, **and the refusal of one that shadows
+    /// itself**.
+    ///
+    /// # Why the check is here and not in a gate
+    ///
+    /// [`shadowed`](Self::shadowed) has existed since R1989 and a gate ran it
+    /// over the six screens one assembled application mounts. Measured at
+    /// R2087, this tree names [`IntrospectSchema`] in 131 files and constructs
+    /// one at 163 sites, so that gate asked its question of a few per cent of
+    /// the declarations and nothing asked it of the rest. Copying the gate to
+    /// each of them is the hand-copy shape this repository has paid for twice
+    /// (five screens hand-rolling one voice gate; thirty-six examples
+    /// hand-rolling one ring census), and it would still cover only the sites
+    /// somebody remembered.
+    ///
+    /// So the population is not widened — it is **abolished**. This type is
+    /// `#[non_exhaustive]`, so no other crate can reach its fields with a
+    /// struct literal, and this is its only constructor: every
+    /// `IntrospectSchema` that exists came through here. A declaration that
+    /// shadows another therefore cannot be built at all, rather than being
+    /// built and looked for afterwards.
+    ///
+    /// # What a caller sees
+    ///
+    /// A const-evaluated call — a `const` item, a `const { }` block — fails to
+    /// **compile**, pointing at the declaration. Every other call is a
+    /// construction, and a construction of a schema nobody could read
+    /// correctly panics rather than publishing a description that lies about
+    /// what the surface answers.
+    ///
+    /// ```compile_fail
+    /// use pinion_core::external::{IntrospectSchema, SchemaField};
+    /// // `open` is declared twice, so the second declaration is the one no
+    /// // client can reach — and this does not build.
+    /// const SHADOWED: IntrospectSchema = IntrospectSchema::new(const {
+    ///     &[
+    ///         SchemaField::new("open", "bool"),
+    ///         SchemaField::action("open", "string"),
+    ///     ]
+    /// });
+    /// ```
+    ///
+    /// A schema whose declarations are each their own owner builds as it always
+    /// did:
+    ///
+    /// ```
+    /// use pinion_core::external::{IntrospectSchema, SchemaField};
+    /// const FINE: IntrospectSchema = IntrospectSchema::new(const {
+    ///     &[
+    ///         SchemaField::new("open", "bool"),
+    ///         SchemaField::action("set_open", "string"),
+    ///     ]
+    /// });
+    /// assert_eq!(FINE.fields.len(), 2);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// When [`shadowed`](Self::shadowed) names a path — a declaration this
+    /// schema publishes and then answers with a different field's declaration.
+    /// The message cannot carry the path, because a `const` panic takes a
+    /// literal; ask `shadowed()` for it, which is what the panic says to do.
     #[must_use]
     pub const fn new(fields: &'static [SchemaField]) -> Self {
+        let schema = Self { fields };
+        // `is_some()` rather than `if let`, and a literal message rather than a
+        // formatted one: both are what a `const` context accepts, and being
+        // refused at compile time is worth more than naming the path in the
+        // message. `shadowed()` names it.
+        assert!(
+            schema.shadowed().is_none(),
+            "this schema declares a path and then shadows it: `field_for` is a \
+             linear first-match, so the shadowed declaration is unreachable and \
+             everything it says — an action's argument grammar, its conditional \
+             cases, the words it will take — is published to nobody. Ask \
+             `IntrospectSchema::shadowed()` which path it is."
+        );
+        schema
+    }
+
+    /// R2087 — a schema assembled **without** the refusal [`new`](Self::new)
+    /// performs, for the crate's own tests and for nothing else.
+    ///
+    /// A detector asserted only against schemas its own constructor permits is
+    /// a detector asserted against nothing, so the tests that hold
+    /// [`shadowed`](Self::shadowed) to the shapes it must catch need a way to
+    /// build those shapes. `#[cfg(test)]` is what keeps that from becoming a
+    /// bypass: it exists in this crate's test builds and in no shipped one, so
+    /// no surface anywhere can reach for it to get a shadowing declaration past
+    /// the door.
+    #[cfg(test)]
+    pub(crate) const fn declared_without_the_check(fields: &'static [SchemaField]) -> Self {
         Self { fields }
     }
 
@@ -1910,12 +2095,34 @@ impl IntrospectSchema {
     ///
     /// The question is *is this declaration the one that answers for its own
     /// path*, and **nobody answers for it** is a `no`, not an exemption.
+    ///
+    /// # Why it is a `const fn`
+    ///
+    /// R2087 — because [`new`](Self::new) asks it, and `new` is the door every
+    /// schema in this tree comes through. The iterator chain this replaced said
+    /// the same thing more briefly and could only say it at run time; the loops
+    /// below are the price of the question being asked about *every*
+    /// declaration rather than about the ones some run reached.
     #[must_use]
-    pub fn shadowed(&self) -> Option<&'static str> {
-        self.fields.iter().enumerate().find_map(|(mine, field)| {
-            let owner = self.fields.iter().position(|f| f.addresses(field.path));
-            (owner != Some(mine)).then_some(field.path)
-        })
+    pub const fn shadowed(&self) -> Option<&'static str> {
+        let mut mine = 0;
+        while mine < self.fields.len() {
+            let field = &self.fields[mine];
+            let mut owner = 0;
+            // The first field that answers for this path — `field_for`'s own
+            // linear first-match, which is the point: a declaration is shadowed
+            // exactly when the lookup that really runs hands back another one.
+            while owner < self.fields.len() && !self.fields[owner].addresses(field.path) {
+                owner += 1;
+            }
+            // `owner == len` is "nobody answers for it", which is a `no` and not
+            // an exemption — see the note above on an undelimitable template.
+            if owner != mine {
+                return Some(field.path);
+            }
+            mine += 1;
+        }
+        None
     }
 }
 
@@ -6884,8 +7091,15 @@ mod schema_shadowing_tests {
         );
         assert_eq!(clean.shadowed(), None);
 
+        // ★★★★★ R2087 — the dirty fixtures below are built through
+        // `declared_without_the_check`, because `new` now REFUSES them: the
+        // detector's population stopped being "the screens a census visits"
+        // and became "every schema that exists", which is only true while the
+        // door turns these away. The clean ones keep using `new`, so this test
+        // still exercises the door on the shapes it must let through.
+        //
         // (2) A read over its own verb — the live shape, four times over.
-        let across = IntrospectSchema::new(
+        let across = IntrospectSchema::declared_without_the_check(
             const {
                 &[
                     SchemaField::new("focus", "json"),
@@ -6909,7 +7123,7 @@ mod schema_shadowing_tests {
 
         // (3) Same channel, which is a defect too: the second declaration's
         // type is published and never answered from.
-        let doubled = IntrospectSchema::new(
+        let doubled = IntrospectSchema::declared_without_the_check(
             const {
                 &[
                     SchemaField::new("count", "int"),
@@ -6923,7 +7137,7 @@ mod schema_shadowing_tests {
         // question is asked through `field_for` rather than by comparing paths:
         // these two are not equal as strings, and the scalar is unreachable all
         // the same.
-        let family = IntrospectSchema::new(
+        let family = IntrospectSchema::declared_without_the_check(
             const {
                 &[
                     SchemaField::parametric(
@@ -6960,7 +7174,7 @@ mod schema_shadowing_tests {
         // literal between them cannot be delimited, so this template matches
         // nothing at all, its own spelling included: a surface declaring it
         // publishes an address no client can ever reach.
-        let undelimitable = IntrospectSchema::new(
+        let undelimitable = IntrospectSchema::declared_without_the_check(
             const {
                 &[SchemaField::parametric(
                     "a.<x><y>",
@@ -6979,6 +7193,65 @@ mod schema_shadowing_tests {
             Some("a.<x><y>"),
             "a path nothing answers for is not exempt from the question — it \
              is the strongest way to fail it",
+        );
+    }
+
+    /// ★★★★★ R2087 — **the door refuses**, which is the whole of this round:
+    /// the detector above has existed since R1989, and what did not exist was
+    /// anything that made a schema go past it.
+    ///
+    /// A run-time construction, deliberately: the `compile_fail` doctest on
+    /// [`IntrospectSchema::new`] covers the const half, and the two halves are
+    /// different code paths in the compiler. Most of this tree's 163
+    /// construction sites sit inside a `fn schema(&self)`, so the run-time path
+    /// is the one that carries the population.
+    #[test]
+    #[should_panic(expected = "declares a path and then shadows it")]
+    fn r2087_a_shadowing_schema_cannot_be_built_at_all() {
+        use crate::external::{IntrospectSchema, SchemaField};
+
+        let _ = IntrospectSchema::new(
+            const {
+                &[
+                    SchemaField::new("focus", "json"),
+                    SchemaField::action("focus", "string"),
+                ]
+            },
+        );
+    }
+
+    /// ★★★★★ R2087 — **the door is the only door**, which is the premise the
+    /// whole round rests on and the one thing about it a compiler does not
+    /// already enforce.
+    ///
+    /// [`IntrospectSchema`] is `#[non_exhaustive]`, so no *other* crate can
+    /// reach its fields with a struct literal — that half is the compiler's and
+    /// needs no test. Inside this crate the attribute says nothing, so a future
+    /// round could add a second constructor and the refusal in
+    /// [`IntrospectSchema::new`] would quietly stop covering everything while
+    /// every other assertion here stayed green. That is the failure this
+    /// watches for, and it is why the assertion is a count with a name attached
+    /// rather than a sentence in a doc comment.
+    ///
+    /// The two permitted literals are `new` itself and
+    /// `declared_without_the_check`, which is `#[cfg(test)]` and therefore in
+    /// no shipped build.
+    #[test]
+    fn r2087_the_only_ways_to_build_a_schema_are_the_door_and_the_tests_door() {
+        // This file, read as text: the question is about what the source says,
+        // and no run-time value can answer it.
+        let source = include_str!("external.rs");
+        // ★ Spelled in two halves so this line is not itself one of the sites
+        // it counts — the first draft answered three and the third was the
+        // needle.
+        let literals = source.matches(concat!("Self { ", "fields }")).count();
+        assert_eq!(
+            literals, 2,
+            "`IntrospectSchema` is built by struct literal at {literals} site(s) \
+             in this file; exactly two are accounted for — `new`, which refuses \
+             a schema that shadows itself, and `declared_without_the_check`, \
+             which is `#[cfg(test)]`. A third site is a way past the refusal, \
+             and every declaration built through it is one nothing checks",
         );
     }
 }

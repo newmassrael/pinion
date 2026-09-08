@@ -384,18 +384,6 @@
       ]
     },
     {
-      "name": "debt-a-schema-outside-the-assembled-app-can-shadow-its-own-path",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "unranked",
-      "why": [
-        "links analyzer-debt-repayment-loop, debt-the-canon-is-one-app-and-we-are-many-binaries"
-      ]
-    },
-    {
       "name": "debt-a-screen-announces-inert-where-it-could-declare-it",
       "substituted": false,
       "blocked_by": "buildable",
@@ -426,7 +414,7 @@
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
-      "rank": "unranked",
+      "rank": "critical",
       "why": [
         "links analyzer-debt-repayment-loop"
       ]
@@ -699,6 +687,6 @@
       ]
     }
   ],
-  "unranked": 14,
+  "unranked": 12,
   "undated": 7
 }

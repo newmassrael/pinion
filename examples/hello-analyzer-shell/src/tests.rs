@@ -8226,6 +8226,22 @@ fn r1954_the_sort_this_screen_announces_is_the_sort_it_draws() {
 /// So the population is `ScreenRoster::externals_everywhere` — every screen
 /// this application mounts, whether or not a walk visits it, and a screen
 /// mounted after this was written is covered without a row being added here.
+///
+/// # ★★★★★ R2087 — what this test is now, and why it is not the same test
+///
+/// `IntrospectSchema::new` refuses a shadowing declaration, and it is the only
+/// constructor the type has. So the shadow question is no longer *asked* here:
+/// a screen that shadowed a path would panic on the way to `schema()`, and an
+/// `assert_eq!(shadowed(), None)` after that call is an assertion with no
+/// failing path left — the kind this project has twice been told to delete
+/// rather than keep as decoration.
+///
+/// What survives, and is load-bearing, is the **construction**: this is the one
+/// place that reaches every mounted screen's external and builds its schema.
+/// The refusal is a thing that happens when a schema is built, so a population
+/// nobody builds is a population nobody checks — this walk is what makes the
+/// door swing for all six screens of the assembled application. The assertions
+/// below are therefore about coverage, which is what can still be false.
 #[test]
 fn r1989_no_mounted_screen_shadows_a_path_it_declares() {
     let owner = Owner::new();
@@ -8233,24 +8249,18 @@ fn r1989_no_mounted_screen_shadows_a_path_it_declares() {
         let roster = super::screen_roster();
         let mut asked = 0_usize;
         let mut surfaces = 0_usize;
-        for (key, mut externals) in roster.externals_everywhere() {
+        for (_key, mut externals) in roster.externals_everywhere() {
             asked += 1;
             for external in &mut externals {
                 let Some(surface) = external.handle.introspect_mut() else {
                     continue;
                 };
                 surfaces += 1;
-                let schema = surface.schema();
-                assert_eq!(
-                    schema.shadowed(),
-                    None,
-                    "the screen at {key} declares `{}` on its external `{}` and \
-                     then answers that path with a DIFFERENT field's \
-                     declaration, so what this one says is published to nobody \
-                     — a path is a read or an action, never both",
-                    schema.shadowed().unwrap_or_default(),
-                    external.tag,
-                );
+                // R2087 — building it IS the check: `IntrospectSchema::new`
+                // refuses a declaration that shadows another, so a screen with
+                // the R1989 defect fails here by panicking rather than by an
+                // assertion this test would have to spell a second time.
+                let _schema = surface.schema();
             }
         }
         // The denominator, asserted rather than reported: a roster that handed
