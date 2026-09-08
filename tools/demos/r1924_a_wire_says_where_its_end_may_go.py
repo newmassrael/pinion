@@ -233,6 +233,19 @@ def body() -> None:
                         # and the drop then refused with this sentence. The
                         # question runs every gate the act runs now.
                         "already dials every endpoint",
+                        # ★★★★★ R2084 — the second screen-level sentence, and it
+                        # is added because the CODE was repaired, not to make
+                        # this pass. The taxonomy now refuses a landing on a
+                        # card holding no listen endpoint (the canon's own rule,
+                        # at the canon's own moment), and that refusal reached
+                        # this register through an arm nobody had re-worded: it
+                        # read `node 4.0 may not reach node 3.1` with `Q-01`
+                        # sitting right there — the very defect the comment on
+                        # `would_land`'s `NoRoom` arm was written about, one arm
+                        # over. This walk read it back, the arm now names the
+                        # card, and the sentence it names it with is the one
+                        # place this screen keeps that wording.
+                        "has no listen endpoint",
                     )
                 ),
             )

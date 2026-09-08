@@ -1148,6 +1148,27 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         {
             want.push(format!("lab.pin.{id}.dial"));
         }
+        // ★★★★★ R2084 — **and its accepting side, on the same derivation.**
+        //
+        // The census demanded the dial from R2068 and never demanded the
+        // accept, which was survivable only while the accept pin's EXISTENCE
+        // was a per-role declaration: half the roster had none, so there was no
+        // sentence the census could say about all of them. This round makes
+        // every card carry an accepting side and derives only whether it is
+        // live, so the sentence exists — and an undemanded mark is one that can
+        // stop being painted with nothing noticing, which is what this table is
+        // for.
+        //
+        // ⚠ Asked of the document, exactly as the dial is, so the two routes
+        // still meet rather than agreeing by construction.
+        if !state
+            .doc
+            .borrow()
+            .resolved_ports(state.here(), node, pinion_node_graph::Side::Input)
+            .is_empty()
+        {
+            want.push(format!("lab.pin.{id}.accept"));
+        }
     }
     if let Some(form) = super::selected_form(state) {
         for field in form.fields() {
@@ -2069,6 +2090,235 @@ fn r1681_a_reported_link_is_drawn_in_a_rhythm_a_drawn_one_is_not() {
             "★ and one a source only REPORTED is not: {reported:?}"
         );
     });
+}
+
+/// ★★★★★ R2084 — **the key beside the canvas and the marks on the canvas are
+/// the same three appearances, over the WHOLE roster.**
+///
+/// # What this is for
+///
+/// `spec::PIN_LEGEND` is carried as data so that the legend and the pins cannot
+/// drift. Nothing had ever compared them, and they had drifted: the legend
+/// declares three appearances — *dial*, *accept*, *closed* — while the screen
+/// had a FOURTH, no pin at all, worn by ten of the roster's twenty-one roles,
+/// because a role used to declare whether it could be dialled at all. Half the
+/// canvas was in a state its own key did not explain.
+///
+/// So this puts one card of EVERY role on the canvas and holds the screen to
+/// four things at once:
+///
+/// 1. every card has an accepting pin — there is no fourth appearance left;
+/// 2. every appearance the register publishes is a word the legend declares;
+/// 3. all three of the legend's words are actually reached, so the legend
+///    describes a screen rather than a hope;
+/// 4. the register and the paint agree — every published pin is painted, every
+///    painted pin is published, and the two accepting appearances are drawn in
+///    colours a reader can tell apart.
+///
+/// ⚠ The colours are compared to EACH OTHER rather than to a constant. What a
+/// reader needs is that *closed* and *accept* are distinguishable; pinning the
+/// grey here would make this file a second author of the palette, which is the
+/// duplication R1966 removed from this screen.
+#[test]
+fn r2084_every_card_wears_one_of_the_legends_three_pin_appearances() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        // One card of every role, so the claim is about the roster and not
+        // about the eight the specification opens with — the population that
+        // let the fourth appearance live for as long as it did.
+        for role in Role::ALL {
+            super::add_node(&state, role);
+        }
+        assert!(
+            state.cards().len() > spec::ROLES.len(),
+            "★ the opening graph plus one card per role: {} card(s)",
+            state.cards().len()
+        );
+
+        let rows = super::pins_wire(&state)["pins"]
+            .as_array()
+            .expect("the screen publishes its pins as a list")
+            .clone();
+        let accepting = r2084_every_appearance_is_one_the_legend_declares(&state, &rows);
+        r2084_the_register_and_the_paint_name_the_same_pins(&state, &rows, &accepting);
+        r2084_an_endpoint_opens_the_pin_of_the_card_that_gets_one(&state, &accepting);
+    });
+}
+
+/// R2084 phase 1 — every appearance the register uses is a word the legend
+/// declares, every card has an accepting pin, and all three words are REACHED.
+///
+/// Hands back the accepting pin of every card, by the word it is wearing.
+fn r2084_every_appearance_is_one_the_legend_declares(
+    state: &std::rc::Rc<LabState>,
+    rows: &[serde_json::Value],
+) -> BTreeMap<String, String> {
+    let words: BTreeSet<&str> = spec::PIN_LEGEND.iter().map(|(kind, _)| *kind).collect();
+    let mut accepting: BTreeMap<String, String> = BTreeMap::new();
+    let mut reached: BTreeSet<String> = BTreeSet::new();
+    for row in rows {
+        let card = row["card"].as_str().expect("a row names its card");
+        let pin = row["pin"].as_str().expect("a row names its pin");
+        let Some(worn) = row["appearance"].as_str() else {
+            assert!(
+                pin.contains('.'),
+                "★ only a split member has no legend word, and {card}.{pin} is not one"
+            );
+            continue;
+        };
+        assert!(
+            words.contains(worn),
+            "★★★★★ {card}.{pin} is drawn as {worn:?}, which the legend does not \
+             declare — the key beside the canvas would not explain it"
+        );
+        reached.insert(worn.to_owned());
+        if pin == "accept" {
+            accepting.insert(card.to_owned(), worn.to_owned());
+        }
+    }
+    for node in state.cards() {
+        let name = state.name_of(node);
+        assert!(
+            accepting.contains_key(&name),
+            "★★★★★ {name} has no accepting pin at all, which is the fourth \
+             appearance this round removed: a card can be dialled or be said to \
+             be closed, and neither of those is 'nothing is drawn'"
+        );
+    }
+    // The legend describes a screen. `accept` needs a card that listens, which
+    // the opening graph supplies; `closed` needs one that does not, which most
+    // of the freshly placed cards are.
+    assert_eq!(
+        reached,
+        words
+            .iter()
+            .map(|word| (*word).to_owned())
+            .collect::<BTreeSet<String>>(),
+        "★★★★★ all three declared appearances must be REACHED on one canvas — a \
+         legend row nothing can wear is a row describing nothing"
+    );
+    accepting
+}
+
+/// R2084 phase 2 — the register and the paint name the same pins, in both
+/// directions, and the two accepting appearances are drawn so a reader can tell
+/// them apart.
+fn r2084_the_register_and_the_paint_name_the_same_pins(
+    state: &std::rc::Rc<LabState>,
+    rows: &[serde_json::Value],
+    accepting: &BTreeMap<String, String>,
+) {
+    let (shot, scene) = painted_at(state, (WIN_W, WIN_H));
+    let mut borders: BTreeMap<String, pinion_core::Color> = BTreeMap::new();
+    scene.for_each_node(&mut |visit| {
+        if let Scene::Container(node) = visit.node {
+            let Some(tag) = node.tag.as_deref() else {
+                return;
+            };
+            if let (true, Some(border)) = (tag.starts_with("lab.pin."), node.style.border) {
+                borders.insert(tag.to_owned(), border.color);
+            }
+        }
+    });
+    // ⚠ Over the cards the viewport actually holds, and that boundary is a
+    // finding rather than a convenience: twenty-one fresh cards do not fit on
+    // one canvas, and the screen CLIPS what falls outside (this module's
+    // property 6). The register answers about the document and the paint about
+    // the window, so the comparison is drawn where both are speaking — anything
+    // else asks the paint about a card nobody can see.
+    let on_screen = |card: &str| shot.tags.contains_key(&format!("lab.node.{card}"));
+    let mut compared = 0_usize;
+    for row in rows {
+        let card = row["card"].as_str().expect("a row names its card");
+        if !on_screen(card) {
+            continue;
+        }
+        let tag = row["tag"].as_str().expect("a row carries its address");
+        assert!(
+            shot.tags.contains_key(tag),
+            "★★★★★ the register publishes {tag}, the card is on screen, and the \
+             screen paints no such mark — a register naming a pin nobody drew is \
+             worse than silence"
+        );
+        compared += 1;
+    }
+    assert!(
+        compared > spec::NODES.len(),
+        "★ and the comparison is not vacuous: {compared} pin(s) of cards the \
+         window holds were checked"
+    );
+    for tag in shot.tags.keys().filter(|t| t.starts_with("lab.pin.")) {
+        assert!(
+            rows.iter()
+                .any(|row| row["tag"].as_str() == Some(tag.as_str())),
+            "★★★★★ {tag} is painted and the register does not know it — the other \
+             direction, and the one a forward check cannot see"
+        );
+    }
+
+    // The two accepting appearances are TELLABLE APART.
+    let mut closed_inks: BTreeSet<[u8; 4]> = BTreeSet::new();
+    let mut open_inks: BTreeSet<[u8; 4]> = BTreeSet::new();
+    for (card, worn) in accepting.iter().filter(|(card, _)| on_screen(card)) {
+        let tag = format!("lab.pin.{card}.accept");
+        let ink = *borders.get(&tag).unwrap_or_else(|| {
+            panic!("{tag} is painted with a border, which is where its identity lives")
+        });
+        let key = [ink.r, ink.g, ink.b, ink.a];
+        if worn == "closed" {
+            closed_inks.insert(key);
+        } else {
+            open_inks.insert(key);
+        }
+    }
+    assert_eq!(
+        closed_inks.len(),
+        1,
+        "★ a closed pin has ONE appearance, whatever card wears it: {closed_inks:?}"
+    );
+    assert!(
+        !open_inks.is_empty(),
+        "★ and at least one card on this canvas can be dialled"
+    );
+    assert!(
+        open_inks.is_disjoint(&closed_inks),
+        "★★★★★ a card that can be dialled must not be drawn as one that cannot — \
+         the legend's two accepting rows are two appearances or they are one row \
+         told twice: open={open_inks:?} closed={closed_inks:?}"
+    );
+}
+
+/// R2084 phase 3 — the transition is the CARD's, driven through the screen's
+/// own verb: a card the register calls `closed` becomes `accept` when a person
+/// gives it somewhere to listen, with no role consulted.
+fn r2084_an_endpoint_opens_the_pin_of_the_card_that_gets_one(
+    state: &std::rc::Rc<LabState>,
+    accepting: &BTreeMap<String, String>,
+) {
+    let subject = accepting
+        .iter()
+        .find(|(_, worn)| worn.as_str() == "closed")
+        .map(|(card, _)| card.clone())
+        .expect("a freshly placed card of a role the canon seeds nothing listens nowhere");
+    let node = state.node_of(&subject).expect("it is on the canvas");
+    super::set_value(state, node, "listen.endpoints", "tcp/0.0.0.0:7551")
+        .expect("a person may say where a card listens");
+    let moved = super::pins_wire(state)["pins"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .find(|row| {
+            row["card"].as_str() == Some(subject.as_str()) && row["pin"].as_str() == Some("accept")
+        })
+        .cloned()
+        .expect("the card still has its accepting pin");
+    assert_eq!(
+        moved["appearance"].as_str(),
+        Some("accept"),
+        "★★★★★ giving the CARD an endpoint opens its pin — the whole of what \
+         decides this, now that the role's declaration is gone"
+    );
 }
 
 /// ★ R1656 — a card's text is part of the diagram, so it shrinks with it.
@@ -6664,7 +6914,7 @@ fn r1690_reach_follows_the_palette_and_not_the_screen() {
         let narrowed = {
             let forms: Vec<_> = Role::ALL
                 .iter()
-                .map(|role| super::form_for(spec::SELECTED_NODE, *role))
+                .map(|role| super::form_for(spec::SELECTED_NODE, *role, None))
                 .collect();
             let catalogue: Vec<_> = forms
                 .iter()

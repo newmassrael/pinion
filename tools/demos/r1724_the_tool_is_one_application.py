@@ -571,18 +571,41 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             1,
             f"I: pressing {roles[0]['name']} put one card on the canvas",
         )
-        # ★ The seat is DERIVED, never spelled: the marks that appeared with the
-        # card are the card's, and the widest of them is the body a hand picks
-        # up (its pins hang off the edges, so containment would refuse the very
-        # rectangle it is looking for). Nothing separately proves the choice —
-        # the gesture's own effect does, because `the_one_that_moved` refuses a
-        # drag that moved no card.
+        # ~~★ The seat is DERIVED, never spelled: the marks that appeared with
+        # the card are the card's, and the widest of them is the body a hand
+        # picks up.~~
+        #
+        # 🟥🟥🟥 R2084 — **that heuristic was a guess wearing the word DERIVED,
+        # and it broke the first time the screen put something bigger on the
+        # canvas.** Measured, the same press, one change apart:
+        #
+        #     seed off:  5 new mark(s), widest 122x60   <- the card's body
+        #     seed on:   8 new mark(s), widest 284x31   <- an INSPECTOR row
+        #
+        # A placed card is selected, so the inspector's rows arrive with it, and
+        # this round gives a fresh Router a listen endpoint — three more rows,
+        # each 284 wide against a 122-wide card. `max(by area)` then picked a
+        # row of the form, the drag grabbed nothing, and the failure read
+        # *exactly one card should have moved; 0 did*.
+        #
+        # ⇒ the body has a published ADDRESS (R2082 declared the family for
+        # exactly this), so it is named rather than guessed at. The comment's
+        # own worry — that pins hang off the card's edges — is about
+        # CONTAINMENT, and naming the mark never asked a containment question.
+        #
+        # ⚠ And the address is ASKED for, not spelled: `painted_addresses.py`
+        # counts a hand-typed one and it is a ratchet that only falls. This card
+        # is not in the specification's roster — a walk placed it — so the
+        # PREFIX comes off that roster (R2051's helper exists for exactly this
+        # case) and the card's own name completes it.
         landed = abs_rects_of(app.snapshot(source="paint"))
         arrived = {tag: landed[tag] for tag in landed if tag not in rects_before}
-        seat = max(arrived.values(), key=lambda r: r[2] * r[3])
+        placed = sorted(arrived_cards)[0]
+        card_at = address_prefix(lab_spec(app)["nodes"], key="id")
+        seat = arrived[f"{card_at}{placed}"]
         print(
-            f"[demo] {sorted(arrived_cards)[0]} arrived as {len(arrived)} new "
-            f"mark(s); the widest is {seat[2]}x{seat[3]}"
+            f"[demo] {placed} arrived as {len(arrived)} new mark(s); its body "
+            f"is {seat[2]}x{seat[3]}"
         )
 
         places = lab_places(app)

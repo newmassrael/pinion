@@ -137,16 +137,29 @@ def body() -> None:
         )
 
         banner("C — ★★★★★ the reference's command, on a canon card")
-        # ★★★★★ DERIVED, not chosen. Measured on this topology: a card with no
+        # ★★★★★ DERIVED, not chosen. ~~Measured on this topology: a card with no
         # inbound wire has no accept port at all — the lab's accept pin is a
-        # variadic run and an empty run is no port — so there is nothing for a
-        # stand-in to be wired back through, and the framework says so by name.
-        # The reference never meets this: every state in a state machine has one
-        # transition pin each side by construction. So the walk asks every card
-        # in turn and asserts BOTH outcomes are the framework's, rather than
-        # picking one that happens to work.
+        # variadic run and an empty run is no port.~~
+        #
+        # 🟥 R2084 — **that premise is gone, and it was never general.** It held
+        # only because the accepting side was gated on the ROLE: a role that did
+        # not accept declared no variadic run at all, so ten of twenty-one kinds
+        # had no accept port whatever their wiring. Every card carries an accept
+        # run now — the behaviour canon's own arrangement, where whether the pin
+        # is LIVE is derived from the card's listen endpoints — so the first
+        # card asked is no longer refused, and this walk's section D was reading
+        # a DIFFERENT case: it landed on a free slot and the wire ADDED (7 -> 8)
+        # where the check is about a wire that DISPLACES.
+        #
+        # ⇒ so the subject is derived from the property section D is about — a
+        # card whose accept slot is already taken, which is a card something
+        # dials. Read off the drawn links rather than guessed, and the refusals
+        # are still collected so both outcomes stay the framework's.
+        dialled = {w["to"] for w in js(app.query(f"{surface}/links"))}
         subject, made, turned_away = None, None, []
         for row in rows:
+            if row["card"] not in dialled:
+                continue
             try:
                 made = app.invoke(f"{surface}/stand_in_for", row["card"])
                 subject = row["card"]

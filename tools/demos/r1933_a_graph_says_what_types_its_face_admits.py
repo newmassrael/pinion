@@ -147,9 +147,21 @@ def fresh_card(app: RpcSubprocess, surface: str) -> str:
     a non-router role is chosen because a router may not be placed in every
     kind of graph (R1999) — the press would be refused for a reason that has
     nothing to do with what section C asks.
+
+    ★★★★★ R2084 — and a role that does NOT open listening, read off the row's
+    own `opens_listening`. The behaviour canon seeds a fresh card's fields per
+    role and gives any seeded listen endpoint a free port, which this screen now
+    reproduces — so *told nothing* stopped being true of every role. It is still
+    true of most, and the screen publishes which, so this picks rather than
+    guesses. Before that key existed this took the first non-Router role, which
+    is Peer — one of the two the canon DOES seed.
     """
     spec = js(app.query(f"{surface}/spec"))
-    row = next(r for r in spec["roles"] if r["name"] != "Router")
+    row = next(
+        r
+        for r in spec["roles"]
+        if r["name"] != "Router" and not r["opens_listening"]
+    )
     before = {n.strip() for n in str(app.query(f"{surface}/nodes")).split(",") if n.strip()}
     app.click(path=row["tag"])
     app.tick_ms(16)

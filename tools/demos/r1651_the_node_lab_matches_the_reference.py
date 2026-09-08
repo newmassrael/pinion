@@ -662,7 +662,28 @@ def body() -> None:
             # ⇒ A gate line arriving because the fixture became honest is not
             # the same event as one arriving because a screen regressed, and the
             # only thing that tells them apart is this sentence.
-            "lab.gate": 8,
+            # ★★★★★ R2084 — 8 -> 6, and the two lines that went are NAMED.
+            #
+            # The old finding fired on `role.accepts() && !listens`: a role that
+            # COULD be dialled, on a card holding no listen endpoint. Of the
+            # eight opening cards, four hold no listen row (T-01, Q-01, S-01,
+            # T-02) and exactly two of those four had an accepting role —
+            # **S-01 (Store) and T-02 (Subscriber)** — so exactly two lines.
+            #
+            # Both are gone, and neither is a finding by any standard this
+            # screen still holds. Extracted from the behaviour canon's own
+            # validator this round: it reports a locator's format, a listen
+            # PORT COLLISION inside one host, and a client that listens at all —
+            # and has **no** finding for *this card listens nowhere*. Ours is an
+            # addition beyond it, kept (the standing order keeps what the canon
+            # lacks), but kept for the two cases that are worth SAYING: a card
+            # something dials that listens nowhere, and a card of a kind that
+            # OPENS listening which is not listening. A Store and a Subscriber
+            # that nothing dials are neither.
+            #
+            # ⚠ The count moved DOWN, which is the direction a family pin had
+            # never moved here, so it is written out rather than merely edited.
+            "lab.gate": 6,
             "lab.hint": 2,
             # ★★★★★ R1984 — the breadcrumb, ONE at the opening frame.
             #

@@ -2831,7 +2831,49 @@ impl LabState {
                 let listens = form
                     .field("listen.endpoints")
                     .is_some_and(|f| !f.value().trim().is_empty());
-                if self.role_of(node).is_some_and(Role::accepts) && !listens {
+                // ★★★★★ R2084 — **the two cases where listening nowhere is
+                // worth SAYING**, and the walk that made this its final shape.
+                //
+                // # What the first draft got wrong, and what caught it
+                //
+                // The draft narrowed this to *something dials it and it listens
+                // nowhere* and wrote down that the rest was covered by the
+                // `closed` pin. `r1686_a_row_says_take_me_out` drives a person
+                // taking the listen row off `P-03` — a Peer that opened
+                // listening, which nothing on this canvas dials — and asserts
+                // *the launch gate says so in words*. It went red. A pin is not
+                // words: a reader who does not see the canvas lost the report
+                // entirely, and no in-process paint gate could notice, because
+                // the pin still paints.
+                //
+                // # Why the repair is not the field this round removed
+                //
+                // Measured against the canon's own validator this round: it has
+                // **no** finding for *this card listens nowhere* — and it does
+                // consult what a node IS elsewhere (its client arm warns when a
+                // client listens at all). So role knowledge in a GATE is the
+                // canon's way; what `Role::accepts` did wrong was gate the
+                // PIN's existence. The two are different questions and only one
+                // of them was the defect.
+                //
+                // So the trigger is [`opens_listening`] — *a card of a kind
+                // that opens listening, which is not listening* — and that is
+                // TWO of twenty-one roles, from the canon's own seed table,
+                // where `accepts` was eleven of twenty-one from a table we
+                // invented. Narrower, sourced, and it says the thing a person
+                // just did.
+                //
+                // ⚠ `here()` and not `ROOT`: a read this screen makes asks
+                // which graph it is standing in, or the tool can only ever show
+                // one — the defect R1981 repaired at 185 sites, and its ratchet
+                // caught this line the first time it ran.
+                let dialled = self
+                    .doc
+                    .borrow()
+                    .tree(self.here())
+                    .is_some_and(|tree| tree.links().iter().any(|link| link.to.node == node));
+                let normally_listens = self.role_of(node).is_some_and(opens_listening);
+                if (dialled || normally_listens) && !listens {
                     found.push((name.clone(), Finding::NothingListening));
                 }
                 // ★★★★★ R1927 — **the framework's own answer**, folded into the
@@ -3282,7 +3324,9 @@ fn seed_nodes(
 ) {
     for node in spec::NODES {
         let role = Role::from_name(node.role).expect("the spec names a role that exists");
-        let form = form_for(node.id, role);
+        // `None`: the specification names this card, so its opening endpoint is
+        // the specification's and no port has to be picked for it.
+        let form = form_for(node.id, role, None);
 
         let listen = form
             .field("listen.endpoints")
@@ -4027,12 +4071,112 @@ fn seed_links(
 /// PARTLY derivable — five of the eight cards carry an `id` row in the
 /// specification and three (T-01, Q-01, T-02) do not, so folding it here would
 /// need the specification to gain rows the canon's cards do not show.
-fn opening_listen(id: &str) -> &'static str {
-    spec::NODES
+fn opening_listen(id: &str, role: Role, fresh_at_port: Option<u32>) -> String {
+    if let Some((_, value)) = spec::NODES
         .iter()
         .find(|node| node.id == id)
         .and_then(|node| node.rows.iter().find(|(key, _)| *key == "listen"))
-        .map_or("", |(_, value)| *value)
+    {
+        return (*value).to_owned();
+    }
+    // ★★★★★ R2084 — a card the palette makes opens with what the behaviour
+    // canon SEEDS its role with. See [`opens_listening`].
+    match fresh_at_port {
+        Some(port) if opens_listening(role) => format!("tcp/0.0.0.0:{port}"),
+        _ => String::new(),
+    }
+}
+
+/// ★★★★★ R2084 — **whether a card this role's palette row makes opens ALREADY
+/// LISTENING**, which is a statement about a card's first moment and about
+/// nothing else.
+///
+/// # Why this is not the field this round removed
+///
+/// `RoleSpec::accepts` said what a role could EVER do: it gated the accepting
+/// pin's existence, so a card of a role that did not accept could never be
+/// dialled however it was configured. This decides ONE VALUE in a fresh card's
+/// form. Nothing reads it afterwards — the pin, the landing rule and the `pins`
+/// register all ask the card — so a person may take the endpoint off a Router
+/// and watch its pin close, or give one to a Client and watch it open. Neither
+/// was reachable while a role declared the capability.
+///
+/// # Why it exists at all, and why it is measured rather than chosen
+///
+/// Because R2084's rule needs it. A wire lands only on a listen endpoint, and
+/// with every fresh card seeded with nothing, no card the palette makes could
+/// ever take a wire — measured on the assembled shell, where *a wire let go
+/// over the canvas* was refused by all twenty-one roles at once. The canon does
+/// not have that problem because its own add-node path seeds a role's opening
+/// fields and then hands any seeded listen endpoint a free port.
+///
+/// Extracted from the canon this round: of its twenty-one roles exactly **two**
+/// are seeded a listen endpoint — the two infrastructure roles that exist to be
+/// dialled — and its own client role is seeded nothing at all. So a fresh card
+/// that cannot yet be dialled is the canon's behaviour too; what was ours alone
+/// was that NO card could be.
+///
+/// ⚠ The rest of that seed table is not here. It seeds traffic and placement
+/// vocabulary the thing this screen configures does not declare as
+/// configuration paths at all — recorded in `docs/analyzer-config-surface.json`
+/// under the names it cannot place — so transcribing it would invent paths, the
+/// defect R1842 paid off. That half is the palette debt's own remaining item.
+///
+/// ★ An exhaustive match rather than a list: a role added tomorrow does not
+/// compile until somebody decides this for it, which is the property the roster
+/// table next door has and a list of names does not.
+const fn opens_listening(role: Role) -> bool {
+    match role {
+        Role::Router | Role::Peer => true,
+        Role::Client
+        | Role::Store
+        | Role::Publisher
+        | Role::Subscriber
+        | Role::Puller
+        | Role::Querier
+        | Role::Responder
+        | Role::Put
+        | Role::Delete
+        | Role::Get
+        | Role::Retainer
+        | Role::Recoverer
+        | Role::Roster
+        | Role::Scanner
+        | Role::Member
+        | Role::Beacon
+        | Role::Watcher
+        | Role::Prober
+        | Role::Forwarder => false,
+    }
+}
+
+/// ★★★★★ R2084 — the lowest port no card on this canvas is listening on.
+///
+/// The canon's own arithmetic: read the port off every card's listen endpoints,
+/// start at the family's usual first port and walk up. Two fresh cards
+/// therefore never open on one address, which is what makes seeding safe —
+/// a default that collides is worse than no default, because the graph it
+/// produces is one the thing being configured refuses.
+fn free_listen_port(state: &LabState) -> u32 {
+    const FIRST: u32 = 7447;
+    let taken: BTreeSet<u32> = state
+        .forms
+        .borrow()
+        .values()
+        .filter_map(|form| form.field("listen.endpoints"))
+        .flat_map(|field| {
+            field
+                .value()
+                .split(',')
+                .filter_map(|one| one.rsplit(':').next().and_then(|p| p.trim().parse().ok()))
+                .collect::<Vec<u32>>()
+        })
+        .collect();
+    let mut port = FIRST;
+    while taken.contains(&port) {
+        port += 1;
+    }
+    port
 }
 
 /// The configuration form a node of that role opens with.
@@ -4041,8 +4185,8 @@ fn opening_listen(id: &str) -> &'static str {
 /// for the router; every other role gets the same shape with its own opening
 /// values, because a form whose rows depended on which node was clicked would
 /// make "the key is the configuration path" untrue for all but one of them.
-fn form_for(id: &str, role: Role) -> ConfigForm {
-    let listen = opening_listen(id);
+fn form_for(id: &str, role: Role, fresh_at_port: Option<u32>) -> ConfigForm {
+    let listen = opening_listen(id, role, fresh_at_port);
     // ★★★★★ R1690 — **the shape comes from the option surface, not from
     // here.** Every row below used to name its own, and one of them was wrong
     // for the whole life of this screen: `id` is read by a parser and was
@@ -4054,7 +4198,7 @@ fn form_for(id: &str, role: Role) -> ConfigForm {
     let shape = settings::shape_or_free;
     let mut fields = vec![
         ConfigField::new("id", "id", Applies::Restart, opening_id(id)).with_shape(shape("id")),
-        ConfigField::new("listen.endpoints", "address[]", Applies::Restart, listen)
+        ConfigField::new("listen.endpoints", "address[]", Applies::Restart, &listen)
             .with_shape(shape("listen.endpoints")),
         // ★★★★★ R1716 — `connect.endpoints` is NOT here any more, and its
         // absence is the round's screen change. It used to open holding an
@@ -4124,7 +4268,9 @@ fn form_for(id: &str, role: Role) -> ConfigForm {
 fn palette_reach() -> pinion_core::widgets::config_schema::Reach {
     let forms: Vec<ConfigForm> = Role::ALL
         .iter()
-        .map(|role| form_for(spec::SELECTED_NODE, *role))
+        // `None`: this asks what KEYS a role's form carries, and a seeded
+        // address is a value rather than a key.
+        .map(|role| form_for(spec::SELECTED_NODE, *role, None))
         .collect();
     let catalogue: Vec<(&str, &FieldType)> = forms
         .iter()
@@ -11407,8 +11553,28 @@ fn turn_of(
         .borrow()
         .may_turn(state.here(), id)
         .err()
-        .map(|why| reverse_refusal(state, &why));
+        .map(|why| reverse_refusal(state, id, &why));
     (Some(seat), refusal)
+}
+
+/// ★★★★★ R2084 — **this screen's ONE sentence for *there is nothing to dial
+/// there*.**
+///
+/// Every refusal that comes of a card holding no listen endpoint reads this,
+/// and there are four of them: the turn seat's, the landing's, the connect
+/// verb's slot arm and its taxonomy arm. Measured this round with two spellings
+/// live at once — *has no listen endpoint* on one path and *does not listen* on
+/// another — which is precisely the drift R1719 and R1720 each paid off at this
+/// screen's other refusals, met a third time because the rule moved and the
+/// wordings did not move with it.
+///
+/// The words are the canon's own, and its `closed` legend row says the same
+/// thing about the pin a reader is looking at while they read this.
+fn nothing_listens_at(state: &LabState, node: NodeId) -> String {
+    format!(
+        "{} has no listen endpoint, so nothing can dial it",
+        state.name_of(node)
+    )
 }
 
 /// ★★★★★ R2000 — the word the turn seat carries, in one place.
@@ -11442,13 +11608,56 @@ fn turn_name(refusal: Option<&str>) -> String {
     }
 }
 
+/// ★★★★★ R2084 — does this card declare somewhere to listen?
+///
+/// The one question the accepting side turns on, asked of the NODE, because
+/// that is where the answer is derived from the card's own `listen.endpoints`
+/// (`sync_node_at`). The canon's predicate is literally this — its `labAccepts`
+/// is `!!labListenOf(id)` — and the per-role declaration this replaces was a
+/// second answer to it.
+fn listens_at(state: &LabState, node: NodeId) -> bool {
+    state
+        .doc
+        .borrow()
+        .tree(state.here())
+        .and_then(|tree| tree.node(node))
+        .is_some_and(|held| match &held.body {
+            NodeBody::Kind(kind) => kind.listening,
+            // Everything that is not one of this taxonomy's cards — a frame, a
+            // group, the crate's own structural bodies — has no listen
+            // endpoint to declare, which is the same answer as a card that
+            // declares none.
+            _ => false,
+        })
+}
+
 /// ★★★★★ R2000 — what to SAY when a wire will not turn round.
 ///
 /// The crate names the nodes by number, because a taxonomy's own word for a
 /// node is the application's to supply — the line `graph_kind_token` draws. This
 /// is the application supplying it: a person on this canvas knows their cards by
 /// the names on them, and *node 4* is not one of them.
-fn reverse_refusal(state: &LabState, why: &LandError<Endpoint>) -> String {
+fn reverse_refusal(state: &LabState, link: LinkId, why: &LandError<Endpoint>) -> String {
+    // ★★★★★ R2084 — the LINK, so this can name the card for the refusals that
+    // are not `NoRoom` too.
+    //
+    // A turn makes the wire's current SOURCE its sink, and the taxonomy refuses
+    // a landing on a card with no listen endpoint (the canon's own rule, and
+    // its own sentence). The crate says that with a node NUMBER, because the
+    // word for a card is the application's to supply — the same split
+    // `NoRoom`'s arm below is written for. Until this round that refusal did
+    // not exist, because a card with nowhere to listen had no accepting side at
+    // all; now it does, and the sentence needs the name.
+    let becomes_sink = state
+        .doc
+        .borrow()
+        .tree(state.here())
+        .and_then(|tree| tree.link(link).map(|held| held.from.node));
+    if let (LandError::Refused(_), Some(node)) = (why, becomes_sink) {
+        if !listens_at(state, node) {
+            return nothing_listens_at(state, node);
+        }
+    }
     match why {
         // ★ WHICH side has no room is the crate's answer, and naming the card
         // in this canvas's own words is the application's. A card that never
@@ -11456,7 +11665,8 @@ fn reverse_refusal(state: &LabState, why: &LandError<Endpoint>) -> String {
         // nowhere to berth — and that end is on the card the wire currently
         // leaves, which is the one a person is looking at.
         //
-        // Asked of the taxonomy's own `accepts`: this is not a second
+        // ★ R2084 — asked of the CARD's own listen endpoints, which since that
+        // round is the only place the answer lives. This is not a second
         // derivation of the refusal, which the document already made; it is the
         // wording of one, which is exactly the split `graph_kind_token` draws.
         LandError::NoRoom { node, side } => match (state.role_of(*node), side) {
@@ -11464,11 +11674,7 @@ fn reverse_refusal(state: &LabState, why: &LandError<Endpoint>) -> String {
             // `turn_name`'s, which is where the painted word gets in front of
             // it; saying "cannot run the other way" here too would say the
             // refusal twice and still not say `turn`.
-            (Some(role), Side::Input) if !role.accepts() => format!(
-                "{} is a {} and never listens",
-                state.name_of(*node),
-                role.name()
-            ),
+            (Some(_), Side::Input) if !listens_at(state, *node) => nothing_listens_at(state, *node),
             _ => format!(
                 "{} has no {} pin free and cannot grow one",
                 state.name_of(*node),
@@ -12134,7 +12340,7 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
                 .with_style(style)
                 .with_layout(absolute(shape.rect)),
         ));
-        children.extend(canvas_pins(state, node, shape.rect, role, ink));
+        children.extend(canvas_pins(state, node, shape.rect, ink));
     }
     children
 }
@@ -12334,38 +12540,92 @@ fn troubled_cards(state: &LabState) -> BTreeMap<NodeId, bool> {
 }
 
 /// A node's pins. Their appearance **is** the rule the legend states: filled =
-/// can dial, ringed in the transport's colour = can be dialled, grey = the role
-/// listens and this node has nowhere to.
-fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink) -> Vec<Scene> {
-    let name = state.name_of(node);
-    let mut children: Vec<Scene> = Vec::new();
-    // ★★★★★ R1912 — a pin a hand PUT AWAY is not drawn, and the model is what
-    // says so. `visible_ports` answers over both reasons a port can be off the
-    // frame; asking it here rather than reading the appearance is what keeps
-    // this painter from becoming a second copy of that rule.
+/// can dial, ringed in the transport's colour = can be dialled, grey = this
+/// card has nowhere to listen, so nothing can call it.
+///
+/// ★★★★★ R2084 — those three are `spec::PIN_LEGEND`'s three, and now they are
+/// the only three. A fourth appearance stood here until this round — **no pin
+/// at all**, worn by the ten roles of twenty-one whose declaration said they
+/// could not be dialled — so the legend this screen paints beside the canvas
+/// described half its cards.
+// ★ R2084 — the ROLE is no longer one of a pin's inputs. Every card has both
+// pins and whether each is drawn is the crate's answer about this node, so the
+// painter takes the node and asks; passing the role in as well would be handing
+// it a fact it must not consult.
+/// ★★★★★ R2084 — **which of `spec::PIN_LEGEND`'s appearances one of a card's
+/// two pins is wearing**, or `None` when that pin is not drawn at all.
+///
+/// # Why this is one function and not a rule in the painter
+///
+/// The legend is carried as data so that the key beside the canvas and the
+/// marks on it cannot drift. Nothing enforced that: the words lived in
+/// `spec::PIN_LEGEND` and the appearances lived in [`canvas_pins`]'s `if`s, and
+/// they HAD drifted — three declared appearances against a screen with four,
+/// the fourth being *no pin at all* on ten of the roster's twenty-one roles.
+/// This round removed the fourth; this function is what stops a fifth.
+///
+/// The painter chooses its colour from what this answers and `pins_wire`
+/// publishes the same answer, so the mark, the register and the legend are one
+/// decision rather than three that agree today.
+///
+/// ⚠ It says what a pin IS, not what a hand is doing to it. A pin lit while a
+/// wire is being carried to it wears the accent over its appearance and is not
+/// a fourth kind — that state is `rewire`'s `lit`, published there, and a
+/// person who lets go finds this answer unchanged.
+fn pin_appearance(state: &LabState, node: NodeId, side: Side) -> Option<&'static str> {
+    let doc = state.doc.borrow();
+    // The model's answer to *has this card such a pin at all* — an interface
+    // card's outward end is all inputs, so it has no dial (R2068's finding, and
+    // the derivation the census already uses).
+    if doc.resolved_ports(state.here(), node, side).is_empty() {
+        return None;
+    }
+    // ★★★★★ R1912 — and *is it on the frame*: a pin a hand put away is not
+    // drawn. `visible_ports` answers over both reasons a port can be off it.
     //
     // The lab's dial pin is output 0 and its accept pin is input 0 — the
     // variadic run's first item — which is the mapping `LabNode`'s signature
     // declares.
-    let drawn = state.doc.borrow().visible_ports(state.here(), node);
-    let shows = |side: Side, index: u32| -> bool {
-        drawn.as_ref().is_none_or(|v| {
-            let list = match side {
-                Side::Input => &v.inputs,
-                Side::Output => &v.outputs,
-            };
-            list.contains(&index)
-        })
-    };
+    let on_frame = doc
+        .visible_ports(state.here(), node)
+        .is_none_or(|v| match side {
+            Side::Input => v.inputs.contains(&0),
+            Side::Output => v.outputs.contains(&0),
+        });
+    if !on_frame {
+        return None;
+    }
+    drop(doc);
+    Some(match side {
+        Side::Output => "dial",
+        // ★ The card's own answer and the only one: a card holding a listen
+        // endpoint can be called, and a card holding none cannot. That is the
+        // legend's own sentence for `closed`, and since this round it is also
+        // the taxonomy's rule for whether a wire may land.
+        Side::Input if listens_at(state, node) => "accept",
+        Side::Input => "closed",
+    })
+}
+
+fn canvas_pins(state: &LabState, node: NodeId, card: Rect, ink: Ink) -> Vec<Scene> {
+    let name = state.name_of(node);
+    let mut children: Vec<Scene> = Vec::new();
+    // ★ R1912's rule — a pin a hand PUT AWAY is not drawn, and the model is
+    // what says so — now lives in [`pin_appearance`] with the rest of the
+    // decision, so this painter asks one question instead of two.
     {
-        let listening = state
-            .forms
-            .borrow()
-            .get(&state.address_of(node))
-            .is_some_and(|f| {
-                f.field("listen.endpoints")
-                    .is_some_and(|v| !v.value().trim().is_empty())
-            });
+        // ★★★★★ R2084 — **the appearance is decided ONCE, by the function the
+        // register publishes from.**
+        //
+        // What stood here was a fourth spelling of *does this card's form hold
+        // a listen endpoint* — the predicate `sync_node_at` runs on every edit
+        // to write `LabNode::listening`, which the taxonomy's own rules then
+        // read. With the role's declaration removed, that flag is the WHOLE of
+        // what decides this pin, so a painter re-deriving it was a second
+        // answer to the question this round finished making singular. Now the
+        // pin a person sees, the word `pins_wire` publishes, the legend beside
+        // the canvas and the refusal the document gives are one fact.
+        let wears = |side: Side| pin_appearance(state, node, side);
         // ★ R1961 — the node's OWN socket type, through the one function that
         // turns a transport into one. The `unwrap_or(Transport::Tcp)` that
         // stood here answered for two different absences with one colour — a
@@ -12386,7 +12646,7 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
                 NodeBody::Kind(kind) => Some(kind.accept_type()),
                 _ => None,
             });
-        if shows(Side::Output, 0) {
+        if wears(Side::Output) == Some("dial") {
             children.push(box_at(
                 &format!("lab.pin.{name}.dial"),
                 pin_rect(state, card, true),
@@ -12395,7 +12655,9 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
                 PIN / 2,
             ));
         }
-        if role.accepts() && shows(Side::Input, 0) {
+        // ★ R2084 — every card has an accepting side now, so what varies is
+        // WHICH of the legend's two accepting appearances it wears.
+        if let Some(worn) = wears(Side::Input) {
             // ★★★★★ R1924 — a card that would take the wire being re-aimed
             // wears the accent while the hand is carrying it.
             //
@@ -12404,6 +12666,11 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
             // the change is an edge. The set is the crate's answer, so a card
             // is lit exactly when `may_relink` would say yes: there is no
             // second rule on this side deciding what "will take it" means.
+            //
+            // ⚠ R2084 — and it is drawn OVER the appearance rather than being
+            // one: the pin still IS what it is while a hand hovers, which is
+            // why `pin_appearance` does not know about this and `rewire`'s own
+            // `lit` publishes it.
             let lit = state.rewire_targets.borrow().contains(&node);
             children.push(box_at(
                 &format!("lab.pin.{name}.accept"),
@@ -12411,7 +12678,7 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
                 ink.surface,
                 Some(if lit {
                     ink.accent
-                } else if listening {
+                } else if worn == "accept" {
                     socket
                         .and_then(|ty| <LabNode as NodeKind>::type_colour(&ty))
                         .map_or(ink.text_3, ink_of)
@@ -12423,7 +12690,7 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
         }
         // ★★★★★ R1914 — the pins a SPLIT put there, under the parent's place.
         //
-        // The parent is hidden by `shows` above (the model answers
+        // The parent is hidden by [`pin_appearance`] above (the model answers
         // `Hidden::Split` for it), so without this a split would take a pin off
         // the frame and put nothing back — which is a picture that says the
         // gesture destroyed something. The reference draws its sub-pins in the
@@ -15053,6 +15320,19 @@ const FIELDS: &[SchemaField] = &{
         // crate rather than by the taxonomy — two different answers a screen
         // has to be able to tell apart.
         SchemaField::new("watchable", "json"),
+        // ★★★★★ R2084 — **which of the legend's appearances each drawn pin is
+        // wearing**, card by card.
+        //
+        // The legend is carried as data (`spec::PIN_LEGEND`, published beside
+        // this as `pin_legend`) precisely so that what the canvas draws and what
+        // the key beside it explains cannot drift. Until this round nothing
+        // compared them, and they HAD drifted: the legend declared three
+        // appearances while the screen had a fourth — no pin at all — on ten of
+        // its twenty-one roles. This register is the comparison, and it is what
+        // an agent reads instead of the `accepts` key this round removed from
+        // `roles[]`: that key answered *could a card of this kind be dialled*
+        // from the role, and the answer belongs to the card.
+        SchemaField::new("pins", "json"),
         // ★★★★★ R1943 — what each card is with respect to ZONES: a bracketed
         // region opened by one node and closed by another. This taxonomy opens
         // none, and the register SAYS so rather than staying silent — "nothing
@@ -15432,6 +15712,7 @@ impl ExternalIntrospect for LabOracle {
             "containers" => Ok(IntrospectValue::Json(containers_wire(state))),
             "takes" => Ok(IntrospectValue::Json(takes_wire(state))),
             "watchable" => Ok(IntrospectValue::Json(watchable_wire(state))),
+            "pins" => Ok(IntrospectValue::Json(pins_wire(state))),
             "zones" => Ok(IntrospectValue::Json(zones_wire(state))),
             "stand_ins" => Ok(IntrospectValue::Json(stand_ins_wire(state))),
             "history" => Ok(IntrospectValue::Json(history_wire(state))),
@@ -17448,6 +17729,21 @@ const fn wording_word(wording: graph::Wording) -> &'static str {
     }
 }
 
+/// ★★★★★ R2084 — [`opens_listening`] for a row of the published roster.
+///
+/// Lifted out of `spec_json` because it is a **lookup by string** between two
+/// tables — the roster's `name` and [`Role::from_name`] — and a lookup deserves
+/// a name and one place to fail. Inline it was three lines of a JSON builder,
+/// which is where R1968 found the same shape last time and said so: a
+/// `from_name` in the middle of a value expression is a join nobody can see.
+///
+/// ⚠ The `expect` is a real invariant and not a shrug: [`spec::ROLES`] IS
+/// `Role::specs()`, so a name in that list that `from_name` cannot resolve
+/// would mean the roster had stopped being the taxonomy's own view of itself.
+fn role_opens_listening(role: &spec::RoleSpec) -> bool {
+    opens_listening(Role::from_name(role.name).expect("the roster names its own roles"))
+}
+
 fn spec_json() -> serde_json::Value {
     serde_json::json!({
         // ★ R1664 — `body` is published too. R1662 added the column to the
@@ -17488,8 +17784,36 @@ fn spec_json() -> serde_json::Value {
         // sits beside the violations on the capture screen.
         "traffic_parameters": spec::TRAFFIC_PARAMETERS
             .iter().map(|p| p.key()).collect::<Vec<_>>(),
+        // ★★★★★ R2084 — **`accepts` is GONE from this row, and its absence is
+        // the round's finding rather than a trim.** The key said whether a role
+        // could be dialled at all; the behaviour canon has no such fact, gives
+        // every card both pins, and derives whether the accepting one can be
+        // called from that card's own listen endpoints. A client reading this
+        // row was being handed a second, coarser answer to a question every
+        // card on the canvas already answers for itself — so what it should ask
+        // instead is the card, and this round gives it somewhere to ask: the
+        // `pins` register says which of the legend's appearances each card's
+        // accepting pin is wearing, so *can this one be dialled* is answered
+        // about the card that is on the canvas rather than about its kind.
         "roles": spec::ROLES.iter().map(|r| serde_json::json!({
-            "name": r.name, "gist": r.gist, "group": r.group, "accepts": r.accepts,
+            "name": r.name, "gist": r.gist, "group": r.group,
+            // ★★★★★ R2084 — **whether a card this row makes opens ALREADY
+            // LISTENING**, which is the one thing about a card that nothing can
+            // ask the card, because the card does not exist yet.
+            //
+            // ⚠ This is not `accepts` coming back under another name, and the
+            // difference is the whole of what this round is about. `accepts`
+            // said whether a role could EVER be dialled — a capability the CARD
+            // already answers by holding an address, so the row was publishing
+            // a second, coarser copy of it. This says what a fresh card opens
+            // WITH, which no card can answer before it is placed, and it is
+            // read off the canon's own seed table (two roles of twenty-one,
+            // where `accepts` was eleven from a table we invented).
+            //
+            // Published because a client that places a card needs it: an agent
+            // choosing a role to take a waiting wire, and this round's own walk
+            // choosing a role whose card will speak nothing, both had to guess.
+            "opens_listening": role_opens_listening(r),
             "carries": r.carries.iter().map(|p| p.key()).collect::<Vec<_>>(),
             // ★★★★★ R2078 — **the role's badge and its colour**, which this
             // taxonomy has declared since R1966/R1968 and which had never
@@ -17938,12 +18262,13 @@ fn endpoint_at(state: &LabState, socket: Socket) -> Option<String> {
 ///
 /// Two addresses, in the order a node acquires them:
 ///
-/// 1. **the one it listens on**, when its role can listen and it has been given
-///    one — the node's own declaration of what it speaks;
-/// 2. **the one it dials**, otherwise. A Client, a Publisher and a Querier
-///    cannot listen at all ([`Role::accepts`] is false for those three), so
-///    they have no address of their own and the wire is the only thing that
-///    can say. This is R1716's direction — *the connection is derived from the
+/// 1. **the one it listens on**, when it has been given one — the node's own
+///    declaration of what it speaks;
+/// 2. **the one it dials**, otherwise. A card that has been given no listen
+///    endpoint has no address of its own — since R2084 that is a fact about the
+///    card and not about its role, so any role can be in this arm — and the
+///    wire is the only thing that can say. This is R1716's direction — *the
+///    connection is derived from the
 ///    wire* — and it satisfies [`LabNode::conversion`] by construction: a node
 ///    that took its transport from the address it dials agrees with the pin it
 ///    dialled, because it read the answer off that pin.
@@ -18302,15 +18627,18 @@ fn connect(state: &Rc<LabState>, from: NodeId, to: NodeId) -> Result<String, Inv
     };
     let Some(port) = open_slot(state, to, endpoint.as_deref()) else {
         // ★★★★ R1720 — ONE sentence, where this site had two. It said
-        // `{name} has no accept pin` to the person and
-        // `{name} does not listen, so nothing can dial it` to the agent, about
-        // the same fact — the drift R1719 built the shared value to prevent,
-        // surviving three sites away from where it was written. The framework
-        // now announces the refusal it hands back, so a second wording here
-        // would not merely be untidy: it would be overwritten a moment later
-        // by the one the agent got, and the person would read whichever the
-        // path chose.
-        let said = Utterance::refused(&format!("{name} does not listen, so nothing can dial it"));
+        // `{name} has no accept pin` to the person and a second wording to the
+        // agent, about the same fact — the drift R1719 built the shared value
+        // to prevent, surviving three sites away from where it was written. The
+        // framework now announces the refusal it hands back, so a second
+        // wording here would not merely be untidy: it would be overwritten a
+        // moment later by the one the agent got, and the person would read
+        // whichever the path chose.
+        //
+        // ★★★★★ R2084 — and the sentence itself is now [`nothing_listens_at`]'s,
+        // for the same reason one level up: R1720 made this site's two spellings
+        // one, and this round found THIS site disagreeing with the taxonomy's.
+        let said = Utterance::refused(&nothing_listens_at(state, to));
         state.say(said.clone());
         return Err(InvokeError::rejected(said.into_clause()));
     };
@@ -18342,6 +18670,19 @@ fn connect(state: &Rc<LabState>, from: NodeId, to: NodeId) -> Result<String, Inv
             // `Utterance::refused` takes something that can say itself, and a
             // `Debug` spelling handed in anyway is a fault the constructor
             // names.
+            //
+            // ★★★★★ R2084 — and the ONE refusal this screen has a better word
+            // for is named here rather than left as a node number. The
+            // taxonomy refuses a landing on a card with no listen endpoint (the
+            // canon's own rule, at the canon's own moment), and the crate says
+            // it with an id because the word for a card is the application's to
+            // supply. Until this round the same fact was refused EARLIER, by
+            // the card having no accepting side at all.
+            if !listens_at(state, to) {
+                let said = Utterance::refused(&nothing_listens_at(state, to));
+                state.say(said.clone());
+                return Err(InvokeError::rejected(said.into_clause()));
+            }
             let said = Utterance::refused(&why);
             state.say(said.clone());
             Err(InvokeError::rejected(said.into_clause()))
@@ -18452,7 +18793,7 @@ fn turn_link(state: &Rc<LabState>, link: LinkId) -> Result<String, InvokeError> 
             Ok(word)
         }
         Err(why) => {
-            let said = Utterance::new(Tone::Refused, reverse_refusal(state, &why));
+            let said = Utterance::new(Tone::Refused, reverse_refusal(state, link, &why));
             state.say(said.clone());
             Err(InvokeError::rejected(said.into_clause()))
         }
@@ -20795,6 +21136,19 @@ fn would_land(state: &LabState, link: LinkId, to: NodeId) -> Result<Landfall, St
             LandError::NoRoom { .. } => {
                 format!("{} has no accept pin", state.name_of(to))
             }
+            // ★★★★★ R2084 — **and the arm this round added, for the reason the
+            // comment above already gave.** The taxonomy now refuses a landing
+            // on a card with no listen endpoint, and that refusal is
+            // `Refused`, not `NoRoom` — so it fell to the arm below and reached
+            // a person as *node 4.0 may not reach node 3.1*, with `Q-01` sitting
+            // right there. `r1924_a_wire_says_where_its_end_may_go` is what
+            // read it back.
+            //
+            // ⇒ the same defect, one arm over, four rounds later. A round that
+            // adds a refusal has to carry its WORDS to every path that shows
+            // one, and this screen has three: the turn seat
+            // ([`reverse_refusal`]), the connect verb, and this.
+            LandError::Refused(_) if !listens_at(state, to) => nothing_listens_at(state, to),
             other => Utterance::refused(&other).into_clause(),
         })
 }
@@ -23282,10 +23636,20 @@ fn add_node(state: &Rc<LabState>, role: Role) {
     // goes in at that tree's address. This is the site the defect was measured
     // at: keyed by the number alone, a card made inside a definition took over
     // the settings of the root card whose number it was minted with.
+    //
+    // ★★★★★ R2084 — and it opens with the endpoint its role is seeded, on a
+    // port nothing else here is listening on. Read BEFORE the form goes in, so
+    // the card cannot be handed the port it is about to occupy.
+    let port = free_listen_port(state);
     state
         .forms
         .borrow_mut()
-        .insert(state.address_of(id), form_for(&name, role));
+        .insert(state.address_of(id), form_for(&name, role, Some(port)));
+    // ★ R2084 — and the model is told, because `listening` is what the pin, the
+    // landing rule and the `pins` register all read. A card seeded with an
+    // address the taxonomy had not been told about would draw a closed pin over
+    // a form that says otherwise.
+    sync_node(state, id);
     // The card exists and can be measured now, so the spot it ends up in is
     // computed from where it is DRAWN and applied as a delta to where it is
     // STORED. See `free_spot` for why a delta rather than a position.
@@ -24568,12 +24932,16 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
         // subgraph: *lab.pin.Group Output.accept (unvoiced)*, and the voice
         // census is total, so an unclassified region is a reader told nothing.
         //
-        // ⚠ Stated rather than left: `Peer` is the painter's word for "a card
+        // ⚠ Stated rather than left: `Peer` was the painter's word for "a card
         // like any other", so what a reader hears about an interface end is
         // what they hear about any pin. A sentence naming it as the subgraph's
         // outward end would be better, and it is a different question from
         // whether it speaks at all.
-        let role = state.role_of(node).unwrap_or(Role::Peer);
+        //
+        // ★ R2084 — and the fallback is GONE with the role fact it stood in
+        // for: every card has both pins now, so "a card like any other" is what
+        // every card is, and this announcement asks the crate about the node
+        // exactly as the painter does.
         // ★★★★★ R1928 — **what a pin is CALLED comes from the model**, and only
         // what it is FOR is this screen's.
         //
@@ -24620,7 +24988,9 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
                 ),
             );
         }
-        if role.accepts() && shows(Side::Input, 0) {
+        // ★ R2084 — `shows` alone: every card has an accepting side now, and
+        // whether its pin is there is the crate's own answer about this node.
+        if shows(Side::Input, 0) {
             nodes.push(
                 AccessNode::new(format!("lab.pin.{name}.accept"), AriaRole::Button).with_name(
                     pin_announcement(
@@ -26405,6 +26775,14 @@ fn waiting_wire(state: &Rc<LabState>) -> serde_json::Value {
             // question. The card is added the way `add_node` adds one, because
             // an answer about a differently-built card is an answer about
             // something else.
+            //
+            // ★★★★★ R2084 — **including whether it opens LISTENING**, which is
+            // where that sentence stopped being true and the drift it warns
+            // about actually happened. `listening` was a hardcoded `false`
+            // here; the round that made a landing require a listen endpoint
+            // then made every role answer *no pin takes the wire*, on a screen
+            // where two of them would have taken it. Measured on the assembled
+            // shell: twenty-one refusals, all of them wrong.
             let mut trial = state.doc.borrow().clone();
             let built = trial.add_node(
                 here,
@@ -26412,7 +26790,7 @@ fn waiting_wire(state: &Rc<LabState>) -> serde_json::Value {
                     role: *role,
                     listens_over: None,
                     dials_over: None,
-                    listening: false,
+                    listening: opens_listening(*role),
                     implementation: Implementation::default(),
                 }),
                 waiting.at.0,
@@ -27073,6 +27451,59 @@ fn watchable_wire(state: &Rc<LabState>) -> serde_json::Value {
     serde_json::json!({ "pins": rows })
 }
 
+/// ★★★★★ R2084 — **which of the legend's appearances every drawn pin wears.**
+///
+/// # Why this register exists
+///
+/// `spec::PIN_LEGEND` is carried as data, and published as `pin_legend`, so
+/// that the key beside the canvas and the marks on the canvas cannot drift.
+/// Nothing ever compared them, and they had drifted: the legend declared three
+/// appearances while the screen had a FOURTH — no pin at all — worn by ten of
+/// the roster's twenty-one roles, because a role used to declare whether it
+/// could be dialled. This round removed that declaration; this register is what
+/// keeps the drift from coming back, and it is the thing an agent reads now
+/// that `roles[]` no longer publishes `accepts`.
+///
+/// ★ Every row's `appearance` is a word from the legend by construction —
+/// [`pin_appearance`] is the painter's own decision — so a client comparing
+/// this register with `pin_legend` is comparing the screen with its key, and
+/// not this file with itself.
+///
+/// ⚠ Split members are here too, under the address `split_pin` spells them by,
+/// and they carry `appearance: null`: a member pin's colour is its own type's
+/// (R1926) and the legend has no word for it. Stated rather than omitted, so a
+/// client counting pins against the canvas is not short by the ones a split
+/// made.
+fn pins_wire(state: &Rc<LabState>) -> serde_json::Value {
+    let mut rows: Vec<serde_json::Value> = Vec::new();
+    for node in state.cards() {
+        let name = state.name_of(node);
+        for side in [Side::Output, Side::Input] {
+            let root = PortPath::root(0);
+            if let Some(worn) = pin_appearance(state, node, side) {
+                rows.push(serde_json::json!({
+                    "card": name,
+                    "pin": pin_word(side, &root),
+                    // The painted address, so a walk aims at what it read
+                    // rather than re-typing a prefix (R2049's rule).
+                    "tag": format!("lab.pin.{name}.{}", pin_word(side, &root)),
+                    "appearance": worn,
+                }));
+            }
+            for (path, _port) in member_pins(state, node, side) {
+                let word = pin_word(side, &path);
+                rows.push(serde_json::json!({
+                    "card": name,
+                    "pin": word,
+                    "tag": format!("lab.pin.{name}.{word}"),
+                    "appearance": serde_json::Value::Null,
+                }));
+            }
+        }
+    }
+    serde_json::json!({ "pins": rows })
+}
+
 /// ★★★★★ R1940 — **what this card's KIND says it is drawn as**, in a sentence.
 ///
 /// Published beside the faces rather than folded into them, because the two
@@ -27251,7 +27682,7 @@ fn link_reverse_wire(state: &Rc<LabState>) -> serde_json::Value {
         Err(why) => serde_json::json!({
             "picked": true,
             "may": false,
-            "why": reverse_refusal(state, &why),
+            "why": reverse_refusal(state, link, &why),
             "berths": [],
         }),
     }

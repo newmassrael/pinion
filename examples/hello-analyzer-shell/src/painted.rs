@@ -7575,7 +7575,18 @@ fn r1838_the_mounted_labs_diagram_survives_maximise_and_detach() {
             let (shot, scene) = painted_at((WIN_W, WIN_H));
             (shot.tags, lab_pins(&scene))
         };
-        assert_eq!(at_opening.len(), 14, "the graph paints fourteen pins");
+        // ★★★★★ R2084 — **two per card, derived**, where this stood at a
+        // hand-written fourteen. The number moved to sixteen the moment every
+        // card gained an accepting side, and a literal is what makes such a
+        // move read as a regression: the two cards that gained one are exactly
+        // the two that used to be drawn with no accepting pin at all, which is
+        // the appearance the lab's own legend never described.
+        let cards = lab_cards(&state).len();
+        assert_eq!(
+            at_opening.len(),
+            cards * 2,
+            "the graph paints a dial and an accept for each of its {cards} card(s)"
+        );
 
         // Fidelity first: the mounted screen reflows, so an equality below is
         // a measurement and not a screen that cannot see a resize.
@@ -12363,7 +12374,7 @@ fn a_person_may_re_classify_the_graph_they_are_in(state: &std::rc::Rc<ShellState
 /// command can be a bare one. A card on this canvas dials from one pin and
 /// listens on a **run** whose length is what has landed on it, so the reversal
 /// is a landing — and both halves of that are things a person meets here and
-/// nobody there ever does: a card that never listens, and a pin that has to
+/// nobody there ever does: a card that listens nowhere, and a pin that has to
 /// appear.
 ///
 /// The mechanism is proven against the reference in `pinion-node-graph`'s own
@@ -12385,7 +12396,7 @@ fn a_person_may_re_classify_the_graph_they_are_in(state: &std::rc::Rc<ShellState
 /// does nothing, and a person finds out by pressing. Here `may_turn` is the
 /// same call the press makes, so the greying, the announcement and the refusal
 /// are one answer — and it says which of the two problems it is, because a card
-/// that never listens and a card with no free pin are fixed by different
+/// with no listen endpoint and a card with no free pin are fixed by different
 /// actions.
 ///
 /// # Which screen this lands on
@@ -12511,13 +12522,13 @@ fn lab_wire(
         .cloned()
 }
 
-/// Phase 3 — **a wire into a card that never listens says so**, before anybody
-/// presses, and the press is refused with the same sentence.
+/// Phase 3 — **a wire into a card that listens nowhere says so**, before
+/// anybody presses, and the press is refused with the same sentence.
 ///
 /// ★ This is the half the reference cannot have: its states all have an inbound
 /// pin, so *the far end does not listen* is not a state that exists there. Here
-/// it is a role's own declaration, and a topology is mostly made of cards that
-/// only ever dial.
+/// it is the card's own configuration — R2084 moved it there from the role —
+/// and a topology is mostly made of cards that only ever dial.
 fn a_wire_into_a_card_that_never_listens_says_so_before_it_is_pressed(
     state: &std::rc::Rc<ShellState>,
 ) {
@@ -12543,17 +12554,23 @@ fn a_wire_into_a_card_that_never_listens_says_so_before_it_is_pressed(
         "★ it will not turn: {answered}"
     );
     let why = answered["why"].as_str().unwrap_or_default();
+    // ★★★★★ R2084 — the sentence moved, deliberately, and it is the same
+    // sentence at four sites now. It read *never listens* — a statement about
+    // the card's KIND, which is what the screen knew while a role declared
+    // whether it accepted at all. The fact is the card's, so the words are
+    // too, and they are the canon's own: *has no listen endpoint*. A person
+    // reading it is told the thing they can change.
     assert!(
-        why.contains("T-01") && why.contains("never listens"),
-        "★★★★★ and it says WHICH card and WHY — named apart from a card that \
-         merely has no free pin, because the two are fixed by different \
-         actions: {why:?}"
+        why.contains("T-01") && why.contains("no listen endpoint"),
+        "★★★★★ and it says WHICH card and WHAT IT LACKS — named apart from a \
+         card that merely has no free pin, because the two are fixed by \
+         different actions: {why:?}"
     );
 
     let refused = lab_invoke(state, "reverse_link", &into_publisher)
         .expect_err("and the press agrees with the pixel");
     assert!(
-        format!("{refused:?}").contains("never listens"),
+        format!("{refused:?}").contains("no listen endpoint"),
         "★ one answer, not two oracles — the greying and the refusal are the \
          same call: {refused:?}"
     );
@@ -14812,6 +14829,207 @@ fn r2010_a_press_reaches_every_mounted_screens_controls() {
             unreachable.join("\n  "),
         );
     });
+}
+
+/// ★★★★★ R2084 — **on the assembled tool, every card carries an accepting pin
+/// and wears one of the three appearances the screen's own legend declares** —
+/// driven on the shell, over one walk.
+///
+/// # What this reproduces
+///
+/// The behaviour canon has no per-role notion of accepting: every card it draws
+/// carries both pins, and whether the accepting one can be called is derived
+/// from that card's own listen endpoints. Ours declared it per ROLE, which made
+/// a fourth appearance the legend beside the canvas does not describe — *no pin
+/// at all* — and gave it to ten of the roster's twenty-one roles.
+///
+/// The taxonomy's half is proven in the lab's own suite and the paint's half in
+/// the lab's own paint test. **What is proven here is that a person on the
+/// ASSEMBLED tool meets it**: the mounted canvas draws the closed pin where it
+/// used to draw nothing, a wire aimed at it is refused by name instead of
+/// having nowhere to land, and saying where the card listens opens the pin and
+/// lets the same wire through — with no role consulted at any step.
+///
+/// ★★★★★ **Where this passes the reference**: there a card that cannot be
+/// dialled is drawn with no inbound socket, so *why will this not take a wire*
+/// has no answer on the canvas at all — the refusal exists only in the release
+/// handler's message, after the drag. Here the pin is drawn, the register says
+/// which appearance it wears, and the sentence names the card and what it lacks.
+///
+/// # Which screen this lands on
+///
+/// Screen A, the node lab, as it is assembled in this shell.
+#[test]
+fn r2084_the_assembled_canvas_draws_a_closed_pin_where_it_drew_none() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        let report = crate::tests::walk_the_application(&state);
+        assert!(
+            report.conforms(),
+            "the application did not reproduce its specification over the walk: {}",
+            report.why().unwrap_or_default()
+        );
+        assert!(
+            report.itinerary().iter().any(|key| key == "lab"),
+            "the walk must stand in the node lab: {:?}",
+            report.itinerary()
+        );
+
+        state.go("lab").expect("the node lab section is open");
+        let closed = every_card_has_an_accepting_pin_the_legend_explains(&state);
+        the_mounted_screen_paints_what_the_register_publishes(&closed);
+        a_wire_into_a_closed_pin_is_refused_by_name(&state, &closed);
+        saying_where_a_card_listens_opens_its_pin(&state, &closed);
+    });
+}
+
+/// Phase 1 — **every card has an accepting pin, and every appearance is one the
+/// legend declares.** Hands back a card whose pin is `closed`.
+fn every_card_has_an_accepting_pin_the_legend_explains(state: &std::rc::Rc<ShellState>) -> String {
+    let published = lab_slot(state, "spec");
+    let legend: BTreeSet<String> = published["pin_legend"]
+        .as_array()
+        .expect("the mounted lab publishes its pin legend")
+        .iter()
+        .map(|row| {
+            row["kind"]
+                .as_str()
+                .expect("a legend row names its appearance")
+                .to_owned()
+        })
+        .collect();
+    assert!(
+        legend.contains("closed"),
+        "★ the legend declares the state a card with nowhere to listen is in: {legend:?}"
+    );
+
+    let register = lab_slot(state, "pins");
+    let rows = register["pins"]
+        .as_array()
+        .expect("the mounted lab publishes its pins");
+    let mut worn: BTreeMap<String, String> = BTreeMap::new();
+    for row in rows {
+        let Some(appearance) = row["appearance"].as_str() else {
+            continue;
+        };
+        assert!(
+            legend.contains(appearance),
+            "★★★★★ a pin is drawn as {appearance:?} and the key beside the \
+             canvas does not explain it: {row}"
+        );
+        if row["pin"].as_str() == Some("accept") {
+            worn.insert(
+                row["card"]
+                    .as_str()
+                    .expect("a row names its card")
+                    .to_owned(),
+                appearance.to_owned(),
+            );
+        }
+    }
+    for card in lab_cards(state) {
+        assert!(
+            worn.contains_key(&card),
+            "★★★★★ {card} has no accepting pin on the assembled canvas — that \
+             absence WAS the fourth appearance, and it is the one the legend \
+             cannot describe: {worn:?}"
+        );
+    }
+    let closed: Vec<String> = worn
+        .iter()
+        .filter(|(_, appearance)| appearance.as_str() == "closed")
+        .map(|(card, _)| card.clone())
+        .collect();
+    assert!(
+        !closed.is_empty(),
+        "★★★★★ the opening graph HAS cards that listen nowhere — before this \
+         round they were the ones drawn with no pin at all: {worn:?}"
+    );
+    assert!(
+        worn.values().any(|appearance| appearance == "accept"),
+        "★ and cards that do listen, or this walk would be asking about one \
+         state and calling it two: {worn:?}"
+    );
+    closed[0].clone()
+}
+
+/// Phase 2 — **the mark is on the assembled screen**, at the address the
+/// register published, and inside the canvas a person is looking at.
+fn the_mounted_screen_paints_what_the_register_publishes(closed: &str) {
+    let shot = painted();
+    let tag = format!("lab.pin.{closed}.accept");
+    let pin = shot.tags.get(&tag).copied().unwrap_or_else(|| {
+        panic!(
+            "★★★★★ the mounted lab publishes {tag} and the assembled screen \
+             paints no such mark — the register and the window disagree"
+        )
+    });
+    let canvas = shot
+        .tags
+        .get("lab.canvas")
+        .copied()
+        .expect("the mounted lab paints its canvas");
+    assert!(
+        pin.x >= canvas.x
+            && pin.y >= canvas.y
+            && pin.x + pin.w <= canvas.x + canvas.w
+            && pin.y + pin.h <= canvas.y + canvas.h,
+        "★ and it is drawn INSIDE the canvas rather than merely somewhere: \
+         {pin:?} against {canvas:?}"
+    );
+}
+
+/// Phase 3 — **a wire aimed at a closed pin is refused by name.**
+///
+/// ★ This is what the pin's existence buys. While a role declared it, a card
+/// that never listened had no accepting side at all, so the crate answered
+/// *no ports* — a sentence about the drawing rather than about the deployment.
+/// Now the run has room and the rule is stated where the canon states it: at
+/// the landing, naming the card and what it lacks.
+fn a_wire_into_a_closed_pin_is_refused_by_name(state: &std::rc::Rc<ShellState>, closed: &str) {
+    let dialler = lab_cards(state)
+        .into_iter()
+        .find(|card| card != closed)
+        .expect("the opening graph holds more than one card");
+    let refused = lab_invoke(state, "connect", &format!("{dialler},{closed}"))
+        .expect_err("a wire cannot land on a card with nowhere to listen");
+    let said = format!("{refused:?}");
+    assert!(
+        said.contains(closed) && said.contains("no listen endpoint"),
+        "★★★★★ it names the CARD and what it lacks — the canon's own sentence, \
+         and a repair a person can actually make: {said:?}"
+    );
+}
+
+/// Phase 4 — **saying where the card listens opens its pin**, with no role
+/// consulted, and the refused wire then lands.
+fn saying_where_a_card_listens_opens_its_pin(state: &std::rc::Rc<ShellState>, closed: &str) {
+    lab_invoke(state, "select", closed).expect("a person may open a card's settings");
+    lab_invoke(state, "set_field", "listen.endpoints=tcp/0.0.0.0:7553")
+        .expect("and say where it listens");
+    let register = lab_slot(state, "pins");
+    let after = register["pins"]
+        .as_array()
+        .expect("a list")
+        .iter()
+        .find(|row| row["card"].as_str() == Some(closed) && row["pin"].as_str() == Some("accept"))
+        .cloned()
+        .expect("the card still has its accepting pin");
+    assert_eq!(
+        after["appearance"].as_str(),
+        Some("accept"),
+        "★★★★★ the CARD's own answer moved the appearance — the whole of what \
+         decides it, now that no role declares one: {after}"
+    );
+    // ★ And the wire phase 3 was refused now lands, which is what makes that
+    // refusal a rule about the deployment rather than about the drawing.
+    let dialler = lab_cards(state)
+        .into_iter()
+        .find(|card| card != closed)
+        .expect("the opening graph holds more than one card");
+    lab_invoke(state, "connect", &format!("{dialler},{closed}"))
+        .expect("★★★★★ and the same wire lands, once the card has somewhere to listen");
 }
 
 #[test]

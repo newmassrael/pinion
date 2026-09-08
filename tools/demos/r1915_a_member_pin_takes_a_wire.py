@@ -166,6 +166,21 @@ def body() -> None:
         # A card nothing has dialled, so the wire cannot close a cycle. The
         # palette is how a person adds one, so it is how this walk adds one.
         listener = add_card(app, surface, "Store")
+        # ★★★★★ R2084 — and it is GIVEN somewhere to listen, because that is now
+        # what makes a card dialable. The taxonomy refuses a landing on a card
+        # with no listen endpoint — the behaviour canon's own rule, at the
+        # canon's own moment — and a Store is not one of the two roles the canon
+        # seeds an endpoint into, so a freshly placed one listens nowhere and
+        # section C's drag was refused with the count unmoved (7 -> 7).
+        #
+        # Said through the screen's own verbs, which is how a person says it:
+        # select the card, write the row. The requirement is stated here rather
+        # than dodged by placing a role the seed happens to cover — a walk that
+        # leaned on the seed would stop testing what section C is about the day
+        # the seed table moved.
+        app.invoke(f"{surface}/select", listener)
+        app.invoke(f"{surface}/set_field", "listen.endpoints=tcp/0.0.0.0:7566")
+        app.tick_ms(16)
         app.invoke(f"{surface}/split_pin", f"{listener},accept")
         app.tick_ms(16)
         frame = boxes(app)

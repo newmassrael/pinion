@@ -438,9 +438,10 @@ pub enum Role {
 /// ninth *fact* meant a ninth match; a role half-declared across them was a
 /// thing a person had to notice.
 ///
-/// This is that one place. The eight accessors on [`Role`] read a field of it,
-/// the palette table is derived from it, and a role that is missing a fact does
-/// not compile.
+/// This is that one place. Every accessor on [`Role`] reads a field of it, the
+/// palette table is derived from it, and a role that is missing a fact does not
+/// compile. (Deliberately no count here: R2084 removed a field and the sentence
+/// that carried one would have been the thing left saying the old number.)
 pub struct RoleSpec {
     /// The role's name — the label the palette shows and the key a saved
     /// document names it by.
@@ -456,8 +457,6 @@ pub struct RoleSpec {
     /// The heading a person reads above its row is **derived** from this rather
     /// than written beside the painter: see `spec::palette_groups`.
     pub group: &'static str,
-    /// Whether it can accept an inbound link at all.
-    pub accepts: bool,
     /// The session mode this role implies, when it implies one.
     pub mode: Option<&'static str>,
     /// ★★★★★ R1967 — **whether this role's WORDS are the canon's own or a
@@ -549,7 +548,6 @@ const ROUTER: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x9A, 0x00, 0x4F),
     gist: "listens, routes",
     group: INFRASTRUCTURE,
-    accepts: true,
     mode: Some("router"),
     wording: Wording::AsTheCanon,
     carries: &[],
@@ -561,7 +559,6 @@ const PEER: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x2D, 0x6C, 0xDF),
     gist: "joins the mesh",
     group: INFRASTRUCTURE,
-    accepts: true,
     mode: Some("peer"),
     wording: Wording::AsTheCanon,
     carries: &[],
@@ -573,7 +570,6 @@ const CLIENT: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x69, 0x71, 0x80),
     gist: "one router only",
     group: INFRASTRUCTURE,
-    accepts: false,
     mode: Some("client"),
     wording: Wording::AsTheCanon,
     carries: &[],
@@ -585,7 +581,6 @@ const STORE: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x1F, 0x8A, 0x4C),
     gist: "volume, key range",
     group: INFRASTRUCTURE,
-    accepts: true,
     mode: Some("peer"),
     // ★ Substituted: the word the protocol gives this node is not the word this
     // screen reads it by. See [`Role::wording`].
@@ -607,7 +602,6 @@ const PUBLISHER: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x8A, 0x5C, 0xF6),
     gist: "sends, with a class",
     group: TRAFFIC,
-    accepts: false,
     mode: None,
     wording: Wording::AsTheCanon,
     // It originates messages, so every parameter is its decision.
@@ -620,7 +614,6 @@ const SUBSCRIBER: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x8A, 0x5C, 0xF6),
     gist: "receives",
     group: TRAFFIC,
-    accepts: true,
     mode: None,
     wording: Wording::AsTheCanon,
     // It chooses neither how often nor how large — those are the sender's. What
@@ -635,7 +628,6 @@ const QUERIER: RoleSpec = RoleSpec {
     tint: Tint::rgb(0xC7, 0x78, 0x00),
     gist: "asks, on a period",
     group: TRAFFIC,
-    accepts: false,
     mode: None,
     wording: Wording::AsTheCanon,
     // A period IS a rate, and a query carries a payload; what it cannot decide
@@ -654,7 +646,6 @@ const RESPONDER: RoleSpec = RoleSpec {
     tint: Tint::rgb(0xC7, 0x78, 0x00),
     gist: "answers",
     group: TRAFFIC,
-    accepts: true,
     mode: None,
     // ★ Substituted, in both halves: the code this screen shows and the word it
     // reads by are its own. See [`Role::wording`].
@@ -691,24 +682,25 @@ const RESPONDER: RoleSpec = RoleSpec {
 // # Why the records are what the round costs
 //
 // Because every fact is required. A role that is missing one does not compile
-// (R1968's design), so thirteen roles is thirteen × nine decisions and none of
-// them can be deferred — which is the property that makes this a data round
-// rather than a plumbing one. The two that are genuinely OURS to decide are
-// [`RoleSpec::carries`], which R1848 established is the domain's call and not
-// the framework's, and [`RoleSpec::accepts`]; each record below says what it
-// decided and why.
+// (R1968's design), so none of the thirteen roles' decisions can be deferred —
+// which is the property that makes this a data round rather than a plumbing
+// one. The one that is genuinely OURS to decide is [`RoleSpec::carries`], which
+// R1848 established is the domain's call and not the framework's; each record
+// below says what it decided and why.
 //
-// ⚠ **`accepts` is a role's capability and the canon has no such field.**
-// Measured this round: the canon gives EVERY card both pins and derives whether
-// the accepting one is live from whether a listen address is configured — its
-// own comment beside the derivation says *pin presence is derived, not
-// declared*. Ours is a coarser statement one level up (whether the role is the
-// sort of thing that is dialled at all), and the difference is the debt's
-// third item, which this instalment does not take.
+// ★★★★★ R2084 — **the roster used to carry a second such decision, and it was
+// a rule the behaviour canon does not have.** Every record declared whether its
+// role could be dialled AT ALL, and every reader of that declaration — the pin
+// derivation, the incompleteness warning, the published role row — asked the
+// ROLE a question the CARD was already answering. Measured against the canon:
+// it gives every card both pins and derives whether the accepting one can be
+// called from that card's own listen endpoints, its own note beside the
+// derivation saying pin presence is derived rather than declared. Two answers
+// to one question is one answer too many, and the coarser one was ours.
 //
-// The direction each record chooses is the one the existing eight already use:
-// a role accepts when it is the END of the flow — a thing that receives, is
-// asked, or is joined — and does not when it is the START.
+// ⇒ the declaration is gone and the derivation is the only answer. What a role
+// once said about itself, a card now says by holding an address — which is the
+// state this screen's legend was already able to draw and never reached.
 
 /// A receiver that takes messages **on its own beat** rather than as they are
 /// sent.
@@ -725,8 +717,6 @@ const PULLER: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x8A, 0x5C, 0xF6),
     gist: "receives, on its own beat",
     group: TRAFFIC,
-    // It is the end of the flow: somebody's messages arrive here.
-    accepts: true,
     mode: None,
     // ★ Restyled: the canon abbreviates the second half of this kind's name and
     // this roster spells its roles out. Nothing is withheld.
@@ -754,7 +744,6 @@ const PUT: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x8A, 0x5C, 0xF6),
     gist: "sends once",
     group: ONE_SHOT,
-    accepts: false,
     mode: None,
     wording: Wording::AsTheCanon,
     // ⚠★★★★★ R2078 — **empty, and the first draft of this record was not.**
@@ -786,7 +775,6 @@ const DELETE: RoleSpec = RoleSpec {
     tint: Tint::rgb(0xB0, 0x33, 0x5B),
     gist: "removes once",
     group: ONE_SHOT,
-    accepts: false,
     mode: None,
     wording: Wording::AsTheCanon,
     // Empty, for [`PUT`]'s measured reason. ⚠ And a removal would have been the
@@ -805,7 +793,6 @@ const GET: RoleSpec = RoleSpec {
     tint: Tint::rgb(0xC7, 0x78, 0x00),
     gist: "asks once",
     group: ONE_SHOT,
-    accepts: false,
     mode: None,
     wording: Wording::AsTheCanon,
     // Empty, for [`PUT`]'s measured reason.
@@ -820,7 +807,6 @@ const RETAINER: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x7C, 0x4D, 0xEF),
     gist: "sends, and keeps it",
     group: EXTENDED,
-    accepts: false,
     mode: None,
     // ★ Substituted: the canon names this kind after the extension library it
     // comes from, which is protocol vocabulary. See [`RoleSpec::wording`].
@@ -843,7 +829,6 @@ const RECOVERER: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x7C, 0x4D, 0xEF),
     gist: "receives, asks again",
     group: EXTENDED,
-    accepts: true,
     mode: None,
     // ★ Substituted, for [`RETAINER`]'s reason.
     wording: Wording::Neutralised,
@@ -859,7 +844,6 @@ const ROSTER: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x0E, 0x9A, 0xA7),
     gist: "reads who is in",
     group: EXTENDED,
-    accepts: true,
     mode: None,
     // ★ Substituted: the canon's label and code here are both the protocol's
     // words for the membership mechanism.
@@ -879,7 +863,6 @@ const SCANNER: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x69, 0x71, 0x80),
     gist: "looks for peers",
     group: DISCOVERY,
-    accepts: false,
     mode: None,
     // ★ Substituted: the canon's word here is the protocol's term for the
     // discovery exchange itself.
@@ -899,7 +882,6 @@ const MEMBER: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x0E, 0x9A, 0xA7),
     gist: "decides who is in",
     group: DISCOVERY,
-    accepts: true,
     mode: None,
     // ★ Restyled: the canon writes this kind's label as a two-word phrase whose
     // first word its group heading already says. Nothing is withheld.
@@ -916,7 +898,6 @@ const BEACON: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x0E, 0x9A, 0xA7),
     gist: "says it is here",
     group: PRESENCE,
-    accepts: false,
     mode: None,
     // ★ Substituted: the canon's label and code here are the protocol's own
     // term for the presence mechanism, and so are its two neighbours'.
@@ -934,7 +915,6 @@ const WATCHER: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x0E, 0x9A, 0xA7),
     gist: "watches who is here",
     group: PRESENCE,
-    accepts: true,
     mode: None,
     // ★ Substituted, for [`BEACON`]'s reason.
     wording: Wording::Neutralised,
@@ -949,7 +929,6 @@ const PROBER: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x0E, 0x9A, 0xA7),
     gist: "asks who is here",
     group: PRESENCE,
-    accepts: false,
     mode: None,
     // ★ Substituted, for [`BEACON`]'s reason.
     wording: Wording::Neutralised,
@@ -964,9 +943,6 @@ const FORWARDER: RoleSpec = RoleSpec {
     tint: Tint::rgb(0x3E, 0x7C, 0x8C),
     gist: "passes it on",
     group: UTILITY,
-    // It is dialled like any receiver; the passing on is what it does with what
-    // arrives.
-    accepts: true,
     mode: None,
     // ★ Restyled: the canon writes this kind's label as the bare verb and this
     // roster reads its roles as agent nouns. Nothing is withheld.
@@ -1160,18 +1136,6 @@ impl Role {
         self.spec().gist
     }
 
-    /// Whether a node of this role can be **dialled** — whether it is the sort
-    /// of thing that listens at all.
-    ///
-    /// Not the same question as whether a *particular* node is reachable: a
-    /// role that can listen and has no endpoint configured shows the closed
-    /// pin, which is the warning the reference's gate raises. This is the
-    /// role's half of that, and the node's half lives in its form.
-    #[must_use]
-    pub const fn accepts(self) -> bool {
-        self.spec().accepts
-    }
-
     /// The session mode this role implies, when it implies one.
     ///
     /// ★★★ R1716 — the value the inspector's `mode` row is **worked out
@@ -1246,8 +1210,9 @@ pub struct LabNode {
     ///
     /// `Option` and not a [`Transport`] with a fall-back, which was R1961's
     /// decision. The fall-back was `unwrap_or(Transport::Tcp)`, and it
-    /// classified every node that does not listen — exactly the roles that
-    /// CANNOT ([`Role::accepts`] is false for Client, Publisher and Querier) —
+    /// classified every node that does not listen — which at the time was read
+    /// off a per-role declaration and since R2084 is read off the card's own
+    /// listen endpoints, the only place it was ever really written —
     /// so half the opening canvas was coloured by a default nobody chose. An
     /// `Option` makes the unclassified state *sayable*, which is what lets the
     /// canvas draw it, the gate name it, and a test count it.
@@ -1276,8 +1241,14 @@ pub struct LabNode {
     /// is what a person drags from.
     #[serde(default)]
     pub dials_over: Option<Transport>,
-    /// Whether *this* node has somewhere to listen. A role that accepts and a
-    /// node with no endpoint is the closed pin.
+    /// Whether *this* node has somewhere to listen.
+    ///
+    /// ★★★★★ R2084 — **the only answer to that question.** Every card carries
+    /// an accept run whatever its role is called, so this field alone decides
+    /// which of the legend's two accepting appearances it wears: a card with an
+    /// endpoint is open, and a card without one is closed. Until this round a
+    /// per-role declaration answered it first and coarsely, which left the
+    /// closed state reachable by only some of the roster.
     pub listening: bool,
     /// Which codebase this node runs, and the wire revisions it speaks (R1885).
     ///
@@ -1633,10 +1604,15 @@ impl NodeKind for LabNode {
         Some(self.role.gist().to_owned())
     }
 
-    /// The accept pin, present only when the role can be dialled.
+    /// Empty on purpose: the accept pin is the variadic run below.
     ///
-    /// Absent rather than disabled for a role that never listens: a pin that
-    /// exists and can never be used is a pin a person will try to drag to.
+    /// ★★★★★ R2084 — this doc used to read *"present only when the role can be
+    /// dialled … a pin that exists and can never be used is a pin a person will
+    /// try to drag to"*, and both halves are gone with the declaration behind
+    /// them. A card's accepting pin can ALWAYS be used — a person gives it an
+    /// address and it opens — so the pin a person drags to is a pin that
+    /// answers, and the appearance says which of the legend's two accepting
+    /// states it is in before they let go.
     fn inputs(&self) -> Vec<Port<Self::Type, Self::Value>> {
         // The fixed part is empty: the accept pin is the variadic run below, so
         // declaring it here as well would give every listening node two.
@@ -1662,9 +1638,25 @@ impl NodeKind for LabNode {
     /// way the crate expresses it: the accept port is a **run**, one port per
     /// link, drawn as one pin because a person authoring a topology is not
     /// choosing which slot to land in.
+    /// ★★★★★ R2084 — **every card has an accepting side**, and what differs is
+    /// whether it is LIVE.
+    ///
+    /// The behaviour canon has no per-role notion of accepting at all: every
+    /// card carries both pins, and whether the accepting one can be called is
+    /// derived from the card's own `listen.endpoints` — which this screen
+    /// already derives, under the same key, in `sync_node_at`. Gating the pin's
+    /// EXISTENCE on the role was a second declaration of a fact the card
+    /// already answers.
+    ///
+    /// ⚠ And it left this screen disagreeing with its own legend.
+    /// `spec::PIN_LEGEND` declares THREE appearances — dial, accept, and
+    /// *closed: nothing is listening, so nothing can call it* — while the
+    /// screen had a FOURTH, no pin at all, on ten of its twenty-one roles. The
+    /// legend is carried as data precisely so that the legend and the pins
+    /// cannot drift; they had.
     fn variadic(&self, side: Side) -> Option<Variadic<Self::Type, Self::Value>> {
         match side {
-            Side::Input if self.role.accepts() => Some(
+            Side::Input => Some(
                 Variadic::at(
                     0,
                     vec![
@@ -1674,7 +1666,8 @@ impl NodeKind for LabNode {
                 )
                 .at_least(1),
             ),
-            _ => None,
+            // The dial side is a fixed pin, declared by `outputs`.
+            Side::Output => None,
         }
     }
 
@@ -1767,10 +1760,10 @@ impl NodeKind for LabNode {
     /// opposite ways on purpose.
     ///
     /// *No role declares one*: this taxonomy's two pins are a dial and an
-    /// accept run, and [`Role::accepts`] already says which roles have the
-    /// second at all. There is no third, occasional pin for a kind to fold
-    /// away, so declaring [`Port::advanced`] anywhere here would be inventing
-    /// a class to have one.
+    /// accept run, and since R2084 every role has both — whether the accepting
+    /// one is live is the card's own answer, not the class's. There is no
+    /// third, occasional pin for a kind to fold away, so declaring
+    /// [`Port::advanced`] anywhere here would be inventing a class to have one.
     ///
     /// *A person may say*: which pins matter on a topology is a property of the
     /// **deployment** and not of the role. A store that never dials in one
@@ -1886,7 +1879,10 @@ impl NodeKind for LabNode {
     /// blocked here would refuse to start a deployment that is perfectly
     /// legitimate.
     fn warning(&self, around: &pinion_node_graph::Surroundings) -> Option<Objection> {
-        if self.role.accepts() && self.listening && !around.any_wired(Side::Input) {
+        // ★ R2084 — the role's half of this is gone with `Role::accepts`: what
+        // matters is that this card LISTENS and nothing here dials it, and a
+        // card that listens is a card that listens whatever its role is called.
+        if self.listening && !around.any_wired(Side::Input) {
             return Some(Objection::Warns(
                 "listening, and nothing on this canvas dials it — the drawing is \
                  not the whole picture"
@@ -2113,6 +2109,31 @@ impl NodeKind for LabNode {
     /// upgrades; when neither is older than the other the ranges overlap and
     /// there is no refusal to blame anybody for.
     fn admits(source: &Self, sink: &Self) -> Admission {
+        // ★★★★★ R2084 — **a wire lands on a listen endpoint, or it does not
+        // land**, and that is the canon's own rule rather than an inference
+        // from it. Its release handler asks `labAccepts(acc)` — which is
+        // literally `!!labListenOf(id)`, a card's own endpoints and nothing
+        // else — and refuses in these words: *connection impossible: `acc` has
+        // no listen endpoint*.
+        //
+        // # Why this arrives with the accept pin
+        //
+        // Until this round the refusal was the PIN'S ABSENCE: a role that did
+        // not accept declared no accepting side, so there was nowhere to land
+        // and the crate answered `NoPorts`. Now every card declares one — which
+        // is what the legend already said, three appearances with `closed`
+        // among them — so the run has room and the rule has to be stated where
+        // the canon states it: at the landing.
+        //
+        // ⇒ The state that used to be *no pin* is now *a closed pin that
+        // refuses by name*, and a person is told which card and what it lacks
+        // instead of being handed a card with nothing to aim at.
+        if !sink.listening {
+            return Admission::Refused(Refusal {
+                end: Side::Input,
+                because: "it has no listen endpoint, so nothing can dial it".to_owned(),
+            });
+        }
         if source.implementation.negotiates_with(sink.implementation) {
             return Admission::Allowed;
         }
@@ -2491,8 +2512,19 @@ mod tests {
         );
     }
 
+    /// ★★★★★ R2084 — **every role declares an accepting side**, and the state
+    /// that used to be "no pin" is now the one this screen's legend already
+    /// names: `closed`.
+    ///
+    /// This test asserted the opposite until this round — `is_some() ==
+    /// role.accepts()` — and it was faithful to a rule the behaviour canon does
+    /// not have. The canon gives every card both pins and derives whether the
+    /// accepting one can be called from that card's own listen endpoints; the
+    /// per-role declaration was a second answer to a question the card was
+    /// already answering, and it left `PIN_LEGEND`'s three appearances short of
+    /// the screen's four states.
     #[test]
-    fn r1651_a_role_that_never_listens_has_no_accept_pin_at_all() {
+    fn r2084_every_role_declares_an_accepting_side() {
         for role in Role::ALL {
             let node = LabNode {
                 role,
@@ -2501,10 +2533,9 @@ mod tests {
                 listening: true,
                 implementation: Implementation::default(),
             };
-            assert_eq!(
+            assert!(
                 node.variadic(pinion_node_graph::Side::Input).is_some(),
-                role.accepts(),
-                "{} declares its accept run exactly when it can be dialled",
+                "{} declares an accept run, whatever it is called",
                 role.name()
             );
             assert!(

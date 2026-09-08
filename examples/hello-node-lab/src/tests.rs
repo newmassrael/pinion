@@ -1302,7 +1302,7 @@ const CARD_UNDER_TEST: &str = "R-01";
 /// ⚠ Asserted in this file rather than in the walk, and the reason is a
 /// measurement rather than a preference: the walk that drives this screen
 /// cannot reach a card whose kind objects. The taxonomy's rule needs a card
-/// that accepts, is listening, and has nothing wired to it, and no gesture this
+/// that is listening with nothing wired to it, and no gesture this
 /// screen publishes removes a link or changes a card's role — so a
 /// counterfactual that put this arm back to a flat `false` left that walk
 /// GREEN. An empty population is a green light for a wrong assertion, which is
@@ -1543,11 +1543,23 @@ fn r1651_the_gate_reports_the_two_warnings_the_reference_reports() {
         let state = state();
         let lines = state.gate_lines();
         let warnings: Vec<&String> = lines.iter().filter(|(b, _)| !b).map(|(_, s)| s).collect();
+        // ★★★★★ R2084 — the listening warning at the opening is P-03's, and it
+        // was HIDDEN until this round: the model's rule is *this card listens
+        // and nothing on this canvas dials it*, and the screen was suppressing
+        // it for every card whose ROLE declared it could not be dialled. P-03
+        // declares `listen` in the specification and no wire lands on it, so
+        // the sentence was true and unsaid.
+        //
+        // ⇒ The role fact was not only a second declaration of what the card
+        // already derives; it was silencing a report about a card that does
+        // listen. S-01's old line was the OTHER finding (*nothing is
+        // listening*), which now belongs to a card something dials — nothing
+        // dials S-01, and its closed pin is what says it listens nowhere.
         assert!(
             warnings
                 .iter()
-                .any(|s| s.starts_with("S-01") && s.contains("listening")),
-            "a store with nowhere to listen is a pin nobody can dial: {warnings:?}"
+                .any(|s| s.starts_with("P-03") && s.contains("listening")),
+            "a card that listens and nothing dials is a service nobody uses: {warnings:?}"
         );
         assert!(
             warnings
@@ -1633,8 +1645,19 @@ fn r1651_the_pin_a_node_shows_is_derived_from_the_form_it_holds() {
                 })
                 .expect("a kind node")
         };
-        assert!(warned(&state), "it opens with nowhere to listen");
-        assert!(!listening(&state), "so the pin is drawn closed");
+        // ★★★★★ R2084 — the DERIVATION is what this test is named for, and it
+        // is asserted directly now. The finding was a proxy for it and stopped
+        // being one: `nothing is listening` is raised when something DIALS a
+        // card that listens nowhere, and nothing dials S-01 at the opening, so
+        // the sentence is correctly absent while the state it stood for is
+        // exactly as it was. What says the card has nowhere to listen is the
+        // card — and the pin it shows.
+        assert!(!listening(&state), "it opens with nowhere to listen");
+        assert!(
+            !warned(&state),
+            "and nothing SAYS so, because nothing dials it: the closed pin is \
+             the whole of what a reader is told here",
+        );
         assert!(
             !undialled(&state),
             "and a card that listens nowhere cannot be undialled — the model's \
@@ -1651,7 +1674,10 @@ fn r1651_the_pin_a_node_shows_is_derived_from_the_form_it_holds() {
         super::sync_node(&state, store);
 
         assert!(listening(&state), "giving it an endpoint opens the pin");
-        assert!(!warned(&state), "and retires the warning it raised");
+        assert!(
+            !warned(&state),
+            "and nothing says it listens nowhere, because now it does",
+        );
         // ★★★★★ R1927 — and it RAISES the other one, which is a real finding
         // and not an artefact of this edit: S-01 dials R-01 and nothing dials
         // S-01, so the moment it has somewhere to listen it is a service the
@@ -3023,11 +3049,17 @@ fn a_card_that_never_listens_greys_the_seat(
             .set(Some(super::LinkPick::Authored(into_publisher)));
         let refusal = super::link_chrome(state)
             .and_then(|c| c.turn_refusal)
-            .expect("a publisher never listens, so there is no way round");
+            .expect("T-01 declares no listen endpoint, so there is no way round");
+        // ★★★★★ R2084 — the sentence names the card and WHAT IT LACKS, where it
+        // used to name the card and its ROLE. The canon's own refusal is this
+        // one — *connection impossible: X has no listen endpoint* — and it is
+        // the honest sentence besides: a publisher that a person gives a listen
+        // endpoint to CAN be dialled, and telling them their card is the wrong
+        // kind would send them to change the wrong thing.
         assert!(
-            refusal.contains("T-01") && refusal.contains("never listens"),
-            "and the sentence names the card and its role rather than a node \
-             number: {refusal:?}"
+            refusal.contains("T-01") && refusal.contains("no listen endpoint"),
+            "and the sentence names the card and what it lacks rather than a \
+             node number: {refusal:?}"
         );
         // ★ The press goes through the same verb the wire does, and it is
         // refused. Asserted through the verb rather than through `may_reverse`
@@ -3201,10 +3233,13 @@ fn r1681_the_accept_run_holds_one_slot_per_thing_that_lands_on_it() {
                         .count();
                     let want = landed + reported;
                     drop(doc);
-                    // The floor is the crate's `at_least(1)`, and it applies to
-                    // the roles that declare an accept run at all — a role that
-                    // never listens has no run and no floor.
-                    let floor = usize::from(state.role_of(node).is_some_and(Role::accepts));
+                    // The floor is the crate's `at_least(1)`.
+                    //
+                    // ★ R2084 — and it applies to EVERY card now, because every
+                    // card declares an accept run: the floor used to be read
+                    // off the role, which was this test carrying a copy of the
+                    // rule the taxonomy states.
+                    let floor = 1;
                     (arity != want.max(floor)).then(|| (state.name_of(node), arity, want))
                 })
                 .collect::<Vec<_>>()
@@ -5975,6 +6010,20 @@ fn r1915_a_wire_on_a_member_is_cut_by_the_fold_and_named() {
             splits(listener, Side::Input),
             "★ a card nothing has dialled has an accept pin nothing is wired to",
         );
+        // ★★★★★ R2084 — and it is GIVEN somewhere to listen, because that is now
+        // what makes a card dialable: the taxonomy refuses a landing on a card
+        // with no listen endpoint, which is the canon's own rule at the canon's
+        // own moment. A fresh card from the palette declares none, so a fixture
+        // that wants one dialled says so — the same edit a person makes in the
+        // form, through the same sync the screen runs.
+        state
+            .forms
+            .borrow_mut()
+            .get_mut(&state.address_of(listener))
+            .expect("a fresh card has a form")
+            .set("listen.endpoints", "tcp/0.0.0.0:7470")
+            .expect("held");
+        super::sync_node(&state, listener);
 
         super::split_pin(&state, dialler, "dial").expect("the dial splits");
         super::split_pin(&state, listener, "accept").expect("the accept splits");
@@ -9135,10 +9184,15 @@ fn r2078_the_wire_carries_every_fact_a_role_declares() {
                  wire is written as",
                 role.name,
             );
-            assert_eq!(
-                row["accepts"].as_bool(),
-                Some(role.accepts),
-                "{} says whether it can be dialled",
+            // ★★★★★ R2084 — and it says NOTHING about whether it can be
+            // dialled, which is the one key this pin lost rather than gained.
+            // The declaration behind it is gone: every role has an accept run
+            // and whether that run is live is the CARD's answer, published as
+            // `nodes[].listening`. A row asserting the role's version would be
+            // asserting the second answer this round removed.
+            assert!(
+                row.get("accepts").is_none(),
+                "{} must not re-declare what its cards answer for themselves",
                 role.name,
             );
             let carried: Vec<String> = row["carries"]
@@ -9180,8 +9234,8 @@ fn r2078_the_wire_carries_every_fact_a_role_declares() {
                 role.name,
                 at("wording"),
             );
-            // ★★★★★ The bijection. `RoleSpec` declares nine facts, of which
-            // eight are published here (`mode` is not — the inspector's mode
+            // ★★★★★ The bijection. `RoleSpec` declares eight facts, of which
+            // seven are published here (`mode` is not — the inspector's mode
             // row is worked out from it and published there), plus the two
             // painted ADDRESSES, which are derived from a role rather than
             // declared by it.
@@ -9190,15 +9244,34 @@ fn r2078_the_wire_carries_every_fact_a_role_declares() {
             // above and raise this number, or write down why a client does not
             // need it. Do not raise it alone — that is how `badge` and `tint`
             // came to be declared, painted, tested and unpublishable.
+            //
+            // ★★★★★ R2084 moved it DOWN, 10 -> 9, which is the direction this
+            // number had never gone and the only direction the warning above
+            // does not cover. It is deliberate and it is a removal from a
+            // published surface: `accepts` was a role-level answer to a
+            // card-level question, so a client that read it was reading the
+            // coarser of two answers. Lowering the pin is what makes the
+            // removal a thing a reader can see rather than a key that quietly
+            // stopped being there.
             let keys = row
                 .as_object()
                 .expect("a role's row is an object")
                 .keys()
                 .count();
+            // ★★★★★ R2084 moved this pin TWICE, and the pair is the round's
+            // whole argument in one number. It went 10 -> 9 when `accepts` was
+            // removed — the first time this pin had ever gone down — and back
+            // to 10 when `opens_listening` was published. Same count, different
+            // fact: `accepts` was a capability the CARD already answers, so the
+            // row carried a second and coarser copy; `opens_listening` is what
+            // a fresh card opens WITH, which no card can answer before it is
+            // placed. A reader who sees only the number would think nothing
+            // happened, which is why it is written out here.
             assert_eq!(
                 keys, 10,
-                "{}'s row carries {keys} key(s); eight of `RoleSpec`'s nine \
-                 facts belong here and two painted addresses are derived",
+                "{}'s row carries {keys} key(s); eight of `RoleSpec`'s eight \
+                 facts belong here (`mode` excepted, `opens_listening` added) \
+                 and two painted addresses are derived",
                 role.name,
             );
         }
