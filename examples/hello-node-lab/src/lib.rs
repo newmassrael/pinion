@@ -1368,11 +1368,17 @@ enum Drag {
     /// `DragLatch::origin` was published to end.
     Pan { start: (i32, i32), latch: DragLatch },
     /// A node is being placed. Held: the node, the grab offset in canvas units.
-    Node {
-        node: NodeId,
-        grab: (i32, i32),
-        snap: bool,
-    },
+    ///
+    /// ★★★★★ R2080 — and **not** whether to snap to the grid, which it carried
+    /// from R1651 to here. That flag had one construction site, hard-coded
+    /// `false`, and no verb or press path could set it: the branch reading it
+    /// was unreachable for 429 rounds while the module header and this screen's
+    /// own operation table both advertised "hold ctrl to snap" to a reader. The
+    /// repair is not to set the flag at pick-up — the canon reads its snap key
+    /// off each MOVE, so the grid is taken and released mid-gesture — so the
+    /// gesture holds no chord at all and
+    /// [`move_cursor_with_chord`] reads the one that arrived with the move.
+    Node { node: NodeId, grab: (i32, i32) },
     /// A link is being authored out of this node's dial pin.
     ///
     /// ★★★★★ R1915 — `port` is WHICH dial pin, because a split one is several.
@@ -17467,6 +17473,17 @@ fn spec_json() -> serde_json::Value {
         })).collect::<Vec<_>>(),
         "graph": spec::GRAPH_NAME,
         "zoom": spec::OPENING_ZOOM,
+        // ★★★★★ R2080 — **the grid a ctrl-held placement drag lands on.**
+        //
+        // Published for the reason R2078 published a role's badge: the
+        // operation exists, this screen's own operation table tells a reader it
+        // exists, and a client that wanted to CHECK it had to know the number
+        // from the source. A walk asserting `x % 22 == 0` would be pinning a
+        // constant it cannot see move; asking for it makes the gesture and the
+        // number one fact. The behaviour canon declares its own grid as a
+        // constant beside the drag, and this is the same declaration crossing
+        // the wire.
+        "grid": SNAP,
         // ★★★ R1687 — the smallest window this screen says it can paint.
         //
         // Published because a demo needs it and two of them were carrying their
@@ -20792,7 +20809,27 @@ fn panned_to(start: (i32, i32), latch: &DragLatch, cursor: (u32, u32)) -> (i32, 
     )
 }
 
+/// The cursor is here now, with **no chord held**.
+///
+/// The zero-chord half of the pair, mirroring the framework's own
+/// `cursor_moved` / `cursor_moved_with_modifiers`: a caller that has no
+/// keyboard to ask (the `point` verb, which addresses a pixel and says nothing
+/// about the hand) says so by coming through here.
 fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
+    move_cursor_with_chord(state, px, py, Modifiers::empty());
+}
+
+/// ★★★★★ R2080 — the cursor is here now, and **this** is what was held while
+/// it got here.
+///
+/// The chord is a parameter and not a cell on the state, because the gestures
+/// that read it read it AT USE: the behaviour canon's placement drag takes the
+/// grid the moment the key goes down, mid-drag, and lets go of it the moment it
+/// comes up, so what matters is the chord of THIS move and not the chord of the
+/// press that started the gesture. A latched flag can express neither edge —
+/// and this screen had exactly that flag, on a gesture nothing supplied, for
+/// 429 rounds (see [`Drag::Node`]).
+fn move_cursor_with_chord(state: &Rc<LabState>, px: u32, py: u32, chord: Modifiers) {
     state.cursor.set((px, py));
     // ★ R1916 — a move is what says the pointer is here again after a leave.
     state.pointer_inside.set(true);
@@ -20838,11 +20875,13 @@ fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
                 }));
             }
         }
-        Drag::Node { node, grab, snap } => {
+        Drag::Node { node, grab } => {
             let (ux, uy) = to_canvas(state, px, py);
             let mut cx = ux - grab.0;
             let mut cy = uy - grab.1;
-            if snap {
+            // ★★★★★ R2080 — the chord of THIS move, so the grid is taken and
+            // released while the hand is down, which is what the canon does.
+            if chord.ctrl {
                 cx = (cx + SNAP / 2) / SNAP * SNAP;
                 cy = (cy + SNAP / 2) / SNAP * SNAP;
             }
@@ -20974,7 +21013,6 @@ fn press(state: &Rc<LabState>) {
             state.drag.set(Some(Drag::Node {
                 node: *node,
                 grab: (ux - cx, uy - cy),
-                snap: false,
             }));
         }
         Hit::Pin {
@@ -23177,8 +23215,11 @@ impl External for LabOracle {
         // This screen keeps `layout_point` because it needs the PAN term too,
         // and the two agree — asserted rather than assumed, by
         // `r1727_the_readings_extent_is_the_surface_the_screen_was_told_about`.
+        // ★★★★★ R2080 — and the reading now carries the third fact about this
+        // one delivery: the chord held while the hand travelled. The placement
+        // drag's grid is a function of it, read per move.
         let (px, py) = pinion_core::external::layout_point(VIEW_TAG, at.at);
-        move_cursor(&state, px, py);
+        move_cursor_with_chord(&state, px, py, at.modifiers);
     }
 
     /// ★★★★★ R1700 §5.35 — what a press here addresses, for the framework to

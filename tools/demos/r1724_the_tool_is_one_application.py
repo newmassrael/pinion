@@ -36,6 +36,13 @@ What this script drives, on the running application:
 * **F** — the accessibility tree follows the rail: the lab's tree hangs under
   the page region while it is showing.
 * **G** — leaving and returning is a return, not a restart.
+* **H** — the mounted palette is the behaviour canon's roster: 21 kinds in 7
+  groups, every heading and row reached by scrolling the pane a reader
+  scrolls, and the row furthest from the top adds the card its badge predicts
+  (R2078; this list said A-G for one round after it landed).
+* **I** — the chord of each move decides where a card lands: one held gesture,
+  the same pixel, plain then ctrl then released, and the grid taken and given
+  back mid-flight (R2080).
 
 Run from the workspace root:
     cargo build -p hello-analyzer-shell --release
@@ -132,6 +139,41 @@ def card_names(app: RpcSubprocess) -> set:
     """
     answer = app.query(f"/{LAB_ROOT}{EXT}/nodes")
     return {name for name in str(answer).split(",") if name}
+
+
+def lab_places(app: RpcSubprocess) -> dict:
+    """Where every card on the mounted lab's canvas sits, in CANVAS units.
+
+    ★★★★★ R2080 — read out of the screen's own saved document, which is the
+    only channel that answers a position in the units the gesture works in. A
+    painted rectangle is the camera's answer, and recovering a canvas unit from
+    one here would re-derive this screen's zoom and pan in Python — the class of
+    transcription that makes a walk agree with a picture nobody sees.
+
+    Keyed by the id the document itself hands out, so nothing here has to know
+    what a card is called or how a name is minted.
+    """
+    saved = json.loads(str(app.query(f"/{LAB_ROOT}{EXT}/archive")))
+    return {
+        json.dumps(node["id"]): (node["x"], node["y"])
+        for tree in saved["document"]["trees"]
+        for node in tree["nodes"]
+    }
+
+
+def the_one_that_moved(before: dict, after: dict) -> tuple:
+    """The place of the single card that moved, refusing any other count.
+
+    A gesture that missed its target moves nothing and a gesture that took the
+    canvas with it moves everything; both are failures of the drive rather than
+    of the claim, and telling them apart in the message is what makes them
+    cheap to fix.
+    """
+    changed = sorted(key for key in after if before.get(key) != after[key])
+    assert len(changed) == 1, (
+        f"exactly one card should have moved; {len(changed)} did ({changed})"
+    )
+    return after[changed[0]]
 
 
 def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
@@ -494,6 +536,101 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         )
         app.scroll(body_tag, to=(0, 0))
         app.tick_ms(16)
+
+        # ── (I) the chord of each move decides where the card lands ───────
+        # ★★★★★ R2080 — "drag a node to place it (hold ctrl to snap)" is written
+        # in this screen's module header AND in its own published operation
+        # table, and for 429 rounds nothing could perform it: the gesture
+        # carried a snap flag with one construction site, hard-coded false, and
+        # no press path or verb could set it, so the branch reading it was
+        # unreachable while two documents told a reader the operation exists.
+        #
+        # What was missing was not a flag beside it but a SUPPLY. The
+        # framework's move payload carried the position and no chord, so
+        # nothing inside the callback could know what was held — R1619's own
+        # defect one edge later: that round stamped the PRESS because a gesture
+        # that begins at the press needs the chord it began with, and left the
+        # march carrying position alone.
+        #
+        # Driven the way the canon reads it — PER MOVE, inside one held
+        # gesture — because that is the half a latch cannot reproduce: the same
+        # pixel resolves to two different places depending only on the chord
+        # that arrived with the move, and letting the key go hands the pixel
+        # back.
+        banner("I — hold ctrl and the placement drag lands on the grid")
+        grid = spec["grid"]
+        ok(f"I: the screen publishes the grid it snaps to ({grid} canvas units)", grid > 0)
+        # A card of this section's own making, so the gesture runs on something
+        # no earlier section is holding.
+        rects_before = abs_rects_of(app.snapshot(source="paint"))
+        cards_before = card_names(app)
+        press_at(app, rects_before[roles[0]["tag"]])
+        arrived_cards = card_names(app) - cards_before
+        assert_eq(
+            len(arrived_cards),
+            1,
+            f"I: pressing {roles[0]['name']} put one card on the canvas",
+        )
+        # ★ The seat is DERIVED, never spelled: the marks that appeared with the
+        # card are the card's, and the widest of them is the body a hand picks
+        # up (its pins hang off the edges, so containment would refuse the very
+        # rectangle it is looking for). Nothing separately proves the choice —
+        # the gesture's own effect does, because `the_one_that_moved` refuses a
+        # drag that moved no card.
+        landed = abs_rects_of(app.snapshot(source="paint"))
+        arrived = {tag: landed[tag] for tag in landed if tag not in rects_before}
+        seat = max(arrived.values(), key=lambda r: r[2] * r[3])
+        print(
+            f"[demo] {sorted(arrived_cards)[0]} arrived as {len(arrived)} new "
+            f"mark(s); the widest is {seat[2]}x{seat[3]}"
+        )
+
+        places = lab_places(app)
+        grab = (seat[0] + seat[2] // 2, seat[1] + seat[3] // 2)
+        aim = (grab[0] + 37, grab[1] + 29)
+        app.drag(from_at=grab, to_at=aim, phase="begin")
+        app.tick_ms(16)
+        plain = the_one_that_moved(places, lab_places(app))
+        # Walk the hand a pixel at a time until it is genuinely between two grid
+        # lines, so the comparison below cannot pass by having landed on one.
+        nudges = 0
+        while plain[0] % grid == 0 and plain[1] % grid == 0:
+            nudges += 1
+            assert nudges <= grid, "I: no pixel within a grid step places off the grid"
+            aim = (aim[0] + 1, aim[1])
+            app.drag(from_at=aim, to_at=aim, steps=1, phase="move")
+            app.tick_ms(16)
+            plain = the_one_that_moved(places, lab_places(app))
+        # Take the grid — same pixel, same gesture, never released.
+        app.modifiers(ctrl=True)
+        app.drag(from_at=aim, to_at=aim, steps=1, phase="move")
+        app.tick_ms(16)
+        held = the_one_that_moved(places, lab_places(app))
+        ok(
+            f"I: ★★★★★ with ctrl held the card lands on the {grid}-unit grid "
+            f"at {held}, from the same pixel that placed it at {plain}",
+            held[0] % grid == 0 and held[1] % grid == 0,
+        )
+        ok(
+            "I: ★★★★★ and the two are different, so the chord decided rather "
+            "than the pixel",
+            held != plain,
+        )
+        # Let the key go, still holding the drag, and settle it.
+        app.modifiers()
+        app.drag(from_at=aim, to_at=aim, steps=1, phase="end")
+        app.tick_ms(16)
+        settled = the_one_that_moved(places, lab_places(app))
+        ok(
+            f"I: ★★★★★ letting ctrl go INSIDE the gesture hands the pixel back "
+            f"({settled}) -- which a flag latched at pick-up cannot do, and is "
+            "what says the chord is read per move",
+            settled == plain,
+        )
+        print(
+            f"[demo] one gesture, three chords: plain {plain} -> ctrl {held} -> "
+            f"released {settled} (grid {grid}, {nudges} nudge(s) to get off it)"
+        )
 
         print(f"\n[demo] {len(CHECKS)} named check(s)")
         ok("the tool is one application at three of its seven seats", True)

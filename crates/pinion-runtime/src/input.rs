@@ -3634,7 +3634,24 @@ impl InputRouter {
         // different basis and their consumers read the fraction, so publishing a
         // pixel verdict for them would judge arithmetic nobody performs.
         pinion_core::arrival::record_pointer_arrival(primary, arrival);
-        external.handle.pointer_move(arrival.reading());
+        // ★★★★★ R2080 §5.35 §5.41 — and the chord held right now goes WITH it,
+        // from the same cache (`held_modifiers`) R1619 stamps the press wire
+        // from. That round's own doc names the class: before it, only the
+        // release edge carried modifiers, so a gesture that BEGAN at the press
+        // could not read what it began with. The march was left behind by the
+        // same reasoning one edge later — a gesture whose step size is a
+        // function of the chord (a snapping placement drag) reads it at use,
+        // and every move delivered here answered "nothing held".
+        //
+        // The cache and NOT the `modifiers` parameter the move entry threads:
+        // the zero-modifier wrapper `cursor_moved` exists (tests, and any
+        // backend that has no keyboard to ask), so a chord genuinely held would
+        // arrive here as empty through it. The cache has one writer and is the
+        // absolute state; the parameter is what the pan channel reads for the
+        // move it is advancing.
+        external
+            .handle
+            .pointer_move(arrival.reading().with_modifiers(self.held_modifiers));
         // R1430 §5.35 — every non-positional axis (pressure / tilt / twist /
         // tangential / height) travels WITH the move (the W3C `pointermove`
         // model), forwarded as ONE bundle so a new axis is a struct field, not a
@@ -9571,6 +9588,73 @@ mod tests {
                 "2:PointerUp".into(),
             ],
         );
+    }
+
+    /// ★★★★★ R2080 §5.35 §5.41 — **and so does every move of the march.**
+    ///
+    /// The sibling of the test above, one edge later, and it repairs that
+    /// repair's own remainder: R1619 stamped the press because a gesture that
+    /// *begins* at the press needs the chord it began with, and left the move
+    /// payload carrying position alone — so a gesture that *continues* under a
+    /// chord could not read one either. The two are different gestures, not one:
+    /// a placement drag that snaps to a grid takes the grid mid-flight and lets
+    /// go of it mid-flight, which is what the behaviour canon does and what no
+    /// press-time answer can express.
+    ///
+    /// Driven as a chord really arrives — absolute, out of band, between two
+    /// moves of ONE held capture — because the defect this closes is not "a
+    /// modifier never arrives" but "it can only be asked at pick-up", and a
+    /// test that set the chord before the press could not tell those apart.
+    #[test]
+    fn r2080_every_move_of_a_march_carries_the_chord_held_while_it_moved() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut state = Scene::External(
+            ExternalNode::new(Box::new(ReadingExternal(Arc::clone(&log)))).with_tag("board"),
+        );
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_primary_and_subtag(
+                600,
+                600,
+                Rect::new(80, 80, 400, 400),
+                Rect::new(96, 80, 8, 8),
+                "board",
+                "cell",
+            ),
+            &mut state,
+        );
+        let ctrl = Modifiers {
+            shift: false,
+            ctrl: true,
+            alt: false,
+            meta: false,
+        };
+        // Pick up with nothing held, then take the grid, then let it go —
+        // three deliveries of one gesture.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.set_held_modifiers(ctrl);
+        router.cursor_moved(PointerId::MOUSE, 140.0, 100.0, &mut state);
+        router.set_held_modifiers(Modifiers::empty());
+        router.cursor_moved(PointerId::MOUSE, 180.0, 100.0, &mut state);
+
+        let seen = log.lock().expect("mutex poisoned").clone();
+        assert_eq!(seen.len(), 3, "the press forwards one, then two marches");
+        assert_eq!(
+            seen.iter().map(|r| r.modifiers).collect::<Vec<_>>(),
+            vec![Modifiers::empty(), ctrl, Modifiers::empty()],
+            "the chord of each move, and it changes twice mid-capture",
+        );
+        // The positions still march, so the chord is not costing the payload
+        // its own subject. Compared with a tolerance and not for equality: the
+        // pixel is recovered by multiplying a normalised `f32` fraction back by
+        // the extent, and 60 comes back as 60.000004.
+        for (seen, want) in seen.iter().map(|r| r.px().0).zip([20.0_f32, 60.0, 100.0]) {
+            assert!(
+                (seen - want).abs() < 1e-3,
+                "cursor - origin, per delivery: {seen} is not {want}",
+            );
+        }
     }
 
     #[test]

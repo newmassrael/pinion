@@ -1989,6 +1989,96 @@ fn r1654_a_node_drags_above_and_left_of_the_opening_graph() {
     });
 }
 
+/// ★★★★★ R2080 — **the grid this screen has advertised since it was built.**
+///
+/// "hold ctrl to snap" is written in the module header and in this screen's own
+/// operation table, and for 429 rounds nothing could perform it. The gesture
+/// carried a `snap` flag with ONE construction site, hard-coded `false`, and no
+/// verb and no press path could set it — so the branch reading it was
+/// unreachable while two documents told a reader the operation exists. What was
+/// missing was not a flag beside it but a SUPPLY: the framework's move payload
+/// carried the position and no chord, so nothing inside this callback could
+/// know what was held.
+///
+/// Asserted the way the canon behaves, which is what makes the assertion strong:
+/// the chord is read PER MOVE, so the two states are interleaved inside ONE
+/// held gesture and the same pixel lands on the grid or off it depending only on
+/// the chord that arrived with the move. A latched flag — the design this
+/// replaces — cannot produce this log at all, and a test that merely pressed
+/// ctrl before the press would have passed against it.
+#[test]
+fn r2080_the_chord_of_each_move_decides_whether_the_card_lands_on_the_grid() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        crate::painted::render_so_a_press_can_be_asked(&state);
+        let node = state.node_of("R-01").expect("on the canvas");
+        let before = super::card_rect(&state, node).expect("a card");
+        let start = super::content_to_window(
+            &state,
+            i64::from(before.x + before.w / 2),
+            i64::from(before.y + before.h / 2),
+        )
+        .expect("on screen");
+        let ctrl = pinion_core::Modifiers {
+            shift: false,
+            ctrl: true,
+            alt: false,
+            meta: false,
+        };
+        let placed = || {
+            state
+                .doc
+                .borrow()
+                .tree(super::ROOT)
+                .and_then(|t| t.node(node).map(|n| (n.x, n.y)))
+                .expect("the node")
+        };
+
+        super::move_cursor(&state, start.0, start.1);
+        super::press(&state);
+        let mut plain = Vec::new();
+        let mut held = Vec::new();
+        // Eight consecutive pixels, each asked twice: once with nothing held,
+        // once with the grid taken. One gesture, never released between.
+        for step in 0..8 {
+            let (px, py) = (start.0 + step, start.1 + step);
+            super::move_cursor(&state, px, py);
+            plain.push(placed());
+            super::move_cursor_with_chord(&state, px, py, ctrl);
+            held.push(placed());
+        }
+        super::release(&state);
+
+        // The grid the WIRE publishes, and not the constant this file could
+        // read directly: the number a client is told is the number the gesture
+        // uses, or the two are free to part.
+        let grid = i32::try_from(
+            super::spec_json()["grid"]
+                .as_i64()
+                .expect("the specification publishes the grid a chorded drag lands on"),
+        )
+        .expect("a grid is a canvas distance");
+        assert_eq!(grid, super::SNAP, "one grid, published and applied");
+        assert!(
+            held.iter().all(|&(x, y)| x % grid == 0 && y % grid == 0),
+            "every chorded move landed on the {grid}-unit grid: {held:?}",
+        );
+        // NON-VACUITY, and it is what says the chord decided rather than the
+        // fixture: consecutive pixels cannot all be grid multiples, so a plain
+        // move must be able to land between two of them.
+        assert!(
+            plain.iter().any(|&(x, y)| x % grid != 0 || y % grid != 0),
+            "a plain move places where the hand is, off the grid: {plain:?}",
+        );
+        assert!(
+            plain.iter().zip(&held).any(|(a, b)| a != b),
+            "the same pixel resolved to two places inside one gesture",
+        );
+    });
+}
+
 /// R1654 — the group behaviour the reference has: a frame's box is DERIVED from
 /// what it holds, a card dropped inside joins it, and dragging the frame takes
 /// its members along.

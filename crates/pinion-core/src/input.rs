@@ -2065,13 +2065,73 @@ pub struct PointerReading {
     /// `(0.0, 0.0)` — the router collapses rather than dividing by zero, so
     /// [`px`](Self::px) stays finite.
     pub extent: (f32, f32),
+    /// ★★★★★ R2080 §5.35 §5.41 — the keyboard chord held **when this move was
+    /// delivered**, stamped from the router's absolute cache.
+    ///
+    /// # Why the chord rides the move rather than being latched at the press
+    ///
+    /// A gesture whose *step* is a function of the chord reads it at USE, not
+    /// at pick-up: a grid-snapping placement drag lets go of the grid the
+    /// moment the key comes up, mid-gesture, and takes it the moment it goes
+    /// down. Latching at the press cannot express either edge, and a screen
+    /// that latches answers a question ("was it held when the hand went
+    /// down?") no one asked. The behaviour canon this workspace reproduces
+    /// reads its snap key off the *move* event for exactly that reason, and in
+    /// two different gestures.
+    ///
+    /// # It is the same cache the press edge is stamped from
+    ///
+    /// R1619 made the router's absolute modifier state the single writer and
+    /// stamped it onto the press wire, whose doc states the defect it repaired:
+    /// before it, only the RELEASE carried modifiers, so a gesture that *began*
+    /// at the press could not read the chord it began with. The move edge was
+    /// left behind by that repair — the payload a captured surface receives per
+    /// march carried position and nothing else — so a gesture that *continues*
+    /// under a chord could not read it either. One cache, every edge.
+    ///
+    /// # Floor, measured by probing 6.11.1
+    ///
+    /// There the held-chord accessor is declared on the base class **every**
+    /// input event inherits, so a move event answers the chord without asking
+    /// for it, and a drop event declares its own accessor besides. On that axis
+    /// the floor was above us until this field: the fraction, the extent and
+    /// the chord are all facts about one delivery, and a payload that carries
+    /// two of the three makes the third unreachable from inside the callback.
+    ///
+    /// [`Modifiers::empty`] on every reading built by [`new`](Self::new) — a
+    /// consumer that never asks is unaffected, and a producer that cannot
+    /// answer the axis says so by leaving it empty rather than by inventing a
+    /// chord.
+    pub modifiers: Modifiers,
 }
 
 impl PointerReading {
-    /// A reading of `at` taken over a rectangle measuring `extent`.
+    /// A reading of `at` taken over a rectangle measuring `extent`, with **no
+    /// chord held** ([`modifiers`](Self::modifiers)).
+    ///
+    /// The chord is added by [`with_modifiers`](Self::with_modifiers) rather
+    /// than taken here, so that every producer written before the axis existed
+    /// keeps compiling and keeps meaning what it said: a reading with an empty
+    /// chord is what a channel that cannot observe the keyboard should hand
+    /// over.
     #[must_use]
     pub const fn new(at: (f32, f32), extent: (f32, f32)) -> Self {
-        Self { at, extent }
+        Self {
+            at,
+            extent,
+            modifiers: Modifiers::empty(),
+        }
+    }
+
+    /// R2080 §5.35 §5.41 — the same reading, stamped with the chord held when
+    /// it was delivered.
+    #[must_use]
+    pub const fn with_modifiers(self, modifiers: Modifiers) -> Self {
+        Self {
+            at: self.at,
+            extent: self.extent,
+            modifiers,
+        }
     }
 
     /// A reading over a rectangle of **unit** size: the fraction is the whole
@@ -3322,5 +3382,37 @@ mod key_arrival_tests {
         let reading = super::PointerReading::new((0.0, 0.0), (0.0, 0.0));
         assert_eq!(reading.px(), (0.0, 0.0));
         assert!(reading.px().0.is_finite() && reading.px().1.is_finite());
+    }
+
+    /// ★★★★★ R2080 — a reading says which chord arrived with it, and a producer
+    /// that cannot observe the keyboard says so by leaving it empty.
+    ///
+    /// The default matters as much as the stamp: every channel that hands a
+    /// reading over without asking a keyboard (a test, a headless verb that
+    /// addresses a pixel) keeps meaning what it said, and a consumer reading
+    /// the axis sees "nothing held" rather than a chord nobody was holding.
+    #[test]
+    fn r2080_a_reading_carries_the_chord_it_was_stamped_with() {
+        let plain = super::PointerReading::new((0.25, 0.5), (400.0, 320.0));
+        assert_eq!(
+            plain.modifiers,
+            Modifiers::empty(),
+            "a reading nobody stamped holds no chord",
+        );
+        let ctrl = Modifiers {
+            shift: false,
+            ctrl: true,
+            alt: false,
+            meta: false,
+        };
+        let held = plain.with_modifiers(ctrl);
+        assert_eq!(held.modifiers, ctrl);
+        assert_ne!(plain, held, "the chord is part of what a reading IS");
+        // The stamp is the only difference: a gesture reading `px` mid-chord
+        // must get the same pixel it would get without one.
+        assert_eq!(
+            (held.at, held.extent, held.px()),
+            (plain.at, plain.extent, plain.px())
+        );
     }
 }
