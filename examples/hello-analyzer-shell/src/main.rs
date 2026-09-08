@@ -5619,6 +5619,37 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::new("cursor", "string"),
         SchemaField::new("selected", "string"),
         SchemaField::new("hit", "string"),
+        // ★★★★★ R2100 — WHAT IS AT A POINT IS A QUESTION, AND A QUESTION IS
+        // NOT A COMMAND.
+        //
+        // `hit` above answers for the cursor, so a client asking about any
+        // OTHER point had to aim the cursor there first — and `point` is an
+        // action that really moves it: it sets `pointer_inside`, carries the
+        // hover crossing, and previews a live carry. So the only way to ask
+        // "what is at (x,y)" was to CHANGE the screen, which is a question
+        // that perturbs its own answer.
+        //
+        // Measured: `r1649`'s paint-versus-gesture sweep asks 588 points, so
+        // it dragged the cursor across the whole window 588 times to read a
+        // pure function — `Hit::at` takes its coordinates and never consults
+        // the cursor — and that walk sat at 108.09s of the sweep's 180s
+        // budget on the hosted runner, the third-largest in 726 demos and one
+        // nobody had named.
+        //
+        // A parametric READ, not a second action: the answer is a function of
+        // the state and the point, the channel says so, and `$schema` now
+        // publishes an argument grammar an agent can discover instead of
+        // learning that a verb happens to return something.
+        SchemaField::parametric(
+            "hit.<x>.<y>",
+            "string",
+            const {
+                &[
+                    SchemaArg::key("x", "int", "cursor"),
+                    SchemaArg::key("y", "int", "cursor"),
+                ]
+            },
+        ),
         SchemaField::new("keymap", "string"),
         SchemaField::new("drag", "string"),
         SchemaField::new("carrying", "string"),
@@ -5873,6 +5904,26 @@ fn query_gesture(state: &ShellState, path: &str) -> Result<IntrospectValue, Read
         )),
         "hit" => {
             let (x, y) = state.cursor.get();
+            Ok(IntrospectValue::Text(hit_word(&Hit::at(state, x, y))))
+        }
+        // R2100 — the same answer for ANY point, without moving anything. The
+        // arm above is this one applied to the cursor, and both go through
+        // `Hit::at`, so the cursor's answer and a point's answer cannot come
+        // from two different tests.
+        parametric if parametric.starts_with("hit.") => {
+            let rest = &parametric["hit.".len()..];
+            let (x, y) = rest.split_once('.').ok_or(ReadRefusal::UnknownPath)?;
+            let (x, y) = (
+                x.parse::<u32>().map_err(|_| ReadRefusal::UnknownPath)?,
+                y.parse::<u32>().map_err(|_| ReadRefusal::UnknownPath)?,
+            );
+            // Refused rather than answered outside the shell, for the reason
+            // the `point` action refuses there: a hit word for a pixel that is
+            // not on this window is not a fact about this window.
+            let (w, h) = window_size();
+            if x >= w || y >= h {
+                return Err(ReadRefusal::UnknownPath);
+            }
             Ok(IntrospectValue::Text(hit_word(&Hit::at(state, x, y))))
         }
         "drag" | "carrying" => Ok(carry_slot(state, path)),
@@ -6179,6 +6230,10 @@ impl ExternalIntrospect for ShellOracle {
             "cursor" | "selected" | "hit" | "drag" | "carrying" | "float_grab" | "crossing" => {
                 query_gesture(state, path)
             }
+            // R2100 — the parametric member of that family. Routed beside its
+            // scalar sibling rather than in a branch of its own, so the two
+            // cannot drift apart.
+            parametric if parametric.starts_with("hit.") => query_gesture(state, parametric),
             "keymap" => text(
                 KEYMAP
                     .iter()
@@ -6275,6 +6330,11 @@ impl ExternalIntrospect for ShellOracle {
             | "affordances" | "states" | "remedies" | "steppers" | "toast" | "cursor"
             | "selected" | "hit" | "keymap" | "rail" | "tabs" | "catalogue" | "config_open"
             | "drag" | "carrying" => Err(InterveneError::ReadOnly),
+            // R2100 — a declared read is READ-ONLY, not unknown. The two
+            // refusals say different things to an agent: one means "you have
+            // the wrong path", the other means "that path exists and this is
+            // not how you change it".
+            parametric if parametric.starts_with("hit.") => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }

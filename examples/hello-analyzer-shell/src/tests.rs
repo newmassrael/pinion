@@ -2859,6 +2859,85 @@ fn board_layout(state: &std::rc::Rc<super::ShellState>) -> String {
     serde_json::to_string(&state.board.get()).expect("a board serialises")
 }
 
+/// ★★★★★ R2100 — **asking what is at a point answers, and changes nothing.**
+///
+/// Before this round the only way to learn what a point hit-tests to was the
+/// `point` ACTION, which really moves the cursor: it sets `pointer_inside`,
+/// carries the hover crossing and previews a live carry. So a client asking a
+/// question had to change the screen to ask it, and a sweep of the window
+/// asked the question by dragging the pointer across every part of it.
+///
+/// The three assertions are three different claims, and each fails on its own:
+///
+/// 1. the read ANSWERS, and answers what the paint's own hit test says —
+///    checked against `Hit::at` rather than against a literal, because a
+///    literal here would be a second copy of the thing under test;
+/// 2. it moves NOTHING — `cursor` is byte-identical before and after, which is
+///    what makes this a property rather than a speed-up. A later round that
+///    routes the read back through the action fails here;
+/// 3. and the action still does move it, so this test cannot pass by the
+///    screen having lost the ability to point at all. That third one is the
+///    non-vacuity check: without it, deleting `move_cursor` outright would
+///    leave the first two green.
+#[test]
+fn r2100_asking_what_is_at_a_point_answers_without_moving_the_pointer() {
+    use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        let mut oracle = super::ShellOracle::new();
+        oracle.attach_state(state.clone());
+
+        let text = |value: IntrospectValue| match value {
+            IntrospectValue::Text(t) => t,
+            other => panic!("a hit word is text, got {other:?}"),
+        };
+
+        let (tag, ax, ay) = grip_centre(1);
+        let before = text(oracle.query("cursor").expect("the cursor is readable"));
+
+        // (1) it answers, and it answers what the paint's hit test does.
+        let asked = text(
+            oracle
+                .query(&format!("hit.{ax}.{ay}"))
+                .expect("a point on this window has a hit word"),
+        );
+        assert_eq!(
+            asked,
+            super::hit_word(&super::Hit::at(&state, ax, ay)),
+            "the parametric read and the paint's own hit test are one function"
+        );
+        assert!(
+            asked.contains(&tag) || !asked.is_empty(),
+            "{tag} at ({ax},{ay}) is a painted control, so the word is not empty"
+        );
+
+        // (2) and it moved nothing.
+        assert_eq!(
+            text(oracle.query("cursor").expect("the cursor is readable")),
+            before,
+            "a question moved the pointer — `hit.<x>.<y>` is a read"
+        );
+
+        // (3) while the ACTION still does, so (2) cannot pass vacuously.
+        point(&mut oracle, ax, ay);
+        assert_eq!(
+            text(oracle.query("cursor").expect("the cursor is readable")),
+            format!("{ax},{ay}"),
+            "the `point` action is still the command that moves the cursor"
+        );
+
+        // A point outside the shell is refused rather than answered, for the
+        // reason the action refuses there: a hit word for a pixel this window
+        // does not have is not a fact about this window.
+        assert!(
+            oracle.query("hit.99999.99999").is_err(),
+            "a point outside the window has no hit word here"
+        );
+    });
+}
+
 /// ★★★★★ R1701 — **two clicks on a card's header toggle it between its size on
 /// the board and the whole board, and carry nothing else with them.**
 ///

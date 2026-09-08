@@ -834,10 +834,19 @@ def body() -> None:
         # catches — and the second is what found R1648 painting every card's
         # contents at twice their intended offset.
         tags = {node.get("tag") for _p, node in walk_nodes(snap) if node.get("tag")}
+        # ★★★★★ R2100 — ASKED AS A QUESTION, NOT DRIVEN AS A COMMAND.
+        # This sweep used to call the `point` ACTION, which really moves the
+        # cursor: it sets `pointer_inside`, carries the hover crossing and
+        # previews a live carry. So 588 probes dragged the pointer across the
+        # whole window while asserting about what the window paints — a
+        # measurement that changes the thing it measures, and the largest
+        # single cost in a walk that sat at 108.09s of a 180s budget on the
+        # hosted runner. `hit.<x>.<y>` is the same `Hit::at` as a READ.
+        before = q(tf, "cursor")
         probed, named = 0, 0
         for py in range(4, 900, 44):
             for px in range(4, 1440, 52):
-                where = inv(tf, "point", f"{px},{py}")
+                where = q(tf, f"hit.{px}.{py}")
                 probed += 1
                 if where == "nothing":
                     continue
@@ -848,6 +857,14 @@ def body() -> None:
                     f"different facts"
                 )
         assert probed > 400 and named > 200, f"K: the sweep covers the window: {named}/{probed}"
+        # ★ And the sweep left the screen where it found it. This is the
+        # assertion that makes the change above a PROPERTY rather than a
+        # speed-up: a read that moved the cursor would fail here, and so would
+        # a later round that quietly routed this path back through the action.
+        assert q(tf, "cursor") == before, (
+            f"K: asking where things are moved the pointer ({before} -> "
+            f"{q(tf, 'cursor')}) — a question is not a command"
+        )
 
         words = q(tf, "affordances").split(",") + q(tf, "steppers").split(",")
         # ★ R1664 — WINDOW-absolute rects, for the reason `at` states: a node
