@@ -98,10 +98,6 @@ pub struct GpuContext {
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    /// R2088.1 — the one channel a device-lost failure arrives on. See
-    /// [`DeviceLiveness`]; the callback that writes it is installed in
-    /// [`Self::new`], and every surface made here holds a handle to it.
-    liveness: DeviceLiveness,
 }
 
 impl core::fmt::Debug for GpuContext {
@@ -209,6 +205,16 @@ impl GpuContext {
         // error" for a call that failed, and a caller reading that silence as
         // success is how R2088's first repair still let a never-configured
         // surface reach `get_current_texture()`. See [`DeviceLiveness`].
+        //
+        // ⚠ R2088.2 — the context does NOT keep a handle to this. R2088.1
+        // gave it one behind a `liveness()` accessor, justified by "an
+        // embedder that can see it can say so" — and nothing read it. The
+        // fact already reaches a reader by the route that matters: a lost
+        // device makes [`GpuSurface::acquire`] answer
+        // [`Missed::DeviceLost`](crate::Missed::DeviceLost), which the
+        // recovery ladder records and the shell publishes on the wire. A
+        // second door onto one fact is a second thing that can disagree
+        // with it, and a justification in the future tense is not a reader.
         let liveness = DeviceLiveness::default();
         {
             let lost = liveness.clone();
@@ -219,7 +225,7 @@ impl GpuContext {
             &device,
             surface,
             Box::new(source),
-            liveness.clone(),
+            liveness,
             crate::surface::SurfaceRequest {
                 width,
                 height,
@@ -232,20 +238,9 @@ impl GpuContext {
                 adapter,
                 device,
                 queue,
-                liveness,
             },
             surface,
         ))
-    }
-
-    /// R2088.1 — whether this context's device has been lost.
-    ///
-    /// Published because "why is this window dark" has a fourth answer that
-    /// none of the swapchain statuses can carry, and an embedder that can see
-    /// it can say so instead of reporting a surface problem.
-    #[must_use]
-    pub fn liveness(&self) -> &DeviceLiveness {
-        &self.liveness
     }
 
     /// ★ R1754 — **which adapter this window is actually rendering on.**
