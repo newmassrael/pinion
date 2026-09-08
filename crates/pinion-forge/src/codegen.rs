@@ -232,11 +232,10 @@ pub enum __ERR_NAME__ {
     /// Vello renderer init or frame submission failed.
     Vello(::vello::Error),
     /// Swapchain surface acquisition did not yield a presentable
-    /// texture. The `&'static str` is the
-    /// [`::pinion_gpu::Missed`](::pinion_gpu::Missed) the recovery ladder
-    /// recorded (timeout / occluded / outdated / lost / validation /
-    /// unconfigured) — a label rather than the enum itself so the error
-    /// type cannot represent the success states
+    /// texture. The `&'static str` is the [`::pinion_gpu::Missed`] the
+    /// recovery ladder recorded (timeout / occluded / outdated / lost /
+    /// validation / unconfigured / device_lost) — a label rather than the
+    /// enum itself so the error type cannot represent the success states
     /// (illegal-states-unrepresentable).
     Surface(&'static str),
     /// R1537 §5.16 — the wgpu instance / adapter / device / surface could
