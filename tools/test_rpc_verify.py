@@ -54,6 +54,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_same_picture,
     find_by_tag,
+    park_into_view,
     resize_and_settle,
     terminate_process_tree,
     wait_until,
@@ -1279,6 +1280,123 @@ def test_resize_and_settle_waits_for_the_frame_that_is_the_new_size() -> None:
         len(served) >= 2,
         f"and it waited rather than taking the first frame ({len(served)} read)",
     )
+
+
+TAG = "lab.palette.protocol.tcp"
+
+
+class _Panes:
+    """A screen with one scrolling pane, answering `scene/scroll_reach`.
+
+    `out` is the list of answers to hand out in order, so a case can say what
+    the screen reports BEFORE and AFTER the scroll — which is the whole of what
+    this helper has to get right.
+    """
+
+    def __init__(self, out: "list[list[dict]]", *, paints: bool = True) -> None:
+        self.out = out
+        self.paints = paints
+        self.asked: list[object] = []
+        self.scrolled: list[tuple[str, tuple[int, int]]] = []
+        self.ticks = 0
+
+    def request(self, method: str, params: object = None) -> Response:
+        check(method == "scene/" + "scroll_reach", f"it asks the screen: {method}")
+        self.asked.append(params)
+        rows = self.out[min(len(self.asked) - 1, len(self.out) - 1)]
+        return Response(id=1, result={"out_of_sight": rows})
+
+    def scroll(self, path: str, *, to: tuple[int, int]) -> None:
+        self.scrolled.append((path, to))
+
+    def tick_ms(self, _ms: int) -> None:
+        self.ticks += 1
+
+    def snapshot(self, *, source: str, viewport: object = None) -> dict:
+        check(source == "paint", f"it reads the rendered frame: {source}")
+        return {
+            "type": "Container",
+            "tag": "root",
+            "rect": {"x": 0, "y": 0, "w": 400, "h": 400},
+            "children": (
+                [
+                    {
+                        "type": "Container",
+                        "tag": TAG,
+                        "rect": {"x": 10, "y": 20, "w": 36, "h": 19},
+                        "children": [],
+                    }
+                ]
+                if self.paints
+                else []
+            ),
+        }
+
+
+def _away(reach: str = "scrollable", *, moves: "list[dict] | None" = None) -> dict:
+    return {
+        "tag": TAG,
+        "reach": reach,
+        "rect": {"x": 14, "y": 1411, "w": 36, "h": 19},
+        "viewport": {"name": "lab.palette.body", "h": 818},
+        "moves": [{"to_x": 0, "to_y": 612, "viewport": "lab.palette.body"}]
+        if moves is None
+        else moves,
+    }
+
+
+def test_park_into_view_takes_the_move_the_screen_named() -> None:
+    """★★★★★ R2081 — the offset comes from the screen, and nothing moves when
+    nothing has to.
+
+    Two properties in one case because they are one decision: a mark the screen
+    does not list as out of sight is already in view, so the helper must drive
+    NO gesture — a park that scrolled unconditionally would move a pane every
+    caller was already reading correctly, and R1684's thirty operations press
+    thirty seats of which one was ever below a fold.
+    """
+    quiet = _Panes([[]])
+    check(park_into_view(quiet, TAG) == [], "park: nothing to do answers no moves")
+    check(quiet.scrolled == [], f"park: and drives no gesture ({quiet.scrolled})")
+
+    # Out of sight, then in view once the named move has been taken.
+    screen = _Panes([[_away()], []])
+    moves = park_into_view(screen, TAG)
+    check(len(moves) == 1, f"park: answers the move(s) it took ({moves})")
+    check(
+        screen.scrolled == [("lab.palette.body", (0, 612))],
+        f"park: drives the viewport and offset the SCREEN named ({screen.scrolled})",
+    )
+    check(screen.ticks >= 1, "park: and lets a frame happen, so the paint can carry it")
+    check(len(screen.asked) >= 2, "park: it asks again rather than assuming the move worked")
+
+
+def test_park_into_view_refuses_what_no_gesture_reaches() -> None:
+    """★★★★★ R2081 — three refusals, and each is a different wrong answer this
+    helper could have given quietly.
+
+    A mark nothing reaches, a move that did not work, and a screen that stops
+    listing the mark while the paint still does not carry it. Every one of them
+    would otherwise surface as a `KeyError` in the caller's next line, blamed on
+    the caller's own tag rather than on the screen — which is exactly how the
+    three walks this round repaired reported their failure.
+    """
+    for label, panes in (
+        ("a mark no gesture reaches", _Panes([[_away("lost")]])),
+        ("a mark with no move named", _Panes([[_away(moves=[])]])),
+        ("a move that changed nothing", _Panes([[_away()], [_away()]])),
+        ("a screen in view that paints nothing", _Panes([[_away()], []], paints=False)),
+    ):
+        raised = None
+        try:
+            park_into_view(panes, TAG)
+        except AssertionError as exc:
+            raised = exc
+        check(raised is not None, f"park: {label} raises rather than answering []")
+        check(
+            raised is not None and TAG in str(raised),
+            f"park: and the message names the mark ({str(raised)[:60]!r})",
+        )
 
 
 def _target_report(rows: list[dict], *, surface: str = "screen") -> dict:

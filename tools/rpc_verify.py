@@ -5868,6 +5868,103 @@ def behind_an_overflow(
     return set(state.get("moved_seats") or [])
 
 
+def park_into_view(
+    app: "RpcSubprocess",
+    tag: str,
+    *,
+    viewport: "Optional[tuple[int, int]]" = None,
+) -> "list[dict]":
+    """★★★★★ R2081 — scroll until the SCREEN says `tag` is in view, and answer
+    the moves it named. Empty when nothing had to move.
+
+    # Why this asks instead of stepping
+
+    A mark below a scrolling pane's fold is not gone, it is one gesture away —
+    the same distinction [`press_painted_tag`] already draws for a seat the
+    toolbar moved behind an overflow control. The framework has answered which
+    gesture since R1662: `scene/scroll_reach` reports, per painted mark,
+    whether it is on screen, whether some offset of an enclosing viewport
+    brings it there (`scrollable`, with the offset in `moves`), whether some
+    offset brings only PART of it (`clipped`), or whether nothing reaches it
+    (`lost`). Only the last is a defect.
+
+    R2078's walk stepped an offset in forties and re-read the paint after each
+    step until the tag appeared. That works and it is a guess with a loop
+    around it: it cannot tell "the pane is at its end" from "one more step
+    would have done it" without a second rule, and the offset it lands on is
+    whatever the step size made it. Here the offset is the screen's own
+    arithmetic.
+
+    # It verifies, because a move that did not work reads exactly like one that did
+
+    Both halves are checked after the scroll: the framework must stop listing
+    the mark as out of sight, AND the mark must be in the paint the caller is
+    about to read. The second is the caller's own currency — every consumer of
+    this helper immediately does `abs_rects_of(...)[tag]`, and a helper that
+    left that KeyError to the caller would be reporting success for the one
+    thing it exists to prevent.
+
+    # Refusals, and why they are refusals
+
+    `lost` / `unplaced` raise rather than returning empty: a mark no gesture
+    reaches is the defect `scene/scroll_reach`'s own budget exists for, and
+    silently answering "nothing to do" would turn it into a KeyError three
+    lines later, attributed to the caller's tag rather than to the screen.
+
+    `viewport` asks about a size the window is not at (R1711's `at`), for a
+    caller that reads its paint the same way — the two questions must be about
+    one size or the answer is a different question quietly substituted.
+    """
+    at = (
+        {"at": {"width": int(viewport[0]), "height": int(viewport[1])}}
+        if viewport is not None
+        else None
+    )
+
+    def out_of_sight() -> "Optional[dict]":
+        resp = app.request("scene/scroll_reach", at)
+        assert resp is not None
+        rows = resp.result.get("out_of_sight") or []
+        return next((row for row in rows if row.get("tag") == tag), None)
+
+    row = out_of_sight()
+    if row is None:
+        # Nothing to move: the mark is in view, or the screen paints no such
+        # mark at all and the report has nothing to say about it. The two are
+        # deliberately NOT told apart here — the caller's own read is the thing
+        # that distinguishes them, and it does so one line later, with the
+        # `KeyError` a misspelled tag has always earned.
+        return []
+    reach = row.get("reach")
+    moves = row.get("moves") or []
+    if reach in ("lost", "unplaced") or not moves:
+        raise AssertionError(
+            f"park_into_view: the screen answers {reach!r} for {tag!r} with "
+            f"{len(moves)} move(s), so no gesture brings it into view — that is "
+            f"the screen's defect and not this aim's. Viewport "
+            f"{row.get('viewport', {}).get('name')!r}, rect {row.get('rect')}."
+        )
+    for move in moves:
+        app.scroll(move["viewport"], to=(int(move["to_x"]), int(move["to_y"])))
+        app.tick_ms(16)
+    still = out_of_sight()
+    if still is not None:
+        raise AssertionError(
+            f"park_into_view: {tag!r} is STILL out of sight after taking the "
+            f"screen's own {len(moves)} move(s) {moves} — it now answers "
+            f"{still.get('reach')!r} at {still.get('rect')}."
+        )
+    painted = abs_rects_of(app.snapshot(source="paint", viewport=viewport))
+    if tag not in painted:
+        raise AssertionError(
+            f"park_into_view: the screen no longer lists {tag!r} as out of "
+            f"sight, but the paint does not carry it either. The move was "
+            f"{moves}; a caller about to read its rectangle would get a "
+            f"KeyError and blame its own tag."
+        )
+    return moves
+
+
 def press_painted_tag(
     app: "RpcSubprocess",
     tag: str,
@@ -5886,6 +5983,23 @@ def press_painted_tag(
 
     Re-reading the paint after opening is not optional: the seat's rectangle is
     the menu's, not the row's.
+
+    ★★★★★ R2081 — and a SECOND way a seat is one gesture away rather than gone:
+    below the fold of a pane that scrolls. The paragraph above predicted the
+    class ("the rule belongs here so a third does not have to learn it") and
+    the class came back in a different form, learned from CI again: R2078 gave
+    the node lab's palette the behaviour canon's twenty-one roles, the palette's
+    own parts went under the fold behind them, and the thirty-operation table
+    `r1684` drives could no longer aim at the discovery switch.
+    [`park_into_view`] asks the screen for the offset.
+
+    ⚠ THE TRADE, SAID RATHER THAN LEFT TO BE FOUND: a press that parks can no
+    longer NOTICE that a seat went below a fold, and one of those failures is
+    how [[debt-the-palettes-own-parts-sit-behind-the-whole-roster]] was found.
+    That is the right behaviour for a press — a person scrolls and presses —
+    but it means the debt's evidence has to live where it is looked for, in the
+    debt and in `scene/scroll_reach`'s own standing count of what is one scroll
+    away, and not in a walk that happens to go red.
     """
     if tag in behind_an_overflow(app, external):
         control = abs_rects_of(app.snapshot(source="paint", viewport=viewport))[
@@ -5893,7 +6007,16 @@ def press_painted_tag(
         ]
         app.click(at=(control[0] + control[2] // 2, control[1] + control[3] // 2))
         app.tick_ms(16)
-    box = abs_rects_of(app.snapshot(source="paint", viewport=viewport))[tag]
+    painted = abs_rects_of(app.snapshot(source="paint", viewport=viewport))
+    if tag not in painted:
+        # ★ Asked only when the paint does not already carry it. `abs_rects_of`
+        # answers "the part a pointer can reach", so a seat that is there is
+        # pressable and needs no gesture — and `scene/scroll_reach` judges every
+        # mark on the screen, which is not a cost to pay thirty times for the
+        # twenty-nine seats that were never below a fold.
+        park_into_view(app, tag, viewport=viewport)
+        painted = abs_rects_of(app.snapshot(source="paint", viewport=viewport))
+    box = painted[tag]
     app.click(at=(box[0] + box[2] // 2, box[1] + box[3] // 2))
 
 

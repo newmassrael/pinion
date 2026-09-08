@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     ink_in_boxes,
+    park_into_view,
     resize_and_settle,
     run_demo,
 )
@@ -78,10 +79,29 @@ def body() -> None:
     with RpcSubprocess(LAB, boot_grace=1.5) as tf:
         resize_and_settle(tf, AT)
         tf.tick_ms(16)
+        # ★★★★★ R2081 — PARK FIRST, because five of the eight seats moved.
+        #
+        # R2078 gave the palette the behaviour canon's twenty-one roles, and the
+        # protocol chips sit below them: at the size the reader had, the wire
+        # reports no ink for a chip that is not painted, so section A asked
+        # about eight seats and the screen could answer three. The ink question
+        # is unchanged — a glyph's slack inside its box is the same fact at any
+        # scroll offset — and the offsets are the SCREEN's (`park_into_view`
+        # asks `scene/scroll_reach`), so this file names none.
+        parked = []
+        for tag in NAMED:
+            parked += park_into_view(tf, tag)
+        tf.tick_ms(16)
         rows = ink_in_boxes(tf)
         by_box = {r["box"]: r for r in rows}
 
         banner("A — the seats a reader named, measured as INK")
+        ok(
+            "A: ★ parking was NEEDED to see all eight — with the canon's roster "
+            f"the palette does not fit, so a run that scrolled nothing ({parked}) "
+            "would mean the roster had shrunk back",
+            parked != [],
+        )
         for tag, word in NAMED.items():
             row = by_box.get(tag)
             ok(f"A: `{tag}` is reported at all", row is not None)
