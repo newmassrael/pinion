@@ -18017,6 +18017,44 @@ fn definition_seats_wire() -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// ★★★★★ R1968 — the palette's grouping, published so a client can expand the
+/// `role_groups` population a voice family names, and so the arrangement a
+/// person sees is a thing an agent can read rather than infer from row order.
+/// Derived from the roster, never authored.
+///
+/// ★★★★★ R2085 — lifted out of `spec_json` beside its sibling helpers, which is
+/// why they exist: that function passed the hundred-line bound at **101/100**
+/// the moment this row gained one key, and the bound is paid with STRUCTURE
+/// here as everywhere. ⚠ It was caught by the PUSH gate and not by this
+/// round's own clippy run, because the key was added AFTER that run to repair
+/// a sweep — *what was fixed after it was verified is not verified*.
+///
+/// Both ADDRESSES are published, and both for R2049's reason: a walk is Python
+/// and cannot call the declaration, so spelling one there is a wrong letter
+/// away from looking for a mark that is not there — which reads as *the screen
+/// did not paint it* rather than as a typo.
+///
+/// ⚠ The chip's address sits BESIDE the heading's rather than replacing it: a
+/// heading and its control are siblings (see [`address::GROUP_INK`]), the
+/// conformance walk checks both in both directions, and one of them going
+/// missing must not be able to hide behind the other. The `palette` register
+/// publishes the same chip address for a client that is choosing — one
+/// declaration, two readers, so they cannot drift.
+fn role_groups_wire() -> Vec<serde_json::Value> {
+    spec::palette_groups()
+        .iter()
+        .map(|run| {
+            serde_json::json!({
+                "label": run.label,
+                "tag": address::group_head(run.label),
+                "ink": address::group_ink(run.label),
+                "roles": spec::ROLES[run.start..run.end()]
+                    .iter().map(|r| r.name).collect::<Vec<_>>(),
+            })
+        })
+        .collect()
+}
+
 /// The host frames the specification declares — see [`card_seats_wire`].
 fn frames_wire() -> Vec<serde_json::Value> {
     spec::FRAMES
@@ -18219,37 +18257,7 @@ fn spec_json() -> serde_json::Value {
         // expand the `role_groups` population a voice family names, and so the
         // arrangement a person sees is a thing an agent can read rather than
         // infer from row order. Derived from `roles` above, never authored.
-        "role_groups": spec::palette_groups().iter().map(|run| serde_json::json!({
-            "label": run.label,
-            // ★★★★★ R2078 — the ADDRESS this heading is painted under, published
-            // for the reason R2049 published the role row's: a walk is Python
-            // and cannot call the declaration, so spelling it there is a wrong
-            // letter away from looking for a mark that is not there — which
-            // reads as *the screen did not paint it* rather than as a typo.
-            //
-            // ⚠ The roster expansion is what made this owed. The palette had
-            // TWO headings and now has the canon's SEVEN, and this address was
-            // spelled five times in this screen's own source before it was
-            // declared — one of the remainders
-            // `debt-a-paint-address-is-retyped-at-every-reader` names.
-            "tag": address::group_head(run.label),
-            // ★★★★★ R2085 — and the address of the CONTROL beside the words,
-            // published here for the reason `tag` above is: the specification
-            // conformance walk builds its declared set out of this register, so
-            // a family whose address is not here reads to that walk as *the
-            // screen painted something nobody declared* — which is exactly how
-            // it refused this round's chips on their first sweep.
-            //
-            // ⚠ Beside `tag` rather than instead of it: a heading and its
-            // control are siblings (see `address::GROUP_INK`), and the walk
-            // checks BOTH directions over both, so one of them going missing
-            // cannot hide behind the other. The `palette` register publishes
-            // this same address as `chip` for a client that is choosing — one
-            // declaration, two readers, so they cannot drift.
-            "ink": address::group_ink(run.label),
-            "roles": spec::ROLES[run.start..run.end()]
-                .iter().map(|r| r.name).collect::<Vec<_>>(),
-        })).collect::<Vec<_>>(),
+        "role_groups": role_groups_wire(),
         "pin_legend": spec::PIN_LEGEND.iter().map(|(k, m)| serde_json::json!({
             "kind": k, "means": m,
         })).collect::<Vec<_>>(),
