@@ -426,3 +426,40 @@ impl GpuContext {
         surface.resize(&self.device, width, height);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// ★★★★★ R2095 — the two maintains around a rung, guarded by a COUNT,
+    /// because nothing else in this tree can see them.
+    ///
+    /// Measured rather than assumed: deleting the one after the rung and
+    /// running the deterministic GPU guard leaves it GREEN in 0.54s. Both
+    /// submits exist to give `wgpu`'s device-lost callback a chance to fire
+    /// (it is queued only inside `Device::maintain`, which `Queue::submit`
+    /// runs) — a NARROWING of a window, and a narrowing produces no
+    /// observable difference on a host where the device never goes. So the
+    /// repair R2089 and R2092 landed is exactly the kind a later round
+    /// deletes as dead weight while every test stays green.
+    ///
+    /// A source count is a weak instrument and the right one here: it cannot
+    /// say the submits are in the right places, but it says they are still
+    /// there, and "still there" is the whole property at risk. The needle is
+    /// spelled in two halves so this test is not one of the things it counts
+    /// — the same trick `pinion_core`'s schema-door ratchet uses.
+    #[test]
+    fn a_rung_is_bracketed_by_two_maintains() {
+        let source = include_str!("context.rs");
+        let needle = format!("self.queue.{}(core::iter::empty())", "submit");
+        let found = source.matches(&needle).count();
+        assert_eq!(
+            found, 2,
+            "`GpuContext::recover` must run a maintain BEFORE the rung (so the \
+             configure it is about to do reads a fresh liveness) and AFTER it \
+             (so the caller's retry acquire does) — found {found}. If this \
+             number fell, read the comments at those sites before restoring \
+             them: they carry the three constraints measured in wgpu 29's own \
+             source, and `Device::poll` is NOT an alternative (it is fatal on \
+             a lost device)."
+        );
+    }
+}
