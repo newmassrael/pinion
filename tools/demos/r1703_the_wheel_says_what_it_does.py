@@ -56,13 +56,14 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    card_tag,
     run_demo,
 )
 
@@ -163,6 +164,9 @@ def hint_strip_gestures(tf: RpcSubprocess) -> int:
     # one is new — `tools/painted_addresses.py` refused the first draft, which
     # had typed the family three more times.
     moved_card = next(node["tag"] for node in spec["nodes"] if node["id"] == "P-03")
+    # ★ R2103 — the same for the card the WHEEL is aimed at, which R2082 left
+    # spelled one line below the sentence above.
+    wheel_card = next(node["tag"] for node in spec["nodes"] if node["id"] == "P-01")
 
     # ★ The WHOLE published surface, minus the pointer position — a hint strip
     # claims an effect in prose ("pan", "author a link"), and choosing a slot
@@ -178,9 +182,9 @@ def hint_strip_gestures(tf: RpcSubprocess) -> int:
             corner = (canvas[0] + canvas[2] - 40, canvas[1] + canvas[3] - 40)
             tf.drag(from_at=corner, to_at=(corner[0] - 30, corner[1] - 20))
         elif name == "wheel":
-            tf.wheel(centre(shot["lab.node.P-01"]), lines=AWAY)
+            tf.wheel(centre(shot[wheel_card]), lines=AWAY)
         elif name == "drag a node":
-            here = centre(shot["lab.node.P-03"])
+            here = centre(shot[moved_card])
             tf.drag(from_at=here, to_at=(here[0] + 40, here[1] + 24))
         elif name == "drag a pin":
             tf.drag(
@@ -268,13 +272,22 @@ def hint_strip_gestures(tf: RpcSubprocess) -> int:
 # ── B — the answer and the behaviour are one fact ──────────────────────────
 
 
-def answer_matches_behaviour(binary: str, probes: list[str]) -> int:
+def answer_matches_behaviour(
+    binary: str, probes: Callable[[RpcSubprocess], list[str]]
+) -> int:
     """At every probed rectangle: what the wire says, and what a wheel does.
 
     ★ Both directions. A declared point must MOVE something and an undeclared
     point must move nothing — a gate that only checked the positive half would
     pass a surface that declared a wheel everywhere and took it everywhere,
     which is precisely the reference's combo-box hazard wearing a declaration.
+
+    ★★ R2103 — the probes arrive as a FUNCTION of the running screen rather
+    than as a list of strings, because some of them are addresses the screen
+    composes and publishes. A caller cannot ask for one before the binary is up,
+    and spelling it instead is what this round is removing: a wrong letter there
+    fails the `is painted` assertion below and reads as the screen having
+    stopped painting the card.
     """
     checks = 0
     with RpcSubprocess(binary) as tf:
@@ -283,7 +296,7 @@ def answer_matches_behaviour(binary: str, probes: list[str]) -> int:
         shot = abs_rects_of(tf.snapshot(source="paint"))
         declared_seen = False
         silent_seen = False
-        for tag in probes:
+        for tag in probes(tf):
             rect = shot.get(tag)
             assert rect is not None, f"{binary}: {tag} is painted"
             at = centre(rect)
@@ -329,8 +342,10 @@ def answer_matches_behaviour(binary: str, probes: list[str]) -> int:
 def the_canons_zoom(tf: RpcSubprocess) -> int:
     """One event is one multiplicative step, anchored under the cursor."""
     checks = 0
+    # ★ R2103 — the card's address from the screen, held for the whole section.
+    anchor = card_tag(tf, "P-01")
     shot = abs_rects_of(tf.snapshot(source="paint"))
-    card = shot["lab.node.P-01"]
+    card = shot[anchor]
     aim = centre(card)
     opening = tf.query(f"{EXT}/zoom")
 
@@ -380,12 +395,12 @@ def the_canons_zoom(tf: RpcSubprocess) -> int:
     tf.invoke(f"{EXT}/reset", "view")
     tf.tick(0.016)
     shot = abs_rects_of(tf.snapshot(source="paint"))
-    card = shot["lab.node.P-01"]
+    card = shot[anchor]
     aim = (float(card[0] + 2), float(card[1] + 2))
     for step in range(1, 5):
         tf.wheel(aim, lines=AWAY)
         tf.tick(0.016)
-        now = abs_rects_of(tf.snapshot(source="paint"))["lab.node.P-01"]
+        now = abs_rects_of(tf.snapshot(source="paint"))[anchor]
         drift = (abs(now[0] + 2 - aim[0]), abs(now[1] + 2 - aim[1]))
         assert drift[0] <= 1.0 and drift[1] <= 1.0, (
             f"after {step} cursor-anchored step(s) the point under the cursor had "
@@ -652,8 +667,8 @@ def body() -> None:
 
     checks += answer_matches_behaviour(
         "hello-node-lab",
-        [
-            "lab.node.P-01",  # over the canvas: declared
+        lambda tf: [
+            card_tag(tf, "P-01"),  # over the canvas: declared
             "lab.canvas",  # the canvas itself: declared
             "lab.palette",  # a scrolling pane: NOT declared, falls through
             "lab.inspector",  # the other scrolling pane: NOT declared

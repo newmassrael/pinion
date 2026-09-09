@@ -43,6 +43,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     assert_router_press_moves,
+    card_tag,
     run_demo,
 )
 
@@ -117,7 +118,8 @@ def body() -> None:
                 # nothing, which is the screen behaving correctly and is why
                 # the router-press helper cannot be the driver here.
                 rects = abs_rects_of(tf.snapshot(source="paint", viewport=VIEWPORT))
-                x, y, w, h = rects["lab.node.P-03"]
+                # ★ R2103 — the card's address from the screen, not spelled.
+                x, y, w, h = rects[card_tag(tf, "P-03")]
                 at = (float(x + w // 2), float(y + h // 2))
                 before = q(tf, "layout")
                 tf.drag(from_at=at, to_at=(at[0] + 40, at[1] + 24), steps=6)

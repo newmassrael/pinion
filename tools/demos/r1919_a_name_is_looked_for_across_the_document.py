@@ -91,6 +91,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    card_prefix,
     find_by_tag,
     run_demo,
 )
@@ -143,7 +144,7 @@ def shared(a: str, b: str) -> str:
     return best
 
 
-def card_marks(app: RpcSubprocess) -> dict:
+def card_marks(app: RpcSubprocess, surface: str) -> dict:
     """Every card box on the frame, by tag — **its place AND its edge**.
 
     ★★★★★ R1919 — the edge is half of this and the round's first draft left it
@@ -154,9 +155,13 @@ def card_marks(app: RpcSubprocess) -> dict:
     they cannot end up describing two different frames.
     """
     snap = app.snapshot(source="paint", viewport=VIEWPORT)
+    # ★ R2103 — the prefix a card is painted under, from the mounted lab's own
+    # published roster. Spelled, a wrong letter empties this map and every
+    # section below reads as the canvas drawing no cards to search.
+    card = card_prefix(app, ext=surface)
     marks = {}
     for tag, rect in abs_rects_of(snap).items():
-        if not (tag.startswith("lab.node.") and tag.count(".") == 2):
+        if not (tag.startswith(card) and tag.count(".") == 2):
             continue
         node = find_by_tag(snap, tag) or {}
         marks[tag] = {"rect": rect, "edge": node.get("style", {}).get("border")}
@@ -173,11 +178,14 @@ def body() -> None:
             app.query(f"{EXT}/nav") == SEAT,
         )
         surface = surface_of(app, SEAT)
+        # ★ R2103 — and the prefix its cards are painted under, asked once for
+        # the whole walk. Every card address below is composed from it.
+        card = card_prefix(app, ext=surface)
 
         banner("A — nothing is being looked for")
         ok("A: the needle is empty", found(app, surface)["needle"] == "")
         ok("A: and nothing is found", not found(app, surface)["hits"])
-        rest = card_marks(app)
+        rest = card_marks(app, surface)
         ok(f"A: the canvas draws cards to search — {len(rest)}", len(rest) >= 2)
 
         banner("B — a name nothing carries")
@@ -187,11 +195,11 @@ def body() -> None:
         )
         ok(
             "B: and the frame is untouched",
-            card_marks(app) == rest,
+            card_marks(app, surface) == rest,
         )
 
         banner("C — a name a person authored")
-        subject = sorted(rest)[0].removeprefix("lab.node.")
+        subject = sorted(rest)[0].removeprefix(card)
         count = app.invoke(f"{surface}/find", subject)
         app.tick_ms(16)
         ok(f"C: {subject} answers to its own name — {count}", count >= 1)
@@ -205,8 +213,8 @@ def body() -> None:
             f"C: announced as a name a PERSON gave it — {mine['because']}",
             mine["because"] == "label",
         )
-        marked = card_marks(app)
-        mark = f"lab.node.{subject}"
+        marked = card_marks(app, surface)
+        mark = f"{card}{subject}"
         ok(
             "C: ★★★★★ and the card CHANGES ON THE FRAME — a search a reader "
             "cannot see is a search that did not happen",
@@ -237,7 +245,7 @@ def body() -> None:
         # ⚠ Which cards SHOULD have changed is read off the wire rather than
         # assumed to be one: a card's name can be a substring of another's, and
         # a walk that assumed a single hit would fail on a graph it never saw.
-        struck = {f"lab.node.{h['node']}" for h in hits}
+        struck = {f"{card}{h['node']}" for h in hits}
         moved = {tag for tag in rest if marked[tag] != rest[tag]}
         ok(
             f"C: ★ and EXACTLY the hits change — {sorted(moved)} against "
@@ -255,7 +263,7 @@ def body() -> None:
         reasons = set()
         depths = set()
         for tag in sorted(rest):
-            name = tag.removeprefix("lab.node.")
+            name = tag.removeprefix(card)
             answered = app.invoke(f"{surface}/find", name)
             ok(f"D: {name} answers to its own name — {answered}", answered >= 1)
             for hit in found(app, surface)["hits"]:
@@ -330,7 +338,7 @@ def body() -> None:
         ok("G: nothing is published as found", not found(app, surface)["hits"])
         ok(
             "G: ★ and every card is exactly where it was before any search",
-            card_marks(app) == rest,
+            card_marks(app, surface) == rest,
         )
 
         banner("H — found and selected are TWO states, and the frame says which")
@@ -347,7 +355,7 @@ def body() -> None:
         # hold two hits AT ONCE cannot be defeated by a graph whose cards were
         # renamed. A first draft used the common prefix of every name and
         # measured it empty on the very screen it was written for.
-        names = sorted(tag.removeprefix("lab.node.") for tag in rest)
+        names = sorted(tag.removeprefix(card) for tag in rest)
         pair = next(
             (
                 (name, shared(subject, name))
@@ -362,14 +370,14 @@ def body() -> None:
         app.tick_ms(16)
         app.invoke(f"{surface}/find", stem)
         app.tick_ms(16)
-        both = card_marks(app)
+        both = card_marks(app, surface)
         hit_names = {h["node"] for h in found(app, surface)["hits"]}
         ok(
             f"H: it finds the selected one AND another — {sorted(hit_names)}",
             {subject, other} <= hit_names,
         )
         chosen_edge = both[mark]["edge"]
-        plain_edge = both[f"lab.node.{other}"]["edge"]
+        plain_edge = both[f"{card}{other}"]["edge"]
         ok(
             f"H: ★ both are found, so both are WIDE — {chosen_edge['width']} "
             f"and {plain_edge['width']}",
@@ -384,7 +392,7 @@ def body() -> None:
         ok(
             "H: ★ while the unselected hit keeps the colour it had before any "
             "search — the search axis does not touch the selection's channel",
-            plain_edge["color"] == rest[f"lab.node.{other}"]["edge"]["color"],
+            plain_edge["color"] == rest[f"{card}{other}"]["edge"]["color"],
         )
         app.invoke(f"{surface}/find", "")
         app.tick_ms(16)

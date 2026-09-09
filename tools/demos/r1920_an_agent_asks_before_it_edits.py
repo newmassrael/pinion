@@ -59,6 +59,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    card_prefix,
     run_demo,
 )
 
@@ -93,12 +94,17 @@ def editable(app: RpcSubprocess, surface: str) -> dict:
     return {row["node"]: row for row in js(app.query(f"{surface}/editable"))["nodes"]}
 
 
-def cards(app: RpcSubprocess) -> set[str]:
-    """Every card the canvas actually draws, by name."""
+def cards(app: RpcSubprocess, surface: str) -> set[str]:
+    """Every card the canvas actually draws, by name.
+
+    ★ R2103 — the prefix is the mounted lab's own, asked of it. Spelled, a wrong
+    letter answers the empty set and reads as a canvas drawing no cards.
+    """
+    card = card_prefix(app, ext=surface)
     return {
-        tag.removeprefix("lab.node.")
+        tag.removeprefix(card)
         for tag in abs_rects_of(app.snapshot(source="paint", viewport=VIEWPORT))
-        if tag.startswith("lab.node.") and tag.count(".") == 2
+        if tag.startswith(card) and tag.count(".") == 2
     }
 
 
@@ -114,7 +120,7 @@ def body() -> None:
         surface = surface_of(app, SEAT)
 
         banner("A — the row covers every card that is drawn")
-        drawn = cards(app)
+        drawn = cards(app, surface)
         ok(f"A: the canvas draws cards to ask about — {len(drawn)}", len(drawn) >= 2)
         rows = editable(app, surface)
         # ★ The population is READ OFF THE FRAME, not off the same wire field
@@ -150,7 +156,7 @@ def body() -> None:
         ok(f"C: {subject} was promised deletable", rows[subject]["delete"] == "allowed")
         app.invoke(f"{surface}/delete_node", subject)
         app.tick_ms(16)
-        after = cards(app)
+        after = cards(app, surface)
         ok(
             f"C: ★★★★★ and it really goes — {len(drawn)} then {len(after)}",
             subject not in after and after == drawn - {subject},

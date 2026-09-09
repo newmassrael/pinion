@@ -66,6 +66,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     address_prefix,
     assert_eq,
+    card_prefix,
     run_demo,
 )
 
@@ -128,10 +129,13 @@ def card_names(app: RpcSubprocess) -> set:
     on these two lines, and it is right — a literal prefix in a walk is the
     class the R2049-R2054 campaign removed, because a wrong letter reads as
     *the screen did not paint it* rather than as a typo. Measured while fixing
-    it: the card family has no declaration to derive from either (`lab.node.` is
-    spelled inline in three places in the screen's own source), which is a
-    remainder of `debt-a-paint-address-is-retyped-at-every-reader` and not this
-    round's to close — so the repair is to stop needing the address at all.
+    it: the card family had no declaration to derive from either (`lab.node.`
+    was spelled inline in three places in the screen's own source), which was a
+    remainder of `debt-a-paint-address-is-retyped-at-every-reader` and not that
+    round's to close — so the repair here was to stop needing the address at
+    all. (R2082 then declared it and R2103 converted the two sites below that
+    still had to name the family; this one still asks the screen for its cards,
+    which remains the better claim for the reason the paragraph ends with.)
 
     ⇒ The screen publishes its live card names on its own slot, so this asks it.
     That is also the better claim: a name from the MODEL rather than one
@@ -330,7 +334,13 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         banner("E — the pointer reaches the section that is showing")
         go(app, "lab")
         rects = abs_rects_of(app.snapshot(source="paint"))
-        cards = sorted(tag for tag in rects if tag.startswith("lab.node."))
+        # ★★★★★ R2103 — and this is the repair the docstring above said was not
+        # that round's to make: the card family HAS a declaration now, the
+        # mounted lab publishes it on its own `nodes` roster, and the two sites
+        # that had to spell the prefix ask for it. `ext=` is the mounted path,
+        # which is the reason that keyword exists.
+        card = card_prefix(app, ext=f"/{LAB_ROOT}{EXT}")
+        cards = sorted(tag for tag in rects if tag.startswith(card))
         ok(f"E: the lab painted {len(cards)} node card(s)", len(cards) >= 2)
         # ★ Asked of the LAB's own wire rather than of the painted scene: "the
         # scene changed" is satisfied by a caret blink, and it is not satisfied
@@ -371,7 +381,11 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # ── (G) leaving and returning is a return ─────────────────────────
         banner("G — a section keeps what it had")
         rects = abs_rects_of(app.snapshot(source="paint"))
-        target = next(tag for tag in rects if tag.startswith("lab.node."))
+        target = next(
+            tag
+            for tag in rects
+            if tag.startswith(card_prefix(app, ext=f"/{LAB_ROOT}{EXT}"))
+        )
         press_at(app, rects[target])
         chosen = abs_rects_of(app.snapshot(source="paint"))
         go(app, "dashboard")

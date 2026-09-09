@@ -74,6 +74,7 @@ from analyzer_spec import (  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    absent_id,
     address_prefix,
     assert_eq,
     run_demo,
@@ -262,7 +263,7 @@ def body() -> None:
         # that state, and R1684's rule has a dual — the state a demo INHERITS
         # may be one that should not exist.
         try:
-            app.invoke(f"{EXT}/title", "no.such.card,x")
+            app.invoke(f"{EXT}/title", f"{absent_id('card')},x")
         except Exception:  # noqa: BLE001 - the refusal IS the affordance here
             pass
         app.tick_ms(16)

@@ -102,6 +102,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     address_prefix,
     assert_eq,
+    card_tag,
     form_part_tag,
     resize_and_settle,
     run_demo,
@@ -389,7 +390,9 @@ def section_c(app: RpcSubprocess) -> str:
 
     # A card, selected the way a reader selects one: press the card the canvas
     # drew. The palette chip that offers the row is only there once a card is.
-    press_tag(app, "lab.node.P-01")
+    # ★ R2103 — the card's address from the MOUNTED lab, asked at its own path
+    # for `control_of`'s reason one function below.
+    press_tag(app, card_tag(app, "P-01", ext=f"/{tag_of(app)}{EXT}"))
     assert_eq(
         app.query(f"/{tag_of(app)}{EXT}/selected"),
         "P-01",
@@ -630,7 +633,7 @@ def section_e(app: RpcSubprocess, key: str) -> None:
         )
         # The SAME gestures, over the same painted rectangles, in a process
         # that has never seen the shell.
-        press_tag(alone, "lab.node.P-01")
+        press_tag(alone, card_tag(alone, "P-01", ext=EXT))
         alone_chip = part_tag(alone, "add", key, EXT)
         reveal(alone, alone_chip)
         press_tag(alone, alone_chip)

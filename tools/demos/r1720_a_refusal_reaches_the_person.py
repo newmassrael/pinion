@@ -88,6 +88,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     abs_rects_of,
+    absent_id,
     access_node_by_tag,
     assert_eq,
     assert_every_refusal_is_heard,
@@ -101,9 +102,19 @@ EXT = "/external"
 #: refusal the surface itself authors. The last is needed because the two kinds
 #: of refusal are held to opposite rules — see `b_the_two_kinds_of_refusal`.
 SCREENS = [
-    ("hello-node-lab", "lab.toast", "zoom", ("select", "no.such.card")),
-    ("hello-packet-view", "pv.appbar.said", "row_count", ("select_message", "no.such.row")),
-    ("hello-analyzer-shell", "shell.toast", "cards", ("title", "no.such.card,x")),
+    ("hello-node-lab", "lab.toast", "zoom", ("select", absent_id("card"))),
+    (
+        "hello-packet-view",
+        "pv.appbar.said",
+        "row_count",
+        ("select_message", absent_id("row")),
+    ),
+    (
+        "hello-analyzer-shell",
+        "shell.toast",
+        "cards",
+        ("title", f"{absent_id('card')},x"),
+    ),
 ]
 
 #: R1564 / R1565 — the codes a refusal the SURFACE authored travels under. Every

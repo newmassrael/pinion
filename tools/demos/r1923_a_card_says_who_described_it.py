@@ -54,6 +54,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    card_prefix,
     run_demo,
 )
 
@@ -88,11 +89,13 @@ def notes(app: RpcSubprocess, surface: str) -> dict:
     return {row["node"]: row for row in js(app.query(f"{surface}/notes"))["nodes"]}
 
 
-def cards(app: RpcSubprocess) -> list[str]:
+def cards(app: RpcSubprocess, surface: str) -> list[str]:
+    # ★ R2103 — the prefix from the mounted lab, not spelled here.
+    card = card_prefix(app, ext=surface)
     return sorted(
-        tag.removeprefix("lab.node.")
+        tag.removeprefix(card)
         for tag in abs_rects_of(app.snapshot(source="paint", viewport=VIEWPORT))
-        if tag.startswith("lab.node.") and tag.count(".") == 2
+        if tag.startswith(card) and tag.count(".") == 2
     )
 
 
@@ -106,7 +109,7 @@ def body() -> None:
             app.query(f"{EXT}/nav") == SEAT,
         )
         surface = surface_of(app, SEAT)
-        drawn = cards(app)
+        drawn = cards(app, surface)
         ok(f"the canvas draws cards to describe — {len(drawn)}", len(drawn) >= 2)
         subject = drawn[0]
 

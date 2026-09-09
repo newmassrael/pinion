@@ -47,7 +47,9 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    card_tag,
     form_part_tag,
+    frame_tag,
     press_painted_tag,
     run_demo,
 )
@@ -155,6 +157,23 @@ def role_tag(tf, name: str) -> str:
     return next(role["tag"] for role in roles if role["name"] == name)
 
 
+def node_tag(tf, name: str) -> str:
+    """The address the screen publishes for that card.
+
+    ★ R2103 — [`role_tag`]'s reason, for the family the recipes below aim at
+    most: a card's address is composed in one place and published on the
+    screen's `nodes` roster, so this asks for it. `ext=EXT` because this walk
+    drives the screen through its own external path.
+    """
+    return card_tag(tf, name, ext=EXT)
+
+
+def host_frame_tag(tf, name: str) -> str:
+    """The address the screen publishes for that host frame — [`node_tag`]'s
+    sibling, and the same reason."""
+    return frame_tag(tf, name, ext=EXT)
+
+
 def press_wire(tf, frm: str, to: str) -> None:
     """Press the middle of the wire between two cards.
 
@@ -225,28 +244,28 @@ GESTURES = {
     # a node's life
     "add a node": lambda tf: press(tf, role_tag(tf, "Responder")),
     "delete a node": lambda tf: (
-        press(tf, "lab.node.P-03"),
+        press(tf, node_tag(tf, "P-03")),
         press(tf, "lab.inspector.delete"),
     ),
     "rename a node": lambda tf: (
-        press(tf, "lab.node.P-03"),
+        press(tf, node_tag(tf, "P-03")),
         type_into(tf, APPLY, "edge-01"),
     ),
-    "move a node": lambda tf: drag_by(tf, "lab.node.P-03", (40, 24)),
+    "move a node": lambda tf: drag_by(tf, node_tag(tf, "P-03"), (40, 24)),
     "collapse a node": lambda tf: (
-        press(tf, "lab.node.P-03"),
+        press(tf, node_tag(tf, "P-03")),
         press(tf, "lab.inspector.collapse"),
     ),
     "disable a node": lambda tf: (
-        press(tf, "lab.node.P-03"),
+        press(tf, node_tag(tf, "P-03")),
         press(tf, "lab.inspector.disable"),
     ),
     # a frame's life
     "re-parent a node between frames": lambda tf: alt_drag_onto(
-        tf, "lab.node.P-03", "lab.frame.host-b"
+        tf, node_tag(tf, "P-03"), host_frame_tag(tf, "host-b")
     ),
     "move a frame and its members": lambda tf: drag_by(
-        tf, "lab.frame.host-b.caption", (30, 0)
+        tf, f"{host_frame_tag(tf, 'host-b')}.caption", (30, 0)
     ),
     # the form
     # ★★ R1690 — the chip is named by the operation table's own argument rather

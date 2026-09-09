@@ -182,6 +182,65 @@ def demos_naming(paths: list[str]) -> list[tuple[Path, set[str]]]:
     return out
 
 
+def changed_walks(paths: list[str]) -> list[Path]:
+    """The demos among the changed paths — the axis a change to a WALK takes.
+
+    ★★★★★ R2103 — the third axis, and the one the other two are blind to by
+    construction. `blast_radius.py` answers *packages* and [`tracked_data`]
+    answers *pins*; a change that edits nothing but Python under `tools/` has
+    neither, so this tool answered **no demo** for a round that rewrote
+    twenty-six walks and the shared harness. Measured on that round's own staged
+    diff, `--radius` selected zero and the sweep it feeds printed *this change
+    reaches no demo — nothing to run*. A radius that answers "nothing" for a
+    change made entirely inside its own population is not narrow, it is absent,
+    and the failure is silent in the direction that publishes unverified walks.
+
+    ⚠ Only walks that still EXIST. `git diff --name-only` names a deleted file
+    too, and a radius that selects one hands the sweep a path it cannot run.
+
+    ⚠⚠ The neighbouring axis was measured and REJECTED. The obvious companion —
+    a changed shared module under `tools/` selects every walk that imports it —
+    is correct and useless here: measured at R2103 the corpus is 726 walks and
+    **726 of them import `rpc_verify`**, so that axis answers the entire sweep
+    for any harness edit, which is R1858's *the answer is EVERYTHING and the
+    narrow set vanishes into six hundred names nobody can run*. It is reported
+    as a caution in `main` instead, where a person can weigh it, rather than
+    silently turning a push into a full sweep.
+    """
+    out = []
+    for repo_path in paths:
+        candidate = REPO / repo_path
+        if candidate.parent == DEMOS and candidate.suffix == ".py" and candidate.exists():
+            out.append(candidate)
+    return sorted(set(out))
+
+
+def touches_harness(paths: list[str]) -> list[str]:
+    """The shared modules under `tools/` this change edits that a walk imports.
+
+    Not an axis — a CAUTION, for the reason [`changed_walks`] records: every
+    walk imports the harness, so selecting on it would mean the full sweep. What
+    it is good for is saying so out loud, since a harness edit really can reach
+    a walk this tool then does not select.
+    """
+    shared = set()
+    for demo in sorted(DEMOS.glob("*.py")):
+        try:
+            tree = ast.parse(demo.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for node in ast.walk(tree):
+            names: list[str] = []
+            if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                names = [node.module.split(".")[0]]
+            elif isinstance(node, ast.Import):
+                names = [alias.name.split(".")[0] for alias in node.names]
+            for name in names:
+                if (REPO / "tools" / f"{name}.py").exists():
+                    shared.add(f"tools/{name}.py")
+    return sorted(set(paths) & shared)
+
+
 def tracked_data(paths: list[str]) -> list[str]:
     """The changed paths that are DATA a demo can assert against.
 
@@ -338,6 +397,41 @@ def selftest() -> int:
     if not named:
         failures.append("no demo names docs/analyzer-packets-spec.json")
 
+    # ★★★★★ R2103 — the corpus axis, against real files rather than a story.
+    #
+    # The defect it repairs was a SILENCE: for a change made entirely of walks
+    # this tool answered nothing, and the sweep it feeds ran nothing. So the
+    # case that matters is not "does it find a walk" but "is a walk-only change
+    # non-empty", and that is what is asserted.
+    real_walk = sorted(DEMOS.glob("*.py"))[:1]
+    if not real_walk:
+        failures.append("no walk exists at all, so the corpus axis cannot be checked")
+    else:
+        rel = str(real_walk[0].relative_to(REPO))
+        if changed_walks([rel]) != real_walk:
+            failures.append(f"the corpus axis did not select {rel}, a walk this change edits")
+        # A path that is not a walk must not be selected, or the axis is
+        # "everything changed" wearing a narrower name.
+        noise = changed_walks(
+            [
+                "crates/pinion-core/src/lib.rs",
+                "tools/rpc_verify.py",
+                "docs/phase-b-rounds.tsv",
+                "tools/demos/README.md",
+            ]
+        )
+        if noise:
+            failures.append(f"the corpus axis selected non-walks: {noise}")
+        # ⚠ A DELETED walk is named by `git diff --name-only` and cannot be run.
+        if changed_walks(["tools/demos/r0000_deleted_by_this_change.py"]):
+            failures.append("the corpus axis selected a walk that does not exist")
+
+    # And the harness caution must name the harness and nothing else — it is the
+    # axis that was measured and rejected, so it has to stay a caution.
+    said = touches_harness(["tools/rpc_verify.py", "tools/demo_radius.py"])
+    if said != ["tools/rpc_verify.py"]:
+        failures.append(f"the harness caution named {said!r}")
+
     # ★★★★★ R2028 — THE ORACLE, against this repository's real index.
     #
     # Every case above hands the pure readers a fixture path list. Nothing
@@ -407,19 +501,38 @@ def main() -> int:
 
     names = set(packages(args.mode, args.rev_range))
     hits = demos_for(names)
-    if args.count:
-        print(len(hits))
-        return 0
+
+    # ★★★★★ R2103 — the SELECTION is the union of every axis that selects, and
+    # it all leaves on stdout, because stdout is what `sweep_headless.sh
+    # --radius` consumes. Before this, the package axis was the selection and
+    # the pin axis was a sentence on stderr a person was expected to act on —
+    # so a change that edited only a pin, or only walks, selected NOTHING while
+    # the tool printed a paragraph saying which demos it reached. A radius
+    # printed beside the selection is not in the selection.
+    why: dict[Path, set[str]] = {}
     for path, launched in hits:
+        why.setdefault(path, set()).update(f"pkg:{n}" for n in launched)
+    for path, hit in by_pin:
+        why.setdefault(path, set()).update(f"pin:{Path(p).name}" for p in hit)
+    for path in changed_walks(changed):
+        why.setdefault(path, set()).add("walk:edited")
+
+    if args.count:
+        print(len(why))
+        return 0
+    for path in sorted(why):
         rel = path.relative_to(REPO)
         if args.command:
             print(f"python3 {rel}")
         else:
-            print(f"{rel}  ({', '.join(sorted(launched))})")
-    # ★★★★★ R1858 — and the pin axis is REPORTED beside the package one rather
+            print(f"{rel}  ({', '.join(sorted(why[path]))})")
+    # ★★★★★ R1858 — and the pin axis is NAMED beside the package one rather
     # than folded into it. Folding would hide it exactly when it matters: the
     # sets are the same size only while the package answer is small, and the
-    # case this exists for is the one where that answer is six hundred.
+    # case this exists for is the one where that answer is six hundred. R2103
+    # kept the naming and moved the SELECTING half above, where a caller that
+    # reads stdout gets it — the two are different jobs and only one of them
+    # was being done.
     if by_pin:
         print(
             f"\n★ {len(by_pin)} of these assert against data this change edits "
@@ -431,7 +544,19 @@ def main() -> int:
                 f"  python3 {path.relative_to(REPO)}  ({', '.join(sorted(hit))})",
                 file=sys.stderr,
             )
-    elif pins:
+    # ⚠ R2103 — the harness caution. Every walk imports `rpc_verify`, so an edit
+    # to it can reach a walk this tool does not select, and selecting on that
+    # would mean the full sweep for every harness round. Said, not decided.
+    harness = touches_harness(changed)
+    if harness:
+        print(
+            f"\n⚠ this change edits {len(harness)} shared module(s) every walk "
+            f"imports ({', '.join(harness)}). Only the walks selected above are "
+            f"in the radius; whether the rest are reached is a judgment about "
+            f"what changed in them — the full sweep is CI's.",
+            file=sys.stderr,
+        )
+    if pins and not by_pin:
         print(
             f"\n★ this change edits {len(pins)} tracked data file(s) and NO demo "
             f"names any of them: {', '.join(pins)}",

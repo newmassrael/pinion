@@ -53,6 +53,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    card_tag,
     run_demo,
     voice_defects,
     voice_partition_sum,
@@ -353,7 +354,8 @@ def body() -> None:
         )
         assert_eq(grown["counts"]["hollow"], 0, "and no box was left vouching for nothing")
         grown_rows = voice_rows(grown)
-        card = grown_rows[f"lab.node.{made}"]
+        # ★ R2103 — the new card's address from the screen, not spelled here.
+        card = grown_rows[card_tag(tf, made)]
         assert_eq(card["voice"], "announced")
         assert judge(card["tag"], card["name"]) is None, (
             f"the new card announces {card['name']!r}"

@@ -34,6 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    address_prefix,
     assert_declared_channels_are_true,
     assert_eq,
     assert_router_press_moves,
@@ -184,6 +185,12 @@ def body() -> None:
         # a wrong letter written here looks for a mark that is not there, which
         # reads as the screen not painting it.
         parts = spec["form_parts"]
+        # ★★★★★ R2103 — and the prefixes the CANVAS's two families are addressed
+        # under, recovered from the rosters the screen publishes rather than
+        # spelled. `address_prefix` takes a member's own key off the end of the
+        # address the paint used, so a card's prefix here and the card's address
+        # in `nodes` cannot be two different strings.
+        cards = address_prefix(spec["nodes"], key="id")
         assert_eq(q(tf, "graph"), spec["graph"], "the graph is the one declared")
         assert_eq(q(tf, "zoom"), spec["zoom"], "and it opens at the declared zoom")
         assert_eq(
@@ -327,7 +334,7 @@ def body() -> None:
             if tag not in painted:
                 missing.append(tag)
         for frame in spec["frames"]:
-            for tag in (f"lab.frame.{frame['name']}", f"lab.frame.{frame['name']}.caption"):
+            for tag in (frame["tag"], f"{frame['tag']}.caption"):
                 if tag not in painted:
                     missing.append(tag)
         # ★ R1678 — the reset the specification says is UNCONDITIONAL has to be
@@ -340,9 +347,9 @@ def body() -> None:
                 missing.append(tag)
         for node in spec["nodes"]:
             for tag in (
-                f"lab.node.{node['id']}",
-                f"lab.node.{node['id']}.id",
-                f"lab.node.{node['id']}.badge",
+                node["tag"],
+                f"{node['tag']}.id",
+                f"{node['tag']}.badge",
                 f"lab.pin.{node['id']}.dial",
             ):
                 if tag not in painted:
@@ -480,11 +487,11 @@ def body() -> None:
         for word in spec["protocols"]:
             declared.add(f"lab.palette.protocol.{word}")
         for frame in spec["frames"]:
-            declared.add(f"lab.frame.{frame['name']}")
-            declared.add(f"lab.frame.{frame['name']}.caption")
+            declared.add(frame["tag"])
+            declared.add(f"{frame['tag']}.caption")
         for node in spec["nodes"]:
             for suffix in ("", ".id", ".badge"):
-                declared.add(f"lab.node.{node['id']}{suffix}")
+                declared.add(f"{node['tag']}{suffix}")
             # ★★★★★ R1927's issue dot, declared here at R1931 — and it is
             # declared BACKWARD only, deliberately. A card wears it exactly when
             # the gate names that card, so it is not in the forward list above:
@@ -497,7 +504,7 @@ def body() -> None:
             # machine, because the regression sweep here was being run with
             # `PINION_ASSUME_BUILT=1` against a `hello-node-lab` binary that
             # predated the mark.
-            declared.add(f"lab.node.{node['id']}.issue")
+            declared.add(f"{node['tag']}.issue")
             declared.add(f"lab.pin.{node['id']}.dial")
             declared.add(f"lab.pin.{node['id']}.accept")
         for field in spec["fields"]:
@@ -1111,8 +1118,8 @@ def body() -> None:
             if tag.startswith("lab.pin."):
                 node, _, side = tag[len("lab.pin."):].rpartition(".")
                 return f"pin:{node}:{side}"
-            if tag.startswith("lab.node.") and tag.count(".") == 2:
-                return f"node:{tag[len('lab.node.'):]}"
+            if tag.startswith(cards) and tag.count(".") == 2:
+                return f"node:{tag[len(cards):]}"
             return {
                 "lab.toolbar.zoom.in": "zoom:in",
                 "lab.toolbar.zoom.out": "zoom:out",
@@ -1254,12 +1261,12 @@ def body() -> None:
         #    canvas is a viewport over a world surface, so a card's own
         #    rectangle is stated in that surface's coordinates and a press aimed
         #    at it lands outside the window.
-        held = window_of(tf, "lab.node.T-01")
+        held = window_of(tf, f"{cards}T-01")
         inv(tf, "point", centre(held))
         inv(tf, "send", "PointerDown")
         inv(tf, "point", f"{held['x'] + held['w'] // 2 + 40},{held['y'] + held['h'] // 2 + 30}")
         inv(tf, "send", "PointerUp")
-        moved = window_of(tf, "lab.node.T-01")
+        moved = window_of(tf, f"{cards}T-01")
         assert moved != held, f"a node drag places it: {held} -> {moved}"
 
         # 4. drag a pin = author a link
@@ -1392,7 +1399,7 @@ def body() -> None:
         print("[L] the three derived reads refuse a write as read-only")
 
         # ── (M) Selecting another node re-derives the whole inspector ───────
-        click(tf, at(tf, "lab.node.P-01"))
+        click(tf, at(tf, f"{cards}P-01"))
         assert_eq(q(tf, "selected"), "P-01")
         form = json.loads(q(tf, "form"))
         assert any(f["key"] == "discovery.multicast.enabled" for f in form), (
@@ -1406,7 +1413,7 @@ def body() -> None:
         print("[M] selecting another node re-derives its rows, badges and degree")
 
         # ── (N) Running settles the form ────────────────────────────────────
-        click(tf, at(tf, "lab.node.R-01"))
+        click(tf, at(tf, f"{cards}R-01"))
         # ★ R1716 — an AUTHORED row. `connect.endpoints` used to be one and is
         # now worked out from the wires, so writing to it is refused by the row
         # itself; what this section is about is that a launch settles whatever a
@@ -1430,7 +1437,7 @@ def body() -> None:
         # green, and R1663 shipped a second sibling with the same defect in both
         # of its joins. This section is the one that would have failed.
         assert_router_press_moves(
-            tf, "lab.node.P-02", lambda: q(tf, "selected"), "O: a node card"
+            tf, f"{cards}P-02", lambda: q(tf, "selected"), "O: a node card"
         )
         assert_router_press_moves(
             tf, "lab.toolbar.zoom.in", lambda: q(tf, "zoom"), "O: a toolbar stepper"
@@ -1470,7 +1477,7 @@ def body() -> None:
         #     that was already drawn — nothing is re-authored. The seats are one
         #     per address, always, so this holds whatever earlier sections left
         #     the list at.
-        click(tf, at(tf, "lab.node.R-01"))
+        click(tf, at(tf, f"{cards}R-01"))
         inv(tf, "select_link", f"{held['id']}")
 
         def seats() -> list:

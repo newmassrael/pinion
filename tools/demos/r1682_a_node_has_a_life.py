@@ -53,6 +53,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     assert_router_press_moves,
+    card_prefix,
     run_demo,
 )
 
@@ -84,6 +85,11 @@ def refused(tf, verb, args) -> str:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        # ★★★★★ R2103 — the prefix a card is painted under, asked of the screen
+        # once. Every address below is composed from it, so a wrong letter is
+        # not spellable: spelled, it would raise a `KeyError` that reads as the
+        # canvas having stopped painting the card.
+        card = card_prefix(tf)
         # ── (A) boot ────────────────────────────────────────────────
         opening = cards(tf)
         assert_eq(
@@ -113,11 +119,11 @@ def body() -> None:
         # ── (C) collapse is a LOOK ──────────────────────────────────
         tf.invoke(f"{EXT}/select", "P-03")
         assert_eq(q(tf, "selected"), "P-03", "the inspector's subject")
-        before = rects(tf)["lab.node.P-03"]
+        before = rects(tf)[f"{card}P-03"]
         assert_eq(tf.invoke(f"{EXT}/collapse", "P-03"), "true", "the toggle answers its state")
         assert_eq(cards(tf)["P-03"]["collapsed"], True, "★ and the wire reports it")
         painted = rects(tf)
-        after = painted["lab.node.P-03"]
+        after = painted[f"{card}P-03"]
         assert after[3] < before[3], (
             f"★ a collapsed card is DRAWN smaller — {after[3]} < {before[3]} — "
             f"which is the observable a look has"
@@ -162,10 +168,11 @@ def body() -> None:
         # And it cannot have grown into a neighbour: R1655's invariant, which
         # a floating affordance broke one round ago.
         for tag, box in painted.items():
-            # Cards only: `lab.node.<name>` with nothing after it. The parts
-            # INSIDE a card (`lab.node.P-03.id`) legitimately overlap it.
-            rest = tag.removeprefix("lab.node.")
-            if rest == tag or "." in rest or tag == "lab.node.P-03":
+            # Cards only: the card prefix with a name and nothing after it. The
+            # parts INSIDE a card (its identifier run, its badge) legitimately
+            # overlap it.
+            rest = tag.removeprefix(card)
+            if rest == tag or "." in rest or tag == f"{card}P-03":
                 continue
             apart = (
                 after[0] + after[2] <= box[0]
@@ -182,7 +189,7 @@ def body() -> None:
             tf, "lab.inspector.collapse", lambda: q(tf, "cards"), "the card expands again"
         )
         assert_eq(cards(tf)["P-03"]["collapsed"], False, "★ the seat toggles it back")
-        assert_eq(rects(tf)["lab.node.P-03"], before, "and the card is its old size")
+        assert_eq(rects(tf)[f"{card}P-03"], before, "and the card is its old size")
 
         # ── (D) switching off is what the graph MEANS ───────────────
         assert_eq(tf.invoke(f"{EXT}/disable", "P-03"), "true", "the toggle answers its state")
@@ -204,11 +211,11 @@ def body() -> None:
         links_before = json.loads(q(tf, "links"))
         form_before = q(tf, "form")
         painted_before = rects(tf)
-        card_before = painted_before["lab.node.P-03"]
+        card_before = painted_before[f"{card}P-03"]
         digest_before = sorted(
-            tag.removeprefix("lab.node.P-03.")
+            tag.removeprefix(f"{card}P-03.")
             for tag in painted_before
-            if tag.startswith("lab.node.P-03.")
+            if tag.startswith(f"{card}P-03.")
         )
 
         assert_eq(tf.invoke(f"{EXT}/rename", "P-03,edge-01"), "edge-01", "the new name")
@@ -243,7 +250,7 @@ def body() -> None:
         # itself from a different source and snap to the default width. Nothing
         # was broken enough to fail, which is how it would have stayed.
         painted_after = rects(tf)
-        card_after = painted_after["lab.node.edge-01"]
+        card_after = painted_after[f"{card}edge-01"]
         assert_eq(
             (card_after[2], card_after[3]),
             (card_before[2], card_before[3]),
@@ -251,9 +258,9 @@ def body() -> None:
         )
         assert_eq(
             sorted(
-                tag.removeprefix("lab.node.edge-01.")
+                tag.removeprefix(f"{card}edge-01.")
                 for tag in painted_after
-                if tag.startswith("lab.node.edge-01.")
+                if tag.startswith(f"{card}edge-01.")
             ),
             digest_before,
             "★★ and shows the same digest lines — they are the specification's, "

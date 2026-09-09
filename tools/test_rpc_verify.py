@@ -369,6 +369,53 @@ def test_real_pointer_button_names_are_the_harness_vocabulary() -> None:
     check(names == ["left", "middle", "right"], f"button vocabulary is {names}")
 
 
+def test_absent_id_is_composed_and_carries_the_kind() -> None:
+    """R2103 — the id nothing sits at is composed from one declared stem.
+
+    Two claims, and they fail separately. The KIND has to survive into the
+    string, because a walk that gets a refusal prints the argument it sent and
+    `no.such.card` says what was missing where a bare sentinel says nothing.
+    And the stem has to be `ABSENT` rather than a second copy of it: a copy is
+    free to drift, and the whole point of the declaring site is that the address
+    census stops finding this family because there is only one place it exists.
+    """
+    made = rpc_verify.absent_id("card")
+    check(made.endswith(".card"), f"the kind survives into the id: {made!r}")
+    check(
+        made == f"{rpc_verify.ABSENT}.card",
+        f"the id is composed from the declared stem: {made!r}",
+    )
+    check(
+        rpc_verify.absent_id("row") != made,
+        "two kinds are two different ids, or the word is decorative",
+    )
+
+
+def test_hostile_args_compose_through_the_declaring_site() -> None:
+    """R2103 — and the one caller in this file really goes through it.
+
+    A declaring site nothing calls is a declaration, not a repair. Asserted by
+    REBUILDING the value from `absent_id` rather than by comparing against the
+    literal it replaced: the literal is what this round removed, so writing it
+    here would put the spelling back in the file that exists to hold one copy.
+
+    ⚠ What this cannot see, said rather than left to be found: a hand-typed
+    literal that happens to EQUAL the composition passes here, because both
+    sides would read the same string. That property — that the file spells the
+    stem in exactly one place — is not a unit test's to hold; it is
+    `tools/painted_addresses.py`, which counts this file among the corpus and
+    pins `no.such` at zero, so a re-spelling is refused at the push gate.
+
+    ⚠⚠ And breaking `absent_id` itself does NOT turn this red — both sides move
+    together. That is deliberate: the case above is the one that watches the
+    composition, and this one watches the CALLER not drifting off it. Verified
+    by mutating each separately; neither mutation reddens the other's case.
+    """
+    first = rpc_verify.HOSTILE_ARGS[0]
+    want = f"{rpc_verify.absent_id('thing')},{rpc_verify.absent_id('thing')}"
+    check(first == want, f"the hostile name is composed: {first!r}")
+
+
 def test_request_matches_its_own_id() -> None:
     tf = wired()
     deliver(tf, {"jsonrpc": "2.0", "id": 999, "result": "somebody else's"})

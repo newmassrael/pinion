@@ -75,7 +75,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcSubprocess, find_by_tag, run_demo  # noqa: E402
+from rpc_verify import RpcSubprocess, card_tag, find_by_tag, run_demo  # noqa: E402
 
 SHELL = "hello-analyzer-shell"
 EXT = "/external"
@@ -163,7 +163,18 @@ def register(app: RpcSubprocess, surface: str) -> dict:
     return {row["card"]: row for row in js(app.query(f"{surface}/wrong"))["cards"]}
 
 
-def mark_fill(app: RpcSubprocess, card: str):
+def issue_tag(app: RpcSubprocess, surface: str, card: str) -> str:
+    """The address a card's issue mark is painted under.
+
+    ★ R2103 — the card's half comes from the mounted lab's published roster and
+    only the mark's own word is written here, so a wrong letter in the family
+    is not spellable. Spelled, `find_by_tag` answers `None` and this walk reads
+    it as *the card wears no mark*, which is the assertion it is making.
+    """
+    return f"{card_tag(app, card, ext=surface)}.issue"
+
+
+def mark_fill(app: RpcSubprocess, surface: str, card: str):
     """The ISSUE MARK's fill, or None when the card wears none.
 
     The fill and not the rectangle: what a mark means here is its colour, and
@@ -171,18 +182,18 @@ def mark_fill(app: RpcSubprocess, card: str):
     somewhere else on the node.
     """
     snap = app.snapshot(source="paint", viewport=VIEWPORT)
-    node = find_by_tag(snap, f"lab.node.{card}.issue")
+    node = find_by_tag(snap, issue_tag(app, surface, card))
     if node is None:
         return None
     return as_hex((node.get("style", {}) or {}).get("fill"))
 
 
-def marks(app: RpcSubprocess, cards) -> dict:
+def marks(app: RpcSubprocess, surface: str, cards) -> dict:
     """One paint snapshot, read for every card — the whole canvas at once."""
     snap = app.snapshot(source="paint", viewport=VIEWPORT)
     found = {}
     for card in cards:
-        node = find_by_tag(snap, f"lab.node.{card}.issue")
+        node = find_by_tag(snap, issue_tag(app, surface, card))
         found[card] = None if node is None else as_hex((node.get("style", {}) or {}).get("fill"))
     return found
 
@@ -312,7 +323,7 @@ def body() -> None:
         carries_the_models_sentence(app, surface, starved)
 
         banner("C — ★★★★★ a card with a problem WEARS the mark")
-        worn = marks(app, starved)
+        worn = marks(app, surface, starved)
         wearing = sorted(name for name, fill in worn.items() if fill is not None)
         bare = sorted(name for name, fill in worn.items() if fill is None)
         ok(f"C: ★ some cards wear it — {wearing}", wearing != [])
@@ -348,7 +359,7 @@ def body() -> None:
             isinstance(held, str),
         )
         split = register(app, surface)
-        worn = marks(app, split)
+        worn = marks(app, surface, split)
         blocking = {as_hex(worn[n]) for n, r in split.items() if r["blocks"]}
         warning = {
             as_hex(worn[n])
@@ -398,17 +409,17 @@ def body() -> None:
         ok(
             "E: ★★★★★ so the mark went with it — the paint is a rendering of "
             "the model rather than a second answer",
-            mark_fill(app, STARVED) is None,
+            mark_fill(app, surface, STARVED) is None,
         )
         ok(
             "E: ★ and the cards this walk did not touch kept their marks, so "
             "the change was the model's and not a repaint of everything",
-            mark_fill(app, TWINS[0]) is not None,
+            mark_fill(app, surface, TWINS[0]) is not None,
         )
 
         banner("F — the panel and the marks are one walk")
         final = register(app, surface)
-        worn = marks(app, final)
+        worn = marks(app, surface, final)
         listed = {name for name, row in final.items() if row["problem"]}
         drawn = {name for name, fill in worn.items() if fill is not None}
         ok(

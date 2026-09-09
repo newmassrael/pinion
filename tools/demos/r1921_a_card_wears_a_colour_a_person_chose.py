@@ -52,6 +52,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    card_prefix,
+    card_tag,
     find_by_tag,
     run_demo,
 )
@@ -105,7 +107,7 @@ def luminance(colour: dict) -> float:
     return 0.213 * colour["r"] + 0.715 * colour["g"] + 0.072 * colour["b"]
 
 
-def card_paint(app: RpcSubprocess, name: str) -> tuple[dict, dict]:
+def card_paint(app: RpcSubprocess, surface: str, name: str) -> tuple[dict, dict]:
     """The card's FILL and the colour of its identifier's letters, from ONE
     snapshot — the pair the contrast property is about.
 
@@ -114,16 +116,20 @@ def card_paint(app: RpcSubprocess, name: str) -> tuple[dict, dict]:
     snapshot is what makes the gap below a fact about one frame.
     """
     snap = app.snapshot(source="paint", viewport=VIEWPORT)
-    box = find_by_tag(snap, f"lab.node.{name}") or {}
-    label = find_by_tag(snap, f"lab.node.{name}.id") or {}
+    # ★ R2103 — the card's address from the mounted lab, and the identifier run
+    # from the same address rather than a second spelling of it.
+    tag = card_tag(app, name, ext=surface)
+    box = find_by_tag(snap, tag) or {}
+    label = find_by_tag(snap, f"{tag}.id") or {}
     return box.get("style", {}).get("fill"), label.get("style", {}).get("fg_color")
 
 
-def cards(app: RpcSubprocess) -> list[str]:
+def cards(app: RpcSubprocess, surface: str) -> list[str]:
+    card = card_prefix(app, ext=surface)
     return sorted(
-        tag.removeprefix("lab.node.")
+        tag.removeprefix(card)
         for tag in abs_rects_of(app.snapshot(source="paint", viewport=VIEWPORT))
-        if tag.startswith("lab.node.") and tag.count(".") == 2
+        if tag.startswith(card) and tag.count(".") == 2
     )
 
 
@@ -137,7 +143,7 @@ def body() -> None:
             app.query(f"{EXT}/nav") == SEAT,
         )
         surface = surface_of(app, SEAT)
-        drawn = cards(app)
+        drawn = cards(app, surface)
         ok(f"the canvas draws cards to colour — {len(drawn)}", len(drawn) >= 2)
         subject = drawn[0]
 
@@ -166,7 +172,7 @@ def body() -> None:
                 for row in rows.values()
             ),
         )
-        bare_fill, bare_ink = card_paint(app, subject)
+        bare_fill, bare_ink = card_paint(app, surface, subject)
         ok(f"A: the card is painted in its kind's surface — {bare_fill}", bare_fill)
 
         banner("B — a colour given over the wire lands on the frame")
@@ -175,7 +181,7 @@ def body() -> None:
             app.invoke(f"{surface}/tint", f"{subject},{LIGHT}") == LIGHT,
         )
         app.tick_ms(16)
-        lit_fill, lit_ink = card_paint(app, subject)
+        lit_fill, lit_ink = card_paint(app, surface, subject)
         ok(
             f"B: ★★★★★ and the FILL CHANGED — {bare_fill} then {lit_fill}",
             lit_fill != bare_fill,
@@ -230,7 +236,7 @@ def body() -> None:
         )
         app.invoke(f"{surface}/tint", f"{subject},{DARK}")
         app.tick_ms(16)
-        dark_fill, dark_ink = card_paint(app, subject)
+        dark_fill, dark_ink = card_paint(app, surface, subject)
         dark_gap = abs(luminance(dark_fill) - luminance(dark_ink))
         ok(
             f"D: and on a DARK one — fill {dark_fill}, ink {dark_ink}, "
@@ -277,7 +283,7 @@ def body() -> None:
             f"taken away — {back['faces']}",
             back["faces"] is None or back["faces"]["title"] != LIGHT,
         )
-        gone_fill, gone_ink = card_paint(app, subject)
+        gone_fill, gone_ink = card_paint(app, surface, subject)
         ok(
             f"F: ★★★★★ and the frame is EXACTLY as it was before any colour — "
             f"{gone_fill} / {gone_ink}",

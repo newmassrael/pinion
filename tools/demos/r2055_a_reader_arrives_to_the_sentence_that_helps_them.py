@@ -82,6 +82,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    absent_id,
     assert_eq,
     run_demo,
     screen_spec,
@@ -136,7 +137,7 @@ def speak(app) -> None:
     about the same screen.
     """
     try:
-        app.invoke(f"{EXT}/title", "no.such.card,x")
+        app.invoke(f"{EXT}/title", f"{absent_id('card')},x")
     except Exception:  # noqa: BLE001 - the refusal IS the affordance here
         pass
     app.tick_ms(16)

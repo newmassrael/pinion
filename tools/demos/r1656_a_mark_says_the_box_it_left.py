@@ -36,6 +36,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     call,
+    card_prefix,
     form_part_prefixes,
     resize_and_settle,
     run_demo,
@@ -243,7 +244,11 @@ def run(tf: RpcSubprocess) -> None:
     # ── 7. a press at the far side of a grown window reaches the node under it,
     #      which is the failure a person reported.
     by_tag = {r["tag"]: r for r in text_runs(tf) if r.get("tag")}
-    ids = [t for t in by_tag if t.startswith("lab.node.") and t.endswith(".id")]
+    # ★ R2103 — the prefix a card is painted under, from the screen. Spelled, a
+    # wrong letter would empty this list and the assertion below would read as
+    # "the graph paints no cards" rather than as a typo.
+    card = card_prefix(tf)
+    ids = [t for t in by_tag if t.startswith(card) and t.endswith(".id")]
     assert len(ids) >= 6, f"the graph paints its cards: {ids}"
 
     # ★★ R1682.1 — the picked link's own chrome is a summoned OVERLAY, and an
@@ -291,7 +296,7 @@ def run(tf: RpcSubprocess) -> None:
     reached = 0
     covered = 0
     for tag in sorted(ids):
-        node = tag[len("lab.node."):-len(".id")]
+        node = tag[len(card):-len(".id")]
         other = "Q-01" if node != "Q-01" else "T-01"
         tf.invoke(f"{EXT}/select", other)
         r = by_tag[tag]

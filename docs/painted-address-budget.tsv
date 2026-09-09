@@ -60,12 +60,12 @@ kp.list	1
 lab.crumb	6
 lab.faults	4
 lab.form	0
-lab.frame	10
+lab.frame	0
 lab.gate	4
 lab.hint	2
 lab.inspector	41
 lab.link	12
-lab.node	112
+lab.node	0
 lab.palette	41
 lab.pin	39
 lab.rail	9
@@ -82,7 +82,7 @@ lv.list	1
 lv.severity	1
 modified.elem	7
 name.elem	1
-no.such	8
+no.such	0
 nodegroups.frame	3
 nodegroups.node	6
 nodegroups.wire	1

@@ -60,6 +60,7 @@ Usage:
     python3 tools/painted_addresses.py --selftest      # its own tests
     python3 tools/painted_addresses.py --owed          # the work order
     python3 tools/painted_addresses.py --list <stem>   # every site in a family
+    python3 tools/painted_addresses.py --unspelled     # which families Rust never spells
     python3 tools/painted_addresses.py --write-budget            # re-pin
     python3 tools/painted_addresses.py --write-budget --pin lab.form
                                        # ...and record a family as converted
@@ -87,6 +88,21 @@ BUDGET = ROOT / "docs" / "painted-address-budget.tsv"
 #: ⚠ Anchored on purpose. `^` is what separates a string that is an address from
 #: a sentence that talks about one, and this file is full of the latter.
 ADDRESS = re.compile(r"^([a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)\.")
+
+#: The trees a painted address is COMPOSED in — the Rust side of the wall.
+#:
+#: [`sources`] is the corpus that SPELLS addresses (python); this is the corpus
+#: that MAKES them. Two different questions, so two names.
+RUST_ROOTS: tuple[str, ...] = ("crates", "examples")
+
+#: A Rust string literal, escapes handled, quotes included.
+#:
+#: ⚠ Approximate, and the direction of the approximation is the point: a raw
+#: string (`r#"..."#`) reads here as an ordinary literal, and a commented line
+#: carrying a lone quote can open one. Both errors can only make a stem look
+#: MORE spelled, never less, so a family this reports as unspelled is a claim
+#: that errs towards under-claiming silence.
+RUST_LITERAL = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"', re.DOTALL)
 
 
 def _imported_helpers(walks: list[Path]) -> list[Path]:
@@ -346,6 +362,91 @@ def owed() -> int:
     return 0
 
 
+def rust_needles(text: str, stem: str) -> tuple[bool, bool]:
+    """Does this Rust source spell `stem` — anywhere, and inside a literal?
+
+    ★★★★★ R2103 — two needles rather than one, because their DISAGREEMENT is
+    the fact worth having, and folding them is what let a paragraph of prose be
+    wrong. R2055 prescribed separating this census's true families from its
+    noise by asking whether the stem appears in the Rust tree. Whether such a
+    filter keeps or deletes a given family can come down to a single doc
+    comment: measured at R2103, `expanded.struct` — a QUERY PATH a walk asks a
+    screen for, not a mark anything paints — is spelled in Rust exactly once,
+    in a comment. A reader that answered only *yes* could not say so, and the
+    hand-written note recording that refutation put this family among the ones
+    Rust never spells, which it is not.
+
+    Pure, and handed its text rather than reading the tree, so its cases are
+    fixtures: the whole reason the prose went wrong is that a count measured
+    once against a moving corpus was written down as though it would hold.
+    """
+    if stem not in text:
+        return (False, False)
+    return (True, any(stem in lit for lit in RUST_LITERAL.findall(text)))
+
+
+@functools.lru_cache(maxsize=1)
+def rust_text() -> str:
+    """Every Rust source under [`RUST_ROOTS`], joined into one string.
+
+    Joined rather than kept per file because every caller asks *does anything
+    at all spell this*, which one pass answers for a hundred families. Held for
+    the life of the process: reading it is real IO and [`unspelled`] asks once
+    per family. A file that cannot be read is skipped rather than fatal — this
+    is a diagnostic, and most of an answer beats none.
+    """
+    parts: list[str] = []
+    for root in RUST_ROOTS:
+        for path in sorted((ROOT / root).rglob("*.rs")):
+            try:
+                parts.append(path.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+    return "\n".join(parts)
+
+
+def unspelled() -> int:
+    """Which families no Rust source spells — under each needle, side by side.
+
+    ★★★★★ R2103 — the command that replaces a paragraph of hand-measured
+    counts. This question is asked every time somebody proposes telling this
+    census's real families from its noise by looking for the stem in Rust; it
+    has been answered by hand twice, and once wrongly. The answer also MOVES as
+    the debt is repaid — a family converted to a composition the screen
+    publishes stops being spelled in Rust too — so it is exactly the kind of
+    number that must not sit in prose.
+
+    Prints every family the LITERAL needle calls silent, since that is the
+    wider set, and names the ones the two needles disagree about: those are the
+    families whose fate under such a filter would be decided by a comment.
+    """
+    families = sorted(set(read_budget()) | set(census()))
+    if not families:
+        print("painted-addresses: no families to ask about")
+        return 0
+    text = rust_text()
+    verdicts = {stem: rust_needles(text, stem) for stem in families}
+    silent = [s for s in families if not verdicts[s][0]]
+    no_literal = [s for s in families if not verdicts[s][1]]
+    only_comment = [s for s in no_literal if verdicts[s][0]]
+    print(f"{'source':>7}  {'literal':>7}  family")
+    for stem in no_literal:
+        in_src, in_lit = verdicts[stem]
+        print(f"{'yes' if in_src else 'no':>7}  {'yes' if in_lit else 'no':>7}  {stem}")
+    print(
+        f"of {len(families)} family/ies: {len(silent)} spelled by no Rust source "
+        f"at all, {len(no_literal)} by no Rust string literal"
+    )
+    if only_comment:
+        print(
+            f"★ the two needles disagree about {len(only_comment)}: "
+            f"{', '.join(only_comment)} — Rust's only spelling is a comment, so "
+            "a filter built on 'the stem appears in Rust' keeps or deletes "
+            "these by accident"
+        )
+    return 0
+
+
 def _counts(source: str) -> list[str]:
     import tempfile
 
@@ -430,6 +531,92 @@ def selftest() -> int:
             failed += 1
             print(f"FAIL: {name}: want {want}, got {got}", file=sys.stderr)
 
+    # ★★★★★ R2103 — the two Rust needles, against FIXTURES rather than this
+    # tree. The prose these replace was measured once against a moving corpus
+    # and was wrong by the time it was read; a case pinned to today's
+    # `examples/` would rot exactly the same way. What cannot rot is the
+    # discrimination itself: a comment is not a string literal.
+    needle_cases: list[tuple[str, str, str, tuple[bool, bool]]] = [
+        (
+            "a stem in a string literal is spelled under both needles",
+            'fn f() { press("lab.node.T-01"); }',
+            "lab.node",
+            (True, True),
+        ),
+        (
+            "★ a stem in a COMMENT is source-only — the case that broke the prose",
+            "// the id is `expanded.struct:...` for a struct row\n",
+            "expanded.struct",
+            (True, False),
+        ),
+        (
+            "a stem nowhere is silent under both",
+            'fn f() { press("shell.rail.Packets"); }',
+            "nodegroups.node",
+            (False, False),
+        ),
+        (
+            "★★ a doc comment in a file that DOES carry literals still separates",
+            '/// see `line.area`\nfn f() { press("lab.pin.x.dial"); }',
+            "line.area",
+            (True, False),
+        ),
+        (
+            "⚠ an escaped quote does not end a literal early and hide the stem",
+            r'fn f() { p("a\"b lab.rail.x"); }',
+            "lab.rail",
+            (True, True),
+        ),
+    ]
+    for label, fixture, stem, want in needle_cases:
+        got = rust_needles(fixture, stem)
+        if got != want:
+            failed += 1
+            print(f"FAIL: {label}: rust_needles -> {got}, wanted {want}", file=sys.stderr)
+
+    # ★★★★★ R2103 — and the ORACLE, against this repository's real Rust.
+    #
+    # Every case above hands the pure rule a fixture, which is what keeps them
+    # from rotting — and leaves [`rust_text`] exercised by nothing. A reader
+    # that found no files at all would then answer *spelled nowhere* for every
+    # family, `--unspelled` would report the whole census silent, and all five
+    # cases above would still pass. That is this workspace's registered class:
+    # a pure rule is remembered and the oracle that hands it the world is not.
+    #
+    # So the expectation is DERIVED FROM THE TREE by a different method than
+    # the one under test — a per-file read that stops at the first Rust literal
+    # spelling an address, against the joined corpus `rust_text` builds. Naming
+    # a family here would be a hand-written list, and it would rot the moment
+    # that family converted.
+    seed = ""
+    for root in RUST_ROOTS:
+        for path in sorted((ROOT / root).rglob("*.rs")):
+            body = path.read_text(encoding="utf-8", errors="replace")
+            for literal in RUST_LITERAL.findall(body):
+                hit = ADDRESS.match(literal[1:])
+                if hit:
+                    seed = hit.group(1)
+                    break
+            if seed:
+                break
+        if seed:
+            break
+    if not seed:
+        failed += 1
+        print(
+            "FAIL: no Rust string literal spells an address anywhere, so the "
+            "oracle case below cannot fail and is not checking anything",
+            file=sys.stderr,
+        )
+    elif rust_needles(rust_text(), seed) != (True, True):
+        failed += 1
+        print(
+            f"FAIL: the corpus rust_text() builds does not carry {seed!r}, which "
+            "a file-by-file read of the same trees found in a literal — the "
+            "oracle is reading less than the tree holds",
+            file=sys.stderr,
+        )
+
     # ★★★★★ THE POPULATION IS ASSERTED, because a gate that cannot see a file
     # answers zero about it and reads as a pass. The expected roster is derived
     # here by a DIFFERENT method from the one under test — a line-wise read of
@@ -499,7 +686,7 @@ def selftest() -> int:
                 file=sys.stderr,
             )
 
-    total = len(cases) + 5
+    total = len(cases) + len(needle_cases) + 6
     print(f"painted_addresses selftest: {total - failed} of {total} cases OK")
     return 1 if failed else 0
 
@@ -517,6 +704,11 @@ def main() -> int:
     parser.add_argument("--selftest", action="store_true")
     parser.add_argument("--owed", action="store_true", help="the work order")
     parser.add_argument("--list", metavar="STEM", help="every site in one family")
+    parser.add_argument(
+        "--unspelled",
+        action="store_true",
+        help="which families no Rust source spells, under each of the two needles",
+    )
     args = parser.parse_args()
 
     if args.selftest:
@@ -533,6 +725,8 @@ def main() -> int:
         return 2
     if args.owed:
         return owed()
+    if args.unspelled:
+        return unspelled()
     if args.list:
         found = scan().get(args.list, [])
         for path, line in found:

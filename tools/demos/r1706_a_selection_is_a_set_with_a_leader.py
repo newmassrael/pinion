@@ -89,7 +89,10 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    card_prefix,
+    card_tag,
     find_by_tag,
+    frame_tag,
     isolated_storage_dir,
     png_pixel,
     read_png_rgba8,
@@ -140,9 +143,12 @@ def card_positions(tf: RpcSubprocess) -> dict[str, tuple[int, int]]:
 def card_edges(tf: RpcSubprocess) -> dict[str, tuple[int, int, int, int]]:
     """Each card's declared border colour, out of the painted scene."""
     snap = tf.snapshot(source="paint")
+    # ★ R2103 — the prefix a card is painted under, asked of the screen once for
+    # the whole loop rather than spelled at each turn of it.
+    card = card_prefix(tf)
     out: dict[str, tuple[int, int, int, int]] = {}
     for name in [n for names in HOSTS.values() for n in names]:
-        node = find_by_tag(snap, f"lab.node.{name}")
+        node = find_by_tag(snap, f"{card}{name}")
         assert node is not None, f"the canvas draws no card for {name}"
         border = (node.get("style") or {}).get("border")
         assert border is not None, f"{name}'s card has no border at all"
@@ -158,7 +164,7 @@ def access_nodes(tf: RpcSubprocess) -> dict[str, dict]:
 
 def press_host_tab(tf: RpcSubprocess, host: str) -> None:
     shot = abs_rects_of(tf.snapshot(source="paint"))
-    tf.click(centre(shot[f"lab.frame.{host}.caption"]))
+    tf.click(centre(shot[f"{frame_tag(tf, host)}.caption"]))
     tf.tick(16)
 
 
@@ -188,12 +194,12 @@ def b_the_same_gesture_selects_and_carries(tf: RpcSubprocess) -> None:
     # Start from somewhere else entirely, so "it was already selected" cannot
     # make this pass.
     shot = abs_rects_of(tf.snapshot(source="paint"))
-    tf.click(centre(shot["lab.node.T-01"]))
+    tf.click(centre(shot[card_tag(tf, "T-01")]))
     tf.tick(16)
     assert_eq(selection_of(tf)[1], ["T-01"], "the run starts on one card of the OTHER host")
 
     before = card_positions(tf)
-    tab = abs_rects_of(tf.snapshot(source="paint"))["lab.frame.host-a.caption"]
+    tab = abs_rects_of(tf.snapshot(source="paint"))[f"{frame_tag(tf, 'host-a')}.caption"]
     start = centre(tab)
     tf.drag(from_at=start, to_at=(start[0] + 48, start[1] + 36))
     tf.tick(16)
@@ -280,11 +286,13 @@ def d_the_three_states_are_visibly_different(tf: RpcSubprocess, out_dir: Path) -
     assert png.exists(), "the screenshot was not written"
     img = read_png_rgba8(png)
 
-    lead_px = sample_edge(img, probe_of(rects[f"lab.node.{leader}"]))
+    # ★ R2103 — one ask, three addresses composed from it.
+    card = card_prefix(tf)
+    lead_px = sample_edge(img, probe_of(rects[f"{card}{leader}"]))
     member = next(name for name in picked if name != leader)
-    member_px = sample_edge(img, probe_of(rects[f"lab.node.{member}"]))
+    member_px = sample_edge(img, probe_of(rects[f"{card}{member}"]))
     stranger = HOSTS["host-b"][0]
-    stranger_px = sample_edge(img, probe_of(rects[f"lab.node.{stranger}"]))
+    stranger_px = sample_edge(img, probe_of(rects[f"{card}{stranger}"]))
 
     def apart(a: tuple[int, ...], b: tuple[int, ...]) -> int:
         return max(abs(int(p) - int(q)) for p, q in zip(a, b))
@@ -323,7 +331,7 @@ def e_the_panel_says_how_many_and_which(tf: RpcSubprocess) -> None:
 
     # With one card picked it does not claim a group.
     shot = abs_rects_of(snap)
-    tf.click(centre(shot["lab.node.T-01"]))
+    tf.click(centre(shot[card_tag(tf, "T-01")]))
     tf.tick(16)
     single = access_nodes(tf)["lab.inspector.selcount"]["name"]
     assert single.startswith("1 selected"), f"one card picked, and it says {single!r}"
@@ -343,19 +351,21 @@ def f_the_tree_carries_membership_and_the_lead(tf: RpcSubprocess) -> None:
         "multi-selectable, or a per-card 'not selected' is noise"
     )
 
+    # ★ R2103 — the prefix these two comprehensions classify by, asked once.
+    card = card_prefix(tf)
     said_selected = sorted(
-        tag.removeprefix("lab.node.")
+        tag.removeprefix(card)
         for tag, node in nodes.items()
-        if tag.startswith("lab.node.")
+        if tag.startswith(card)
         and tag.count(".") == 2
         and node.get("selected") is True
     )
     assert_eq(said_selected, sorted(picked), "aria-selected names exactly the members")
 
     said_current = [
-        tag.removeprefix("lab.node.")
+        tag.removeprefix(card)
         for tag, node in nodes.items()
-        if tag.startswith("lab.node.")
+        if tag.startswith(card)
         and tag.count(".") == 2
         and node.get("current") is not None
     ]
@@ -370,7 +380,7 @@ def g_the_agent_path_is_the_same_act(tf: RpcSubprocess) -> None:
     tf.invoke(f"{EXT}/select", "T-01")
     start_at = card_positions(tf)
     shot = abs_rects_of(tf.snapshot(source="paint"))
-    start = centre(shot["lab.frame.host-a.caption"])
+    start = centre(shot[f"{frame_tag(tf, 'host-a')}.caption"])
     tf.drag(from_at=start, to_at=(start[0] + 32, start[1] + 24))
     tf.tick(16)
     by_gesture = selection_of(tf)
@@ -444,7 +454,7 @@ def h_narrowing_and_the_hosts_own_place(tf: RpcSubprocess) -> None:
     assert len(selection_of(tf)[1]) == len(HOSTS["host-a"]), "the group is picked"
 
     shot = abs_rects_of(tf.snapshot(source="paint"))
-    tf.click(centre(shot["lab.node.S-01"]))
+    tf.click(centre(shot[card_tag(tf, "S-01")]))
     tf.tick(16)
     assert_eq(selection_of(tf), ("S-01", ["S-01"]), "pressing one card narrows to it")
 
@@ -522,7 +532,7 @@ def j_growing_the_set_does_not_disturb_the_open_field(tf: RpcSubprocess) -> None
 
     # And the other direction still shuts it: moving the leader does.
     shot = abs_rects_of(tf.snapshot(source="paint"))
-    tf.click(centre(shot["lab.node.S-01"]))
+    tf.click(centre(shot[card_tag(tf, "S-01")]))
     tf.tick(16)
     assert_eq(
         editing(tf)["target"],

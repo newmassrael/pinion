@@ -58,6 +58,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     access_node_by_tag,
     assert_eq,
+    card_tag,
     form_part_prefixes,
     form_part_tag,
     run_demo,
@@ -491,8 +492,11 @@ def body() -> None:
             "census of that morning",
         )
         rows_grown = voice_rows(grown)
-        assert_eq(rows_grown[f"lab.node.{made}"]["voice"], "announced")
-        assert_eq(rows_grown[f"lab.node.{made}.id"]["voice"], "silent")
+        # ★ R2103 — the address the card the POINTER just made is painted
+        # under, composed from the prefix the screen publishes.
+        made_tag = card_tag(tf, made)
+        assert_eq(rows_grown[made_tag]["voice"], "announced")
+        assert_eq(rows_grown[f"{made_tag}.id"]["voice"], "silent")
         assert_eq(rows_grown[f"lab.pin.{made}.dial"]["voice"], "announced")
         tf.invoke(f"{EXT}/delete_node", made)
         # ★ Put the selection back first. A delete moves it to another card, and

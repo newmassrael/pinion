@@ -104,8 +104,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    absent_id,
     assert_action_refused,
     assert_eq,
+    card_tag,
     resize_and_settle,
     run_demo,
 )
@@ -210,16 +212,33 @@ def reading(node: dict[str, Any]) -> str:
     return value if isinstance(value, str) else ""
 
 
-def select_card(app: RpcSubprocess, card: str = "P-01") -> None:
+def lab_ext(app: RpcSubprocess) -> str:
+    """The path the lab answers on when it is a SECTION of the shell.
+
+    ★ R2103 — the shell publishes each section's root beside its key, so this is
+    asked rather than assembled from a name written here. Needed because a card's
+    painted address is now taken from the lab's own published roster, and the two
+    processes this walk drives reach that roster by different paths.
+    """
+    row = next(r for r in app.query(f"{EXT}/sections")["rows"] if r["key"] == SEAT)
+    return f"/{row['tag']}{EXT}"
+
+
+def select_card(app: RpcSubprocess, card: str = "P-01", *, ext: str = EXT) -> None:
     """Press a node card, the way a hand selects one.
 
     ★ Through the harness's own `abs_rects_of`, which folds every scroll offset
     AND every enclosing clip — R1676 measured what a hand-rolled walk costs here:
     coordinates outside the viewport, and presses that went nowhere.
+
+    ★★ R2103 — the card's ADDRESS comes from the screen too. Spelled, a wrong
+    letter here would fail the assertion below as *the frame drew nothing*,
+    which is a sentence about the screen and not about the walk.
     """
+    tag = card_tag(app, card, ext=ext)
     rects = abs_rects_of(app.snapshot(source="paint"))
-    box = rects.get(f"lab.node.{card}")
-    assert box is not None, f"the frame drew nothing at lab.node.{card}"
+    box = rects.get(tag)
+    assert box is not None, f"the frame drew nothing at {tag}"
     x, y, w, h = box
     app.click((x + w / 2, y + h / 2))
 
@@ -242,7 +261,7 @@ def section_a(app: RpcSubprocess) -> None:
     app.intervene_painted(f"{EXT}/nav", SEAT)
     assert_eq(app.query(f"{EXT}/nav"), SEAT, "the lab section opens")
 
-    select_card(app)
+    select_card(app, ext=lab_ext(app))
     tags = set(walk_tags(app.snapshot(source="paint")))
     ok("its inspector paints the fault panel", "lab.faults" in tags)
     rows = sorted(
@@ -484,7 +503,7 @@ def section_e(app: RpcSubprocess, offers: list[dict[str, Any]]) -> None:
     # comment promises not to make. A caller has to be able to tell them apart,
     # so the third refusal is now its own sentence.
     held = {row["key"] for row in slot(app, "form")}
-    absent_key = "no.such.key"
+    absent_key = absent_id("key")
     ok("the premise: the declaration really does not hold it", absent_key not in held)
     said = assert_action_refused(
         lambda: app.invoke(f"{EXT}/inject", f"{absent_key}:wrong_type"),

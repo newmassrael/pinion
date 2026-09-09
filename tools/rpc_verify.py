@@ -3719,10 +3719,79 @@ def assert_eq(actual: Any, expected: Any, label: str = "value") -> None:
         )
 
 
+#: ★★★★★ R2103 — the stem every id that NOTHING SITS AT is built from.
+#:
+#: A walk that wants a refusal names something absent, and eight sites across
+#: six files each typed their own `no.such.<word>`. That is the address debt's
+#: shape in a family that is not an address at all, and it cost something
+#: measurable: `tools/painted_addresses.py` reads a dotted literal structurally
+#: and cannot tell one from a painted mark, so its budget carried `no.such` as
+#: a family owing eight conversions, and R2055 was REFUSED at the push gate for
+#: raising a count of noise from six to eight.
+#:
+#: ⚠ R2055 PRESCRIBED A FILTER INSTEAD, and R2103 measured it before building
+#: it. Both forms of the prescription fail, in opposite directions:
+#:
+#: * *first segment appears in the Rust tree* separates NOTHING. `"no"` is a
+#:   bare Rust string literal in 19 files / 29 places (`relink.rs`, `origin.rs`,
+#:   `cell_value.rs`, `utterance.rs`, …), so the filter keeps `no.such`.
+#: * *the whole stem appears in the Rust tree* throws away real work. Most of
+#:   the families Rust never spells are GENUINE painted families a walk reads a
+#:   rectangle from — `nodegroups.node`, `nodegroups.frame`, `nodegroups.wire`,
+#:   `line.area` — composed from a prefix the caller passes in, which is
+#:   precisely the converted shape this debt is driving the tree towards. So
+#:   that test would drop several true families to remove one false one, and
+#:   would get STRICTER as the debt is repaid.
+#:
+#: ⇒ the repair is this debt's own medicine rather than a heuristic in the
+#: needle: an absent id gets a DECLARING SITE, every reader is handed one, and
+#: the census stops seeing a family because there is no longer one to see.
+#:
+#: ⚠⚠ **The counts are not written here, because a hand-written one was wrong.**
+#: `python3 tools/painted_addresses.py --unspelled` answers, and the reason it
+#: has to is that the earlier draft of this comment measured the families once
+#: and named `expanded.struct.Position` among the ones Rust never spells. It is
+#: not one: Rust spells it in exactly one place, a DOC COMMENT. So the rejected
+#: filter's verdict on that family is decided by whether the needle counts
+#: comments — count them and it survives, do not and it is deleted, and neither
+#: is a judgment about anything. That is a worse fact about the prescription
+#: than the one this comment used to carry, and a hand-written count is what
+#: hid it.
+#:
+#: ⚠⚠⚠ `expanded.struct.Position` is still a false positive, left standing and
+#: said rather than hidden: it is a QUERY PATH a walk asks the screen for, not
+#: a mark anything paints. The census cannot tell a dotted query path from a
+#: dotted address either, and no declaring site here reaches it — it belongs to
+#: whatever publishes that screen's query grammar. A census counting one kind
+#: of noise is a census that may be counting two.
+ABSENT: str = "no.such"
+
+
+def absent_id(what: str) -> str:
+    """An id of `what` that nothing on any screen sits at.
+
+    For driving a refusal: a card that is not on the canvas, a row the form does
+    not hold, a message the capture does not carry. The word is carried so the
+    failure a walk prints says which KIND of thing was missing, which is the
+    only part of the string a reader needs.
+
+    ★ Deliberately NOT shaped like this tree's painted addresses. A screen's
+    address is `<screen>.<family>.<key>` composed from a declaration the screen
+    publishes; this is the opposite — a string chosen so no composition can ever
+    produce it — and the two being told apart is what makes the address census's
+    number true.
+    """
+    return f"{ABSENT}.{what}"
+
+
 #: R1720 — arguments chosen so a verb that CAN refuse will: a name nothing is
 #: called, an index nothing sits at, and a value of the wrong kind entirely.
 #: Tried in order, and the first refusal is the one judged.
-HOSTILE_ARGS: tuple[Any, ...] = ("no.such.thing,no.such.thing", -987654, True)
+HOSTILE_ARGS: tuple[Any, ...] = (
+    f"{absent_id('thing')},{absent_id('thing')}",
+    -987654,
+    True,
+)
 
 
 def assert_every_refusal_is_heard(
@@ -5007,6 +5076,69 @@ def form_part_tag(tf, part: str, key: str, *, ext: str = "/external") -> str:
     be a constant here.
     """
     return f"{form_part_prefixes(tf, ext=ext)[part]}{key}"
+
+
+def published_prefix(tf, roster: str, *, key: str, ext: str = "/external") -> str:
+    """The prefix the addresses in one of a screen's published rosters share.
+
+    ★★★★★ R2103 — [`address_prefix`] applied to a roster the screen names,
+    which is the shape every family this address debt has converted turns out to
+    take: the screen publishes each member beside the address it painted it
+    under, and a walk that wants the family's PREFIX takes a member's own key
+    off the end of its address rather than typing the prefix again.
+
+    Lifted rather than written twice: the node lab publishes two such rosters
+    (`nodes` keyed by `id`, `frames` keyed by `name`) and the four named readers
+    below would otherwise be four copies of one line under four names — the
+    exact shape R2054's own closing audit found and lifted as
+    [`form_part_tag`].
+
+    A roster the screen does not publish is a `KeyError` naming it, and a roster
+    whose rows do not carry their own address raises out of [`address_prefix`].
+    Both are the answer worth having: the alternative is a plausible prefix that
+    addresses nothing, which reads to every later assertion as *the screen did
+    not paint it*.
+    """
+    return address_prefix(screen_spec(tf, ext)[roster], key=key)
+
+
+def card_prefix(tf, *, ext: str = "/external") -> str:
+    """The prefix every card on the node graph is painted under — the SCREEN's.
+
+    ★ The screen composes it in one place (`address::CARD_TEMPLATE`, R2082) and
+    publishes the result on every `nodes` row, so a walk is handed it. Ask once
+    and hold it: a walk that classifies a whole snapshot by family wants the
+    prefix, not one card's address.
+
+    ⚠ A prefix is not a family. `lab.node.build.<word>` shares this prefix and
+    is a different family (R1885's build seat), which is why the screen's own
+    router reads that one first — a walk that filters a snapshot by this prefix
+    alone is asking for cards AND build seats.
+    """
+    return published_prefix(tf, "nodes", key="id", ext=ext)
+
+
+def card_tag(tf, name: str, *, ext: str = "/external") -> str:
+    """The address the card for `name` is painted under.
+
+    Takes the card's name because that is what this screen addresses a card by
+    and what the wire and the accessibility tree both carry. For a card the
+    screen really holds, `next(n["tag"] for n in spec["nodes"] …)` is the same
+    answer; this is for the other case, which is most of them — the address of a
+    card a walk is about to make, has just deleted, or is asserting the absence
+    of.
+    """
+    return f"{card_prefix(tf, ext=ext)}{name}"
+
+
+def frame_prefix(tf, *, ext: str = "/external") -> str:
+    """The prefix every host frame on the node graph is painted under."""
+    return published_prefix(tf, "frames", key="name", ext=ext)
+
+
+def frame_tag(tf, name: str, *, ext: str = "/external") -> str:
+    """The address the host frame for `name` is painted under."""
+    return f"{frame_prefix(tf, ext=ext)}{name}"
 
 
 def access_node_by_tag(result: Any, tag: str) -> Optional[dict]:

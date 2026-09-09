@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (
     RpcSubprocess,
     RpcError,
+    absent_id,
     assert_eq,
     find_by_tag,
     run_demo,
@@ -183,7 +184,7 @@ def body() -> None:
             ({}, "no target at all"),
             ({"at": {"x": 100.0}}, "at missing y"),
             ({"path": 42}, "non-string path"),
-            ({"path": "no.such.tag"}, "unknown tag"),
+            ({"path": absent_id("tag")}, "unknown tag"),
         ]:
             try:
                 tf.request("scene/smart_zoom_gesture", params)

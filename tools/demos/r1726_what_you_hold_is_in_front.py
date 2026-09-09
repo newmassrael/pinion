@@ -56,6 +56,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    card_prefix,
     run_demo,
 )
 
@@ -87,17 +88,23 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
     # ── (A) the lab: one card held ────────────────────────────────────────
     banner("A — hello-node-lab: the card you are dragging is in front")
     with RpcSubprocess("hello-node-lab", boot_grace=1.5) as app:
+        # ★★★★★ R2103 — the prefix a card is painted under, ASKED FOR. The
+        # screen composes it in one place and publishes the result on every
+        # `nodes` row, so a wrong letter here is impossible rather than silent:
+        # spelled, it would find no card, and this walk would report that the
+        # canvas paints none.
+        card = card_prefix(app)
         rects = abs_rects_of(app.snapshot(source="paint"))
         cards = {
-            t: r for t, r in rects.items() if t.startswith("lab.node.") and t.count(".") == 2
+            t: r for t, r in rects.items() if t.startswith(card) and t.count(".") == 2
         }
         names = sorted(t.rsplit(".", 1)[-1] for t in cards)
         src, dst = names[0], names[4]
-        s, d = cards[f"lab.node.{src}"], cards[f"lab.node.{dst}"]
+        s, d = cards[f"{card}{src}"], cards[f"{card}{dst}"]
         ok(f"A: the screen paints {len(cards)} node cards", len(cards) >= 6)
 
-        at_rest = paint_order(rects, f"lab.node.{src}")
-        ok(f"A: {src} paints behind {dst} at rest", at_rest < paint_order(rects, f"lab.node.{dst}"))
+        at_rest = paint_order(rects, f"{card}{src}")
+        ok(f"A: {src} paints behind {dst} at rest", at_rest < paint_order(rects, f"{card}{dst}"))
 
         app.drag(
             from_at=(s[0] + s[2] // 2, s[1] + 12),
@@ -106,8 +113,8 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         )
         app.tick(16)
         during = abs_rects_of(app.snapshot(source="paint"))
-        held_at = paint_order(during, f"lab.node.{src}")
-        still_at = paint_order(during, f"lab.node.{dst}")
+        held_at = paint_order(during, f"{card}{src}")
+        still_at = paint_order(during, f"{card}{dst}")
         assert_eq(
             held_at > still_at,
             True,
@@ -117,12 +124,12 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         )
         ok(
             "A: and the two really are overlapping, so the order matters",
-            overlaps(during[f"lab.node.{src}"], during[f"lab.node.{dst}"]),
+            overlaps(during[f"{card}{src}"], during[f"{card}{dst}"]),
         )
         # ★ The half that makes the reorder sufficient rather than cosmetic: a
         # press finds what the eye sees on top, because the hit test reads the
         # same order in reverse.
-        centre = during[f"lab.node.{src}"]
+        centre = during[f"{card}{src}"]
         reach = app.request(
             "scene/pointer_reach",
             {"at": {"x": centre[0] + centre[2] // 2, "y": centre[1] + 8}},
@@ -138,10 +145,10 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         after = abs_rects_of(app.snapshot(source="paint"))
         ok(
             "A: releasing puts the card down where it was dropped",
-            f"lab.node.{src}" in after,
+            f"{card}{src}" in after,
         )
         assert_eq(
-            overlaps(after[f"lab.node.{src}"], after[f"lab.node.{dst}"]),
+            overlaps(after[f"{card}{src}"], after[f"{card}{dst}"]),
             True,
             "A: and the cards STAY overlapped -- overlap was never forbidden, "
             "the reference allows free placement and so do we",
@@ -152,8 +159,8 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # the card just placed was the hidden one. Asserted AFTER the release,
         # because "do they overlap" and "which is on top" are different
         # questions and the first draft of this check only asked the first.
-        dropped_at = paint_order(after, f"lab.node.{src}")
-        under_at = paint_order(after, f"lab.node.{dst}")
+        dropped_at = paint_order(after, f"{card}{src}")
+        under_at = paint_order(after, f"{card}{dst}")
         assert_eq(
             dropped_at > under_at,
             True,
@@ -166,8 +173,8 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             if name == src:
                 continue
             assert_eq(
-                after[f"lab.node.{name}"][:2],
-                rects[f"lab.node.{name}"][:2],
+                after[f"{card}{name}"][:2],
+                rects[f"{card}{name}"][:2],
                 f"A: {name} did not move -- a drop displaces no neighbour, "
                 "which is the free-canvas rule every node editor keeps and "
                 "which this tree's tile dashboard deliberately does not",
@@ -175,8 +182,8 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # The screen is still whole: a reorder must not lose, duplicate or
         # rename a card.
         assert_eq(
-            sorted(t for t in after if t.startswith("lab.node.") and t.count(".") == 2),
-            sorted(t for t in rects if t.startswith("lab.node.") and t.count(".") == 2),
+            sorted(t for t in after if t.startswith(card) and t.count(".") == 2),
+            sorted(t for t in rects if t.startswith(card) and t.count(".") == 2),
             "A: the same cards are on the canvas after the drop -- raising is a "
             "permutation, not an edit",
         )
@@ -185,7 +192,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # Picking a SECOND card up puts that one in front and leaves the first
         # ahead of everything it was already ahead of: the order is a history.
         second = next(n for n in names if n not in (src, dst))
-        s2 = after[f"lab.node.{second}"]
+        s2 = after[f"{card}{second}"]
         app.drag(
             from_at=(s2[0] + s2[2] // 2, s2[1] + 12),
             to_at=(s2[0] + s2[2] // 2 + 30, s2[1] + 40),
@@ -194,12 +201,12 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         app.tick(16)
         third = abs_rects_of(app.snapshot(source="paint"))
         assert_eq(
-            paint_order(third, f"lab.node.{second}") > paint_order(third, f"lab.node.{src}"),
+            paint_order(third, f"{card}{second}") > paint_order(third, f"{card}{src}"),
             True,
             "A: the most recently picked-up card is the frontmost",
         )
         assert_eq(
-            paint_order(third, f"lab.node.{src}") > paint_order(third, f"lab.node.{dst}"),
+            paint_order(third, f"{card}{src}") > paint_order(third, f"{card}{dst}"),
             True,
             "A: and the one picked up before it is still ahead of the one "
             "nobody has touched -- the stacking order is a history of what has "
@@ -210,7 +217,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
                 continue
             ok(
                 f"A: {name} is still on the canvas after two drags",
-                f"lab.node.{name}" in third,
+                f"{card}{name}" in third,
             )
 
     # ── (B) the editor: a whole selection held ────────────────────────────

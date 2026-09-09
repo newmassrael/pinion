@@ -86,6 +86,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    card_prefix,
     pointer_arrivals,
     run_demo,
 )
@@ -137,11 +138,20 @@ def titles(surface: dict) -> dict[str, str]:
 def cards(tf: RpcSubprocess) -> dict[str, tuple[int, int, int, int]]:
     """Every card's painted rectangle, read fresh."""
     rects = abs_rects_of(tf.snapshot(source="paint", viewport=WIN))
+    # ★ R2103 — the prefix from the screen. Spelled, a wrong letter empties this
+    # dictionary and every section below reports zero cards probed.
+    card = card_prefix(tf)
     return {
         tag: rect
         for tag, rect in rects.items()
-        if tag.startswith("lab.node.") and "." not in tag[len("lab.node."):]
+        if tag.startswith(card) and "." not in tag[len(card):]
     }
+
+
+def card_name(tf: RpcSubprocess, tag: str) -> str:
+    """Which card that painted address names — the inverse of the composition,
+    taken from the same published prefix rather than from a second spelling."""
+    return tag[len(card_prefix(tf)):]
 
 
 def probe_points(rect: tuple[int, int, int, int]) -> list[tuple[str, tuple[int, int]]]:
@@ -314,7 +324,7 @@ def section_c(tf: RpcSubprocess, rp: RealPointer, spec_doc: dict) -> None:
     for tag in sorted(cards(tf)):
         if tag.endswith(PARK):
             continue
-        name = tag[len("lab.node."):]
+        name = card_name(tf, tag)
         for label, _ in probe_points((0, 0, 4, 4)):
             # ★ The rectangle is re-read HERE, immediately before the aim. A
             # press that lands drags nothing (there is no movement below), but
@@ -352,7 +362,7 @@ def section_d(tf: RpcSubprocess, rp: RealPointer, spec_doc: dict) -> None:
     said = titles(spec_doc["it_says_so"])
     board = cards(tf)
     target = next(t for t in sorted(board) if not t.endswith(PARK))
-    name = target[len("lab.node."):]
+    name = card_name(tf, target)
 
     tf.invoke(f"{EXT}/select", PARK)
     wire_said = tf.query(f"{EXT}/toast")

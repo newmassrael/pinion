@@ -63,6 +63,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     assert_gesture_reads_one_fact,
+    card_prefix,
     run_demo,
 )
 
@@ -248,8 +249,9 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         )
 
         rects = abs_rects_of(app.snapshot(source="paint"))
+        # ★ R2103 — the card prefix from the screen, not spelled here.
         node_tags = sorted(
-            t for t in rects if t.startswith("lab.node.") and t.count(".") == 2
+            t for t in rects if t.startswith(card_prefix(app)) and t.count(".") == 2
         )
         ok(f"D: the screen paints {len(node_tags)} node cards", len(node_tags) >= 6)
         target = node_tags[0]
@@ -323,8 +325,12 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         (
             "hello-node-lab",
             1.5,
-            lambda r: sorted(
-                t for t in r if t.startswith("lab.node.") and t.count(".") == 2
+            # ★ R2103 — the picker takes the APP as well as the rectangles,
+            # because the family it is picking from has an address the screen
+            # publishes and a walk that spelled it would look for a mark that is
+            # not there.
+            lambda a, r: sorted(
+                t for t in r if t.startswith(card_prefix(a)) and t.count(".") == 2
             )[1],
             lambda a: a.query("/external/selected"),
             "screen A: pressing a node card selects it",
@@ -332,21 +338,21 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         (
             "hello-packet-view",
             1.2,
-            lambda r: "pv.list.row.2",
+            lambda a, r: "pv.list.row.2",
             lambda a: str(a.query("/external/selected_row")),
             "screen B: pressing a capture row selects it",
         ),
         (
             "hello-tile-dashboard",
             1.0,
-            lambda r: "dashboard#card.alarms",
+            lambda a, r: "dashboard#card.alarms",
             lambda a: a.query("/external/current"),
             "screen C: pressing a board card makes it current",
         ),
     ):
         with RpcSubprocess(example, visible_window=True, boot_grace=boot) as app:
             rects = abs_rects_of(app.snapshot(source="paint"))
-            tag = tag_of(rects)
+            tag = tag_of(app, rects)
             ok(f"F: {example} paints {tag}", tag in rects)
             r = rects[tag]
             before = read(app)
@@ -382,22 +388,40 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
 
         return read
 
-    def a_card_and_somewhere_to_put_it(example: str, prefix: str, depth: int):
-        """Grab the first painted card's title bar; drop it down and right."""
+    def a_card_and_somewhere_to_put_it(example: str, prefix_of, depth: int):
+        """Grab the first painted card's title bar; drop it down and right.
+
+        ★ R2103 — the prefix arrives as a FUNCTION of the running screen and is
+        handed back with the coordinates, because one of the two screens here
+        publishes the address its cards are painted under and the other does
+        not. Asking for it needs the binary up; the caller needs it after the
+        probe has closed, to read the same family again.
+        """
         with RpcSubprocess(example, boot_grace=1.5) as probe:
+            prefix = prefix_of(probe)
             rects = abs_rects_of(probe.snapshot(source="paint"))
             tags = sorted(t for t in rects if t.startswith(prefix) and t.count(".") == depth)
             assert tags, f"{example} painted no {prefix}* card to drag"
             r = rects[tags[0]]
             grab = (r[0] + r[2] / 2, r[1] + 12)
-            return grab, (grab[0] + 90, grab[1] + 70)
+            return prefix, grab, (grab[0] + 90, grab[1] + 70)
 
     swept = 0
-    for example, prefix, depth, label in (
-        ("hello-node-lab", "lab.node.", 2, "node lab: a node dragged across the canvas"),
-        ("hello-node-editor", "node_", 0, "node editor: the same gesture on the other graph"),
+    for example, prefix_of, depth, label in (
+        (
+            "hello-node-lab",
+            card_prefix,
+            2,
+            "node lab: a node dragged across the canvas",
+        ),
+        (
+            "hello-node-editor",
+            lambda _probe: "node_",
+            0,
+            "node editor: the same gesture on the other graph",
+        ),
     ):
-        start, end = a_card_and_somewhere_to_put_it(example, prefix, depth)
+        prefix, start, end = a_card_and_somewhere_to_put_it(example, prefix_of, depth)
         assert_gesture_reads_one_fact(
             example,
             from_at=start,

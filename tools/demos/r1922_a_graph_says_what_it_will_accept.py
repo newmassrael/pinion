@@ -56,6 +56,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    card_prefix,
     run_demo,
 )
 
@@ -90,11 +91,13 @@ def accepts(app: RpcSubprocess, surface: str) -> dict:
     return {row["body"]: row for row in js(app.query(f"{surface}/accepts"))["bodies"]}
 
 
-def cards(app: RpcSubprocess) -> set[str]:
+def cards(app: RpcSubprocess, surface: str) -> set[str]:
+    # ★ R2103 — the prefix from the mounted lab, not spelled here.
+    card = card_prefix(app, ext=surface)
     return {
-        tag.removeprefix("lab.node.")
+        tag.removeprefix(card)
         for tag in abs_rects_of(app.snapshot(source="paint", viewport=VIEWPORT))
-        if tag.startswith("lab.node.") and tag.count(".") == 2
+        if tag.startswith(card) and tag.count(".") == 2
     }
 
 
@@ -169,7 +172,7 @@ def body() -> None:
         )
 
         banner("E — the row is a DERIVATION, not a snapshot taken once")
-        before = cards(app)
+        before = cards(app, surface)
         ok(f"E: the canvas draws cards — {len(before)}", len(before) >= 2)
         # ★ Change the document under it and ask again. A row computed once at
         # boot would answer identically for a reason that has nothing to do
@@ -179,7 +182,7 @@ def body() -> None:
         subject = sorted(before)[0]
         app.invoke(f"{surface}/delete_node", subject)
         app.tick_ms(16)
-        after = cards(app)
+        after = cards(app, surface)
         ok(
             f"E: the document really changed — {len(before)} then {len(after)}",
             len(after) < len(before),

@@ -55,6 +55,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    address_prefix,
     assert_eq,
     run_demo,
 )
@@ -112,15 +113,18 @@ def graph_boxes(tf) -> dict[str, tuple[int, int, int, int]]:
     """Every card and every host frame, as PAINTED."""
     painted = rects(tf)
     spec = json.loads(q(tf, "spec"))
+    # ★ R2103 — both prefixes come off the rosters the screen publishes. The
+    # card family needs the prefix rather than a row's address because this
+    # reads the LIVE list of cards, which is not the specification's.
+    card = address_prefix(spec["nodes"], key="id")
     out = {}
     for name in q(tf, "nodes").split(","):
-        tag = f"lab.node.{name}"
+        tag = f"{card}{name}"
         if tag in painted:
             out[name] = painted[tag]
     for frame in spec["frames"]:
-        tag = f"lab.frame.{frame['name']}"
-        if tag in painted:
-            out[frame["name"]] = painted[tag]
+        if frame["tag"] in painted:
+            out[frame["name"]] = painted[frame["tag"]]
     return out
 
 
