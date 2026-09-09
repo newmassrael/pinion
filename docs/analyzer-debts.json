@@ -191,18 +191,6 @@
       ]
     },
     {
-      "name": "debt-a-focus-mode-is-lost-the-moment-the-graph-it-was-aimed-from-changes",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "ordinary",
-      "why": [
-        "links analyzer-debt-repayment-loop, screen-a-vs-canon-operation-census"
-      ]
-    },
-    {
       "name": "debt-a-guest-derives-width-from-one-of-two-declarable-chrome-parts",
       "substituted": false,
       "blocked_by": "unmeasured",
@@ -442,6 +430,18 @@
       "why": [
         "links analyzer-debt-repayment-loop, analyzer-tool-capability-spec",
         "names dashboard.t2.12"
+      ]
+    },
+    {
+      "name": "debt-a-toolbar-row-has-no-space-for-a-second-reading",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-debt-repayment-loop, debt-the-canon-is-one-app-and-we-are-many-binaries, screen-a-vs-canon-operation-census"
       ]
     },
     {

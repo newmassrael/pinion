@@ -8955,6 +8955,73 @@ fn lab_call(
     lab.invoke(verb, args)
 }
 
+/// ★★★★★ R2102 — **in the assembled tool, an edit under a live focus says what
+/// the focus was left holding — and the sentence is PAINTED.**
+///
+/// Rule (7): the debt is about what a person reading this application sees, so
+/// the walk drives the mounted screen through the door the shell reaches it by
+/// and then reads the toast off the painted scene rather than off the screen's
+/// own state. A sentence composed and never drawn would pass a state-only
+/// assertion and tell nobody anything.
+///
+/// # What the debt was, in one line
+///
+/// `Document::focus` is a pure query the lab re-derives every frame, so the
+/// FADE was always current — delete the card tying six others in and those six
+/// dim immediately and correctly. The tally was spoken once, at the press, and
+/// every edit after that moved it in silence.
+#[test]
+fn r2102_an_edit_under_a_live_focus_says_what_it_left_in_the_assembled_tool() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        state.go("lab").expect("the node lab section is open");
+        lab_invoke(&state, "select", "T-01").expect("the opening graph draws that card");
+        lab_invoke(&state, "focus", "lineage").expect("`lineage` is a word the verb takes");
+
+        // The wire's own reading of the answer, which is what the sentence has
+        // to agree with — one derivation, asked here in the vocabulary a client
+        // gets rather than in the screen's.
+        let focus = lab_slot(&state, "focused");
+        let at_the_press = report_count(&focus, "out_of_play");
+        let all = report_count(&focus, "of");
+        assert!(
+            all > at_the_press,
+            "the focus kept something, so there is a set for an edit to move: \
+             {focus}"
+        );
+
+        // ★★★★★ The edit. `Q-01` feeds what the selection feeds, so taking it
+        // away moves what lineage can reach.
+        let said = lab_invoke(&state, "delete_node", "Q-01").expect("that card can be taken away");
+        assert_eq!(said, "Q-01", "the verb answers the card it took");
+
+        let after = lab_slot(&state, "focused");
+        let now = report_count(&after, "out_of_play");
+        assert_ne!(
+            now, at_the_press,
+            "★ the edit really did move the set — without this the assertion \
+             below could pass on an application that said nothing new: \
+             {focus} -> {after}"
+        );
+
+        let (shot, _) = painted_at((WIN_W, WIN_H));
+        let words = run_words(&shot, "lab.toast").join(" ");
+        assert!(
+            words.contains("deleted Q-01"),
+            "the assembled tool draws the edit's own sentence: {words:?}"
+        );
+        assert!(
+            words.contains(&format!(
+                "focus lineage now leaves {now} of {} card(s) out of play",
+                report_count(&after, "of")
+            )),
+            "★★★★★ and it draws what the focus was left holding, in the numbers \
+             the wire publishes — which is the whole of this debt: {words:?}",
+        );
+    });
+}
+
 /// A count out of a report, as a count.
 ///
 /// One conversion rather than a cast at each reader: the wire carries JSON

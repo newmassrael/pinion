@@ -19977,6 +19977,108 @@ fn a_card_between_two_selected_cards_is_upstream_and_downstream_at_once() {
     );
 }
 
+/// ★★★★★ R2102 — **the answer counts itself**, and the two halves partition
+/// the tree.
+///
+/// The counts existed only as `related().len()` — a `Vec` of every id
+/// allocated to answer *how many* — and a screen that shows the tally has to
+/// ask every frame.
+#[test]
+fn a_focus_answer_counts_its_own_two_halves() {
+    let s = siblings();
+    let answer = s.document.focus(ROOT, &[s.one], Focus::Lineage).unwrap();
+    assert_eq!(
+        answer.in_play(),
+        answer.related().len(),
+        "the count is the list's length, without the list"
+    );
+    assert_eq!(answer.out_of_play(), answer.unrelated().len());
+    assert_eq!(
+        answer.total(),
+        answer.in_play() + answer.out_of_play(),
+        "★ the halves PARTITION the tree, which is what lets a screen read a \
+         denominator off the answer instead of counting the tree again"
+    );
+    // Against the fixture's own shape rather than against the accessors: seven
+    // nodes, three of which lineage cannot reach — the sibling, the frame
+    // holding it, and the island.
+    assert_eq!((answer.in_play(), answer.out_of_play()), (4, 3));
+    assert_eq!(answer.total(), 7);
+}
+
+/// ★★★★★ R2102 — **the share never rounds a faded card away**, which is the
+/// contract a consumer would otherwise re-decide.
+///
+/// Plain truncation answers `0` for one card out of three hundred, and a
+/// reader told *nothing is out of play* while a card is drawn faded has been
+/// told the opposite of what the screen is showing.
+#[test]
+fn the_out_of_play_share_never_says_none_while_one_is_out() {
+    let s = siblings();
+    // 3 of 7 set aside, which truncation and the contract agree on.
+    let lineage = s.document.focus(ROOT, &[s.one], Focus::Lineage).unwrap();
+    assert_eq!(lineage.out_of_play_share(), 42);
+
+    // ★ The floor case, built rather than argued: one source feeding two
+    // hundred sinks, and one island nothing reaches. Truncation says `0`; the
+    // contract says `1`.
+    let mut document: Document<Op> = Document::new("root");
+    let hub = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(0)), 0, 0)
+        .unwrap();
+    for _ in 0..200 {
+        let leaf = document
+            .add_node(ROOT, NodeBody::Kind(Op::Sink), 0, 0)
+            .unwrap();
+        document
+            .connect(ROOT, Socket::new(hub, 0), Socket::new(leaf, 0))
+            .unwrap();
+    }
+    let island = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(9)), 0, 0)
+        .unwrap();
+    let wide = document.focus(ROOT, &[hub], Focus::Lineage).unwrap();
+    assert_eq!(
+        (wide.out_of_play(), wide.total()),
+        (1, 202),
+        "one card of two hundred and two is out of play"
+    );
+    assert_eq!(
+        wide.out_of_play() * 100 / wide.total(),
+        0,
+        "★ and plain truncation of it is zero — the lie this contract exists \
+         to refuse, stated here so the assertion below cannot pass vacuously"
+    );
+    assert_eq!(wide.out_of_play_share(), 1);
+
+    // ★ The other end, and the reason `100` is not reachable: the island is
+    // wired to nothing, so selecting it sets aside everything ELSE — and the
+    // share still stops short of 100, because the selected card itself is
+    // always in play.
+    let alone = document.focus(ROOT, &[island], Focus::Lineage).unwrap();
+    assert_eq!(alone.in_play(), 1, "only the selected card is in play");
+    assert_eq!((alone.out_of_play(), alone.total()), (201, 202));
+    assert_eq!(alone.out_of_play_share(), 99);
+    assert_ne!(
+        alone.out_of_play_share(),
+        100,
+        "★ `100` says nothing is in play, and no answer this crate produces \
+         can say it: an empty selection is refused and a selected card is \
+         always related to itself"
+    );
+
+    // And a middle value the contract and the arithmetic agree on, so the
+    // clamp is not what every case is passing through.
+    assert_eq!(
+        s.document
+            .focus(ROOT, &[s.island], Focus::Lineage)
+            .unwrap()
+            .out_of_play_share(),
+        85,
+        "selecting the island sets aside six of seven"
+    );
+}
+
 /// ★★★★★ R1988 — **three answers, so a type**: a card of another tree is not
 /// unrelated, and a caller handed one list of related nodes cannot tell those
 /// apart.

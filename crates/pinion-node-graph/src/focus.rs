@@ -256,6 +256,77 @@ impl Focused {
     pub fn unrelated(&self) -> &[NodeId] {
         &self.unrelated
     }
+
+    /// How many nodes of the tree the selection is about.
+    ///
+    /// ★★★★★ R2102 — a COUNT, where the only way to get one was
+    /// [`Self::related`], which allocates a `Vec` of every id to answer *how
+    /// many*. A screen deriving this every frame — which is what a screen
+    /// showing it has to do — paid a heap allocation per frame for a number
+    /// the map already knows.
+    #[must_use]
+    pub fn in_play(&self) -> usize {
+        self.ties.len()
+    }
+
+    /// How many nodes of the tree nothing ties to it — what a screen fades.
+    #[must_use]
+    pub fn out_of_play(&self) -> usize {
+        self.unrelated.len()
+    }
+
+    /// Every node of the tree this answer covers, in play and out of it.
+    ///
+    /// The two halves partition the tree, so this is the tree's node count as
+    /// the answer saw it — and reading it here rather than counting the tree
+    /// again is what keeps a screen's *2 of 8* from disagreeing with its own
+    /// fade after an edit.
+    #[must_use]
+    pub fn total(&self) -> usize {
+        self.in_play() + self.out_of_play()
+    }
+
+    /// ★★★★★ R2102 — **what share of the tree this focus set aside**, whole
+    /// percent, `0..=100`.
+    ///
+    /// # Why the crate owns a percentage
+    ///
+    /// A consumer showing the tally where a person can SEE it needs a value of
+    /// bounded width — a seat sized for the widest thing it can say cannot be
+    /// sized for `n/m` when `m` grows without bound — and the rounding below
+    /// is a contract, not an arithmetic detail. Written at each consumer it
+    /// would be re-decided at each consumer, which is the drift this module's
+    /// own header is about.
+    ///
+    /// # The rounding contract
+    ///
+    /// Truncation alone lies in the direction that matters: 1 of 300 set aside
+    /// truncates to `0`, and a reader told *nothing is out of play* while a
+    /// card is drawn faded has been told the opposite of what the screen is
+    /// showing. So:
+    ///
+    /// * `0` **exactly** when nothing is out of play — which covers an answer
+    ///   over no nodes at all, since a tree with nothing in it has set nothing
+    ///   aside.
+    /// * otherwise **at least `1`**: a faded card is never rounded away.
+    ///
+    /// `100` therefore means nothing is in play. No answer this crate produces
+    /// says it — [`Document::focus`] refuses an empty selection, and a selected
+    /// node is always [`Tie::Selected`] — but the arithmetic is right rather
+    /// than guarded, because a branch nothing can reach is a branch nothing
+    /// tests.
+    #[must_use]
+    pub fn out_of_play_share(&self) -> u32 {
+        let out = self.out_of_play();
+        if out == 0 {
+            // Which covers an empty answer as well, and is what makes the
+            // division below safe without a second guard: `out >= 1` implies
+            // `total >= 1`.
+            return 0;
+        }
+        let share = u32::try_from(out * 100 / self.total()).unwrap_or(100);
+        share.max(1)
+    }
 }
 
 impl<K: NodeKind> Document<K> {

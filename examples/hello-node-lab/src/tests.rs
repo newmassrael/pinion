@@ -9099,6 +9099,147 @@ fn a_cards_announcement_carries_its_tie_and_says_nothing_about_a_stranger() {
     });
 }
 
+/// ★★★★★ R2102 — **how much room this toolbar has left, as a number.**
+///
+/// # Why a gate and not a comment
+///
+/// R2066 sized the focus-tally debt at *put the number in the chip's caption
+/// and widen the chip*, on the ground that the width is derived rather than
+/// picked — which is true, and was not the constraint. Built that way and
+/// measured, `lineage 99%` takes the seat from 69 to 100, and **the row cannot
+/// pay 31**: it evicted the whole zoom cluster, which
+/// `r1691_the_screen_speaks_and_is_quiet_exactly_where_the_specification_says`
+/// then refused, because the specification declares the view reset on screen.
+///
+/// The finding is a number and numbers go stale in prose, so it is asked here
+/// instead. It fails in two directions and both are worth knowing: a seat that
+/// grows past the slack (which is what this round tried), and a row that
+/// quietly gains slack, which would mean a group left it.
+#[test]
+fn r2102_the_toolbars_row_has_eight_pixels_of_slack() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let laid = super::right_cluster();
+        let on_row: Vec<&str> = laid.shown().map(|g| g.word()).collect();
+        assert_eq!(
+            on_row,
+            ["focus", "zoom", "run"],
+            "★ at the design width these three are what the row holds, and the \
+             specification's own reading of `lab.reset.view` depends on `zoom` \
+             being one of them"
+        );
+
+        // `right_cluster_wants` counts the run inset that `overflow::lay` was
+        // already given room net of, so the two are compared through it.
+        let room = super::toolbar_rect()
+            .w
+            .saturating_sub(super::TOOLBAR_LEFT_CLUSTER + super::RUN_INSET);
+        let wants = super::right_cluster_wants() - super::RUN_INSET;
+        let slack = room - wants;
+        assert_eq!(
+            (room, wants, slack),
+            (410, 402, 8),
+            "★★★★★ EIGHT pixels. Any seat on this row that grows by more than \
+             that costs another group its place — which is why the focus tally \
+             is said by `LabState::say` and not drawn in the chip"
+        );
+        assert!(
+            slack < super::seat_w(" 99%"),
+            "and the slack is smaller than the narrowest tally the chip could \
+             append, which is the claim the sentence above rests on"
+        );
+    });
+}
+
+/// ★★★★★ R2102 — **the chip draws the share, and it MOVES when the graph moves
+/// under it.**
+///
+/// This is the debt's own sentence driven: focus a card, then delete one that
+/// was tying others in, and **the sentence that edit produces says what the
+/// focus now leaves**. Before this round the tally was spoken once, at the
+/// press, and every edit after that moved it in silence — the person saw cards
+/// go dim with nothing anywhere saying why it happened then.
+///
+/// ★ The counterfactual this is written against: with `about_the_focus`
+/// returning `what` unchanged, the delete still says *deleted Q-01, and 1
+/// link(s)* and every other test on this screen stays green.
+#[test]
+fn r2102_an_edit_under_a_live_focus_says_what_it_left() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let head = state
+            .node_of("T-01")
+            .expect("the opening graph draws the card the specification names");
+        super::select_card(&state, Some(head));
+        super::set_focus(&state, Some(pinion_node_graph::Focus::Lineage));
+
+        let answer = super::canvas_focus(&state).expect("a card is selected, so the focus answers");
+        let at_the_press = state.toast.sentence();
+        assert!(
+            at_the_press.contains(&super::focus_tally_clause(&answer)),
+            "the press says the tally, as it always did: {at_the_press:?}"
+        );
+
+        // ★★★★★ The debt's own sentence. Something the focus was reaching
+        // through goes away, and the set moves under the person's feet.
+        let victim = state
+            .node_of("Q-01")
+            .expect("the card the opening graph ties in beside the selection");
+        super::delete_card(&state, victim).expect("a card of this graph can be deleted");
+
+        let moved = super::canvas_focus(&state).expect("the focus still answers");
+        assert_ne!(
+            moved.out_of_play(),
+            answer.out_of_play(),
+            "the edit really did move the set — without this the assertion \
+             below could pass on a screen that said nothing new"
+        );
+        let said = state.toast.sentence();
+        assert!(
+            said.contains("deleted Q-01"),
+            "the edit still says what it did: {said:?}"
+        );
+        assert!(
+            said.contains(&format!(
+                "focus lineage now leaves {}",
+                super::focus_tally_clause(&moved)
+            )),
+            "★★★★★ and NOW it says what the focus was left holding, which is \
+             the whole of this debt: {said:?}"
+        );
+
+        // ★ Said once. A sentence with no EDIT behind it does not repeat it,
+        // which is what the watermark is for — a toast ending every sentence
+        // with the same clause would be noise a person learns to stop reading.
+        // Re-aiming the focus is such a sentence: the selection moved, the
+        // document did not.
+        let other = state
+            .node_of("S-01")
+            .expect("the opening graph draws another card to aim at");
+        super::select_card(&state, Some(other));
+        let again = state.toast.sentence();
+        assert!(
+            !again.is_empty() && !again.contains("now leaves"),
+            "a sentence with no edit behind it carries no focus clause: \
+             {again:?}"
+        );
+
+        // ★ And with the focus off, an edit says only what it did — there is no
+        // set to have moved, and a clause about one would be invented.
+        super::set_focus(&state, None);
+        let next = state
+            .node_of("P-03")
+            .expect("the opening graph has another card to take");
+        super::delete_card(&state, next).expect("a card of this graph can be deleted");
+        let quiet = state.toast.sentence();
+        assert!(
+            quiet.contains("deleted P-03") && !quiet.contains("now leaves"),
+            "no focus is on, so the edit says only what it did: {quiet:?}"
+        );
+    });
+}
+
 /// ★★★★★ R1999 — **dropping the definition a person is standing in brings them
 /// out of it**, so nothing on this screen ever reads a tree that is gone.
 ///

@@ -2059,6 +2059,14 @@ struct LabState {
     /// of it faded for a selection they never made. The reference does persist
     /// its bool, in editor settings.
     focus: Signal<Option<Focus>>,
+    /// ★★★★★ R2102 — the document revision the last sentence about the focus
+    /// was said at.
+    ///
+    /// A WATERMARK on the answer's own argument, never a copy of the answer —
+    /// see [`LabState::about_the_focus`] for why the difference is the whole
+    /// design, and for what the debt this repays warned would happen if it were
+    /// the tally instead.
+    told_focus_at: Cell<u64>,
     pressed: RefCell<Option<Hit>>,
     /// ★★★★★ R1719 — the last thing this screen SAID, and what kind of thing
     /// it was.
@@ -2510,6 +2518,13 @@ impl LabState {
             // ★ R1988 — and nothing is focused: the graph opens whole, which is
             // also the reference's default.
             focus: Signal::new(None),
+            // ★ R2102 — zero, and NOT the document's revision as it stands
+            // here: an opening screen has said nothing about a focus, so the
+            // first sentence it does say is entitled to carry the clause. It
+            // will not, because nothing is focused yet — but the reason for
+            // that is the focus being off, which `about_the_focus` checks, and
+            // not a watermark that quietly agreed with a state nobody was told.
+            told_focus_at: Cell::new(0),
             pressed: RefCell::new(None),
             // ★ R1778 — silent at open, which every screen of this tool now
             // spells the same way: a holder with nothing said yet.
@@ -2599,8 +2614,67 @@ impl LabState {
     /// region's urgency and the toast's colour now derive from the tone, so
     /// neither can be set to a constant that is right for half of what this
     /// screen says.
+    ///
+    /// ★★★★★ R2102 — **and when the graph has moved under a live focus, it
+    /// says what the focus now sets aside.**
+    ///
+    /// `Document::focus` is a pure query this screen re-derives every frame, so
+    /// what is PAINTED has always been the current answer — deleting the card
+    /// that was tying six others in fades those six correctly and immediately.
+    /// What nothing did was **say so**: the tally was spoken once, at the press,
+    /// by [`set_focus`], and every edit after that changed it in silence. A
+    /// person saw cards go dim and had no sentence anywhere telling them why it
+    /// happened *now*.
+    ///
+    /// The clause rides the sentence the edit already produces, so there is no
+    /// second announcement competing with it and no site-by-site edit to the
+    /// forty-odd places that say something after changing the graph.
     fn say(&self, what: Utterance) {
-        self.toast.say(what);
+        self.toast.say(self.about_the_focus(what));
+    }
+
+    /// ★★★★★ R2102 — `what`, plus what the focus now sets aside if the graph
+    /// has changed since the last sentence carried it.
+    ///
+    /// # The watermark is the ARGUMENT, not the answer
+    ///
+    /// The debt this repays named the hazard in its own text: holding the last
+    /// tally in a `Cell<Option<usize>>` makes that cell a **copy of a
+    /// derivation**, and a copy is free to disagree with the derivation it
+    /// copies — which is the defect this screen has paid for repeatedly and the
+    /// reason `canvas_focus` has exactly one author.
+    ///
+    /// What is held here is [`Tracked::revision`], the document's own count of
+    /// mutable borrows: an INPUT the answer is derived from, never the answer.
+    /// It cannot disagree with the tally, because it is not a tally — it is the
+    /// question *has the graph changed since I last said this*, asked of the
+    /// thing that would know.
+    ///
+    /// ⚠ It is the DOCUMENT's revision and not the selection's, and that is the
+    /// population this debt is about: re-aiming a focus is a thing a person did
+    /// on purpose and the selection's own sentence reports, while an edit
+    /// moving the set is the side effect nobody announced.
+    fn about_the_focus(&self, what: Utterance) -> Utterance {
+        let now = self.doc.revision();
+        if self.told_focus_at.get() == now {
+            return what;
+        }
+        self.told_focus_at.set(now);
+        let Some(answer) = canvas_focus(self) else {
+            // No focus is on, or one is and the crate refused the question. In
+            // both cases there is no set to have moved, and inventing a clause
+            // about one would be this screen making a fact up.
+            return what;
+        };
+        Utterance::new(
+            what.tone(),
+            format!(
+                "{} \u{2014} focus {} now leaves {}",
+                what.clause(),
+                answer.focus(),
+                focus_tally_clause(&answer),
+            ),
+        )
     }
 
     /// The node the canvas labels `id`, or `None`.
@@ -7824,16 +7898,37 @@ fn script_right() -> u32 {
 ///
 /// The caption is the mode's own word, and those come from [`Focus::ALL`], so a
 /// third closure added to the crate widens this chip instead of overflowing it.
+///
+/// ★★★★★ R2102 — and it MEASURES now, where it estimated six pixels a
+/// character. Every other seat on this toolbar goes through [`seat_w`], which
+/// shapes the string and falls back to an estimate only when nothing has shaped
+/// anything yet; this was the one seat whose width did not answer to the face
+/// actually in use.
+///
+/// # ⚠ What this seat has NO room for, measured
+///
+/// R2066 sized `debt-a-focus-mode-is-lost-…` at *put the tally in the caption
+/// and widen this*, on the ground that the width is derived rather than picked.
+/// The derivation was never the constraint — **the ROW is**. Measured at R2102
+/// at the design width: the toolbar is 844 wide, this cluster is left 410 of
+/// it, and what is on the row wants 402. **Eight pixels**, which
+/// `r2102_the_toolbars_row_has_eight_pixels_of_slack` keeps true. A caption of
+/// `lineage 99%` measures 100 against this seat's 69, so drawing the share here
+/// costs the whole zoom cluster its place on the row — which
+/// `r1691_the_screen_speaks_and_is_quiet_exactly_where_the_specification_says`
+/// refuses, because the specification declares the view reset on screen.
+///
+/// So the tally is said where the room is — see [`LabState::say`], which puts
+/// it on the sentence the edit that moved it already produces. ⇒
+/// `debt-a-toolbar-row-has-no-space-for-a-second-reading`.
 fn focus_w() -> u32 {
-    let widest = Focus::ALL
+    Focus::ALL
         .into_iter()
-        .map(|one| one.word().len())
-        .chain(std::iter::once(FOCUS_OFF_CAPTION.len()))
+        .map(Focus::word)
+        .chain(std::iter::once(FOCUS_OFF_CAPTION))
+        .map(seat_w)
         .max()
-        .unwrap_or(0);
-    // Six pixels a character at this size plus the chip's own padding, which is
-    // the same arithmetic `seat_w` does for the file pill.
-    u32::try_from(widest).unwrap_or(8) * 6 + 28
+        .unwrap_or(0)
 }
 
 /// What the focus chip says when no focus is on — an invitation rather than a
@@ -7898,6 +7993,9 @@ fn focus_rect() -> Rect {
 /// when there is none — so a person can see from the toolbar which of the two
 /// closures is running, which the reference's toggle-plus-hidden-checkbox
 /// cannot tell them.
+///
+/// ⚠ R2102 — the tally is deliberately NOT here; see [`focus_w`] for the seven
+/// pixels this row has and [`LabState::say`] for where it went instead.
 fn focus_caption(state: &LabState) -> &'static str {
     state.focus.get().map_or(FOCUS_OFF_CAPTION, Focus::word)
 }
@@ -7952,6 +8050,26 @@ fn focus_after(now: Option<Focus>) -> Option<Focus> {
     }
 }
 
+/// ★★★★★ R2102 — **how much of the graph a focus set aside, in one clause.**
+///
+/// Three places said this in three spellings: the chip's accessible name, the
+/// sentence [`set_focus`] shows at the press, and — since this round — the one
+/// an edit gains. Two of those already differed in their arithmetic (one added
+/// `unrelated().len() + related().len()`, the other did the same sum a second
+/// time), and a fourth reader was about to be written. Composed here, from the
+/// answer's own counts, they are one sentence with one author.
+///
+/// ⚠ Deliberately **no frame** — no leading verb, no trailing stop — because it
+/// is a clause: [`focus_name`] sets it between commas and [`LabState::say`]
+/// appends it to somebody else's sentence.
+fn focus_tally_clause(answer: &Focused) -> String {
+    format!(
+        "{} of {} card(s) out of play",
+        answer.out_of_play(),
+        answer.total(),
+    )
+}
+
 /// ★★★★★ R1988 — **what the focus chip announces**: where it is, what the next
 /// press does, and — when the focus is on — how much of the graph is out of
 /// play.
@@ -7965,11 +8083,9 @@ fn focus_name(state: &LabState) -> String {
     match (state.focus.get(), canvas_focus(state)) {
         (None, _) => format!("focus the selection, {next} next"),
         (Some(one), None) => format!("focus {one}, nothing selected to focus on, {next} next",),
-        (Some(one), Some(answer)) => format!(
-            "focus {one}, {} of {} card(s) out of play, {next} next",
-            answer.unrelated().len(),
-            answer.unrelated().len() + answer.related().len(),
-        ),
+        (Some(one), Some(answer)) => {
+            format!("focus {one}, {}, {next} next", focus_tally_clause(&answer))
+        }
     }
 }
 
@@ -24139,9 +24255,8 @@ fn set_focus(state: &Rc<LabState>, want: Option<Focus>) {
             "focus {one} needs a selected card \u{2014} nothing is selected"
         ))),
         Some(answer) => state.say(Utterance::done(format!(
-            "focus {one}: {} of {} card(s) out of play",
-            answer.unrelated().len(),
-            answer.unrelated().len() + answer.related().len(),
+            "focus {one}: {}",
+            focus_tally_clause(&answer)
         ))),
     }
 }
@@ -27123,9 +27238,18 @@ fn focus_wire(state: &Rc<LabState>) -> serde_json::Value {
         // What the next press of the chip does — the same derivation the chip's
         // own accessible name reads, so the two cannot disagree.
         "next": focus_after(mode).map_or(FOCUS_OFF_WORD, Focus::word),
-        "out_of_play": answer
-            .as_ref()
-            .map(|answer| answer.unrelated().len()),
+        "out_of_play": answer.as_ref().map(Focused::out_of_play),
+        // ★★★★★ R2102 — the DENOMINATOR, and the share the chip draws.
+        //
+        // `out_of_play` alone is a numerator: a client reading `2` could not
+        // tell a graph mostly set aside from one barely touched without
+        // counting the tree itself, which is a second derivation of the number
+        // this answer already holds. And `share` is published rather than left
+        // to each client to divide, because the rounding is a contract — see
+        // `Focused::out_of_play_share` for what plain truncation says about one
+        // faded card in three hundred.
+        "of": answer.as_ref().map(Focused::total),
+        "share": answer.as_ref().map(Focused::out_of_play_share),
         "standing": standing,
     })
 }
