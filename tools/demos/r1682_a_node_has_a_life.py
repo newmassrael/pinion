@@ -54,6 +54,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_router_press_moves,
     card_prefix,
+    inspector_seats,
     run_demo,
 )
 
@@ -90,6 +91,10 @@ def body() -> None:
         # not spellable: spelled, it would raise a `KeyError` that reads as the
         # canvas having stopped painting the card.
         card = card_prefix(tf)
+        # ★★★★★ R2105 — and the inspector's seats, asked of the screen the same
+        # way. This walk PRESSES three of them, so a wrong letter here would be
+        # a press that lands on nothing and a card that never changed.
+        seat = inspector_seats(json.loads(q(tf, "spec")))
         # ── (A) boot ────────────────────────────────────────────────
         opening = cards(tf)
         assert_eq(
@@ -102,8 +107,8 @@ def body() -> None:
             assert_eq(switch["disabled"], False, f"{name} opens running")
 
         painted = rects(tf)
-        for seat in ("lab.inspector.collapse", "lab.inspector.disable", "lab.inspector.delete"):
-            assert seat in painted, f"★ {seat} is on the opening screen"
+        for act in ("collapse", "disable", "delete"):
+            assert seat[act] in painted, f"★ {seat[act]} is on the opening screen"
 
         # ── (B) the vocabulary is declared, not guessed ─────────────
         spec = json.loads(q(tf, "spec"))
@@ -186,7 +191,7 @@ def body() -> None:
         # The same toggle through a real router press, which is the column a
         # wire-driven test cannot see.
         assert_router_press_moves(
-            tf, "lab.inspector.collapse", lambda: q(tf, "cards"), "the card expands again"
+            tf, seat["collapse"], lambda: q(tf, "cards"), "the card expands again"
         )
         assert_eq(cards(tf)["P-03"]["collapsed"], False, "★ the seat toggles it back")
         assert_eq(rects(tf)[f"{card}P-03"], before, "and the card is its old size")
@@ -201,7 +206,7 @@ def body() -> None:
             "kept apart",
         )
         assert_router_press_moves(
-            tf, "lab.inspector.disable", lambda: q(tf, "cards"), "the card runs again"
+            tf, seat["disable"], lambda: q(tf, "cards"), "the card runs again"
         )
         assert_eq(cards(tf)["P-03"]["disabled"], False, "the seat toggles it back")
 
@@ -297,7 +302,7 @@ def body() -> None:
         ]
         assert touching, "the card this demo deletes has links, or it proves nothing"
         assert_router_press_moves(
-            tf, "lab.inspector.delete", lambda: q(tf, "nodes"), "the card goes"
+            tf, seat["delete"], lambda: q(tf, "nodes"), "the card goes"
         )
         assert "P-03" not in q(tf, "nodes").split(","), "★ pressed where it is painted"
         assert_eq(

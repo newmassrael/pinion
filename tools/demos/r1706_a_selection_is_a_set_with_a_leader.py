@@ -93,6 +93,7 @@ from rpc_verify import (  # noqa: E402
     card_tag,
     find_by_tag,
     frame_tag,
+    inspector_tag,
     isolated_storage_dir,
     png_pixel,
     read_png_rgba8,
@@ -317,7 +318,8 @@ def e_the_panel_says_how_many_and_which(tf: RpcSubprocess) -> None:
     press_host_tab(tf, "host-a")
     leader, picked = selection_of(tf)
     nodes = access_nodes(tf)
-    chip = nodes.get("lab.inspector.selcount")
+    selcount = inspector_tag(tf, "selcount")
+    chip = nodes.get(selcount)
     assert chip is not None, "the inspector does not announce the selection at all"
     said = chip["name"]
     assert str(len(picked)) in said, f"the count is not in {said!r}"
@@ -325,7 +327,7 @@ def e_the_panel_says_how_many_and_which(tf: RpcSubprocess) -> None:
 
     # And what it ANNOUNCES is what it PAINTS — one derivation, not two.
     snap = tf.snapshot(source="paint")
-    painted = find_by_tag(snap, "lab.inspector.selcount.text")
+    painted = find_by_tag(snap, inspector_tag(tf, "selcount.text"))
     assert painted is not None, "the chip has no painted caption"
     assert_eq(painted["content"], said, "the chip says one thing, once")
 
@@ -333,7 +335,7 @@ def e_the_panel_says_how_many_and_which(tf: RpcSubprocess) -> None:
     shot = abs_rects_of(snap)
     tf.click(centre(shot[card_tag(tf, "T-01")]))
     tf.tick(16)
-    single = access_nodes(tf)["lab.inspector.selcount"]["name"]
+    single = access_nodes(tf)[selcount]["name"]
     assert single.startswith("1 selected"), f"one card picked, and it says {single!r}"
 
 

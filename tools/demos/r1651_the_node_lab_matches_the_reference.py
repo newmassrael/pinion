@@ -41,6 +41,7 @@ from rpc_verify import (  # noqa: E402
     behind_an_overflow,
     call,
     find_by_tag,
+    inspector_seats,
     run_demo,
     toolbar_seats,
     walk_nodes,
@@ -204,6 +205,10 @@ def body() -> None:
         # The bar itself, which is a place rather than one of its seats — see
         # `toolbar_root` for why the wire keeps the two apart.
         bar = spec["toolbar"]["tag"]
+        # ★★★★★ R2105 — the inspector's seats and the pane itself, the same
+        # pair for the same reason.
+        ins_tag = inspector_seats(spec)
+        ins = spec["inspector_addresses"]["tag"]
         assert_eq(q(tf, "graph"), spec["graph"], "the graph is the one declared")
         assert_eq(q(tf, "zoom"), spec["zoom"], "and it opens at the declared zoom")
         assert_eq(
@@ -278,7 +283,7 @@ def body() -> None:
         # that started both have to fail, and a count catches neither on its own.
         want = {
             "lab.palette": ["left", "right"],
-            "lab.inspector": ["left", "right"],
+            ins: ["left", "right"],
         }
         if movable != want:
             raise SystemExit(
@@ -289,7 +294,7 @@ def body() -> None:
               + f"; the other {len(spec['panes']) - len(movable)} declare they stay put")
         # ★ R1889 — the SET again, for the same reason the edges are a set: a
         # pane that stopped resizing and a pane that started both have to fail.
-        want_resize = {"lab.palette": (180, 420), "lab.inspector": (240, 520)}
+        want_resize = {"lab.palette": (180, 420), ins: (240, 520)}
         if resizable != want_resize:
             raise SystemExit(
                 f"[B2] the panes that declare a resize are {resizable}, "
@@ -412,8 +417,8 @@ def body() -> None:
             "lab.hint",
             "lab.hint.text",
             "lab.link.label",
-            "lab.inspector.id",
-            "lab.inspector.degree",
+            ins_tag["id"],
+            ins_tag["degree"],
         ):
             if tag not in painted:
                 missing.append(tag)
@@ -814,7 +819,7 @@ def body() -> None:
             # rustdoc break. ⇒ "the newest completed run" is not "the newest run
             # that judged this job", and only the second question finds a red
             # that a `needs:` chain has been hiding intermittently.
-            "lab.inspector": 15 + len(spec["card_seats"]) + chrome_of["lab.inspector"],
+            ins: 15 + len(spec["card_seats"]) + chrome_of[ins],
             # ★★★★★ R1817.1 — 2, not 3, and the member did not disappear: it
             # became a CAPTION. R1813 made the determinism switch's read-out its
             # box's caption child and renamed it `lab.palette.discovery.state`
@@ -1422,7 +1427,7 @@ def body() -> None:
         assert next(
             f["control"] for f in form if f["key"] == "discovery.multicast.enabled"
         ) in painted
-        assert find_by_tag(paint(tf), "lab.inspector.id") is not None
+        assert find_by_tag(paint(tf), ins_tag["id"]) is not None
         print("[M] selecting another node re-derives its rows, badges and degree")
 
         # ── (N) Running settles the form ────────────────────────────────────

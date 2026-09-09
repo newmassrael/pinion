@@ -523,3 +523,157 @@ pub fn toolbar(word: &str) -> String {
 pub fn toolbar_word(tag: &str) -> Option<&str> {
     tag.strip_prefix(TOOLBAR_SEAT)
 }
+
+/// ★★★★★ R2105 — the tag the card inspector is painted under.
+///
+/// [`TOOLBAR`]'s shape and its reason, measured the same way before declaring:
+/// this family was the head of `python3 tools/painted_addresses.py --owed` —
+/// **41 walk sites across twelve files**, and 85 more in this crate's own Rust
+/// (73 of them a seat), none of them derived from anything.
+///
+/// ⚠ What makes the inspector different from the bar is what a wrong letter
+/// COSTS. The toolbar's seats are pressed; the inspector's are mostly READ —
+/// the identifier, the role chip, the degree, how many cards are picked, what
+/// cannot be reached. A press that lands on nothing is at least a walk that
+/// fails. A read that lands on nothing is a walk asserting about an address
+/// that was never painted, and the assertion it writes is *the screen did not
+/// paint it* — a report that accuses the screen of the walk's own typo.
+///
+/// ⚠⚠ The pane's OWN tag, and not a prefix. Its seats hang off
+/// [`INSPECTOR_SEAT`], which carries the separator, for [`TOOLBAR`]'s reason:
+/// a prefix of `lab.inspector` alone swallows every seat, so a reader
+/// classifying a snapshot by it would call the whole panel the pane. This
+/// screen already relies on that distinction — `spec::PANES` names the pane and
+/// `SILENCES` names `lab.inspector.body` separately, and they are container and
+/// content.
+pub const INSPECTOR: &str = "lab.inspector";
+
+/// [`INSPECTOR`] with the separator its seats hang off.
+///
+/// A `&'static str` because the seat consts below are `&'static str` too and a
+/// derivation cannot make one; the gate drives it against [`INSPECTOR`].
+pub const INSPECTOR_SEAT: &str = "lab.inspector.";
+
+/// The scrolling body the panel's content sits in — the pane a reader lands on.
+///
+/// ⚠ A layout mark rather than a control: `spec::SILENCES` carries it for that
+/// reason, and it is in this roster because walks reach for it, not because it
+/// speaks.
+pub const INSPECTOR_BODY: &str = "lab.inspector.body";
+
+/// The panel's flip control — see the pair it makes with [`INSPECTOR_FOLD`].
+pub const INSPECTOR_FLIP: &str = "lab.inspector.flip";
+
+/// The panel's fold control, which leaves the strip a hand grabs to open it.
+pub const INSPECTOR_FOLD: &str = "lab.inspector.fold";
+
+/// The selected card's identifier, the panel's heading.
+pub const INSPECTOR_ID: &str = "lab.inspector.id";
+
+/// The selected card's role chip.
+pub const INSPECTOR_ROLE: &str = "lab.inspector.role";
+
+/// How many wires the selected card carries.
+pub const INSPECTOR_DEGREE: &str = "lab.inspector.degree";
+
+/// [`INSPECTOR_DEGREE`]'s caption, painted inside it.
+pub const INSPECTOR_DEGREE_TEXT: &str = "lab.inspector.degree.text";
+
+/// How many cards are picked, and which one the panel is showing.
+pub const INSPECTOR_SELCOUNT: &str = "lab.inspector.selcount";
+
+/// [`INSPECTOR_SELCOUNT`]'s caption, painted inside it.
+pub const INSPECTOR_SELCOUNT_TEXT: &str = "lab.inspector.selcount.text";
+
+/// What the panel holds that no scrolling can reach.
+pub const INSPECTOR_REACH: &str = "lab.inspector.reach";
+
+/// [`INSPECTOR_REACH`]'s caption, painted inside it.
+pub const INSPECTOR_REACH_TEXT: &str = "lab.inspector.reach.text";
+
+/// The panel's note — what it has to say about the selection.
+pub const INSPECTOR_NOTE: &str = "lab.inspector.note";
+
+/// [`INSPECTOR_NOTE`]'s caption, painted inside it.
+pub const INSPECTOR_NOTE_TEXT: &str = "lab.inspector.note.text";
+
+/// The field the selected card's name is typed into.
+pub const INSPECTOR_NAME: &str = "lab.inspector.name";
+
+/// The seat that starts a rename.
+pub const INSPECTOR_RENAME: &str = "lab.inspector.rename";
+
+/// The seat that adds a key to the selected card.
+pub const INSPECTOR_ADDKEY: &str = "lab.inspector.addkey";
+
+/// Fold the card down, or open it again — `NodeAct::Collapse`.
+pub const INSPECTOR_COLLAPSE: &str = "lab.inspector.collapse";
+
+/// Take the card out of the run without deleting it — `NodeAct::Disable`.
+pub const INSPECTOR_DISABLE: &str = "lab.inspector.disable";
+
+/// Take the card off the canvas — `NodeAct::Delete`.
+pub const INSPECTOR_DELETE: &str = "lab.inspector.delete";
+
+/// Put the card's unwired pins away, or bring them back — `NodeAct::Pins`.
+pub const INSPECTOR_PINS: &str = "lab.inspector.pins";
+
+/// ★★★★★ R2105 — every word this screen ADDRESSES under [`INSPECTOR_SEAT`],
+/// beside the address declared for it.
+///
+/// [`TOOLBAR_SEATS`]'s shape, for the same three readers: the crate's own const
+/// sites, the gate that refuses a second speller, and the wire that hands a
+/// walk the address instead of letting it type one.
+///
+/// ⚠ Not a list of what EXISTS — only the painter knows that. What the gate
+/// holds is two things: every entry's declared address is what [`inspector`]
+/// derives from its word, and every `lab.inspector.*` tag the SPECIFICATION
+/// declares — `spec::VOICES`, `spec::SILENCES`, and the seats `NodeAct` claims
+/// — is in this roster. The second half is the one that catches a seat reaching
+/// the paint tree and the announcement without reaching the wire, which is the
+/// direction a walk cannot detect: it would report that the screen did not
+/// paint a mark the screen paints.
+pub const INSPECTOR_SEATS: &[(&str, &str)] = &[
+    ("body", INSPECTOR_BODY),
+    ("flip", INSPECTOR_FLIP),
+    ("fold", INSPECTOR_FOLD),
+    ("id", INSPECTOR_ID),
+    ("role", INSPECTOR_ROLE),
+    ("degree", INSPECTOR_DEGREE),
+    ("degree.text", INSPECTOR_DEGREE_TEXT),
+    ("selcount", INSPECTOR_SELCOUNT),
+    ("selcount.text", INSPECTOR_SELCOUNT_TEXT),
+    ("reach", INSPECTOR_REACH),
+    ("reach.text", INSPECTOR_REACH_TEXT),
+    ("note", INSPECTOR_NOTE),
+    ("note.text", INSPECTOR_NOTE_TEXT),
+    ("name", INSPECTOR_NAME),
+    ("rename", INSPECTOR_RENAME),
+    ("addkey", INSPECTOR_ADDKEY),
+    ("collapse", INSPECTOR_COLLAPSE),
+    ("disable", INSPECTOR_DISABLE),
+    ("delete", INSPECTOR_DELETE),
+    ("pins", INSPECTOR_PINS),
+];
+
+/// The address of the inspector seat called `word`.
+///
+/// ★ The runtime half of the consts above, for a caller holding a word rather
+/// than a name — the painter composing a seat from `NodeAct`'s wire word, and
+/// the wire's roster, are both built through this, so the address a client
+/// reads and the address the paint used are one spelling by construction.
+#[must_use]
+pub fn inspector(word: &str) -> String {
+    format!("{INSPECTOR_SEAT}{word}")
+}
+
+/// The seat word an inspector address names, or `None` when the tag is not one.
+///
+/// ★ The inverse of [`inspector`], here rather than at the router, for
+/// [`role_of_row`]'s reason. `None` is a real answer: the pane's own tag is not
+/// one of its seats, and a shrink policy naming the pane is asking about the
+/// container.
+#[must_use]
+pub fn inspector_word(tag: &str) -> Option<&str> {
+    tag.strip_prefix(INSPECTOR_SEAT)
+}

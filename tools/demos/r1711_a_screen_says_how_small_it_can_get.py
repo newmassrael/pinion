@@ -71,6 +71,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     declared_and_painted,
     design_size,
+    inspector_tag,
     png_pixel,
     read_png_rgba8,
     resize_and_settle,
@@ -85,18 +86,28 @@ SCREENS = [
 ]
 
 #: The five regions R1710 recorded as lost at the node lab's own floor, and
-#: filed as a defect of the screen. Kept HERE, by name, because section F drives
-#: every one of them: the claim being checked is no longer "these are missing"
-#: but "these are one scroll away, and the scroll works".
-R1710_FIVE = [
-    "lab.inspector.note",
-    "lab.inspector.note.text",
-    "lab.palette.discovery",
-    # ★ R1813 — was `.state`; the switch's read-out is its box's caption child
-    # now and the framework names the suffix.
-    "lab.palette.discovery.caption",
-    "lab.palette.discovery.track",
-]
+#: filed as a defect of the screen. Kept HERE, because section F drives every
+#: one of them: the claim being checked is no longer "these are missing" but
+#: "these are one scroll away, and the scroll works".
+#:
+#: ★★★★★ R2105 — a function rather than a list, and the two inspector regions
+#: are ASKED of the screen rather than named. The three palette ones are still
+#: spelled: that family has no declaration yet, and this comment is where the
+#: next installment finds them.
+#:
+#: ⚠ What the change buys is exactly what the `.caption` line below records
+#: costing: R1813 moved a region and this list had to be edited to follow it.
+#: An address that comes from the screen follows it on its own.
+def r1710_five(app: RpcSubprocess) -> list[str]:
+    return [
+        inspector_tag(app, "note"),
+        inspector_tag(app, "note.text"),
+        "lab.palette.discovery",
+        # ★ R1813 — was `.state`; the switch's read-out is its box's caption
+        # child now and the framework names the suffix.
+        "lab.palette.discovery.caption",
+        "lab.palette.discovery.track",
+    ]
 
 CHECKS: list[str] = []
 
@@ -445,7 +456,7 @@ def the_five_are_one_scroll_away_and_the_scroll_works(
     live = app.request("scene/scroll_reach")
     assert live is not None and isinstance(live.result, dict)
     rows = {row["tag"]: row for row in live.result["out_of_sight"] if row["tag"]}
-    for tag in R1710_FIVE:
+    for tag in r1710_five(app):
         row = rows.get(tag)
         ok(f"F/{name}: {tag} is reported at the floor", row is not None)
         assert_eq(

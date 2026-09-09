@@ -50,6 +50,7 @@ from rpc_verify import (  # noqa: E402
     card_tag,
     form_part_tag,
     frame_tag,
+    inspector_tag,
     press_painted_tag,
     run_demo,
     toolbar_tag,
@@ -59,9 +60,35 @@ EXAMPLE = "hello-node-lab"
 EXT = "/external"
 VIEWPORT = (1440, 900)
 
-# The seat that applies whatever the one text field is holding. Named once: it
-# is the same button for a name, a configuration path and a value.
-APPLY = "lab.inspector.rename"
+_APPLY: str | None = None
+
+
+# ★★★★★ R2105 — the seat that applies whatever the one text field is holding.
+# Asked of the screen once rather than named once: it is the same button for a
+# name, a configuration path and a value, and now it is also the same SPELLING
+# as the paint, because the screen publishes it.
+#
+# ⚠ A function and not a constant, and that is forced rather than chosen: the
+# address comes from the running screen's specification, so there is no `tf` at
+# import time to ask.
+#
+# ⚠⚠ MEMOISED, and the number is why. `screen_spec` is not cached and this walk
+# reaches the apply seat from five places, one of them inside `type_into` —
+# which runs for every value typed. Measured: 147.92s asking each time, against
+# the 83.54s / 97.29s R2104 recorded for this walk; memoised, 93.52s. So the
+# repeated query cost 54s, more than the conversion it paid for.
+#
+# ⚠ What makes ONE answer safe is not that there is one process — this walk
+# opens four `RpcSubprocess` contexts, two of them inside loops, and the first
+# draft of this comment said otherwise. It is that they are all the SAME binary
+# and the address is a compile-time constant of that screen. The specification
+# around it is NOT constant (`panes[].at` moves when a panel does), which is
+# why this caches the ADDRESS and not the document.
+def apply_seat(tf) -> str:
+    global _APPLY
+    if _APPLY is None:
+        _APPLY = inspector_tag(tf, "rename")
+    return _APPLY
 
 
 # ── reading the screen ──────────────────────────────────────────────────────
@@ -233,7 +260,7 @@ def type_into(tf, tag: str, text: str) -> None:
     person takes to put a value anywhere on this screen."""
     press(tf, tag)
     type_keys(tf, text)
-    press(tf, APPLY)
+    press(tf, apply_seat(tf))
 
 
 # ── the gesture recipes ─────────────────────────────────────────────────────
@@ -247,20 +274,20 @@ GESTURES = {
     "add a node": lambda tf: press(tf, role_tag(tf, "Responder")),
     "delete a node": lambda tf: (
         press(tf, node_tag(tf, "P-03")),
-        press(tf, "lab.inspector.delete"),
+        press(tf, inspector_tag(tf, "delete")),
     ),
     "rename a node": lambda tf: (
         press(tf, node_tag(tf, "P-03")),
-        type_into(tf, APPLY, "edge-01"),
+        type_into(tf, apply_seat(tf), "edge-01"),
     ),
     "move a node": lambda tf: drag_by(tf, node_tag(tf, "P-03"), (40, 24)),
     "collapse a node": lambda tf: (
         press(tf, node_tag(tf, "P-03")),
-        press(tf, "lab.inspector.collapse"),
+        press(tf, inspector_tag(tf, "collapse")),
     ),
     "disable a node": lambda tf: (
         press(tf, node_tag(tf, "P-03")),
-        press(tf, "lab.inspector.disable"),
+        press(tf, inspector_tag(tf, "disable")),
     ),
     # a frame's life
     "re-parent a node between frames": lambda tf: alt_drag_onto(
@@ -278,7 +305,7 @@ GESTURES = {
         tf, part_tag(tf, "add", catalogue_key(tf))
     ),
     "add a field by typing its key": lambda tf: type_into(
-        tf, "lab.inspector.addkey", "transport.unicast.lowlatency"
+        tf, inspector_tag(tf, "addkey"), "transport.unicast.lowlatency"
     ),
     "edit a field": lambda tf: press(
         tf, part_tag(tf, "item", "listen.endpoints.add")
@@ -481,7 +508,7 @@ def body() -> None:
             "it held",
         )
 
-        press(tf, APPLY)
+        press(tf, apply_seat(tf))
         assert_eq(
             {f["key"]: f["value"] for f in json.loads(q(tf, "form"))}[row],
             "70000",
@@ -515,7 +542,7 @@ def body() -> None:
         ]
         assert_eq(editing["text"], elements[0], "seeded with that element alone")
         type_keys(tf, "tcp/0.0.0.0:7999")
-        press(tf, APPLY)
+        press(tf, apply_seat(tf))
         after = [
             e.strip()
             for e in {f["key"]: f["value"] for f in json.loads(q(tf, "form"))}[

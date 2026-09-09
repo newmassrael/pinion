@@ -56,6 +56,8 @@ from rpc_verify import (  # noqa: E402
     assert_router_press_moves,
     find_by_tag,
     form_part_prefixes,
+    inspector_root,
+    inspector_tag,
     run_demo,
 )
 
@@ -203,7 +205,7 @@ def scroll_to(tf, tag: str) -> None:
     if tag in rects(tf):
         return
     for _ in range(40):
-        tf.scroll("lab.inspector.body", by=(0, 60))
+        tf.scroll(inspector_tag(tf, "body"), by=(0, 60))
         tf.tick_ms(16)
         if tag in rects(tf):
             return
@@ -361,7 +363,7 @@ def body() -> None:
             "the flex pass and a seat overlaid on it would be painted under a "
             "badge whose box is 'right'"
         )
-        pane = painted["lab.inspector"]
+        pane = painted[inspector_root(tf)]
         assert inside(row_seat, pane), f"and it is inside the pane {pane}"
 
         # Every corner answers the seat, not the row under it. R1684.2: a check
@@ -441,9 +443,9 @@ def body() -> None:
 
         # ── (F) a hand-typed path leaves no chip ───────────────────
         typed = "transport.unicast.lowlatency"
-        press(tf, "lab.inspector.addkey")
+        press(tf, inspector_tag(tf, "addkey"))
         type_keys(tf, typed)
-        press(tf, "lab.inspector.rename")
+        press(tf, inspector_tag(tf, "rename"))
         assert typed in keys(tf), "the typed path is a row"
         assert f"{seat_of['remove']}{typed}" in rects(tf), "with a seat like any other"
         press(tf, f"{seat_of['remove']}{typed}")

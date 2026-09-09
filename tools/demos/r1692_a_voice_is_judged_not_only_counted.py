@@ -54,6 +54,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     card_tag,
+    inspector_seats,
     run_demo,
     voice_defects,
     voice_partition_sum,
@@ -373,7 +374,7 @@ def body() -> None:
         #      selection, and the census reports the new words.
         others = [n["id"] for n in spec["nodes"] if n["id"] != spec["selected_node"]]
         assert others, "the opening graph has more than one card"
-        head_tag = "lab.inspector.id"
+        head_tag = inspector_seats(spec)["id"]
         first = voice_rows(tf.voice()).get(head_tag)
         assert first is not None, f"{head_tag} is a region of this screen"
         assert_eq(first["voice"], "announced")

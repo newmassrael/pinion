@@ -61,6 +61,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     find_by_tag,
+    inspector_tag,
     run_demo,
     texts_of,
 )
@@ -159,7 +160,7 @@ def body() -> None:
         print(f"[A] reach {r['sections']} sections, {r['leaves']} leaves; {s['pinned']} strings pinned")
 
         # ── (B) the pill is a rendering of those numbers ────────────
-        painted = run_of(tf, "lab.inspector.reach.text")
+        painted = run_of(tf, inspector_tag(tf, "reach.text"))
         assert_eq(
             painted,
             f"sections {r['sections']} · leaves {r['leaves']} · strings {s['pinned']}",
@@ -314,7 +315,7 @@ def body() -> None:
         readings = set()
         for name in q(tf, "nodes").split(","):
             tf.invoke(f"{EXT}/select", name)
-            readings.add(run_of(tf, "lab.inspector.reach.text"))
+            readings.add(run_of(tf, inspector_tag(tf, "reach.text")))
         assert_eq(
             len(readings),
             1,

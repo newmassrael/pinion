@@ -50,6 +50,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     assert_router_press_moves,
+    inspector_seats,
     run_demo,
 )
 
@@ -99,12 +100,17 @@ def body() -> None:
         shut = editing(tf)
         assert_eq(shut["target"], None, "the field opens shut")
         assert_eq(shut["text"], "", "and empty")
-        painted = rects(tf)
-        assert "lab.inspector.rename" in painted, "the seat that opens it is there"
-        assert "lab.inspector.addkey" in painted, "and the seat for the other target"
-        assert "lab.inspector.name" in painted, "with a placeholder where the box will be"
-
+        # ★★★★★ R2105 — the specification first, because the seats this walk
+        # presses come out of it. Every inspector address below is looked up by
+        # the word the screen declares, so a wrong letter is a `KeyError` naming
+        # the word rather than an assertion that the screen did not paint it.
         spec = json.loads(q(tf, "spec"))
+        seat = inspector_seats(spec)
+        painted = rects(tf)
+        assert seat["rename"] in painted, "the seat that opens it is there"
+        assert seat["addkey"] in painted, "and the seat for the other target"
+        assert seat["name"] in painted, "with a placeholder where the box will be"
+
         ops = {op["name"]: op for op in spec["operations"]}
         for name in ("rename a node", "add a field by typing its key"):
             assert_eq(ops[name]["gesture"], True, f"★ {name!r} has a way in for a person now")
@@ -112,11 +118,11 @@ def body() -> None:
 
         # ── (B) open it on the name, with a pointer ─────────────────
         tf.invoke(f"{EXT}/select", "P-03")
-        press(tf, "lab.inspector.rename")
+        press(tf, seat["rename"])
         open_now = editing(tf)
         assert_eq(open_now["target"], "name", "★ the seat opened the field on the name")
         assert_eq(open_now["text"], "P-03", "seeded with what the card is called")
-        assert "lab.inspector.name" not in rects(tf), "the placeholder gave way to the field"
+        assert seat["name"] not in rects(tf), "the placeholder gave way to the field"
 
         # ── (C) type, and see that typing alone renames nothing ─────
         before = q(tf, "nodes")
@@ -134,7 +140,7 @@ def body() -> None:
         # ── (D) apply ───────────────────────────────────────────────
         links_before = json.loads(q(tf, "links"))
         assert_router_press_moves(
-            tf, "lab.inspector.rename", lambda: q(tf, "nodes"), "the card is renamed"
+            tf, seat["rename"], lambda: q(tf, "nodes"), "the card is renamed"
         )
         assert "edge-01" in q(tf, "nodes").split(","), "★ applied with the same seat"
         assert "P-03" not in q(tf, "nodes").split(","), "and not the old name"
@@ -148,7 +154,7 @@ def body() -> None:
         assert_eq(q(tf, "selected"), "edge-01", "the selection came with it")
 
         # ── (E) a taken name is refused, and the text survives ──────
-        press(tf, "lab.inspector.rename")
+        press(tf, seat["rename"])
         assert_eq(editing(tf)["text"], "edge-01", "it opens on the current name")
         tf.invoke(f"{EXT}/type", "P-01")
         why = refused(tf, "apply", "")
@@ -174,11 +180,11 @@ def body() -> None:
             chip != "transport.unicast.lowlatency" for chip in spec.get("addable", [])
         ), "the catalogue does not offer it, which is the point of typing one"
 
-        press(tf, "lab.inspector.addkey")
+        press(tf, seat["addkey"])
         assert_eq(editing(tf)["target"], "key", "★ the same field, a different target")
         assert_eq(editing(tf)["text"], "", "and this one opens empty — there is no key yet")
         type_keys(tf, "transport.unicast.lowlatency")
-        press(tf, "lab.inspector.rename")
+        press(tf, seat["rename"])
         keys_after = [f["key"] for f in json.loads(q(tf, "form"))]
         assert "transport.unicast.lowlatency" in keys_after, (
             "★★ a path the catalogue never offered is on the form, typed"
@@ -189,7 +195,7 @@ def body() -> None:
         assert_eq(editing(tf)["target"], None, "and the field shut")
 
         # Twice is refused rather than silently duplicated.
-        press(tf, "lab.inspector.addkey")
+        press(tf, seat["addkey"])
         tf.invoke(f"{EXT}/type", "transport.unicast.lowlatency")
         why = refused(tf, "apply", "")
         assert "already holds" in why, f"a key it already has is refused: {why}"

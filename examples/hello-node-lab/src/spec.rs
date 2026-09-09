@@ -186,10 +186,10 @@ pub const PANES: &[PaneSpec] = &[
         holds: &["lab.canvas", "lab.node.", "lab.wire."],
     },
     PaneSpec {
-        tag: "lab.inspector",
+        tag: crate::address::INSPECTOR,
         title: "Node Inspector",
         width: 312,
-        body: Some("lab.inspector.body"),
+        body: Some(crate::address::INSPECTOR_BODY),
         // ★ R1889 — wider bounds than the palette's, and the reason is in the
         // content: this pane holds a form with labelled rows and a three-across
         // action strip, where the palette holds a single column of chips.
@@ -236,7 +236,11 @@ pub const PANES: &[PaneSpec] = &[
         // goes away when the inspector folds" could not have answered it from
         // the tag alone — which is why this is declared rather than derived
         // from a prefix match on `tag`.
-        holds: &["lab.inspector", "lab.faults", crate::address::FORM_STEM],
+        holds: &[
+            crate::address::INSPECTOR,
+            "lab.faults",
+            crate::address::FORM_STEM,
+        ],
     },
 ];
 
@@ -1654,33 +1658,33 @@ pub const VOICES: &[VoiceSpec] = &[
     },
     // The inspector.
     VoiceSpec {
-        tag: "lab.inspector",
+        tag: crate::address::INSPECTOR,
         role: "group",
         population: Population::One,
     },
     // ★★★★★ R1887 — the inspector's own pair, the palette's twins.
     VoiceSpec {
-        tag: "lab.inspector.flip",
+        tag: crate::address::INSPECTOR_FLIP,
         role: "button",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.inspector.fold",
+        tag: crate::address::INSPECTOR_FOLD,
         role: "button",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.inspector.id",
+        tag: crate::address::INSPECTOR_ID,
         role: "heading",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.inspector.role",
+        tag: crate::address::INSPECTOR_ROLE,
         role: "status",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.inspector.degree",
+        tag: crate::address::INSPECTOR_DEGREE,
         role: "status",
         population: Population::One,
     },
@@ -1688,32 +1692,32 @@ pub const VOICES: &[VoiceSpec] = &[
     // showing. A `status`, like the two pills beside it: it is a fact the
     // screen keeps up to date rather than something a reader operates.
     VoiceSpec {
-        tag: "lab.inspector.selcount",
+        tag: crate::address::INSPECTOR_SELCOUNT,
         role: "status",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.inspector.reach",
+        tag: crate::address::INSPECTOR_REACH,
         role: "status",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.inspector.note",
+        tag: crate::address::INSPECTOR_NOTE,
         role: "status",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.inspector.rename",
+        tag: crate::address::INSPECTOR_RENAME,
         role: "button",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.inspector.addkey",
+        tag: crate::address::INSPECTOR_ADDKEY,
         role: "button",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.inspector.name",
+        tag: crate::address::INSPECTOR_NAME,
         role: "textbox",
         population: Population::One,
     },
@@ -1766,7 +1770,7 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     ("lab.palette.discovery.track", Population::One, "decorative"),
     // The scrolling bodies. Their panes are what a reader lands on.
     ("lab.palette.body", Population::One, "layout"),
-    ("lab.inspector.body", Population::One, "layout"),
+    (crate::address::INSPECTOR_BODY, Population::One, "layout"),
     // A card's identifier and its role chip: the card says both.
     ("lab.node.{}.id", Population::Nodes, "name_of"),
     ("lab.node.{}.badge", Population::Nodes, "part_of"),
@@ -1783,10 +1787,26 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     // ★ `.caption` and not `.text`: the run is `caption::captioned`'s child and
     // the framework names it, so this cannot drift from what is painted.
     ("lab.crumb.caption", Population::One, "name_of"),
-    ("lab.inspector.degree.text", Population::One, "name_of"),
-    ("lab.inspector.selcount.text", Population::One, "name_of"),
-    ("lab.inspector.reach.text", Population::One, "name_of"),
-    ("lab.inspector.note.text", Population::One, "name_of"),
+    (
+        crate::address::INSPECTOR_DEGREE_TEXT,
+        Population::One,
+        "name_of",
+    ),
+    (
+        crate::address::INSPECTOR_SELCOUNT_TEXT,
+        Population::One,
+        "name_of",
+    ),
+    (
+        crate::address::INSPECTOR_REACH_TEXT,
+        Population::One,
+        "name_of",
+    ),
+    (
+        crate::address::INSPECTOR_NOTE_TEXT,
+        Population::One,
+        "name_of",
+    ),
     // The applies badge: its words are already the row's description.
     (
         crate::address::FORM_APPLIES_TEMPLATE,

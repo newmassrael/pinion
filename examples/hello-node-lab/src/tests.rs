@@ -1199,15 +1199,30 @@ fn every_module_is_read() {
 ///
 /// ⚠ The needle is assembled, because this file is one of the sources it reads.
 ///
-/// ⚠⚠ The bar's own tag (`lab.toolbar`, no separator) is NOT in this count and
-/// cannot be: as a substring it occurs inside every seat address, so a count of
-/// it would be the seats' count over again. What holds it instead is the pair
-/// of assertions below — the separator form is the bare form plus a dot, and
-/// every declared seat is what the derivation makes of its word — so a second
-/// speller of the bare tag is a file that has to name the const anyway.
+/// ⚠⚠ The bar's own tag (`lab.toolbar`, no separator) is not in the SEAT count
+/// and cannot be: as a substring it occurs inside every seat address, so
+/// counting it there would be the seats' count over again.
+///
+/// ★ R2105 corrects what this comment used to conclude from that — *and cannot
+/// be counted*. True of the stem, false of the complete LITERAL: with its
+/// closing quote the bare tag does not occur inside any seat's quoted address,
+/// because a seat has a separator and a word where the bare tag has its closing
+/// quote. The root count below is that assertion; until R2105 the bare tag was
+/// held only by the identity `TOOLBAR_SEAT == TOOLBAR + "."`, which by this
+/// round's own denominator lesson says the other places cannot disagree and
+/// says nothing about a reader re-spelling the root.
+///
+/// ⚠ And this comment may not SPELL a seat address to make that point — the
+/// gate reads this file, so an example here is a speller. R2105 wrote one and
+/// the gate refused it, which is the rule enforcing itself on its own
+/// documentation.
 #[test]
 fn r2104_a_toolbar_seat_address_is_typed_in_one_place() {
-    const TOOLBAR_ANY: &str = concat!("lab.toolbar", ".");
+    const TOOLBAR_ANY: &str = concat!("lab.", "toolbar.");
+    // ★ R2105's root ratchet needle, declared here with its sibling rather than
+    // beside the assertion that uses it — `clippy::items_after_statements`, and
+    // it is right: a `const` reads as scoped to where it sits and is not.
+    const ROOT_LITERAL: &str = concat!("\"lab.", "toolbar\"");
     let sources = crate_sources();
     let spellers: Vec<(&str, usize)> = sources
         .iter()
@@ -1253,6 +1268,20 @@ fn r2104_a_toolbar_seat_address_is_typed_in_one_place() {
         None,
         "★ and neither is the seat of another family that sits on this row"
     );
+    // ★★★★★ R2105 — the bar's own tag, countable as a complete literal. See the
+    // doc comment: a ratchet on what R2104 converted, not a repair of a live
+    // defect, and it needed this test's seat needle re-split first.
+    let root_spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(ROOT_LITERAL).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        root_spellers,
+        Vec::new(),
+        "★★★★★ the bar's own tag is declared in `address.rs` as `TOOLBAR` and \
+         taken from there; these file(s) spell it themselves"
+    );
     // ★★★★★ Every tag a `ToolGroup` claims to paint under this prefix is in the
     // published roster. This is the half that catches a seat joining a group
     // without joining the wire — the walks read the roster, so a seat missing
@@ -1273,6 +1302,231 @@ fn r2104_a_toolbar_seat_address_is_typed_in_one_place() {
         Vec::<&str>::new(),
         "★★★★★ these toolbar tag(s) are painted by a group and are not in \
          `address::TOOLBAR_SEATS`, so nothing publishes their address"
+    );
+}
+
+/// ★★★★★ R2105 — **an inspector seat's address is typed in ONE place, and this
+/// counts.**
+///
+/// [`r2104_a_toolbar_seat_address_is_typed_in_one_place`]'s shape, for the
+/// family that took the head of `tools/painted_addresses.py --owed` when the
+/// toolbar left it. The needle is the pane's whole stem, so a reader that
+/// spells ANY seat is refused.
+///
+/// ⚠ The needle is assembled, because this file is one of the sources it reads.
+///
+/// ⚠⚠ The pane's own tag (`lab.inspector`, no separator) is NOT in this count
+/// and cannot be: as a substring it occurs inside every seat address, so a
+/// count of it would be the seats' count over again. What holds it instead is
+/// the pair of assertions below — the separator form is the bare form plus a
+/// dot, and every declared seat is what the derivation makes of its word — so a
+/// second speller of the bare tag is a file that has to name the const anyway.
+#[test]
+fn r2105_an_inspector_seat_address_is_typed_in_one_place() {
+    const INSPECTOR_ANY: &str = concat!("lab.", "inspector.");
+    // ★ The root ratchet's needle, here with its sibling for the reason
+    // `r2104` states: `clippy::items_after_statements`.
+    const ROOT_LITERAL: &str = concat!("\"lab.", "inspector\"");
+    let sources = crate_sources();
+    let spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(INSPECTOR_ANY).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ an inspector seat's address is declared in `address.rs` and taken \
+         from there everywhere else; these file(s) spell it themselves"
+    );
+    // The two forms of the prefix agree, so a const built on the separator form
+    // cannot drift from a reader classifying by the bare one.
+    assert_eq!(
+        super::address::INSPECTOR_SEAT,
+        format!("{}.", super::address::INSPECTOR)
+    );
+    // ★★ Every declared seat IS the derivation of its word, and the inverse
+    // gives the word back. A const that stopped agreeing with `inspector()`
+    // would put the wire and the paint on two spellings — which is this debt.
+    for (word, tag) in super::address::INSPECTOR_SEATS {
+        assert_eq!(
+            &super::address::inspector(word),
+            tag,
+            "★ the declared address for `{word}` is not what `inspector()` derives"
+        );
+        assert_eq!(
+            super::address::inspector_word(tag),
+            Some(*word),
+            "★ `{tag}` does not round-trip back to its word"
+        );
+    }
+    assert_eq!(
+        super::address::inspector_word(super::address::INSPECTOR),
+        None,
+        "★★ the pane's own tag is not one of its seats — the two are container \
+         and content, and a prefix that swallowed the separator would resolve a \
+         reader asking about the pane to whichever seat sorted first"
+    );
+    assert_eq!(
+        super::address::inspector_word("lab.palette.body"),
+        None,
+        "★ and neither is the body of the panel on the other side"
+    );
+    // ★★★★★ R2105 — and the PANE's own tag, which R2104 recorded as impossible
+    // to count. That is true of the STEM — the bare tag sits inside every seat
+    // address, so counting it there would be counting the seats again — and
+    // FALSE of the complete literal: with its closing quote it does not occur
+    // inside a seat's quoted address, because a seat has a separator and a word
+    // where the bare tag has its closing quote. So the container is countable
+    // after all, and the identity above stops being the only thing between a
+    // reader and a re-spelled root.
+    //
+    // ⚠ A RATCHET, not a repair: measured before adding it, the root is already
+    // spelled nowhere outside `address.rs`. What it buys is that a converted
+    // root cannot be quietly re-acquired — the job the family pins in
+    // `painted_addresses.py` do for the walk side, which nothing did here.
+    //
+    // ⚠⚠ The seat needle above had to be re-split for this to be assertable at
+    // all: written as the bare tag plus a dot it CONTAINS the complete root
+    // literal, so this count would have found the gate itself. The two-piece
+    // form is what the palette and inside gates already use.
+    //
+    // ⚠⚠⚠ And neither comment may SPELL a seat address to explain any of this.
+    // The gate reads this file, so an example is a speller — R2105 wrote two
+    // and the gate refused both.
+    let root_spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(ROOT_LITERAL).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        root_spellers,
+        Vec::new(),
+        "★★★★★ the pane's own tag is declared in `address.rs` as `INSPECTOR` and \
+         taken from there; these file(s) spell it themselves"
+    );
+    // ★★★★★ Every inspector tag the SPECIFICATION declares is in the published
+    // roster. This is the half that catches a seat reaching the paint
+    // tree and the announcement without reaching the wire — the walks read the
+    // roster, so a seat missing from it is a seat they cannot be handed the
+    // address of, and the failure they would report is "the screen did not
+    // paint it".
+    //
+    // ⚠ The population is DERIVED from the three tables that name the panel's
+    // marks rather than listed here, on R2053's finding: a gate whose own
+    // population is a hand-written list carries this debt one level up.
+    let declared: Vec<&str> = super::spec::VOICES
+        .iter()
+        .map(|voice| voice.tag)
+        .chain(super::spec::SILENCES.iter().map(|(tag, _, _)| *tag))
+        .chain(super::NodeAct::ALL.iter().map(|act| act.tag()))
+        .filter(|tag| super::address::inspector_word(tag).is_some())
+        .collect();
+    let mut declared: Vec<&str> = declared;
+    declared.sort_unstable();
+    declared.dedup();
+    let mut published: Vec<&str> = super::address::INSPECTOR_SEATS
+        .iter()
+        .map(|(_, tag)| *tag)
+        .collect();
+    published.sort_unstable();
+    // ★★★★★ A BIJECTION and not a containment, which is the stronger claim and
+    // the true one — measured while writing this gate: the specification names
+    // twenty inspector tags and the roster publishes the same twenty.
+    //
+    // Each direction catches its own defect, and they are different defects.
+    // Declared-and-unpublished is a seat that reached the paint tree and the
+    // announcement without reaching the wire: the walks read the roster, so
+    // they cannot be handed its address, and what they would report is "the
+    // screen did not paint it". Published-and-undeclared is the reverse — an
+    // address the wire offers that nothing on this screen claims to draw, which
+    // is a walk being handed a mark to look for that will never arrive.
+    //
+    // ⚠ A future seat that a walk legitimately reads and no specification table
+    // declares would fail here. That is the intended place to say so: the
+    // exception gets written down beside its reason, the way `FORM_PARTS`
+    // carries `toggle`, rather than being absorbed by a weaker assertion.
+    //
+    // ⚠⚠ This subsumes the emptiness check it replaces. The roster is a const
+    // in `address.rs` and cannot collapse, so an equality with it cannot pass
+    // vacuously the day a specification table is renamed away — which a
+    // one-directional filter silently would.
+    assert_eq!(
+        declared, published,
+        "★★★★★ the inspector tags the specification declares and the ones \
+         `address::INSPECTOR_SEATS` publishes are not the same set"
+    );
+}
+
+/// ★★★★★ R2105 — **no two entries of the published specification claim the same
+/// name.**
+///
+/// 🟥 Written because this round spent a whole sweep on it. The address roster
+/// was first published as `"inspector"`, which `spec_json` already uses for the
+/// pane's pinned conformance document. `serde_json::json!` accepts the
+/// duplicate WITHOUT A WORD and keeps the last, so the roster was dropped at
+/// build time, twelve converted walks failed with `KeyError('seats')`, and
+/// nothing in the failure named the cause.
+///
+/// ★★ The defect is invisible in the VALUE — by the time there is a
+/// `serde_json::Value` the two keys have already collapsed into one, so no
+/// assertion about the wire can see it. It is only visible in the SOURCE, which
+/// is why this reads text where every gate around it reads structure.
+///
+/// The scan is depth-aware rather than a bare search: `spec_json` is full of
+/// nested `json!` objects whose inner keys may legitimately repeat a name used
+/// at the top (`tag` occurs in most of the rosters), so only keys at the outer
+/// object's own depth are counted.
+#[test]
+fn r2105_the_published_specification_names_nothing_twice() {
+    const LIB: &str = include_str!("lib.rs");
+    let body = LIB
+        .split_once("fn spec_json() -> serde_json::Value {")
+        .expect("the specification is built in `spec_json`")
+        .1;
+    let mut depth = 0usize;
+    let mut seen: Vec<String> = Vec::new();
+    let mut duplicates: Vec<String> = Vec::new();
+    for (i, ch) in body.char_indices() {
+        match ch {
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+            }
+            // The outer `json!({ ... })` puts its own entries at depth 2: one
+            // for the macro's parentheses, one for its brace.
+            '"' if depth == 2 => {
+                let rest = &body[i + 1..];
+                let Some(end) = rest.find('"') else { break };
+                let key = &rest[..end];
+                if rest[end + 1..].starts_with(':') {
+                    if seen.iter().any(|s| s == key) {
+                        duplicates.push(key.to_owned());
+                    } else {
+                        seen.push(key.to_owned());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // ★ The scan reached the table, so an empty duplicate list is a finding and
+    // not a miss. Without this the assertion below passes the day the function
+    // is renamed — the vacuity this project has paid for twice.
+    assert!(
+        seen.len() > 30,
+        "★ the scan found only {} top-level key(s), so it is broken rather than \
+         the specification being small: {seen:?}",
+        seen.len()
+    );
+    assert_eq!(
+        duplicates,
+        Vec::<String>::new(),
+        "★★★★★ these key(s) are published twice; `json!` keeps the last one \
+         silently, so the earlier value never reaches a reader"
     );
 }
 
@@ -4857,7 +5111,7 @@ fn r1802_every_edge_the_specification_admits_is_one_the_layout_honours() {
 
         let mut checked = 0;
         for pane in spec::PANES {
-            let Some(seat) = ["lab.palette", "lab.inspector"]
+            let Some(seat) = ["lab.palette", crate::address::INSPECTOR]
                 .iter()
                 .position(|t| *t == pane.tag)
             else {

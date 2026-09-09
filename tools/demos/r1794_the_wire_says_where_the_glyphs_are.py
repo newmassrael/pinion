@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     ink_in_boxes,
+    inspector_tag,
     park_into_view,
     resize_and_settle,
     run_demo,
@@ -49,17 +50,26 @@ from rpc_verify import (  # noqa: E402
 LAB = "hello-node-lab"
 AT = (1440, 900)
 
-#: The seats the reader named, and the box each sits in.
-NAMED = {
-    "lab.palette.protocol.tcp": "tcp",
-    "lab.palette.protocol.tls": "tls",
-    "lab.palette.protocol.quic": "quic",
-    "lab.palette.protocol.udp": "udp",
-    "lab.palette.protocol.ws": "ws",
-    "lab.inspector.collapse": "collapse",
-    "lab.inspector.disable": "switch off",
-    "lab.inspector.delete": "delete",
-}
+#: The seats the reader named, and the word each box holds.
+#:
+#: ★★★★★ R2105 — a function rather than a dict, so the three inspector seats
+#: are ASKED of the screen. The five protocol chips are still spelled: that
+#: family has no declaration yet.
+#:
+#: ⚠ The words are NOT asked, and that is the point of this walk — it checks
+#: that the box says what the reader was told it says, so taking the word from
+#: the screen too would compare the screen with itself.
+def named(tf) -> dict[str, str]:
+    return {
+        "lab.palette.protocol.tcp": "tcp",
+        "lab.palette.protocol.tls": "tls",
+        "lab.palette.protocol.quic": "quic",
+        "lab.palette.protocol.udp": "udp",
+        "lab.palette.protocol.ws": "ws",
+        inspector_tag(tf, "collapse"): "collapse",
+        inspector_tag(tf, "disable"): "switch off",
+        inspector_tag(tf, "delete"): "delete",
+    }
 
 CHECKS = 0
 
@@ -88,8 +98,9 @@ def body() -> None:
         # is unchanged — a glyph's slack inside its box is the same fact at any
         # scroll offset — and the offsets are the SCREEN's (`park_into_view`
         # asks `scene/scroll_reach`), so this file names none.
+        want = named(tf)
         parked = []
-        for tag in NAMED:
+        for tag in want:
             parked += park_into_view(tf, tag)
         tf.tick_ms(16)
         rows = ink_in_boxes(tf)
@@ -102,7 +113,7 @@ def body() -> None:
             "would mean the roster had shrunk back",
             parked != [],
         )
-        for tag, word in NAMED.items():
+        for tag, word in want.items():
             row = by_box.get(tag)
             ok(f"A: `{tag}` is reported at all", row is not None)
             ok(

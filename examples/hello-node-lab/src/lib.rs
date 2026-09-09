@@ -751,7 +751,7 @@ fn palette_opens_at() -> EdgePlacement {
 
 /// Where the inspector opens, as `spec::PANES` declares it.
 fn inspector_opens_at() -> EdgePlacement {
-    opens_at("lab.inspector")
+    opens_at(address::INSPECTOR)
 }
 /// What a folded side panel leaves behind — the strip a person grabs to open it
 /// again. Not zero, which is what makes a fold different from a hide.
@@ -903,7 +903,7 @@ impl SidePanel {
     const fn tag(self) -> &'static str {
         match self {
             Self::Palette => "lab.palette",
-            Self::Inspector => "lab.inspector",
+            Self::Inspector => address::INSPECTOR,
         }
     }
 
@@ -6368,10 +6368,10 @@ impl Hit {
         {
             return Self::NodeAct(act);
         }
-        if tag == "lab.inspector.rename" {
+        if tag == address::INSPECTOR_RENAME {
             return Self::Rename;
         }
-        if tag == "lab.inspector.addkey" {
+        if tag == address::INSPECTOR_ADDKEY {
             return Self::AddKey;
         }
         // ★★★★★ R2053 — the framework's own inverses, not prefixes typed here.
@@ -9562,10 +9562,10 @@ impl NodeAct {
     /// The tag the seat is painted under, which is also what a driver presses.
     const fn tag(self) -> &'static str {
         match self {
-            Self::Collapse => "lab.inspector.collapse",
-            Self::Disable => "lab.inspector.disable",
-            Self::Delete => "lab.inspector.delete",
-            Self::Pins => "lab.inspector.pins",
+            Self::Collapse => address::INSPECTOR_COLLAPSE,
+            Self::Disable => address::INSPECTOR_DISABLE,
+            Self::Delete => address::INSPECTOR_DELETE,
+            Self::Pins => address::INSPECTOR_PINS,
         }
     }
 
@@ -13767,19 +13767,19 @@ fn inspector_reach(ink: Ink) -> Vec<Scene> {
     };
     let caption = seat_caption(seat);
     vec![
-        box_at("lab.inspector.reach", seat, fill, Some(edge), 6),
+        box_at(address::INSPECTOR_REACH, seat, fill, Some(edge), 6),
         // ★ R1691 — the run inside the pill is the pill's own words. Announcing
         // it too would read the same two figures out twice; the pill carries
         // them.
         quiet(
             tagged_label(
-                "lab.inspector.reach.text",
+                address::INSPECTOR_REACH_TEXT,
                 reach_caption(),
                 caption,
                 FONT_SMALL,
                 text,
             ),
-            Silence::name_of("lab.inspector.reach"),
+            Silence::name_of(address::INSPECTOR_REACH),
         ),
     ]
 }
@@ -14272,21 +14272,21 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
     let name = state.name_of(node);
     let mut parts = vec![
         tagged_label(
-            "lab.inspector.id",
+            address::INSPECTOR_ID,
             name,
             Rect::new(PAD, 44, 180, 20),
             18,
             ink.text,
         ),
         tagged_label(
-            "lab.inspector.role",
+            address::INSPECTOR_ROLE,
             identity_caption(state, node),
             Rect::new(PAD, 68, 260, 13),
             FONT_SMALL,
             ink.text_3,
         ),
         box_at(
-            "lab.inspector.degree",
+            address::INSPECTOR_DEGREE,
             Rect::new(PAD, 86, inspector_body_w(), 24),
             ink.accent_soft,
             Some(ink.accent_line),
@@ -14294,16 +14294,16 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
         ),
         quiet(
             tagged_label(
-                "lab.inspector.degree.text",
+                address::INSPECTOR_DEGREE_TEXT,
                 degree_caption(state, node),
                 Rect::new(PAD + 10, 92, 220, 13),
                 FONT_SMALL,
                 ink.accent,
             ),
-            Silence::name_of("lab.inspector.degree"),
+            Silence::name_of(address::INSPECTOR_DEGREE),
         ),
         box_at(
-            "lab.inspector.selcount",
+            address::INSPECTOR_SELCOUNT,
             Rect::new(PAD, SEL_COUNT_Y, inspector_body_w(), SEL_COUNT_H),
             ink.accent_soft,
             Some(ink.accent_line),
@@ -14311,13 +14311,13 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
         ),
         quiet(
             tagged_label(
-                "lab.inspector.selcount.text",
+                address::INSPECTOR_SELCOUNT_TEXT,
                 selection_caption(state),
                 Rect::new(PAD + 10, SEL_COUNT_Y + 5, inspector_body_w() - 20, 13),
                 FONT_SMALL,
                 ink.accent,
             ),
-            Silence::name_of("lab.inspector.selcount"),
+            Silence::name_of(address::INSPECTOR_SELCOUNT),
         ),
     ];
     // ★★ R1682 — the node's-life row. Painted for a selected card only, which
@@ -14387,7 +14387,7 @@ fn inspector_edit(state: &LabState, ink: Ink) -> Vec<Scene> {
     // the inspector while a person types further down the pane.
     if !matches!(editing, Some(Editing::Name(_) | Editing::Key(_))) {
         parts.push(box_at(
-            "lab.inspector.name",
+            address::INSPECTOR_NAME,
             box_rect,
             ink.raised,
             Some(ink.outline),
@@ -14415,7 +14415,7 @@ fn inspector_edit(state: &LabState, ink: Ink) -> Vec<Scene> {
     }
     let word = if editing.is_some() { "apply" } else { "rename" };
     parts.push(box_at(
-        "lab.inspector.rename",
+        address::INSPECTOR_RENAME,
         seat,
         ink.accent_soft,
         Some(ink.accent_line),
@@ -14441,7 +14441,7 @@ fn inspector_edit(state: &LabState, ink: Ink) -> Vec<Scene> {
     // have" are different requests and a person should not have to know that
     // one button means both.
     parts.push(box_at(
-        "lab.inspector.addkey",
+        address::INSPECTOR_ADDKEY,
         key_seat,
         ink.raised,
         Some(ink.outline),
@@ -14600,7 +14600,7 @@ fn inspector_pane(
     let note_y = geometry.origin.1 + geometry.height + 16;
 
     children.push(box_at(
-        "lab.inspector.note",
+        address::INSPECTOR_NOTE,
         Rect::new(PAD, note_y, inspector_body_w(), 40),
         ink.raised,
         Some(ink.warn),
@@ -14608,13 +14608,13 @@ fn inspector_pane(
     ));
     children.push(quiet(
         tagged_label(
-            "lab.inspector.note.text",
+            address::INSPECTOR_NOTE_TEXT,
             restart_note(&form),
             Rect::new(PAD + 10, note_y + 8, inspector_body_w() - 20, 26),
             10,
             ink.text_2,
         ),
-        Silence::name_of("lab.inspector.note"),
+        Silence::name_of(address::INSPECTOR_NOTE),
     ));
     // ★★★★★ R1853 — the fault-injection panel, under the note, and every row of
     // it is DERIVED from the form above rather than listed here. See
@@ -18165,6 +18165,29 @@ fn toolbar_wire() -> serde_json::Value {
     })
 }
 
+/// ★★★★★ R2105 — every seat of the card inspector, beside the address it is
+/// painted under.
+///
+/// [`toolbar_wire`]'s shape and its reason: a walk is Python and cannot call
+/// [`address::inspector`], so before this every walk that read the panel
+/// re-typed the address — measured at **41 sites across twelve files**, the
+/// head of `tools/painted_addresses.py --owed` once the toolbar left it.
+///
+/// ⚠ The roster of what this screen ADDRESSES, which is not the roster of what
+/// is on the panel right now: a seat's presence depends on what is selected —
+/// the card acts are absent with nothing picked, and `selcount` says something
+/// different for one card than for several — so a reader asks the SNAPSHOT what
+/// is painted and asks this only WHERE it would be.
+fn inspector_wire() -> serde_json::Value {
+    serde_json::json!({
+        "tag": address::INSPECTOR,
+        "seats": address::INSPECTOR_SEATS
+            .iter()
+            .map(|(word, tag)| serde_json::json!({ "word": word, "tag": tag }))
+            .collect::<Vec<_>>(),
+    })
+}
+
 /// ★★★★★ R2053 — the prefix each part of a form row is addressed under.
 ///
 /// Its own function for the reason the rosters beside it have one — the
@@ -18514,6 +18537,20 @@ fn spec_json() -> serde_json::Value {
         // WITHOUT the separator — would hand every later reader a prefix that
         // composes `lab.toolbarrun`.
         "toolbar": toolbar_wire(),
+        // ★★★★★ R2105 — **the card inspector: its own tag, and every seat's.**
+        //
+        // ⚠ The pane is a `tag` beside the seats rather than the first row of
+        // them, for the reason stated above it: a roster's prefix is recovered
+        // by taking a row's key off the end of its address, and the container's
+        // address is the prefix WITHOUT the separator.
+        //
+        // 🟥 And NOT `inspector`, which is taken: this table already publishes
+        // the pane's pinned conformance DOCUMENT under that name, and `json!`
+        // takes the last of two identical keys without a word. Written as
+        // `inspector` first, this roster was silently dropped and twelve walks
+        // failed with `KeyError('seats')` — the wire's namespace is a namespace,
+        // and R2104's lesson about a file's applies to it.
+        "inspector_addresses": inspector_wire(),
         "addable": spec::ADDABLE,
         "gestures": spec::GESTURES.iter().map(|(g, w)| serde_json::json!([g, w])).collect::<Vec<_>>(),
         // ★ R1678 — the reset affordances, and which of them are CONDITIONAL.
@@ -28932,27 +28969,28 @@ fn inspector_access(state: &LabState) -> Vec<AccessNode> {
     // is not applied* — the same shape as the measurement this round overturned
     // one file over, at the other end of the same campaign.
     if SidePanel::Inspector.at(state).folded {
-        let mut folded =
-            vec![AccessNode::new("lab.inspector", AriaRole::Group).with_name(spec::PANES[3].title)];
+        let mut folded = vec![
+            AccessNode::new(address::INSPECTOR, AriaRole::Group).with_name(spec::PANES[3].title),
+        ];
         folded.extend(side_panel_access(state, SidePanel::Inspector));
         return folded;
     }
     let mut nodes =
-        vec![AccessNode::new("lab.inspector", AriaRole::Group).with_name(spec::PANES[3].title)];
+        vec![AccessNode::new(address::INSPECTOR, AriaRole::Group).with_name(spec::PANES[3].title)];
     nodes.extend(side_panel_access(state, SidePanel::Inspector));
     if let Some(node) = state.active_card() {
         let name = state.name_of(node);
         nodes.push(
-            AccessNode::new("lab.inspector.id", AriaRole::Heading)
+            AccessNode::new(address::INSPECTOR_ID, AriaRole::Heading)
                 .with_name(name.clone())
                 .with_level(2),
         );
         nodes.push(
-            AccessNode::new("lab.inspector.role", AriaRole::Status)
+            AccessNode::new(address::INSPECTOR_ROLE, AriaRole::Status)
                 .with_name(identity_caption(state, node)),
         );
         nodes.push(
-            AccessNode::new("lab.inspector.degree", AriaRole::Status)
+            AccessNode::new(address::INSPECTOR_DEGREE, AriaRole::Status)
                 .with_name(degree_caption(state, node)),
         );
         // ★★ R1706 — the same sentence the chip paints, from the same call.
@@ -28960,7 +28998,7 @@ fn inspector_access(state: &LabState) -> Vec<AccessNode> {
         // that the panel is one of six, and the count is the only place the
         // screen says so in words.
         nodes.push(
-            AccessNode::new("lab.inspector.selcount", AriaRole::Status)
+            AccessNode::new(address::INSPECTOR_SELCOUNT, AriaRole::Status)
                 .with_name(selection_caption(state)),
         );
         // ★ The seat's name is the word it PAINTS, from the same call — a
@@ -28978,7 +29016,7 @@ fn inspector_access(state: &LabState) -> Vec<AccessNode> {
             );
         }
         nodes.push(
-            AccessNode::new("lab.inspector.rename", AriaRole::Button)
+            AccessNode::new(address::INSPECTOR_RENAME, AriaRole::Button)
                 .with_name(format!("rename {name}")),
         );
     }
@@ -28991,16 +29029,16 @@ fn inspector_access(state: &LabState) -> Vec<AccessNode> {
         Some(Editing::Name(_) | Editing::Key(_))
     ) {
         nodes.push(
-            AccessNode::new("lab.inspector.name", AriaRole::TextInput)
+            AccessNode::new(address::INSPECTOR_NAME, AriaRole::TextInput)
                 .with_name("a name for this card, or a configuration path to add"),
         );
     }
     nodes.push(
-        AccessNode::new("lab.inspector.addkey", AriaRole::Button)
+        AccessNode::new(address::INSPECTOR_ADDKEY, AriaRole::Button)
             .with_name("add a field by typing its key"),
     );
     nodes.push(
-        AccessNode::new("lab.inspector.reach", AriaRole::Status)
+        AccessNode::new(address::INSPECTOR_REACH, AriaRole::Status)
             .with_name(reach_caption())
             .with_live(AccessLive::Polite),
     );
@@ -29010,7 +29048,7 @@ fn inspector_access(state: &LabState) -> Vec<AccessNode> {
         // just did, so it is live — a reader who edits a restart-scoped key and
         // is told nothing has been told the edit took effect.
         nodes.push(
-            AccessNode::new("lab.inspector.note", AriaRole::Status)
+            AccessNode::new(address::INSPECTOR_NOTE, AriaRole::Status)
                 .with_name(restart_note(&form))
                 .with_live(AccessLive::Polite),
         );

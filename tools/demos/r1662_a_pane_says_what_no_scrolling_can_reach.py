@@ -47,6 +47,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     call,
+    inspector_tag,
     resize_and_settle,
     run_demo,
 )
@@ -168,7 +169,9 @@ def run(tf: RpcSubprocess) -> None:
     # small enough for them to be holding content off screen — asserting it
     # here, at the opening size, would be asserting about a screen that has
     # nothing to scroll.
-    bodies = {"lab.palette.body", "lab.inspector.body"}
+    # ★ R2105 — the inspector's body is asked of the screen; the palette's is
+    # still spelled, because that family has no declaration yet.
+    bodies = {"lab.palette.body", inspector_tag(tf, "body")}
 
     # ── 5. shrink the window to the floor it declares. THIS is the state the
     #      round is about: the panes now hold more than they show, and every

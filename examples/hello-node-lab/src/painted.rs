@@ -1013,8 +1013,8 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         // nothing selected still has to carry it — and the states below include
         // exactly that one, which is what makes the placement checkable rather
         // than asserted.
-        "lab.inspector.reach".into(),
-        "lab.inspector.reach.text".into(),
+        crate::address::INSPECTOR_REACH.into(),
+        crate::address::INSPECTOR_REACH_TEXT.into(),
     ];
     for pane in spec::PANES {
         want.push(pane.tag.to_owned());
@@ -1321,13 +1321,13 @@ fn must_answer(tag: &str) -> Option<String> {
         // it. These sit in the inspector's scrolling body, so the demand is
         // also what checks that the seat and its press agree once the pane has
         // moved.
-        "lab.inspector.collapse" => Some("card:collapse".into()),
-        "lab.inspector.disable" => Some("card:disable".into()),
-        "lab.inspector.delete" => Some("card:delete_node".into()),
+        crate::address::INSPECTOR_COLLAPSE => Some("card:collapse".into()),
+        crate::address::INSPECTOR_DISABLE => Some("card:disable".into()),
+        crate::address::INSPECTOR_DELETE => Some("card:delete_node".into()),
         // R1683 — the one field's two seats. The field itself is an external
         // with its own hit target and is deliberately not demanded here.
-        "lab.inspector.rename" => Some("card:rename".into()),
-        "lab.inspector.addkey" => Some("card:addkey".into()),
+        crate::address::INSPECTOR_RENAME => Some("card:rename".into()),
+        crate::address::INSPECTOR_ADDKEY => Some("card:addkey".into()),
         "lab.link.act" => Some("link:act".into()),
         // ★★★★★ R2000 — the turn seat, declared for the reason R1681.3 wrote
         // beside its neighbour: the card sweeps excuse whatever the picked
@@ -1406,7 +1406,7 @@ fn owning_pane(tag: &str) -> Option<Rect> {
     if tag.starts_with(super::address::TOOLBAR) {
         return Some(toolbar_rect());
     }
-    if tag.starts_with("lab.inspector")
+    if tag.starts_with(crate::address::INSPECTOR)
         || tag.starts_with("lab.form")
         || tag.starts_with(spec::FAULT_PANEL.tag)
     {
@@ -2751,7 +2751,7 @@ fn r1653_the_painted_screen_invented_nothing() {
             ("lab.pin.", None),
             ("lab.frame.", None),
             (form_stem.as_str(), None),
-            ("lab.inspector.", None),
+            (super::address::INSPECTOR_SEAT, None),
             (super::address::TOOLBAR_SEAT, None),
             ("lab.appbar.", None),
             ("lab.hint.", None),
@@ -3393,7 +3393,7 @@ fn r1654_the_screen_fills_whatever_window_it_is_given() {
             let rail = shot.tags["lab.rail"];
             let palette = shot.tags["lab.palette"];
             let canvas = shot.tags["lab.canvas"];
-            let inspector = shot.tags["lab.inspector"];
+            let inspector = shot.tags[crate::address::INSPECTOR];
             let appbar = shot.tags["lab.appbar"];
 
             assert_eq!(appbar.w, size.0, "{size:?}: the bar spans the window");
@@ -4352,15 +4352,15 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     // no mouse can produce — the rule R1681 wrote next door for the link seats.
     ("delete a node", |state, shot| {
         press_tag(state, shot, "lab.node.P-03");
-        press_tag(state, &painted(state), "lab.inspector.delete");
+        press_tag(state, &painted(state), crate::address::INSPECTOR_DELETE);
     }),
     ("collapse a node", |state, shot| {
         press_tag(state, shot, "lab.node.P-03");
-        press_tag(state, &painted(state), "lab.inspector.collapse");
+        press_tag(state, &painted(state), crate::address::INSPECTOR_COLLAPSE);
     }),
     ("disable a node", |state, shot| {
         press_tag(state, shot, "lab.node.P-03");
-        press_tag(state, &painted(state), "lab.inspector.disable");
+        press_tag(state, &painted(state), crate::address::INSPECTOR_DISABLE);
     }),
     // ★★★ R1683 — the two the one text field answers. Each opens it with the
     // pointer, types through the framework's own buffer and applies with the
@@ -4368,15 +4368,15 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     // `apply` trio drives the same three steps.
     ("rename a node", |state, shot| {
         press_tag(state, shot, "lab.node.P-03");
-        press_tag(state, &painted(state), "lab.inspector.rename");
+        press_tag(state, &painted(state), crate::address::INSPECTOR_RENAME);
         type_into(state, "edge-01");
-        press_tag(state, &painted(state), "lab.inspector.rename");
+        press_tag(state, &painted(state), crate::address::INSPECTOR_RENAME);
     }),
     ("add a field by typing its key", |state, shot| {
         let _ = shot;
-        press_tag(state, &painted(state), "lab.inspector.addkey");
+        press_tag(state, &painted(state), crate::address::INSPECTOR_ADDKEY);
         type_into(state, "transport.unicast.lowlatency");
-        press_tag(state, &painted(state), "lab.inspector.rename");
+        press_tag(state, &painted(state), crate::address::INSPECTOR_RENAME);
         assert!(
             state.editing.get().is_none(),
             "the apply shut the field, or the operation did not finish"
@@ -4434,7 +4434,7 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
             &super::address::form_control("transport.link.tx.batch_size"),
         );
         type_into(state, "70000");
-        press_tag(state, &painted(state), "lab.inspector.rename");
+        press_tag(state, &painted(state), crate::address::INSPECTOR_RENAME);
     }),
     ("author a link", |state, shot| {
         drag_between(state, shot, "lab.pin.S-01.dial", "lab.pin.P-02.accept");
@@ -5586,7 +5586,7 @@ fn r1682_a_node_life_seat_is_pressable_where_it_is_painted() {
             let live = state.inspector_scroll.offset().1;
             scrolled = scrolled.max(live);
             for seat in seats {
-                let tag = format!("lab.inspector.{seat}");
+                let tag = super::address::inspector(seat);
                 let rect = *shot
                     .tags
                     .get(&tag)
@@ -6096,7 +6096,7 @@ fn r1684_leaving_the_field_applies_what_is_in_it() {
         // away rather than let them fix it.
         super::reset_lab_state();
         let state = use_lab_state();
-        press_centre_of(&state, "lab.inspector.rename");
+        press_centre_of(&state, crate::address::INSPECTOR_RENAME);
         assert_eq!(
             state.editing.get().map(|what| what.wire()).as_deref(),
             Some("name"),
@@ -6822,7 +6822,7 @@ fn r1690_the_reach_meter_says_the_same_thing_on_screen_and_on_the_wire() {
 
         let wire = witness(&state, "reach");
         let strings = witness(&state, "strings");
-        let painted_text = run_under(&painted(&state), "lab.inspector.reach.text");
+        let painted_text = run_under(&painted(&state), crate::address::INSPECTOR_REACH_TEXT);
 
         // The two fractions the wire answers, in the spelling the pill shows.
         let fields = json_field(&wire, "sections");
@@ -6875,11 +6875,11 @@ fn r1690_the_reach_meter_says_the_same_thing_on_screen_and_on_the_wire() {
         state.selection.set(Selection::empty());
         let empty = painted(&state);
         assert!(
-            empty.tags.contains_key("lab.inspector.reach"),
+            empty.tags.contains_key(crate::address::INSPECTOR_REACH),
             "the meter stands with no card selected",
         );
         assert_eq!(
-            run_under(&empty, "lab.inspector.reach.text"),
+            run_under(&empty, crate::address::INSPECTOR_REACH_TEXT),
             painted_text,
             "and says the same thing, because nothing about it is the card's",
         );
@@ -6905,7 +6905,7 @@ fn r1690_reach_follows_the_palette_and_not_the_screen() {
     owner.run(|| {
         super::reset_lab_state();
         let state = use_lab_state();
-        let before = run_under(&painted(&state), "lab.inspector.reach.text");
+        let before = run_under(&painted(&state), crate::address::INSPECTOR_REACH_TEXT);
 
         // Take a row out through the affordance a person presses.
         press_centre_of(
@@ -6918,7 +6918,7 @@ fn r1690_reach_follows_the_palette_and_not_the_screen() {
             "the row really left the screen",
         );
         assert_eq!(
-            run_under(&painted(&state), "lab.inspector.reach.text"),
+            run_under(&painted(&state), crate::address::INSPECTOR_REACH_TEXT),
             before,
             "★ and the reach did not move: the chip offers the key back, so the \
              tool can still author it",
@@ -9216,7 +9216,7 @@ fn r1909_a_press_puts_the_inspector_away_and_a_press_brings_it_back() {
         // Through the affordance a person has, not through the wire verb an
         // agent has: the whole difference between a fold and a hide is that a
         // person can undo it, and only a press can show that.
-        press_tag(&state, &painted(&state), "lab.inspector.fold");
+        press_tag(&state, &painted(&state), crate::address::INSPECTOR_FOLD);
         let at = state.inspector_at.get();
         assert!(at.folded, "★ the press put it away: {at:?}");
         assert_eq!(

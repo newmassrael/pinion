@@ -104,6 +104,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     card_tag,
     form_part_tag,
+    inspector_tag,
     resize_and_settle,
     run_demo,
     without_extent,
@@ -169,7 +170,9 @@ def lab_surfaces(app: RpcSubprocess) -> dict:
     return lab_row(app)["conformance"]["surfaces"]
 
 
-def reveal(app: RpcSubprocess, tag: str, over: str = "lab.inspector.body") -> None:
+def reveal(
+    app: RpcSubprocess, tag: str, over: str | None = None, at: str = EXT
+) -> None:
     """Wheel `over` until `tag` is painted, the way a hand reaches a chip below
     the fold.
 
@@ -177,7 +180,18 @@ def reveal(app: RpcSubprocess, tag: str, over: str = "lab.inspector.body") -> No
     on this card and the page the assembled tool gives the lab paints ONE of
     them. A demo that pressed without scrolling would be asserting about a
     window size rather than about the screen.
+
+    ★★ R2105 — `over` defaults to the inspector's body, asked of the screen
+    rather than spelled. Two things about that default are forced rather than
+    chosen. It is `None` and not the address, because a default is evaluated at
+    import time and there is no screen to ask then. And it needs `at`, because
+    this walk drives the lab through TWO doors — its own process, and the
+    assembled shell, where the lab's surface hangs off a nested external path —
+    so the address has to be asked of the same door the tag came from. Spelling
+    it hid that: one literal served both, and looked right.
     """
+    if over is None:
+        over = inspector_tag(app, "body", ext=at)
     for _ in range(20):
         if tag in abs_rects_of(app.snapshot(source="paint")):
             return
@@ -414,7 +428,7 @@ def section_c(app: RpcSubprocess) -> str:
     # The row: reach the palette chip that offers this configuration path — it
     # is below the fold on the page the tool gives the lab — and press it.
     chip = part_tag(app, "add", key, f"/{tag_of(app)}{EXT}")
-    reveal(app, chip)
+    reveal(app, chip, at=f"/{tag_of(app)}{EXT}")
     press_tag(app, chip)
     surfaces = lab_surfaces(app)
     ok(
@@ -456,7 +470,9 @@ def section_c(app: RpcSubprocess) -> str:
     resize_and_settle(app, OPENING_WINDOW)
     app.tick(16)
     cramped = lab_surfaces(app)["enum_row"]
-    body = abs_rects_of(app.snapshot(source="paint")).get("lab.inspector.body")
+    body = abs_rects_of(app.snapshot(source="paint")).get(
+        inspector_tag(app, "body", ext=f"/{tag_of(app)}{EXT}")
+    )
     ok(
         f"C: ★★★★★ at the opening window the inspector is {body[2]}px wide and "
         f"the row is JUDGED rather than declining — the shortfall a reader "
@@ -483,7 +499,7 @@ def section_c(app: RpcSubprocess) -> str:
 
     # The roster: press the collapsed control.
     control = control_of(app, key, f"/{tag_of(app)}{EXT}")
-    reveal(app, control)
+    reveal(app, control, at=f"/{tag_of(app)}{EXT}")
     press_tag(app, control)
     opened = lab_surfaces(app)
     said = opened["enum_roster"]

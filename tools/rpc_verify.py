@@ -5187,6 +5187,56 @@ def toolbar_tag(tf, word: str, *, ext: str = "/external") -> str:
     return toolbar_seats(screen_spec(tf, ext))[word]
 
 
+def inspector_root(tf, *, ext: str = "/external") -> str:
+    """The tag the card inspector ITSELF is painted under — the pane, not a seat.
+
+    ★★★★★ R2105 — published beside the seat roster rather than as its first row,
+    for [`toolbar_root`]'s reason: the container's address is the prefix WITHOUT
+    the separator, so a row for it would hand every later reader a prefix that
+    composes `lab.inspectorid`.
+
+    ⚠ Under `inspector_addresses` and not `inspector`, which the screen already
+    uses for the pane's pinned conformance document. `json!` takes the last of
+    two identical keys silently, so the first spelling of this cost twelve walks
+    a `KeyError('seats')` and nothing said why.
+    """
+    return screen_spec(tf, ext)["inspector_addresses"]["tag"]
+
+
+def inspector_seats(spec: Any) -> dict:
+    """Every inspector seat's address, keyed by the word the screen declares it
+    under — from a specification a caller has ALREADY read.
+
+    ★★★★★ R2105 — [`toolbar_seats`]'s pair of doors, for the same reason: a walk
+    holding the specification should not pay a round trip per seat, and a walk
+    without one should not fetch it by hand.
+    """
+    return {row["word"]: row["tag"] for row in spec["inspector_addresses"]["seats"]}
+
+
+def inspector_tag(tf, word: str, *, ext: str = "/external") -> str:
+    """The address the inspector seat called `word` is painted under.
+
+    ★★★★★ R2105 — the walks' half of the inspector's address declaration, and
+    the head of this debt's remainder once the toolbar left it: **41 sites
+    across twelve walks** typed one of these out.
+
+    ⚠ What a wrong letter costs here is worse than at the bar, and it is worth
+    saying because it decides how a failure READS. Most inspector seats are read
+    rather than pressed — the identifier, the role chip, the degree, the
+    selection count, what cannot be reached. A press on a mistyped address at
+    least fails as a press. A READ of one produces a walk asserting about a mark
+    that was never painted, and the sentence it writes is *the screen did not
+    paint it* — an accusation aimed at the screen for the walk's own typo.
+
+    Takes the seat's WORD, which is what the screen declares and the wire
+    publishes, so the address a walk reads and the address the paint used are
+    one spelling by construction. A word the screen does not address is a
+    `KeyError` naming it.
+    """
+    return inspector_seats(screen_spec(tf, ext))[word]
+
+
 def access_node_by_tag(result: Any, tag: str) -> Optional[dict]:
     """The `scene/access` node carrying this `tag`, or `None` when absent.
 

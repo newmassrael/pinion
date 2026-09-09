@@ -3117,7 +3117,15 @@ fn r1724_the_lab_destination_is_the_node_lab_itself() {
             catalog.contains("node_lab"),
             "the lab's own paint root is in the window"
         );
-        for pane in ["lab.palette", "lab.canvas", "lab.inspector"] {
+        // ★ R2105 — the inspector's address comes from the lab's own
+        // declaration, the way the toolbar consts beside it already do. The
+        // other two are still spelled: those families have no declaring site
+        // yet, and this is where the next installment finds them.
+        for pane in [
+            "lab.palette",
+            "lab.canvas",
+            hello_node_lab::address::INSPECTOR,
+        ] {
             assert!(
                 lab.iter().any(|t| t == pane),
                 "the lab's {pane} pane is painted"
@@ -9291,6 +9299,109 @@ fn r2020_the_assembled_tool_paints_its_status_badges_on_their_states_ground() {
     });
 }
 
+/// Every source an address gate in this crate reads.
+///
+/// ★★★★★ R2105 — lifted out of [`r2051_a_rail_seat_address_is_typed_in_one_place`],
+/// which carried it inline as five entries, and `judge.rs` was not among them.
+/// That is R2053's finding one crate over: a gate that counts by reading source,
+/// whose own population is a hand-written list, carries the address debt one
+/// level up.
+///
+/// ⚠ Measured before repairing, so the claim is what happened rather than what
+/// it sounds like: `judge.rs` spells the rail prefix zero times and the node
+/// lab's inspector address zero times, so the gate was SHORT without being
+/// WRONG. What makes it worth fixing is that the module already spells ten
+/// other painted prefixes — seven under the settings screen, two under the
+/// palette, one under the sub-bar — and the palette is the largest `shell.`
+/// family left in `painted_addresses.py --owed`, so the blind spot is loaded
+/// and pointed at a near-term instalment.
+fn shell_sources() -> [(&'static str, &'static str); 6] {
+    [
+        ("address.rs", include_str!("address.rs")),
+        ("main.rs", include_str!("main.rs")),
+        ("spec.rs", include_str!("spec.rs")),
+        ("painted.rs", include_str!("painted.rs")),
+        ("judge.rs", include_str!("judge.rs")),
+        ("tests.rs", include_str!("tests.rs")),
+    ]
+}
+
+/// ★★★★★ R2105 — **every module this crate declares is one the address gates
+/// read**, mirroring `hello-node-lab`'s gate of the same name.
+///
+/// The gates count by reading source, so their population is a list — and a
+/// list is what goes stale when a module is added. This derives the truth from
+/// `main.rs`'s own `mod` lines, so the next module to spell an address is
+/// caught by a gate that already exists rather than by the round after it.
+#[test]
+fn every_module_is_read() {
+    const MAIN: &str = include_str!("main.rs");
+    let declared: Vec<&str> = MAIN
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let rest = line
+                .strip_prefix("mod ")
+                .or_else(|| line.strip_prefix("pub mod "))?;
+            rest.strip_suffix(';')
+        })
+        .collect();
+    assert!(
+        declared.len() >= 5,
+        "★ the module scan found {} declaration(s), which is not this crate: \
+         the scan is broken rather than the crate being small",
+        declared.len()
+    );
+    let read: Vec<&str> = shell_sources().iter().map(|(name, _)| *name).collect();
+    let missing: Vec<&str> = declared
+        .iter()
+        .filter(|name| !read.contains(&format!("{name}.rs").as_str()))
+        .copied()
+        .collect();
+    assert_eq!(
+        missing,
+        Vec::<&str>::new(),
+        "★★★★★ these module(s) are declared and no address gate reads them"
+    );
+}
+
+/// ★★★★★ R2105 — **this shell does not spell the addresses of the screen it
+/// MOUNTS.**
+///
+/// R2104 converted this crate's ten toolbar sites and recorded that nothing
+/// held them: the lab's gates read the lab's modules and the Python ratchet
+/// reads walks, so an address belonging to a screen this binary merely mounts
+/// sat in no gate's population. This round added an eleventh such site — the
+/// inspector's pane tag — and closes the hole for both families.
+///
+/// ⚠ A ratchet, not a repair, measured first: both are already taken from
+/// `hello_node_lab::address`, so what this asserts is that they stay that way.
+///
+/// ⚠⚠ The needles are assembled, because this file is one of the sources they
+/// read, and they are COMPLETE literals — the bare stems sit inside every seat
+/// address of their family and the quoted form does not.
+#[test]
+fn r2105_the_shell_does_not_spell_the_labs_addresses() {
+    const INSPECTOR: &str = concat!("\"lab.", "inspector\"");
+    const TOOLBAR: &str = concat!("\"lab.", "toolbar\"");
+    let spellers: Vec<(&str, usize)> = shell_sources()
+        .iter()
+        .map(|(name, body)| {
+            (
+                *name,
+                body.matches(INSPECTOR).count() + body.matches(TOOLBAR).count(),
+            )
+        })
+        .filter(|(_, count)| *count > 0)
+        .collect();
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ these file(s) spell a screen this shell only MOUNTS; take the \
+         address from `hello_node_lab::address`, the way the seat consts here do"
+    );
+}
+
 /// ★★★★★ R2051 — **a rail seat's address is typed in ONE place, and this
 /// counts.**
 ///
@@ -9310,13 +9421,7 @@ fn r2020_the_assembled_tool_paints_its_status_badges_on_their_states_ground() {
 #[test]
 fn r2051_a_rail_seat_address_is_typed_in_one_place() {
     const NEEDLE: &str = concat!("shell.", "rail.");
-    let sources: [(&str, &str); 5] = [
-        ("address.rs", include_str!("address.rs")),
-        ("main.rs", include_str!("main.rs")),
-        ("spec.rs", include_str!("spec.rs")),
-        ("painted.rs", include_str!("painted.rs")),
-        ("tests.rs", include_str!("tests.rs")),
-    ];
+    let sources = shell_sources();
     let spellers: Vec<(&str, usize)> = sources
         .iter()
         .map(|(name, body)| (*name, body.matches(NEEDLE).count()))
