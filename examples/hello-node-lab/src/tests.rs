@@ -1026,8 +1026,15 @@ fn r2048_a_register_rows_second_line_speaks_in_both_its_renderings() {
 /// what `spec.roles[].tag` is for, and `r1651` is what holds them to it.
 #[test]
 fn r2049_a_role_address_is_typed_in_one_place() {
-    const NEEDLE: &str = concat!("lab.palette.", "role.");
-    const SWATCH: &str = concat!("lab.palette.", "swatch.");
+    // ⚠ R2106 — re-split at the FIRST dot rather than after the pane's word.
+    // The pane's own stem became a needle this round, and it sat inside these
+    // two: assembled as they were, this gate's source carried the joined
+    // pane's whole stem joined up, and the palette gate counted this file as a
+    // speller. R2105 recorded the same re-split on the inspector, for the same
+    // reason — a gate that counts by reading source has its own source in the
+    // population, and the split has to clear EVERY needle aimed at the file.
+    const NEEDLE: &str = concat!("lab.", "palette.role.");
+    const SWATCH: &str = concat!("lab.", "palette.swatch.");
     let sources = crate_sources();
     let spellers: Vec<(&str, usize)> = sources
         .iter()
@@ -1368,7 +1375,7 @@ fn r2105_an_inspector_seat_address_is_typed_in_one_place() {
          reader asking about the pane to whichever seat sorted first"
     );
     assert_eq!(
-        super::address::inspector_word("lab.palette.body"),
+        super::address::inspector_word(super::address::PALETTE_BODY),
         None,
         "★ and neither is the body of the panel on the other side"
     );
@@ -1455,6 +1462,214 @@ fn r2105_an_inspector_seat_address_is_typed_in_one_place() {
         declared, published,
         "★★★★★ the inspector tags the specification declares and the ones \
          `address::INSPECTOR_SEATS` publishes are not the same set"
+    );
+}
+
+/// ★★★★★ R2106 — **a palette address is typed in one place, and this counts.**
+///
+/// The ninth instalment of `debt-a-paint-address-is-retyped-at-every-reader`,
+/// and the one that finishes a pane the project has been converting a corner at
+/// a time: R2049 took the role row and its swatch, R2078 the group heading,
+/// R2085 the heading's colour control, and everything else this panel paints
+/// was still spelled — measured at **41 walk sites across nine files** and
+/// **77 more in this crate's own Rust** before the conversion.
+///
+/// ⚠ What makes this pane different from the bar and the panel the two rounds
+/// before it took: it is not one roster. Nine seats are FIXED and four families
+/// expand over a population — the pin legend, the transports, the definitions
+/// the document holds and the verbs over them — so the wire publishes the fixed
+/// nine as addresses and the four as PREFIXES, and this gate has to hold both
+/// shapes.
+///
+/// ⚠⚠ Both needles are assembled, because this file is one of the sources they
+/// read. The stem is split at the FIRST dot rather than after the pane's word,
+/// which is what R2049's needles had to be re-split to as well: written the
+/// other way this gate's own source carries the joined stem and the gate counts
+/// itself.
+///
+/// ⚠⚠⚠ And no comment in this crate may spell an address under that stem to
+/// explain any of this — a doc comment is source, and the gate reads source.
+/// R2105 recorded the same cost on the inspector; this round paid it in six
+/// places, three of them in the shell.
+#[test]
+fn r2106_a_palette_address_is_typed_in_one_place() {
+    const PALETTE_ANY: &str = concat!("lab.", "palette.");
+    // ★ The root ratchet's needle, here with its sibling for the reason `r2104`
+    // states: `clippy::items_after_statements`.
+    const ROOT_LITERAL: &str = concat!("\"lab.", "palette\"");
+    let sources = crate_sources();
+    let spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(PALETTE_ANY).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ a palette address is declared in `address.rs` and taken from \
+         there everywhere else; these file(s) spell it themselves"
+    );
+    let root_spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(ROOT_LITERAL).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        root_spellers,
+        Vec::new(),
+        "★★★★★ the pane's own tag is declared in `address.rs` as `PALETTE` and \
+         taken from there; these file(s) spell it themselves"
+    );
+}
+
+/// ★★★★★ R2106 — **every palette address is what its declaration derives, and
+/// the roster agrees with the specification.**
+///
+/// The second half of the gate above, and a test of its own rather than an
+/// `allow` on the workspace's hundred-line refusal — this tree's standing
+/// answer to that lint is STRUCTURE, and the split is one a reader benefits
+/// from either way: *nobody re-spells the address* and *the declarations agree
+/// with each other* are two claims, and `r2053_every_form_part_address_is_derived`
+/// is the same separation one family over.
+#[test]
+fn r2106_every_palette_address_is_derived() {
+    // ★★★★★ The one seat the SPECIFICATION does not declare, written down with
+    // its reason rather than absorbed by a weaker assertion — `FORM_PARTS`
+    // carries `toggle` on the same terms.
+    //
+    // The definitions register's heading is painted and announced, and its rows
+    // are the DOCUMENT's rather than this screen's, so R2047 deliberately left
+    // the whole register out of the voice tables: their population is what the
+    // opening screen has, and a register over a document that holds nothing has
+    // no rows to declare. The heading is checked instead by the paint census,
+    // which sizes it at exactly one.
+    const UNDECLARED: &[&str] = &[super::address::PALETTE_PARTS];
+    // The two forms of the prefix agree, so a const built on the separator form
+    // cannot drift from a reader classifying by the bare one.
+    assert_eq!(
+        super::address::PALETTE_SEAT,
+        format!("{}.", super::address::PALETTE)
+    );
+    // ★★ Every declared seat IS the derivation of its word, and the inverse
+    // gives the word back.
+    for (word, tag) in super::address::PALETTE_SEATS {
+        assert_eq!(
+            &super::address::palette(word),
+            tag,
+            "★ the declared address for `{word}` is not what `palette()` derives"
+        );
+        assert_eq!(
+            super::address::palette_word(tag),
+            Some(*word),
+            "★ `{tag}` does not round-trip back to its word"
+        );
+    }
+    assert_eq!(
+        super::address::palette_word(super::address::PALETTE),
+        None,
+        "★★ the pane's own tag is not one of its seats — the two are container \
+         and content, and a prefix that swallowed the separator would resolve a \
+         reader asking about the pane to whichever seat sorted first"
+    );
+    // ★★★ Each parametric family's template IS its prefix with the placeholder,
+    // so a specification table taking the `&'static str` cannot drift from the
+    // runtime derivation. The role row's, the swatch's, the group heading's and
+    // the ink chip's are held by their own rounds' gates; these two are this
+    // round's.
+    assert_eq!(
+        super::address::PALETTE_PIN_TEMPLATE,
+        format!("{}{{}}", super::address::PALETTE_PIN)
+    );
+    assert_eq!(
+        super::address::PALETTE_PROTOCOL_TEMPLATE,
+        format!("{}{{}}", super::address::PALETTE_PROTOCOL)
+    );
+    // ★★★★ And each family's derivation composes from its own prefix, which is
+    // the half a template equality cannot reach — a `format!` that lost a
+    // separator would still leave both consts agreeing.
+    assert_eq!(
+        super::address::palette_pin("dial"),
+        format!("{}dial", super::address::PALETTE_PIN)
+    );
+    assert_eq!(
+        super::address::palette_protocol("tcp"),
+        format!("{}tcp", super::address::PALETTE_PROTOCOL)
+    );
+    assert_eq!(
+        super::address::palette_part(7),
+        format!("{}7", super::address::PALETTE_PART)
+    );
+    assert_eq!(
+        super::address::palette_part_word(7, "name"),
+        format!("{}.name", super::address::palette_part(7)),
+        "★ a row's runs hang off the ROW's address, so a walk that has the row \
+         appends the word"
+    );
+    assert_eq!(
+        super::address::palette_verb("remove", 7),
+        format!("{}remove.7", super::address::PALETTE_VERB)
+    );
+    // ★★★★★ The register control's inverse gives back what its derivation put
+    // in, and refuses what is not one. The verb vocabulary is the caller's —
+    // this screen's `PartVerb` — because the address module knows the shape and
+    // not the words.
+    let verbs: Vec<&str> = super::PartVerb::ALL.iter().map(|v| v.word()).collect();
+    for verb in &verbs {
+        assert_eq!(
+            super::address::palette_verb_of(&super::address::palette_verb(verb, 7), &verbs),
+            Some((*verb, 7)),
+            "★ `{verb}` does not round-trip back out of its control's address"
+        );
+    }
+    assert_eq!(
+        super::address::palette_verb_of(&super::address::palette_part(7), &verbs),
+        None,
+        "★★ a register ROW is not one of its controls — the two share a stem, \
+         and the router reads them as different things"
+    );
+    assert_eq!(
+        super::address::palette_verb_of(&super::address::palette_verb("nosuch", 7), &verbs),
+        None,
+        "★★ and a verb this screen does not have resolves to nothing rather \
+         than to whichever one sorted first"
+    );
+    // ★★★★★ Every FIXED palette tag the specification declares is in the
+    // published roster, and the roster holds nothing beyond them but the
+    // exception named above. An equality rather than a containment, for
+    // R2105's reason: each direction catches its own defect — a seat that
+    // reached the paint tree and the announcement without reaching the wire is
+    // an address the walks cannot be handed, and the failure they would report
+    // is "the screen did not paint it"; the reverse is a walk handed a mark to
+    // look for that will never arrive.
+    //
+    // ⚠ The population is DERIVED from the tables that name this pane's marks
+    // rather than listed here, on R2053's finding: a gate whose own population
+    // is a hand-written list carries this debt one level up. The templates are
+    // filtered out by their placeholder — they are the parametric families,
+    // held by the equalities above.
+    //
+    // ⚠⚠ Not vacuous: the right-hand side is derived from a const roster in
+    // `address.rs`, which cannot collapse, so this cannot pass by both sides
+    // going empty.
+    let mut declared: Vec<&str> = super::spec::PANES
+        .iter()
+        .filter_map(|pane| pane.body)
+        .chain(super::spec::VOICES.iter().map(|voice| voice.tag))
+        .chain(super::spec::SILENCES.iter().map(|(tag, _, _)| *tag))
+        .filter(|tag| super::address::palette_word(tag).is_some() && !tag.contains('{'))
+        .collect();
+    declared.sort_unstable();
+    declared.dedup();
+    let mut expected: Vec<&str> = super::address::PALETTE_SEATS
+        .iter()
+        .map(|(_, tag)| *tag)
+        .filter(|tag| !UNDECLARED.contains(tag))
+        .collect();
+    expected.sort_unstable();
+    assert_eq!(
+        declared, expected,
+        "★★★★★ the fixed palette tags the specification declares and the ones \
+         `address::PALETTE_SEATS` publishes are not the same set"
     );
 }
 
@@ -5111,7 +5326,7 @@ fn r1802_every_edge_the_specification_admits_is_one_the_layout_honours() {
 
         let mut checked = 0;
         for pane in spec::PANES {
-            let Some(seat) = ["lab.palette", crate::address::INSPECTOR]
+            let Some(seat) = [crate::address::PALETTE, crate::address::INSPECTOR]
                 .iter()
                 .position(|t| *t == pane.tag)
             else {

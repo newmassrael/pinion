@@ -130,10 +130,10 @@ pub const PANES: &[PaneSpec] = &[
         holds: &["lab.rail"],
     },
     PaneSpec {
-        tag: "lab.palette",
+        tag: crate::address::PALETTE,
         title: "Node Palette",
         width: 230,
-        body: Some("lab.palette.body"),
+        body: Some(crate::address::PALETTE_BODY),
         // ★★★★★ R1889 — and a reader may drag its width between these.
         //
         // The floor is what the widest chip row needs before its label starts
@@ -161,7 +161,7 @@ pub const PANES: &[PaneSpec] = &[
         opens: EdgePlacement::open(ChromeEdge::Left, 230),
         // Everything this panel draws is named under its own tag: the chips,
         // the pin legend, the discovery switch and its caption.
-        holds: &["lab.palette"],
+        holds: &[crate::address::PALETTE],
     },
     PaneSpec {
         tag: "lab.canvas",
@@ -1489,7 +1489,7 @@ pub const VOICES: &[VoiceSpec] = &[
     },
     // The palette.
     VoiceSpec {
-        tag: "lab.palette",
+        tag: crate::address::PALETTE,
         role: "group",
         population: Population::One,
     },
@@ -1498,12 +1498,12 @@ pub const VOICES: &[VoiceSpec] = &[
     // of it; what they do is in the name the accessibility tree gives them,
     // which is derived from the placement so it says where pressing would go.
     VoiceSpec {
-        tag: "lab.palette.flip",
+        tag: crate::address::PALETTE_FLIP,
         role: "button",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.palette.fold",
+        tag: crate::address::PALETTE_FOLD,
         role: "button",
         population: Population::One,
     },
@@ -1550,17 +1550,17 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::Roles,
     },
     VoiceSpec {
-        tag: "lab.palette.legend",
+        tag: crate::address::PALETTE_LEGEND,
         role: "heading",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.palette.pin.{}",
+        tag: crate::address::PALETTE_PIN_TEMPLATE,
         role: "group",
         population: Population::PinKinds,
     },
     VoiceSpec {
-        tag: "lab.palette.discovery.head",
+        tag: crate::address::PALETTE_DISCOVERY_HEAD,
         role: "heading",
         population: Population::One,
     },
@@ -1568,7 +1568,7 @@ pub const VOICES: &[VoiceSpec] = &[
     // control as unreadable on screen; what a reader is TOLD it is has to be
     // right whatever the ink does.
     VoiceSpec {
-        tag: "lab.palette.discovery",
+        tag: crate::address::PALETTE_DISCOVERY,
         role: "switch",
         population: Population::One,
     },
@@ -1577,7 +1577,7 @@ pub const VOICES: &[VoiceSpec] = &[
     // of whose caption it is. The ROLE is unchanged — a caption that is also a
     // live status region is both, and the two facts are on different axes.
     VoiceSpec {
-        tag: "lab.palette.discovery.caption",
+        tag: crate::address::PALETTE_DISCOVERY_CAPTION,
         role: "status",
         population: Population::One,
     },
@@ -1766,10 +1766,18 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
         Population::Roles,
         "decorative",
     ),
-    ("lab.palette.protocol.{}", Population::Protocols, "part_of"),
-    ("lab.palette.discovery.track", Population::One, "decorative"),
+    (
+        crate::address::PALETTE_PROTOCOL_TEMPLATE,
+        Population::Protocols,
+        "part_of",
+    ),
+    (
+        crate::address::PALETTE_DISCOVERY_TRACK,
+        Population::One,
+        "decorative",
+    ),
     // The scrolling bodies. Their panes are what a reader lands on.
-    ("lab.palette.body", Population::One, "layout"),
+    (crate::address::PALETTE_BODY, Population::One, "layout"),
     (crate::address::INSPECTOR_BODY, Population::One, "layout"),
     // A card's identifier and its role chip: the card says both.
     ("lab.node.{}.id", Population::Nodes, "name_of"),

@@ -746,7 +746,7 @@ fn opens_at(tag: &str) -> EdgePlacement {
 
 /// Where the palette opens, as `spec::PANES` declares it.
 fn palette_opens_at() -> EdgePlacement {
-    opens_at("lab.palette")
+    opens_at(address::PALETTE)
 }
 
 /// Where the inspector opens, as `spec::PANES` declares it.
@@ -902,7 +902,7 @@ impl SidePanel {
     /// The painted tag this panel owns.
     const fn tag(self) -> &'static str {
         match self {
-            Self::Palette => "lab.palette",
+            Self::Palette => address::PALETTE,
             Self::Inspector => address::INSPECTOR,
         }
     }
@@ -6280,12 +6280,13 @@ impl Hit {
         // precisely when the screen is telling a person the name reaches
         // neither. The parse is checked against the document, which is this
         // router's own rule for every parametric family.
-        if let Some(rest) = tag.strip_prefix("lab.palette.verb.")
-            && let Some((verb, id)) = PartVerb::ALL.into_iter().find_map(|verb| {
-                rest.strip_prefix(&format!("{}.", verb.word()))
-                    .map(|id| (verb, id))
-            })
-            && let Ok(id) = id.parse::<u32>()
+        // ★★★★★ R2106 — parsed through the family's own inverse, which is where
+        // the prefix lives. The vocabulary is still this router's to supply:
+        // `address` knows how a verb control is spelled and `PartVerb` knows
+        // which verbs there are, so the words go IN and the split comes back.
+        let words: Vec<&str> = PartVerb::ALL.iter().map(|verb| verb.word()).collect();
+        if let Some((word, id)) = address::palette_verb_of(tag, &words)
+            && let Some(verb) = PartVerb::ALL.into_iter().find(|v| v.word() == word)
             && let held = pinion_node_graph::TreeId(id)
             && state.doc.borrow().tree(held).is_some()
         {
@@ -6300,7 +6301,7 @@ impl Hit {
         {
             return Self::Build(stack);
         }
-        if tag == "lab.palette.discovery" {
+        if tag == address::PALETTE_DISCOVERY {
             return Self::DiscoveryToggle;
         }
         // ★★★★★ R2001 — a prefix of its own rather than `lab.node.<name>.…`,
@@ -10737,7 +10738,7 @@ fn group_ink_chip(state: &LabState, label: &str, rect: Rect, ink: Ink) -> Scene 
 fn palette_legend(ink: Ink) -> Vec<Scene> {
     let local = in_palette_body;
     let mut children = vec![palette_heading(
-        "lab.palette.legend",
+        address::PALETTE_LEGEND,
         "pins",
         legend_top() - palette_body_origin().1,
         palette_body_w(),
@@ -10760,7 +10761,7 @@ fn palette_legend(ink: Ink) -> Vec<Scene> {
         // habit and the same repair: one call answers the height AND the
         // position, exactly as R1859 found on the inspector's rename row.
         children.push(box_at(
-            &format!("lab.palette.pin.{kind}"),
+            &address::palette_pin(kind),
             band_in(row, row.x, PIN, PIN),
             if *kind == "dial" { colour } else { ink.surface },
             Some(colour),
@@ -10792,7 +10793,7 @@ fn palette_legend(ink: Ink) -> Vec<Scene> {
         // against a rectangle the word was not inside — they were siblings, so
         // nothing in the tree related them and no gate could ask.
         let word = transport.word();
-        let tag = format!("lab.palette.protocol.{word}");
+        let tag = address::palette_protocol(word);
         let mut style = BoxStyle::filled(ink.surface).with_corner_radius(4);
         style = style.with_border(Border::new(transport_ink(transport), 1));
         let (chip_scene, _) = captioned(
@@ -10813,11 +10814,11 @@ fn palette_legend(ink: Ink) -> Vec<Scene> {
                 // set is announced once as the pane's value and each chip says
                 // it is part of that. Five nodes saying one word each would be
                 // five stops on a reader's way through the palette for one fact.
-                .silent(Silence::part_of("lab.palette")),
+                .silent(Silence::part_of(address::PALETTE)),
             // A colour key, not a control: a press falls through to the pane.
             caption::Pointer::Transparent,
         );
-        children.push(quiet(chip_scene, Silence::part_of("lab.palette")));
+        children.push(quiet(chip_scene, Silence::part_of(address::PALETTE)));
     }
 
     children
@@ -10858,14 +10859,15 @@ const DISCOVERY_CAPTION_INSET: u32 = 48;
 
 /// The tag the switch's caption carries, **derived rather than spelled**.
 ///
-/// ★ R1813 — it was `lab.palette.discovery.state`, a name this file chose. The
+/// ★ R1813 — it was the switch's address with a `.state` suffix, a name this
+/// file chose. The
 /// caption is now the switch box's own child, built by `caption::inside`, and
 /// the `.caption` suffix is what tells `caption::Survey` whose caption it is; a
 /// second spelling here could drift from the framework's in an edit nothing
 /// would catch. The a11y id is the same string on purpose — the switch's
 /// `described_by` points at a painted region a reader can also walk onto.
 fn discovery_caption_tag() -> String {
-    format!("lab.palette.discovery{}", caption::CAPTION_SUFFIX)
+    format!("{}{}", address::PALETTE_DISCOVERY, caption::CAPTION_SUFFIX)
 }
 
 /// The determinism switch, off by default.
@@ -10877,7 +10879,7 @@ fn palette_determinism(state: &LabState, ink: Ink) -> Vec<Scene> {
     let toggle = local(discovery_rect());
     let on = state.discovery.get();
     children.push(palette_heading(
-        "lab.palette.discovery.head",
+        address::PALETTE_DISCOVERY_HEAD,
         "graph determinism",
         toggle.y - PAL_HEAD_H,
         palette_body_w(),
@@ -10939,12 +10941,12 @@ fn palette_determinism(state: &LabState, ink: Ink) -> Vec<Scene> {
         discovery_word(on)
     };
     let (state_caption, _) = caption::inside(
-        "lab.palette.discovery",
+        address::PALETTE_DISCOVERY,
         toggle,
         &caption::Caption::new(says, style).padded(caption_pad),
     );
     children.push(box_holding(
-        "lab.palette.discovery",
+        address::PALETTE_DISCOVERY,
         toggle,
         ink.raised,
         Some(if on { ink.warn } else { ink.outline }),
@@ -10953,7 +10955,7 @@ fn palette_determinism(state: &LabState, ink: Ink) -> Vec<Scene> {
     ));
     children.push(quiet(
         box_at(
-            "lab.palette.discovery.track",
+            address::PALETTE_DISCOVERY_TRACK,
             Rect::new(toggle.x + 10, toggle.y + 12, 30, 16),
             if on { ink.warn } else { ink.outline_2 },
             None,
@@ -11084,7 +11086,7 @@ fn palette_parts(state: &LabState, ink: Ink) -> Vec<Scene> {
     let local = in_palette_body;
     let doc = state.doc.borrow();
     let mut children: Vec<Scene> = vec![palette_heading(
-        "lab.palette.parts",
+        address::PALETTE_PARTS,
         "definitions",
         parts_top().saturating_sub(palette_body_origin().1),
         palette_body_w(),
@@ -11119,7 +11121,7 @@ fn palette_parts(state: &LabState, ink: Ink) -> Vec<Scene> {
                 // purpose, so a name-keyed row painted TWO nodes under one tag
                 // exactly when the screen is telling a person that the name
                 // reaches neither. A tag is an address; a name here is not.
-                &format!("lab.palette.part.{}", held.id.0),
+                &address::palette_part(held.id.0),
                 local(seat),
                 ink.surface,
                 None,
@@ -11138,7 +11140,7 @@ fn palette_parts(state: &LabState, ink: Ink) -> Vec<Scene> {
             [FONT_SMALL + 1, 10],
         );
         children.push(tagged_label(
-            &format!("lab.palette.part.{}.name", held.id.0),
+            &address::palette_part_word(held.id.0, "name"),
             held.name.clone(),
             name_band,
             FONT_SMALL + 1,
@@ -11156,7 +11158,7 @@ fn palette_parts(state: &LabState, ink: Ink) -> Vec<Scene> {
         // rectangle instead, which its own helper had to explain.
         let says = part_line(&doc, held);
         children.push(tagged_label(
-            &format!("lab.palette.part.{}.line", held.id.0),
+            &address::palette_part_word(held.id.0, "line"),
             says.sentence(),
             kind_band,
             10,
@@ -11172,11 +11174,11 @@ fn palette_parts(state: &LabState, ink: Ink) -> Vec<Scene> {
             let mut control = box_holding(
                 // ★ A prefix of its own rather than a suffix on the row's tag,
                 // which is this router's standing rule (R1885, R2001): a suffix
-                // would make `lab.palette.part.<id>.<verb>` and a row's own
+                // would put the verb where a row's own suffix goes, and a row's own
                 // suffixed runs the same shape, and the router would answer
                 // whichever arm it read first.
                 // ★★★★★ R2048 — and the ID, for the reason on the row above.
-                &format!("lab.palette.verb.{}.{}", verb.word(), held.id.0),
+                &address::palette_verb(verb.word(), held.id.0),
                 slot,
                 ink.raised,
                 Some(ink.outline),
@@ -16817,6 +16819,30 @@ impl ExternalIntrospect for LabOracle {
                         .collect::<Vec<_>>(),
                     "open": state.toolbar_open.get(),
                     "control": laid.needs_affordance(),
+                    // ★★★★★ R2106 — **the addresses the control ITSELF occupies**,
+                    // published beside the boolean that says whether it is
+                    // drawn. `control` has said *whether* since R1791 and
+                    // nothing said *which*, so a reader that wanted to allow for
+                    // the control's absence had to spell its two tags.
+                    //
+                    // 🟥 That gap is a red this project paid two rounds for.
+                    // R2104 published the seat roster on the specification wire,
+                    // and `r1700` reads EVERY string a specification carries as
+                    // a thing the screen names — so these two entered a
+                    // population whose rule is *painted at the design size, and
+                    // painted or reachable at every other*. They are painted at
+                    // the design width, where the right cluster needs 607 and is
+                    // given 410, and correctly absent at 2494 wide where nothing
+                    // overflows. ⇒ **publishing an address is not a claim that
+                    // the mark is always drawn**, and the difference is the
+                    // screen's to state.
+                    //
+                    // Derived from the same declaration the paint composes from,
+                    // so the pair cannot drift; and published unconditionally,
+                    // because *which* addresses the control has is a fact about
+                    // the row rather than about this width — the shape
+                    // `gives_up` already takes beside `moved`.
+                    "control_seats": [address::TOOLBAR_MORE, address::TOOLBAR_MORE_LABEL],
                     "short_by": laid.short_by(),
                 })))
             }
@@ -18188,6 +18214,44 @@ fn inspector_wire() -> serde_json::Value {
     })
 }
 
+/// ★★★★★ R2106 — the node palette's tag, its fixed seats, and the PREFIX of
+/// each family that expands over a population.
+///
+/// [`toolbar_wire`]'s shape and its reason, with one difference this pane
+/// forces: it is not one roster. The bar and the panel have a closed list of
+/// seats; the palette has nine fixed ones and four families whose members are
+/// the pin legend, the transports, the definitions the document holds and the
+/// verbs over them. A roster of the last four would be a table the size of the
+/// document, so what is published is the prefix — [`form_parts_wire`]'s answer
+/// to the same question — and a walk names the member and appends it.
+///
+/// ⚠ `part_words` is the roster of runs painted INSIDE a register row, not of
+/// rows: a walk composes `<part><id>.<word>`, and the row's own band takes no
+/// word.
+///
+/// ⚠⚠ The role row, its swatch, the group heading and the heading's colour
+/// control are NOT here. They belong to this pane and they are published where
+/// a reader already asks for them — beside the role in `roles[]` and beside the
+/// group in `role_groups[]` — and a second copy would be a second spelling of
+/// one fact, which is the defect this whole campaign is repaying.
+///
+/// ⚠⚠ Named `palette_addresses_wire` because `palette_wire` is taken by the
+/// live colour register — see the note on the key in `spec_json`.
+fn palette_addresses_wire() -> serde_json::Value {
+    serde_json::json!({
+        "tag": address::PALETTE,
+        "seats": address::PALETTE_SEATS
+            .iter()
+            .map(|(word, tag)| serde_json::json!({ "word": word, "tag": tag }))
+            .collect::<Vec<_>>(),
+        "pin": address::PALETTE_PIN,
+        "protocol": address::PALETTE_PROTOCOL,
+        "part": address::PALETTE_PART,
+        "part_words": address::PALETTE_PART_WORDS,
+        "verb": address::PALETTE_VERB,
+    })
+}
+
 /// ★★★★★ R2053 — the prefix each part of a form row is addressed under.
 ///
 /// Its own function for the reason the rosters beside it have one — the
@@ -18551,6 +18615,19 @@ fn spec_json() -> serde_json::Value {
         // failed with `KeyError('seats')` — the wire's namespace is a namespace,
         // and R2104's lesson about a file's applies to it.
         "inspector_addresses": inspector_wire(),
+        // ★★★★★ R2106 — **the node palette: its own tag, every fixed seat's,
+        // and the prefix of each family that expands over a population.**
+        //
+        // ⚠ Under `palette_addresses` and not `palette`, which is taken — and
+        // that took THREE namespaces to establish, which is R2105's lesson
+        // executed rather than repeated. `palette` is free in this table's own
+        // keys, so the duplicate-key gate would have passed it; it is NOT free
+        // in this module's function names, where the compiler refused it; and
+        // it is not free on the introspection path surface, where it already
+        // means *the palette a person is looking at* — a live register of
+        // chosen colours. That last one nothing would have caught: the two
+        // would have sat on one wire under one word meaning different things.
+        "palette_addresses": palette_addresses_wire(),
         "addable": spec::ADDABLE,
         "gestures": spec::GESTURES.iter().map(|(g, w)| serde_json::json!([g, w])).collect::<Vec<_>>(),
         // ★ R1678 — the reset affordances, and which of them are CONDITIONAL.
@@ -25064,7 +25141,7 @@ fn palette_access(state: &LabState) -> Vec<AccessNode> {
     }
     let on = state.discovery.get();
     let mut nodes = vec![
-        AccessNode::new("lab.palette", AriaRole::Group)
+        AccessNode::new(address::PALETTE, AriaRole::Group)
             .with_name(spec::PANES[1].title)
             .with_value(AccessValue::Text(format!(
                 "{} roles; transports {}",
@@ -25137,22 +25214,22 @@ fn palette_access(state: &LabState) -> Vec<AccessNode> {
                 }),
         );
     }
-    nodes.push(AccessNode::new("lab.palette.legend", AriaRole::Heading).with_name("pins"));
+    nodes.push(AccessNode::new(address::PALETTE_LEGEND, AriaRole::Heading).with_name("pins"));
     // The pin legend states what a pin can DO, which is not a fact about
     // colour: a reader who never sees the drawing still needs the vocabulary
     // its announcements use.
     for (kind, meaning) in spec::PIN_LEGEND {
         nodes.push(
-            AccessNode::new(format!("lab.palette.pin.{kind}"), AriaRole::Group)
+            AccessNode::new(address::palette_pin(kind), AriaRole::Group)
                 .with_name(format!("{kind} pin — {meaning}")),
         );
     }
     nodes.push(
-        AccessNode::new("lab.palette.discovery.head", AriaRole::Heading)
+        AccessNode::new(address::PALETTE_DISCOVERY_HEAD, AriaRole::Heading)
             .with_name("graph determinism"),
     );
     nodes.push(
-        AccessNode::new("lab.palette.discovery", AriaRole::Switch)
+        AccessNode::new(address::PALETTE_DISCOVERY, AriaRole::Switch)
             .with_name("graph determinism")
             .with_state(AccessState {
                 checked: Some(on),
@@ -25192,7 +25269,7 @@ fn parts_access(state: &LabState) -> Vec<AccessNode> {
     // tag, so without this a reader who never sees it would meet a heading and
     // then silence.
     let mut nodes = vec![
-        AccessNode::new("lab.palette.parts", AriaRole::Heading)
+        AccessNode::new(address::PALETTE_PARTS, AriaRole::Heading)
             .with_name("definitions")
             .with_value(AccessValue::Text(format!(
                 "{} held",
@@ -25202,7 +25279,7 @@ fn parts_access(state: &LabState) -> Vec<AccessNode> {
     for held in doc.definitions() {
         nodes.push(
             AccessNode::new(
-                format!("lab.palette.part.{}.name", held.id.0),
+                address::palette_part_word(held.id.0, "name"),
                 AriaRole::Status,
             )
             // ★ R2048 — the SAME decision the row paints, rendered for a reader
@@ -25217,7 +25294,7 @@ fn parts_access(state: &LabState) -> Vec<AccessNode> {
         for verb in PartVerb::ALL {
             let refused = doc.may_definition(held.id, verb.act()).err();
             let mut node = AccessNode::new(
-                format!("lab.palette.verb.{}.{}", verb.word(), held.id.0),
+                address::palette_verb(verb.word(), held.id.0),
                 AriaRole::Button,
             )
             .with_name(match &refused {

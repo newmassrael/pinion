@@ -58,7 +58,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcSubprocess, run_demo  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    RpcSubprocess,
+    palette_seats,
+    run_demo,
+    screen_spec,
+)
 
 SHELL = "hello-analyzer-shell"
 EXT = "/external"
@@ -117,18 +122,6 @@ def announced(app: RpcSubprocess, tag: str) -> dict | None:
     return next((n for n in resp.result["nodes"] if n.get("tag") == tag), None)
 
 
-def verb_tag(verb: str, definition: int) -> str:
-    """The tag of one verb's control on one definition's row.
-
-    ⚠ R2048 — keyed on the definition's ID and not on its name. This walk was
-    written against the name, and the round after it measured what that costs:
-    two definitions may answer to one name on purpose, so a name-keyed control
-    is two nodes under one address exactly when the register is telling a person
-    that the name reaches neither.
-    """
-    return f"lab.palette.verb.{verb}.{definition}"
-
-
 def body() -> None:
     with RpcSubprocess(SHELL, boot_grace=1.5) as app:
         app.intervene(f"{EXT}/nav", SEAT)
@@ -139,13 +132,38 @@ def body() -> None:
             app.query(f"{EXT}/nav") == SEAT,
         )
         surface = surface_of(app, SEAT)
+        # ★★★★★ R2106 — the palette's addresses, read ONCE off the mounted
+        # screen's own specification. `surface` is the address the shell
+        # published for the seat, so this asks the screen this walk is actually
+        # driving rather than the shell around it.
+        #
+        # ⚠ Read once rather than per site: R2105 measured a walk paying 54
+        # seconds for asking the specification inside a loop.
+        lab_spec = screen_spec(app, surface)
+        addresses = lab_spec["palette_addresses"]
+        seats = palette_seats(lab_spec)
+
+        def verb_tag(verb: str, definition: int) -> str:
+            """The tag of one verb's control on one definition's row.
+
+            ⚠ R2048 — keyed on the definition's ID and not on its name. This
+            walk was written against the name, and the round after it measured
+            what that costs: two definitions may answer to one name on purpose,
+            so a name-keyed control is two nodes under one address exactly when
+            the register is telling a person that the name reaches neither.
+
+            ★★★★★ R2106 — and the PREFIX comes from the screen. The composition
+            stays here because it is the walk's own arithmetic over two values
+            the screen published; what left is the address.
+            """
+            return f'{addresses["verb"]}{verb}.{definition}'
 
         banner("B — ★ the register is empty at rest, and SAYS so")
         ok(
             f"B: ★ the opening graph holds no definition — {definitions(app, surface)}",
             definitions(app, surface) == [],
         )
-        head = announced(app, "lab.palette.parts")
+        head = announced(app, seats["parts"])
         ok(
             f"B: ★★★★★ and the register announces the count rather than "
             f"leaving a heading over silence — {head}",
@@ -174,7 +192,7 @@ def body() -> None:
         ok(
             f"C: ★★★★★ and NOW a control on the frame is inert for it, which is "
             f"the half nothing painted before this round — "
-            f"{sorted(t for t in census if t.startswith('lab.palette.verb.'))}",
+            f"{sorted(t for t in census if t.startswith(addresses['verb']))}",
             control is not None,
         )
         ok(
@@ -247,7 +265,7 @@ def body() -> None:
         # ⇒ a walk that drives a control must first put the control where a
         # person's cursor could be, which is what R1662's model already says
         # about this pane.
-        app.scroll("lab.palette.body", to=(0, 4_000))
+        app.scroll(seats["body"], to=(0, 4_000))
         app.tick_ms(16)
         before = [row["definition"] for row in definitions(app, surface)]
         app.click(path=verb_tag("remove", PART_ID))

@@ -39,11 +39,29 @@ Whether that many is affordable is the caller's judgment, exactly as
 ## What it cannot see
 
 A demo that launches a binary through anything other than a literal
-`RpcSubprocess("name")` -- a name held in a variable, or a helper that wraps the
-launch. `--audit` reports every demo whose launch target could not be resolved,
-so that set is a NUMBER a round can look at rather than a silence. Measured at
-R1797 it is reported below rather than written here, because a count in prose
-goes stale the moment somebody adds a demo.
+`RpcSubprocess("name")` -- a name held in a variable it cannot follow.
+`--audit` reports every demo whose launch target could not be resolved, so that
+set is a NUMBER a round can look at rather than a silence. Measured at R1797 it
+is reported below rather than written here, because a count in prose goes stale
+the moment somebody adds a demo.
+
+## R2106 -- and the silence had a cost, measured
+
+`r1700_what_is_drawn_is_what_is_pressed.py` drives THREE screens through a
+helper of its own, `screen(example, name)`, called three times with a literal
+each. Its launch argument is that helper's PARAMETER, so this tool resolved
+nothing and the demo sat in `--audit` -- which meant a change to
+`hello-node-lab` never selected the walk that reads that screen's whole
+specification back off the paint. R2104 published a red in it; R2105 published
+over the red; neither round's radius sweep could have run it, and neither round
+was careless. **A blind spot in the instrument reads exactly like a green.**
+
+So the parameter hop is followed now: when a launch argument is the name of a
+parameter of the enclosing module-level function, the literals passed at that
+position by calls to that function IN THE SAME MODULE resolve it. One hop, not
+an interpreter -- `module_strings`'s own rule, applied to arguments instead of
+assignments, and it can only ADD targets to a demo that resolved none by the
+literal path.
 """
 
 from __future__ import annotations
@@ -90,19 +108,71 @@ def module_strings(tree: ast.Module) -> dict[str, str]:
     return out
 
 
+def parameter_arguments(tree: ast.Module) -> dict[tuple[str, str], set[str]]:
+    """For each module-level function's parameter, the string literals this
+    module passes at that position.
+
+    ★★★★★ R2106 — the ONE hop that `module_strings` is for assignments. A demo
+    that drives several screens writes a helper — `screen(example, name)` — and
+    calls it once per screen with a literal each; the launch argument is then
+    that helper's PARAMETER, which the literal path cannot see and the constant
+    path cannot either.
+
+    Keyed by `(function, parameter)` rather than by parameter name alone,
+    because `example` in one helper and `example` in another are different
+    things and merging them would credit a demo with a screen it never launches
+    — the over-selection direction, which is the one that makes a radius useless
+    rather than merely short.
+
+    ⚠ Module-level `def` only, positional and keyword calls, string literals
+    only. A parameter fed from another parameter is not followed: that is the
+    second hop, and following it is an interpreter rather than a lookup —
+    `module_strings` drew the same line and said so.
+    """
+    params: dict[str, list[str]] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = node.args
+            params[node.name] = [a.arg for a in (*args.posonlyargs, *args.args)]
+    out: dict[tuple[str, str], set[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        names = params.get(node.func.id)
+        if names is None:
+            continue
+        for i, arg in enumerate(node.args):
+            if i < len(names) and isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                out.setdefault((node.func.id, names[i]), set()).add(arg.value)
+        for kw in node.keywords:
+            if kw.arg in names and isinstance(kw.value, ast.Constant):
+                if isinstance(kw.value.value, str):
+                    out.setdefault((node.func.id, kw.arg), set()).add(kw.value.value)
+    return out
+
+
 def launched_by(path: Path) -> set[str]:
     """The package names a demo script launches, by parsing it.
 
     Every `RpcSubprocess(...)` call in the file, wherever it appears --
     including inside a helper defined in the same file, which is why this walks
     the whole tree rather than only the top level. The first argument resolves
-    from a string literal or from a module-level constant.
+    from a string literal, from a module-level constant, or — R2106 — from the
+    literals this module passes at that parameter's position.
     """
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except (SyntaxError, UnicodeDecodeError):
         return set()
     consts = module_strings(tree)
+    passed = parameter_arguments(tree)
+    # The module-level function each `RpcSubprocess` call sits inside, so a
+    # parameter name is resolved against the function that declares it.
+    enclosing: dict[int, str] = {}
+    for top in tree.body:
+        if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for inner in ast.walk(top):
+                enclosing[id(inner)] = top.name
     out: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -118,6 +188,10 @@ def launched_by(path: Path) -> set[str]:
             out.add(first.value)
         elif isinstance(first, ast.Name) and first.id in consts:
             out.add(consts[first.id])
+        elif isinstance(first, ast.Name):
+            owner = enclosing.get(id(node))
+            if owner is not None:
+                out |= passed.get((owner, first.id), set())
     return out
 
 
@@ -374,6 +448,57 @@ def selftest() -> int:
             "the substring rule finds no demo an equality rule would miss, so it "
             f"is carrying nothing: {len(by_substring)} vs {len(by_equality)}"
         )
+
+    # ★★★★★ R2106 — the PARAMETER hop, against fixtures rather than against
+    # this tree. A case pinned to a demo that exists rots the day that demo is
+    # rewritten, which is the failure `painted_addresses` recorded for its own
+    # oracle; what does not rot is the distinction being claimed.
+    #
+    # Three cases, and the third is the one that decides whether the hop is a
+    # LOOKUP or a guess: two helpers with a parameter of the same name must not
+    # pool their literals, or a demo is credited with a screen it never
+    # launches. Over-selection is the direction that makes a radius useless
+    # rather than merely short.
+    with tempfile.TemporaryDirectory() as tmp:
+        hop = Path(tmp) / "hop_demo.py"
+        hop.write_text(
+            "def screen(example, name):\n"
+            "    with RpcSubprocess(example) as app:\n"
+            "        pass\n"
+            'screen("hello-node-lab", "node lab")\n'
+            'screen(example="hello-packet-view", name="capture viewer")\n',
+            encoding="utf-8",
+        )
+        if launched_by(hop) != {"hello-node-lab", "hello-packet-view"}:
+            failures.append(
+                f"the parameter hop resolved {sorted(launched_by(hop))!r}, not both literals"
+            )
+        two = Path(tmp) / "two_helpers_demo.py"
+        two.write_text(
+            "def drives(example):\n"
+            "    with RpcSubprocess(example) as app:\n"
+            "        pass\n"
+            "def mentions(example):\n"
+            "    return example\n"
+            'drives("hello-node-lab")\n'
+            'mentions("hello-packet-view")\n',
+            encoding="utf-8",
+        )
+        if launched_by(two) != {"hello-node-lab"}:
+            failures.append(
+                "a literal passed to a DIFFERENT helper's parameter of the same name was "
+                f"credited as a launch: {sorted(launched_by(two))!r}"
+            )
+        unfed = Path(tmp) / "unfed_demo.py"
+        unfed.write_text(
+            "def screen(example):\n    with RpcSubprocess(example) as app:\n        pass\n",
+            encoding="utf-8",
+        )
+        if launched_by(unfed):
+            failures.append(
+                "a parameter nothing in the module feeds resolved to "
+                f"{sorted(launched_by(unfed))!r} rather than to nothing"
+            )
 
     # `tracked_data` must take pins and leave prose and the store alone.
     kept = tracked_data(

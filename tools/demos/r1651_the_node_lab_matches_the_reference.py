@@ -34,6 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    address_family,
     address_prefix,
     assert_declared_channels_are_true,
     assert_eq,
@@ -42,6 +43,7 @@ from rpc_verify import (  # noqa: E402
     call,
     find_by_tag,
     inspector_seats,
+    palette_seats,
     run_demo,
     toolbar_seats,
     walk_nodes,
@@ -209,6 +211,17 @@ def body() -> None:
         # pair for the same reason.
         ins_tag = inspector_seats(spec)
         ins = spec["inspector_addresses"]["tag"]
+        # ★★★★★ R2106 — and the palette's, which is the third pane to arrive
+        # this way. `pal` is the pane; `pal_seat` its fixed seats by word; the
+        # four parametric families are prefixes on the same row, so a member's
+        # key is appended rather than typed into an address.
+        pal_seat = palette_seats(spec)
+        pal = spec["palette_addresses"]["tag"]
+        pal_pin = spec["palette_addresses"]["pin"]
+        pal_protocol = spec["palette_addresses"]["protocol"]
+        pal_part = spec["palette_addresses"]["part"]
+        pal_part_words = spec["palette_addresses"]["part_words"]
+        pal_verb = spec["palette_addresses"]["verb"]
         assert_eq(q(tf, "graph"), spec["graph"], "the graph is the one declared")
         assert_eq(q(tf, "zoom"), spec["zoom"], "and it opens at the declared zoom")
         assert_eq(
@@ -282,7 +295,7 @@ def body() -> None:
         # The SET, not the count: a pane that stopped being movable and a pane
         # that started both have to fail, and a count catches neither on its own.
         want = {
-            "lab.palette": ["left", "right"],
+            pal: ["left", "right"],
             ins: ["left", "right"],
         }
         if movable != want:
@@ -294,7 +307,7 @@ def body() -> None:
               + f"; the other {len(spec['panes']) - len(movable)} declare they stay put")
         # ★ R1889 — the SET again, for the same reason the edges are a set: a
         # pane that stopped resizing and a pane that started both have to fail.
-        want_resize = {"lab.palette": (180, 420), ins: (240, 520)}
+        want_resize = {pal: (180, 420), ins: (240, 520)}
         if resizable != want_resize:
             raise SystemExit(
                 f"[B2] the panes that declare a resize are {resizable}, "
@@ -340,15 +353,19 @@ def body() -> None:
             for tag in (role["tag"], role["swatch"]):
                 if tag not in painted:
                     missing.append(tag)
-        for tag in ("lab.palette.legend", "lab.palette.discovery.head"):
+        # ★★★★★ R2106 — the palette's addresses, handed over for R2049's reason
+        # one paragraph up. The two headings are FIXED seats and are asked for
+        # by word; the legend entries and the transport chips are families, so
+        # the member's key is appended to the published prefix.
+        for tag in (pal_seat["legend"], pal_seat["discovery.head"]):
             if tag not in painted:
                 missing.append(tag)
         for kind in spec["pin_legend"]:
-            tag = f"lab.palette.pin.{kind['kind']}"
+            tag = pal_pin + kind["kind"]
             if tag not in painted:
                 missing.append(tag)
         for word in spec["protocols"]:
-            tag = f"lab.palette.protocol.{word}"
+            tag = pal_protocol + word
             if tag not in painted:
                 missing.append(tag)
         for frame in spec["frames"]:
@@ -493,17 +510,17 @@ def body() -> None:
             # ★ R2085 — and its colour chip, from the same row. Seven marks
             # arrived with this round and this backward check is what said so.
             declared.add(run["ink"])
-        declared.add("lab.palette.legend")
-        # ⚠ `lab.palette.discovery.head` is NOT declared here — it falls under
-        # the `lab.palette.discovery` family below, whose member count is the
-        # thing that has to move for it.
+        declared.add(pal_seat["legend"])
+        # ⚠ The determinism switch's HEADING is NOT declared here — it falls
+        # under the switch's own family below, whose member count is the thing
+        # that has to move for it.
         for role in spec["roles"]:
             declared.add(role["tag"])
             declared.add(role["swatch"])
         for kind in spec["pin_legend"]:
-            declared.add(f"lab.palette.pin.{kind['kind']}")
+            declared.add(pal_pin + kind["kind"])
         for word in spec["protocols"]:
-            declared.add(f"lab.palette.protocol.{word}")
+            declared.add(pal_protocol + word)
         for frame in spec["frames"]:
             declared.add(frame["tag"])
             declared.add(f"{frame['tag']}.caption")
@@ -843,7 +860,7 @@ def body() -> None:
             # never counted here and never announced to a reader either — the
             # same absence with two faces. Naming it makes it both a member of
             # this family and a `heading` in the accessibility tree.
-            "lab.palette.discovery": 3,
+            pal_seat["discovery"]: 3,
             # ★★★★ R1720 — the toast, and it arrived here for a reason worth
             # writing down rather than a number worth widening.
             #
@@ -882,9 +899,22 @@ def body() -> None:
             # ★ R2048 — three tags per definition, not two: the second line took
             # a tag of its own, because what it says is a claim and an untagged
             # run is one no walk can read.
-            "lab.palette.parts": 1,
-            "lab.palette.part": 3 * len(registered),
-            "lab.palette.verb": len(spec["definition_seats"]) * len(registered),
+            #
+            # ★★★★★ R2106 — and the three addresses are HANDED over now. A
+            # family key is a STEM (this table classifies with `t == stem or
+            # t.startswith(stem + ".")`) while the wire publishes a PREFIX, so
+            # the separator comes off through `address_family` — one rule, said
+            # once, rather than a `.` dropped by hand at three sites.
+            #
+            # ★★★★★ R2106 — and the THREE is derived rather than written: the
+            # row's own band, plus one run per word the screen says a row is
+            # addressed by. That constant is exactly the shape the `card_seats`
+            # paragraph above records the cost of — a closed vocabulary counted
+            # by hand goes stale the round it grows, and this one grew once
+            # already (R2047 wrote two, R2048 made it three).
+            pal_seat["parts"]: 1,
+            address_family(pal_part): (1 + len(pal_part_words)) * len(registered),
+            address_family(pal_verb): len(spec["definition_seats"]) * len(registered),
         }
         # ★★★★★ R1792 — a CAPTION is part of its box, not an element beside it.
         # `pinion_widget_paint::caption::captioned` gives a caption its box's tag
@@ -1144,7 +1174,7 @@ def body() -> None:
                 seat_tag["config"]: "config",
                 seat_tag["script"]: "script",  # R1687
                 seat_tag["run"]: "run",
-                "lab.palette.discovery": "discovery",
+                pal_seat["discovery"]: "discovery",
             }.get(tag)
 
         def sweep(when: str) -> int:

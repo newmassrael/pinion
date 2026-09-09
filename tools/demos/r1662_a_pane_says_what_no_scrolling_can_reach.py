@@ -48,6 +48,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     call,
     inspector_tag,
+    palette_tag,
     resize_and_settle,
     run_demo,
 )
@@ -169,9 +170,11 @@ def run(tf: RpcSubprocess) -> None:
     # small enough for them to be holding content off screen — asserting it
     # here, at the opening size, would be asserting about a screen that has
     # nothing to scroll.
-    # ★ R2105 — the inspector's body is asked of the screen; the palette's is
-    # still spelled, because that family has no declaration yet.
-    bodies = {"lab.palette.body", inspector_tag(tf, "body")}
+    # ★ R2105 — the inspector's body is asked of the screen, and ★ R2106 the
+    # palette's is too: both panes declare their scrolling body and publish the
+    # address it is painted under, so neither is spelled here.
+    palette_body = palette_tag(tf, "body")
+    bodies = {palette_body, inspector_tag(tf, "body")}
 
     # ── 5. shrink the window to the floor it declares. THIS is the state the
     #      round is about: the panes now hold more than they show, and every
@@ -225,19 +228,19 @@ def run(tf: RpcSubprocess) -> None:
     rows = {role["tag"] for role in json.loads(tf.query(f"{EXT}/spec"))["roles"]}
     target = next(
         o for o in away
-        if o["viewport"]["name"] == "lab.palette.body" and o["tag"] in rows
+        if o["viewport"]["name"] == palette_body and o["tag"] in rows
     )
     # ★ R1714 — the recipe's step for the pane this target is judged against.
     # At this size the window shows the whole layout, so that step is the whole
     # recipe; asserting it is one is what would notice if it stopped being.
     assert_eq(
         [m["viewport"] for m in target["moves"]],
-        ["lab.palette.body"],
+        [palette_body],
         "the recipe is this pane alone, because nothing above it has to move",
     )
     tag, to_y = target["tag"], target["moves"][0]["to_y"]
     assert to_y > 0, f"the target is below the fold: {target}"
-    tf.scroll("lab.palette.body", to=(0, to_y))
+    tf.scroll(palette_body, to=(0, to_y))
     tf.tick(0.05)
     after = reach(tf)
     still_away = {o["tag"] for o in after["out_of_sight"] if o["tag"]}
@@ -262,7 +265,7 @@ def run(tf: RpcSubprocess) -> None:
     # ── 9. the offset the report published is the LEAST move, not any move ───
     #      Measured against the reference's `ensureVisible`, which for a point
     #      900 into a 198-tall viewport answers 702 and not 900.
-    tf.scroll("lab.palette.body", to=(0, 0))
+    tf.scroll(palette_body, to=(0, 0))
     tf.tick(0.05)
     back = reach(tf)
     again = next(

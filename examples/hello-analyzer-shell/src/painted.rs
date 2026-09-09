@@ -526,9 +526,10 @@ fn lab_palette_scrolled_to(tag: &str, size: (u32, u32)) -> (Painted, Scene) {
     }
 
     let (shot, scene) = painted_at(size);
-    let Some(pane) = state_of(&scene, "lab.palette.body") else {
+    let body_tag = hello_node_lab::address::PALETTE_BODY;
+    let Some(pane) = state_of(&scene, body_tag) else {
         panic!(
-            "the mounted lab paints no scrolling pane tagged `lab.palette.body`, \
+            "the mounted lab paints no scrolling pane tagged `{body_tag}`, \
              so {tag} cannot be scrolled to — the pane stopped declaring a \
              scrolling body, which is a defect and not a reason to skip"
         );
@@ -556,7 +557,7 @@ fn lab_palette_scrolled_to(tag: &str, size: (u32, u32)) -> (Painted, Scene) {
     let body = painted_at(size)
         .0
         .tags
-        .get("lab.palette")
+        .get(hello_node_lab::address::PALETTE)
         .copied()
         .unwrap_or(found);
     let content_mid = found.y + found.h / 2 + u32::try_from(at).unwrap_or(0);
@@ -8140,8 +8141,10 @@ fn r1862_the_walk_reaches_a_legend_row_that_lines_up() {
         // ★ R2078 — parked on the legend, which sits under the roster and is
         // therefore below the fold at rest now that the roster is the canon's
         // twenty-one. See `lab_palette_scrolled_to`.
-        let (painted, _) =
-            lab_palette_scrolled_to(&format!("lab.palette.pin.{}", "dial"), (WIN_W, WIN_H));
+        let (painted, _) = lab_palette_scrolled_to(
+            &hello_node_lab::address::palette_pin("dial"),
+            (WIN_W, WIN_H),
+        );
 
         let (content, run, _) = painted
             .runs
@@ -8154,7 +8157,7 @@ fn r1862_the_walk_reaches_a_legend_row_that_lines_up() {
         // The box a reader means by "the one on its left": the nearest painted
         // sample, found by containment in the run's own band rather than by an
         // address this host would have to know.
-        let samples = painted.family("lab.palette.pin.");
+        let samples = painted.family(hello_node_lab::address::PALETTE_PIN);
         assert!(
             samples.len() >= 3,
             "the legend paints {} sample(s); the specification declares three \
@@ -9805,13 +9808,14 @@ fn r1872_no_run_in_the_message_list_sits_in_a_box_too_short_for_its_face() {
 ///
 /// [`r1872_no_run_in_the_message_list_sits_in_a_box_too_short_for_its_face`]'s
 /// reason, one destination further on and on the site the census DERIVED:
-/// `lab.palette.body/*` was the largest single site in the whole application
+/// the lab palette's body and everything under it was the largest single site
+/// in the whole application
 /// after R1873 repaid the dashboard's tables. A ratchet is the shape of a
 /// backlog; a family whose every run comes from one derivation is owed a zero.
 ///
 /// ⚠ **The family is a PATH, not a tag.** Every run in this pane is untagged —
-/// the census address for all of them is the path
-/// `…/lab.palette/lab.palette.body/*`, which is exactly why they fold into one
+/// the census address for all of them is the path from the pane, through its
+/// scrolling body, to an untagged run — which is exactly why they fold into one
 /// site. A gate written against a tag prefix here would match nothing and pass
 /// by describing nothing, so it is written against the path and the population
 /// is asserted non-empty first.
@@ -9821,7 +9825,7 @@ fn r1872_no_run_in_the_message_list_sits_in_a_box_too_short_for_its_face() {
 #[test]
 fn r1874_no_run_in_the_node_palettes_body_sits_in_a_box_too_short_for_its_face() {
     /// The pane whose content this gate judges, as it appears in a run's path.
-    const PANE: &str = "lab.palette.body";
+    const PANE: &str = hello_node_lab::address::PALETTE_BODY;
 
     let owner = Owner::new();
     owner.run(|| {

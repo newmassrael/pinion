@@ -72,10 +72,12 @@ from rpc_verify import (  # noqa: E402
     declared_and_painted,
     design_size,
     inspector_tag,
+    palette_seats,
     png_pixel,
     read_png_rgba8,
     resize_and_settle,
     run_demo,
+    screen_spec,
 )
 
 #: The three screens of the tool, in the order the specification names them.
@@ -91,22 +93,24 @@ SCREENS = [
 #: "these are one scroll away, and the scroll works".
 #:
 #: ★★★★★ R2105 — a function rather than a list, and the two inspector regions
-#: are ASKED of the screen rather than named. The three palette ones are still
-#: spelled: that family has no declaration yet, and this comment is where the
-#: next installment finds them.
+#: are ASKED of the screen rather than named. ★★★★★ R2106 — and the three
+#: palette ones are now, so not one of the five is spelled here.
 #:
 #: ⚠ What the change buys is exactly what the `.caption` line below records
 #: costing: R1813 moved a region and this list had to be edited to follow it.
 #: An address that comes from the screen follows it on its own.
 def r1710_five(app: RpcSubprocess) -> list[str]:
+    seats = palette_seats(screen_spec(app))
     return [
         inspector_tag(app, "note"),
         inspector_tag(app, "note.text"),
-        "lab.palette.discovery",
+        seats["discovery"],
         # ★ R1813 — was `.state`; the switch's read-out is its box's caption
-        # child now and the framework names the suffix.
-        "lab.palette.discovery.caption",
-        "lab.palette.discovery.track",
+        # child now and the framework names the suffix. The screen's own roster
+        # carries the word, so this walk follows a rename instead of recording
+        # one.
+        seats["discovery.caption"],
+        seats["discovery.track"],
     ]
 
 CHECKS: list[str] = []

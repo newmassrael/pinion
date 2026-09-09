@@ -55,7 +55,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcSubprocess, find_by_tag, run_demo, texts_of  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    RpcSubprocess,
+    find_by_tag,
+    palette_seats,
+    run_demo,
+    screen_spec,
+    texts_of,
+)
 
 SHELL = "hello-analyzer-shell"
 EXT = "/external"
@@ -137,6 +144,14 @@ def body() -> None:
             app.query(f"{EXT}/nav") == SEAT,
         )
         surface = surface_of(app, SEAT)
+        # ★★★★★ R2106 — the register's addresses, read ONCE off the MOUNTED
+        # screen's own specification (`surface`, not the shell around it). The
+        # row prefix and the control prefix are families, so what comes back is
+        # a prefix and the id is appended; the pane's scrolling body is a fixed
+        # seat and comes back by word.
+        lab_spec = screen_spec(app, surface)
+        addresses = lab_spec["palette_addresses"]
+        seats = palette_seats(lab_spec)
 
         banner("B — ★ a definition and a copy, with names of their own")
         opening = cards(app, surface)
@@ -164,7 +179,7 @@ def body() -> None:
             all(row["name_addresses_it"] for row in held["definitions"]),
         )
         ids = row_ids(app, surface)
-        line = f"lab.palette.part.{ids[PART]}.line"
+        line = f'{addresses["part"]}{ids[PART]}.line'
         ok(
             f"B: ★ the row says what KIND of graph it is, which is what it says "
             f"when there is nothing wrong — {run_at(app, line)!r}",
@@ -205,7 +220,7 @@ def body() -> None:
         # state; this round keyed it on the definition's id, and this is what
         # holds that. Read off the paint tree, not off the register.
         painted = [
-            run_at(app, f"lab.palette.part.{held_id}.name")
+            run_at(app, f'{addresses["part"]}{held_id}.name')
             for held_id in shared[0]["holders"]
         ]
         ok(
@@ -237,9 +252,9 @@ def body() -> None:
         # aimed at a node's rect CENTRE — so a row below the fold has to be
         # brought up first, exactly as a person would. R2047's walk recorded the
         # same step and why a clause that skipped it read as a passing press.
-        app.scroll("lab.palette.body", to=(0, 4_000))
+        app.scroll(seats["body"], to=(0, 4_000))
         app.tick_ms(16)
-        app.click(path=f"lab.palette.verb.remove.{spare}")
+        app.click(path=f'{addresses["verb"]}remove.{spare}')
         app.tick_ms(16)
         held = register(app, surface)
         ok(

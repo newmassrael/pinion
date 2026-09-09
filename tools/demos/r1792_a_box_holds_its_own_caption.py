@@ -43,9 +43,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    palette_seats,
     park_into_view,
     resize_and_settle,
     run_demo,
+    screen_spec,
 )
 
 LAB = "hello-node-lab"
@@ -53,8 +55,6 @@ LAB = "hello-node-lab"
 REPORTED_AT = (1440, 900)
 #: The five chips, in the order the palette lays them out.
 CHIPS = ("tcp", "tls", "quic", "udp", "ws")
-#: The reader's SECOND site — the switch whose caption touched its own border.
-SWITCH = "lab.palette.discovery"
 
 CHECKS = 0
 
@@ -167,6 +167,18 @@ def collect(node, xoff, yoff, parent, out, clip=None) -> None:
 
 def body() -> None:
     with RpcSubprocess(LAB, boot_grace=1.5) as tf:
+        # ★★★★★ R2106 — the two sites a reader reported, ASKED for rather than
+        # spelled. The switch is a fixed seat and comes back by word; the chips
+        # are a family, so the transport's word is appended to the prefix the
+        # screen publishes. Read once, out of the specification this walk needs
+        # anyway — a query per chip would be five round trips for one fact.
+        #
+        # ⚠ `CHIPS` above stays written down on purpose: it is the ORDER a
+        # reader sees, which is the subject of section A, and the wire's
+        # `protocols` roster is what section C checks it against.
+        spec = screen_spec(tf)
+        switch = palette_seats(spec)["discovery"]
+        chip_prefix = spec["palette_addresses"]["protocol"]
         resize_and_settle(tf, REPORTED_AT)
         tf.tick_ms(16)
         # ★★★★★ R2081 — PARK FIRST, because the palette's own parts moved.
@@ -185,7 +197,7 @@ def body() -> None:
         # about the screen and this demo says so instead of raising a KeyError
         # in the middle of section B.
         parked = []
-        for tag in (*(f"lab.palette.protocol.{w}" for w in CHIPS), SWITCH):
+        for tag in (*(chip_prefix + w for w in CHIPS), switch):
             parked += park_into_view(tf, tag)
         tf.tick_ms(16)
         shot = tf.snapshot(source="paint")
@@ -194,7 +206,7 @@ def body() -> None:
         from rpc_verify import abs_rects_of
 
         boxes = abs_rects_of(shot)
-        needed = [*(f"lab.palette.protocol.{w}" for w in CHIPS), SWITCH]
+        needed = [*(chip_prefix + w for w in CHIPS), switch]
         missing = [tag for tag in needed if tag not in boxes]
         ok(
             f"A: every part this demo measures is on ONE frame after parking "
@@ -210,7 +222,7 @@ def body() -> None:
 
         banner("A — the five chips a reader reported, read from the paint")
         for word in CHIPS:
-            tag = f"lab.palette.protocol.{word}"
+            tag = chip_prefix + word
             box = boxes[tag]
             run = next(r for r in runs if r["tag"] == f"{tag}.caption")["rect"]
             left = run[0] - box[0]
@@ -235,12 +247,12 @@ def body() -> None:
             )
 
         banner("B — the switch caption, which used to touch its own border")
-        box = boxes[SWITCH]
-        track = boxes[f"{SWITCH}.track"]
+        box = boxes[switch]
+        track = boxes[f"{switch}.track"]
         # ★ R1813 — `.caption`, not `.state`: the read-out is the switch box's
         # own caption child now, and that suffix is the framework's name for the
         # relation rather than one this screen chose.
-        state = boxes[f"{SWITCH}.caption"]
+        state = boxes[f"{switch}.caption"]
         right = (box[0] + box[2]) - (state[0] + state[2])
         left = state[0] - box[0]
         ok(
@@ -263,18 +275,18 @@ def body() -> None:
             state[0] >= track[0] + track[2],
         )
         cap = next(
-            (r for r in runs if r["tag"] == f"{SWITCH}.caption"), None
+            (r for r in runs if r["tag"] == f"{switch}.caption"), None
         )
         ok(
             "B: and the switch's own box answers for it -- the reader's SECOND "
             "site is a declared caption now, not a rectangle two edits could "
             "drift apart",
-            cap is not None and cap["owner"] == "lab.palette.discovery",
+            cap is not None and cap["owner"] == switch,
         )
 
         banner("C — the caption is a child, so its own box answers for it")
         for word in CHIPS:
-            tag = f"lab.palette.protocol.{word}"
+            tag = chip_prefix + word
             cap = next((r for r in runs if r["tag"] == f"{tag}.caption"), None)
             ok(
                 f"C: {word!r} is addressable under its box's name, "

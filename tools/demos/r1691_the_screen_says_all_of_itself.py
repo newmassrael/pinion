@@ -61,6 +61,7 @@ from rpc_verify import (  # noqa: E402
     card_tag,
     form_part_prefixes,
     form_part_tag,
+    palette_seats,
     run_demo,
     voice_defects,
     voice_partition_sum,
@@ -230,7 +231,11 @@ def body() -> None:
             "★ ornament relays nowhere, and the relay is DERIVED from the "
             "reason — a screen and an agent cannot disagree about it",
         )
-        body_row = rows["lab.palette.body"]
+        # ★ R2106 — the pane's scrolling body, asked for by word. Through the
+        # specification this walk already holds, which is the door
+        # `palette_seats` exists for: a second query per address would be a
+        # round trip bought with nothing.
+        body_row = rows[palette_seats(spec)["body"]]
         assert_eq(body_row["reason"], "layout")
         assert_eq(body_row["relay"], "children")
         caption = rows["lab.hint.text"]

@@ -3118,11 +3118,12 @@ fn r1724_the_lab_destination_is_the_node_lab_itself() {
             "the lab's own paint root is in the window"
         );
         // ★ R2105 — the inspector's address comes from the lab's own
-        // declaration, the way the toolbar consts beside it already do. The
-        // other two are still spelled: those families have no declaring site
-        // yet, and this is where the next installment finds them.
+        // declaration, the way the toolbar consts beside it already do.
+        // ★★ R2106 — and the palette's does now. The canvas is the last one
+        // still spelled: that family has no declaring site yet, and this is
+        // where the next instalment finds it.
         for pane in [
-            "lab.palette",
+            hello_node_lab::address::PALETTE,
             "lab.canvas",
             hello_node_lab::address::INSPECTOR,
         ] {
@@ -3555,7 +3556,7 @@ fn r1725_one_application_has_one_navigation() {
         let region = pinion_runtime::rect_for_tag(&scene, "shell.canvas")
             .expect("the page region is painted");
         let pan = pinion_runtime::rect_for_tag(&scene, "window.pan");
-        let palette = pinion_runtime::rect_for_tag(&scene, "lab.palette")
+        let palette = pinion_runtime::rect_for_tag(&scene, hello_node_lab::address::PALETTE)
             .expect("the mounted screen paints its palette");
         let page_x = pan.map_or(region.x, |p| p.x);
         assert_eq!(
@@ -4765,9 +4766,11 @@ fn scrolling_panes(
 ///
 /// A pairing rule strict enough to be quiet is a pairing rule that can be
 /// strict enough to be blind, and the way to tell those apart is to name the
-/// cases the check exists for. `lab.palette.protocol.tcp` is the chip whose
-/// word hung 3px off the right edge; `lab.palette.discovery` is the panel whose
-/// caption sat flush against its own border.
+/// cases the check exists for. The lab's TCP transport chip is the one whose
+/// word hung 3px off the right edge; its determinism switch is the panel whose
+/// caption sat flush against its own border. Both are named below through the
+/// lab's own declaration, which R2106 is why: this file is in the population of
+/// the gate that refuses a re-spelled address, and a doc comment is source.
 ///
 /// ★★★★★ R2078 — and it is asked over what this gate looked at ANYWHERE, which
 /// now includes one scroll away. Both boxes sit under the node lab's roster,
@@ -4798,9 +4801,12 @@ fn assert_the_reported_boxes_are_judged(
     );
     reached.sort_unstable();
     reached.dedup();
-    for reported in ["lab.palette.protocol.tcp", "lab.palette.discovery"] {
+    for reported in [
+        hello_node_lab::address::palette_protocol("tcp"),
+        hello_node_lab::address::PALETTE_DISCOVERY.to_owned(),
+    ] {
         assert!(
-            reached.contains(&reported),
+            reached.contains(&reported.as_str()),
             "`{reported}` is a box a reader reported a caption defect in, and \
              this gate is not looking at it, at any scroll position. Judged: \
              {reached:?}"
@@ -4930,7 +4936,7 @@ fn survey_the_application(
             //
             // ⚠ It was not the ratchet that caught this: it was the anti-vacuity
             // assertion naming the two boxes A READER REPORTED, one of which
-            // (`lab.palette.protocol.tcp`) went below the fold. ⇒ **a gate that
+            // (the lab's TCP transport chip) went below the fold. ⇒ **a gate that
             // quietly stops covering a person-reported defect is worse than one
             // that fails**, and the reason this one failed instead of going
             // quiet is that somebody wrote the cases down by name.
@@ -9380,16 +9386,44 @@ fn every_module_is_read() {
 /// ⚠⚠ The needles are assembled, because this file is one of the sources they
 /// read, and they are COMPLETE literals — the bare stems sit inside every seat
 /// address of their family and the quoted form does not.
+///
+/// ★★★★★ R2106 — **the palette joins, and for it this is a REPAIR rather than a
+/// ratchet.** Measured before widening: this crate spelled that screen's
+/// addresses in **nine** places across both its modules — the pane three
+/// times, its scrolling body twice, a legend entry, the legend's family
+/// prefix, a transport chip and the determinism switch — every one of them
+/// belonging to a screen this binary only mounts. So the hole R2105 closed for
+/// two families was holding real work for a third, which is what a ratchet over
+/// a converted family cannot tell you and a widening does.
+///
+/// ⚠ NINE and not eight, which is the number a `grep -c` answers: one line
+/// carries two of them (`for reported in [<chip>, <switch>]`). R2104 recorded
+/// this class from the other side — three sites on one line counted three
+/// times off `--list`'s output — so it is counted by OCCURRENCE here, and the
+/// two numbers are stated together because they are both true of different
+/// questions.
+///
+/// ⚠⚠⚠ The palette needs BOTH forms where the other two need one: the complete
+/// quoted literal for the pane's own tag, and the STEM for its seats, because
+/// the palette's seats are not a closed roster — four of its families expand
+/// over a population, so a re-spelled member is not any one address to name.
+/// The stem is what catches those, and it costs this file the right to spell an
+/// example in a comment.
 #[test]
 fn r2105_the_shell_does_not_spell_the_labs_addresses() {
     const INSPECTOR: &str = concat!("\"lab.", "inspector\"");
     const TOOLBAR: &str = concat!("\"lab.", "toolbar\"");
+    const PALETTE: &str = concat!("\"lab.", "palette\"");
+    const PALETTE_ANY: &str = concat!("lab.", "palette.");
     let spellers: Vec<(&str, usize)> = shell_sources()
         .iter()
         .map(|(name, body)| {
             (
                 *name,
-                body.matches(INSPECTOR).count() + body.matches(TOOLBAR).count(),
+                body.matches(INSPECTOR).count()
+                    + body.matches(TOOLBAR).count()
+                    + body.matches(PALETTE).count()
+                    + body.matches(PALETTE_ANY).count(),
             )
         })
         .filter(|(_, count)| *count > 0)

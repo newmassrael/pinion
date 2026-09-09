@@ -45,6 +45,7 @@ from rpc_verify import (  # noqa: E402
     park_into_view,
     resize_and_settle,
     run_demo,
+    screen_spec,
 )
 
 LAB = "hello-node-lab"
@@ -53,19 +54,23 @@ AT = (1440, 900)
 #: The seats the reader named, and the word each box holds.
 #:
 #: ★★★★★ R2105 — a function rather than a dict, so the three inspector seats
-#: are ASKED of the screen. The five protocol chips are still spelled: that
-#: family has no declaration yet.
+#: are ASKED of the screen. ★★★★★ R2106 — and the five transport chips are
+#: ASKED too: the palette publishes the prefix its colour-key chips are painted
+#: under, so the ADDRESS comes from the screen.
 #:
 #: ⚠ The words are NOT asked, and that is the point of this walk — it checks
 #: that the box says what the reader was told it says, so taking the word from
-#: the screen too would compare the screen with itself.
+#: the screen too would compare the screen with itself. The address and the word
+#: are different questions: one is where to look, the other is what must be
+#: there.
 def named(tf) -> dict[str, str]:
+    chip = screen_spec(tf)["palette_addresses"]["protocol"]
     return {
-        "lab.palette.protocol.tcp": "tcp",
-        "lab.palette.protocol.tls": "tls",
-        "lab.palette.protocol.quic": "quic",
-        "lab.palette.protocol.udp": "udp",
-        "lab.palette.protocol.ws": "ws",
+        chip + "tcp": "tcp",
+        chip + "tls": "tls",
+        chip + "quic": "quic",
+        chip + "udp": "udp",
+        chip + "ws": "ws",
         inspector_tag(tf, "collapse"): "collapse",
         inspector_tag(tf, "disable"): "switch off",
         inspector_tag(tf, "delete"): "delete",

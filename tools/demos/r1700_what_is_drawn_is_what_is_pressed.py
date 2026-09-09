@@ -73,6 +73,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_targets_survive_resize,
     behind_an_overflow,
+    overflow_control_absent,
     resize_and_settle,
     run_demo,
 )
@@ -260,6 +261,26 @@ def what_the_spec_names_stays_on_screen(app: RpcSubprocess, name: str, sizes: li
         # subtraction and the first to learn it from CI — `r1709` took it in the
         # round that caused it, and nothing pointed at this one.
         gone = [tag for tag in gone if tag not in behind_an_overflow(app)]
+        # ★★★★★ R2106 — and the OVERFLOW CONTROL itself, when this width does
+        # not need one. The line above allows for a control the row moved
+        # BEHIND that control; this allows for the control's own absence, which
+        # is a different mark and a different fact.
+        #
+        # 🟥 It is the fix for a red this walk carried for two rounds. R2104
+        # published the toolbar's address roster on the specification wire, and
+        # `named_in_the_spec` above reads every string a specification carries —
+        # so `more` and its caption joined this population, painted at the
+        # design width (where the right cluster is short) and correctly absent
+        # at 2494 wide. ⇒ **publishing an address is not a claim that the mark
+        # is always drawn.** Asked of the screen, which publishes the control's
+        # own seats beside the boolean saying whether it is needed.
+        #
+        # ⚠⚠ And the reason it survived two rounds is worth more than the fix:
+        # this demo launches through a helper of its own, so `demo_radius.py`
+        # could not resolve its target and no round's radius sweep ever selected
+        # it. That hole is closed in the same round — a red nobody can run reads
+        # exactly like a green.
+        gone = [tag for tag in gone if tag not in overflow_control_absent(app)]
         assert_eq(
             gone,
             [],

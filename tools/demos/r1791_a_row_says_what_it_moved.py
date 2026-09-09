@@ -197,6 +197,7 @@ def body() -> None:
             sorted(state),
             [
                 "control",
+                "control_seats",
                 "gives_up",
                 "gives_up_next",
                 "groups",
@@ -206,10 +207,33 @@ def body() -> None:
                 "open",
                 "short_by",
             ],
-            "nine facts: what the toolbar HOLDS, what stayed, what moved, the "
+            "ten facts: what the toolbar HOLDS, what stayed, what moved, the "
             "seats those groups hold, the order it gives groups up in and what "
-            "goes next, whether the control is drawn, whether it is open -- and "
-            "`short_by`, which is what makes 'never cut' checkable",
+            "goes next, whether the control is drawn AND which addresses it "
+            "occupies, whether it is open -- and `short_by`, which is what "
+            "makes 'never cut' checkable",
+        )
+        # ★★★★★ R2106 — `control_seats` is the tenth, and this exact assertion
+        # is what demanded it be named rather than absorbed. It pins the key set
+        # as a CLOSED vocabulary, so a round that adds a fact has to say what
+        # the fact is — which is why the wire gained the key and this line went
+        # red in the same sweep.
+        #
+        # 🟥 What it is FOR: `control` has said *whether* a control is needed
+        # since R1791 and nothing said *which addresses it occupies*, so
+        # `r1700` — which reads every string a specification carries and holds
+        # that whatever is named and painted at the design size is painted or
+        # reachable at every size — took the overflow control's two addresses
+        # for marks that are always drawn. They are not: the cluster needs 607
+        # and is given 410 at the design width, so the control is painted there
+        # and correctly absent at 2494. That was red in CI from R2104 to here.
+        # ⇒ ★★★★★ PUBLISHING AN ADDRESS IS NOT A CLAIM THAT THE MARK IS ALWAYS
+        # DRAWN, and which addresses are conditional is the screen's to state.
+        assert_eq(
+            state["control_seats"],
+            [more_tag, f"{more_tag}.label"],
+            "★ the control's own addresses, derived from the same declaration "
+            "the paint composes from rather than spelled anywhere",
         )
         assert_eq(state["short_by"], 0, "★★★★★ it fits — that is R1791")
         ok("something had to move", len(state["moved"]) > 0)

@@ -5025,6 +5025,29 @@ def address_prefix(rows: Any, *, key: str = "key", tag: str = "tag") -> str:
     return address[: len(address) - len(own)]
 
 
+def address_family(prefix: str, *, separator: str = ".") -> str:
+    """The family STEM a published prefix names — the prefix with its trailing
+    separator taken off.
+
+    ★★★★★ R2106 — a walk classifying a painted tag by family compares
+    `tag == stem or tag.startswith(stem + separator)`, which needs the stem; a
+    walk BUILDING a member's address needs the prefix. The two differ by one
+    character and both are spelled in walks that pin family sizes, so the
+    conversion of the prefix into the stem is a rule this states once instead of
+    each site repeating it.
+
+    Raises rather than guessing when the prefix does not end in the separator:
+    that means it is not a prefix, and a stem worked out from one that is not
+    would classify tags that are not in the family — which is the direction that
+    makes a pinned count silently too large.
+    """
+    assert prefix.endswith(separator), (
+        f"{prefix!r} does not end with {separator!r}, so it is not a prefix a "
+        "member's key is appended to and has no family stem to recover"
+    )
+    return prefix[: -len(separator)]
+
+
 def form_part_prefixes(tf, *, ext: str = "/external") -> dict:
     """The prefix each PART of a settings-form row is addressed under.
 
@@ -5235,6 +5258,101 @@ def inspector_tag(tf, word: str, *, ext: str = "/external") -> str:
     `KeyError` naming it.
     """
     return inspector_seats(screen_spec(tf, ext))[word]
+
+
+def palette_root(tf, *, ext: str = "/external") -> str:
+    """The tag the node palette ITSELF is painted under — the pane, not a seat.
+
+    ★★★★★ R2106 — published beside the seat roster rather than as its first row,
+    for [`toolbar_root`]'s reason: the container's address is the prefix WITHOUT
+    the separator, so a row for it would hand every later reader a prefix that
+    joins straight onto a seat's word.
+
+    ⚠ Under `palette_addresses` and not `palette`, which is taken on this wire
+    already — `rpc introspect palette` answers the LIVE colour register, what
+    each role is declared as and what was chosen over it. The two would have sat
+    on one wire under one word meaning different things, and no gate here would
+    have said so: the duplicate-key gate reads one table's keys, and these are
+    two surfaces.
+    """
+    return screen_spec(tf, ext)["palette_addresses"]["tag"]
+
+
+def palette_seats(spec: Any) -> dict:
+    """Every FIXED palette seat's address, keyed by the word the screen declares
+    it under — from a specification a caller has ALREADY read.
+
+    ★★★★★ R2106 — [`toolbar_seats`]'s pair of doors, for the same reason: a walk
+    holding the specification should not pay a round trip per seat, and a walk
+    without one should not fetch it by hand.
+
+    ⚠ FIXED only. Four of this pane's families expand over a population — the
+    pin legend, the transports, the definitions the document holds and the verbs
+    over them — and a roster of those would be a table the size of the document.
+    They are published as prefixes and reached through the four helpers below.
+    """
+    return {row["word"]: row["tag"] for row in spec["palette_addresses"]["seats"]}
+
+
+def palette_tag(tf, word: str, *, ext: str = "/external") -> str:
+    """The address the fixed palette seat called `word` is painted under.
+
+    ★★★★★ R2106 — the walks' half of the palette's address declaration, and the
+    head of this debt's remainder once the inspector left it: **41 sites across
+    nine walks** typed one of these out.
+
+    Takes the seat's WORD, which is what the screen declares and the wire
+    publishes, so the address a walk reads and the address the paint used are
+    one spelling by construction. A word the screen does not address is a
+    `KeyError` naming it.
+    """
+    return palette_seats(screen_spec(tf, ext))[word]
+
+
+def palette_pin(tf, kind: str, *, ext: str = "/external") -> str:
+    """The address of the pin legend's entry for a pin that appears as `kind`.
+
+    ★★★★★ R2106 — a PREFIX family, so what the wire hands over is the prefix and
+    the member's key is appended here. `spec["pin_legend"]` is where the kinds
+    themselves come from, so a walk never types one of those either.
+    """
+    return screen_spec(tf, ext)["palette_addresses"]["pin"] + kind
+
+
+def palette_protocol(tf, word: str, *, ext: str = "/external") -> str:
+    """The address of the colour-key chip for the transport called `word`.
+
+    ★★★★★ R2106 — [`palette_pin`]'s shape; `spec["protocols"]` is the roster the
+    word comes from.
+    """
+    return screen_spec(tf, ext)["palette_addresses"]["protocol"] + word
+
+
+def palette_part(tf, held: Any, word: Optional[str] = None, *, ext: str = "/external") -> str:
+    """The address of the definitions register's row for the definition `held`,
+    or of the run called `word` inside it.
+
+    ★★★★★ R2106 — keyed by the definition's ID and not its name, which is
+    R2048's finding rather than a preference: two definitions may answer to one
+    name on purpose, so a name-keyed address cannot say which row a press was
+    about — precisely when the screen is telling a person the name reaches
+    neither.
+
+    `word` is one of `spec["palette_addresses"]["part_words"]`; the row's own
+    band takes none.
+    """
+    row = f'{screen_spec(tf, ext)["palette_addresses"]["part"]}{held}'
+    return row if word is None else f"{row}.{word}"
+
+
+def palette_verb(tf, verb: str, held: Any, *, ext: str = "/external") -> str:
+    """The address of the register control that applies `verb` to the definition
+    `held`.
+
+    ★★★★★ R2106 — the verbs are `spec["definition_seats"]`, so a walk reads the
+    vocabulary rather than typing it, the same way it reads the ids.
+    """
+    return f'{screen_spec(tf, ext)["palette_addresses"]["verb"]}{verb}.{held}'
 
 
 def access_node_by_tag(result: Any, tag: str) -> Optional[dict]:
@@ -6264,6 +6382,50 @@ def behind_an_overflow(
     if not isinstance(state, dict):
         return set()
     return set(state.get("moved_seats") or [])
+
+
+def overflow_control_absent(
+    app: "RpcSubprocess", external: str = "/external"
+) -> set[str]:
+    """★★★★★ R2106 — the overflow CONTROL's own seats, when the screen says this
+    width does not need one. Empty otherwise, so a caller subtracts it
+    unconditionally — [`behind_an_overflow`]'s shape, for its sibling question.
+
+    # What this is for, and what it cost to not have
+
+    `behind_an_overflow` answers *what the row gave up*. This answers *what the
+    row is not showing because it had nothing to give up*, which is a different
+    fact about a different mark: the control that HOLDS the overflow exists only
+    while something is in it. At the node lab's design width the right cluster
+    needs 607 and is given 410, so the control is painted; widen the window and
+    it correctly disappears.
+
+    🟥 That is a red this project paid two rounds for. R2104 published the
+    toolbar's address roster on the specification wire, and
+    `r1700_what_is_drawn_is_what_is_pressed` takes EVERY string in a
+    specification as a thing the screen names — so `lab.toolbar.more` and its
+    caption entered a population whose rule is *painted at the design size, and
+    painted or reachable at every other*. They are painted at the design size
+    and legitimately absent at 2494 wide, and CI went red. R2105 published over
+    it. ⇒ ★★★★★ **publishing an address is not claiming the mark is always
+    drawn**, and the screen is the one that knows which — it has answered
+    `control` on `toolbar_overflow` since R1791.
+
+    ⚠ Asked, never computed, in BOTH halves — whether a control is needed, and
+    which addresses the control occupies. The first is a function of the room
+    the row has, which is a function of the window. The second the screen
+    declares (`address::TOOLBAR_MORE` and its caption) and publishes as
+    `control_seats`; a pair of tags written here, or picked out of the roster by
+    the substring `more`, would be a second spelling of an address — the very
+    thing R2104 and R2106 removed from ninety-odd readers.
+    """
+    try:
+        state = app.query(f"{external}/toolbar_overflow")
+    except Exception:  # noqa: BLE001 - a screen without the slot has no control
+        return set()
+    if not isinstance(state, dict) or state.get("control"):
+        return set()
+    return set(state.get("control_seats") or [])
 
 
 def park_into_view(

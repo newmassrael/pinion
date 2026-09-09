@@ -51,6 +51,7 @@ from rpc_verify import (  # noqa: E402
     form_part_tag,
     frame_tag,
     inspector_tag,
+    palette_tag,
     press_painted_tag,
     run_demo,
     toolbar_tag,
@@ -352,7 +353,8 @@ GESTURES = {
     # painted it under. Spelled here until this round, which is a second copy of
     # a composition this walk cannot call.
     "zoom": lambda tf: press(tf, toolbar_tag(tf, "zoom.in", ext=EXT)),
-    "toggle discovery": lambda tf: press(tf, "lab.palette.discovery"),
+    # ★★★★★ R2106 — the seat's WORD, the same pair as the zoom above it.
+    "toggle discovery": lambda tf: press(tf, palette_tag(tf, "discovery", ext=EXT)),
     # putting things back
     "reset the node set": lambda tf: press(tf, "lab.reset.nodes"),
     "reset the layout": lambda tf: press(tf, "lab.reset.layout"),

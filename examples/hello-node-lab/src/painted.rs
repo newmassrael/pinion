@@ -847,7 +847,7 @@ fn palette_across_its_scroll(
     let mut said: BTreeMap<String, String> = BTreeMap::new();
     let visits = for_each_palette_scroll(state, |shot, landed| {
         for (tag, rect) in &shot.tags {
-            if !tag.starts_with("lab.palette.") {
+            if !tag.starts_with(super::address::PALETTE_SEAT) {
                 continue;
             }
             let mut moved = *rect;
@@ -1067,16 +1067,16 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         for run in spec::palette_groups() {
             want.push(super::address::group_head(run.label));
         }
-        want.push("lab.palette.legend".to_owned());
+        want.push(super::address::PALETTE_LEGEND.to_owned());
         for role in spec::ROLES {
             want.push(super::address::role_row_named(role.name));
             want.push(super::address::role_swatch_named(role.name));
         }
         for (kind, _) in spec::PIN_LEGEND {
-            want.push(format!("lab.palette.pin.{kind}"));
+            want.push(super::address::palette_pin(kind));
         }
         for word in spec::PROTOCOLS {
-            want.push(format!("lab.palette.protocol.{word}"));
+            want.push(super::address::palette_protocol(word));
         }
     }
     // ★★★★★ R2068 — the specification's frame table describes the ROOT screen,
@@ -1350,7 +1350,7 @@ fn must_answer(tag: &str) -> Option<String> {
         super::address::TOOLBAR_CONFIG => Some("config".into()),
         super::address::TOOLBAR_SCRIPT => Some("script".into()),
         super::address::TOOLBAR_RUN => Some("run".into()),
-        "lab.palette.discovery" => Some("discovery".into()),
+        super::address::PALETTE_DISCOVERY => Some("discovery".into()),
         _ => None,
     }
 }
@@ -1400,7 +1400,7 @@ fn owning_pane(tag: &str) -> Option<Rect> {
     if tag.starts_with("lab.rail") {
         return Some(rail_rect());
     }
-    if tag.starts_with("lab.palette") {
+    if tag.starts_with(super::address::PALETTE) {
         return Some(palette_rect());
     }
     if tag.starts_with(super::address::TOOLBAR) {
@@ -2437,7 +2437,8 @@ use pinion_core::test_fixtures::screen_ink::{
 /// smaller share of this one.
 ///
 /// ★★★★★ R1874 — **160 → 125**, this pin's largest fall, and the whole 35 came
-/// from the palette body: the census named `lab.palette.body/*` as the largest
+/// from the palette body: the census named that pane's body and everything
+/// under it as the largest
 /// single site in the entire application once R1873 had repaid the dashboard's
 /// tables. Two title lines, three headings, eight names over eight gists, and
 /// six captions the FRAMEWORK was sizing at exactly the face.
@@ -2725,7 +2726,7 @@ fn r1653_the_painted_screen_invented_nothing() {
             // same run count for the same reason: a palette that grew a group
             // grows a control, and one that lost a group must lose it.
             //
-            // ⚠ Its own entry rather than a wider `lab.palette.` prefix, which
+            // ⚠ Its own entry rather than a wider prefix over the whole pane, which
             // is this table's own standing argument (R2047's three entries, and
             // the rail-prefix debt it cites): one prefix over a heading and its
             // control would let either stop being painted unremarked.
@@ -2733,8 +2734,11 @@ fn r1653_the_painted_screen_invented_nothing() {
                 super::address::GROUP_INK,
                 Some(spec::palette_groups().len()),
             ),
-            ("lab.palette.pin.", Some(spec::PIN_LEGEND.len())),
-            ("lab.palette.protocol.", Some(spec::PROTOCOLS.len())),
+            (super::address::PALETTE_PIN, Some(spec::PIN_LEGEND.len())),
+            (
+                super::address::PALETTE_PROTOCOL,
+                Some(spec::PROTOCOLS.len()),
+            ),
             ("lab.link.", None),
             // ★★★★★ R1970 — the observed layer, which became VISIBLE to this
             // census the moment a wire started carrying a placement, and which
@@ -2756,7 +2760,7 @@ fn r1653_the_painted_screen_invented_nothing() {
             ("lab.appbar.", None),
             ("lab.hint.", None),
             ("lab.crumb", None),
-            ("lab.palette.discovery", None),
+            (super::address::PALETTE_DISCOVERY, None),
             // ★★★★★ R2047 — the definitions register. THREE entries and not one
             // prefix, because one prefix would sweep the heading in with the
             // rows and hide a heading that stopped being painted — the fault
@@ -2768,15 +2772,15 @@ fn r1653_the_painted_screen_invented_nothing() {
             // holding no definitions fails here, and so does one that stopped
             // painting them for a document that does. Two tags per definition
             // (its band and the run that names it) and one control per verb.
-            ("lab.palette.parts", Some(1)),
+            (super::address::PALETTE_PARTS, Some(1)),
             (
                 // ★ R2048 — three: the row's band, the run naming it, and the
                 // run saying what it is or that its name reaches nothing.
-                "lab.palette.part.",
+                super::address::PALETTE_PART,
                 Some(state.doc.borrow().definitions().count() * 3),
             ),
             (
-                "lab.palette.verb.",
+                super::address::PALETTE_VERB,
                 Some(state.doc.borrow().definitions().count() * super::PartVerb::ALL.len()),
             ),
         ];
@@ -2787,7 +2791,7 @@ fn r1653_the_painted_screen_invented_nothing() {
             // the box's family. `captioned` gives a caption its box's tag plus
             // one suffix, so a family counted by prefix doubles the moment a
             // box learns to hold its own word: this gate read
-            // `lab.palette.protocol.` as 10 where the specification sizes it 5,
+            // the transport chips' family as 10 where the specification sizes it 5,
             // and said so on the first run.
             //
             // Subtracted by the FRAMEWORK's name for the suffix rather than by
@@ -3251,7 +3255,7 @@ fn r1968_every_palette_row_is_under_the_heading_its_role_declares() {
         // the same derivation: `legend_top` walks the runs rather than
         // multiplying a group height by a literal 2.
         let legend = tags
-            .get("lab.palette.legend")
+            .get(super::address::PALETTE_LEGEND)
             .expect("the pin legend's heading is painted at some scroll position");
         for role in spec::ROLES {
             let row = tags[&super::address::role_row_named(role.name)];
@@ -3391,7 +3395,7 @@ fn r1654_the_screen_fills_whatever_window_it_is_given() {
         for size in [(WIN_W, WIN_H), (1920, 1200), (super::MIN_W, super::MIN_H)] {
             let shot = painted_at(&state, size).0;
             let rail = shot.tags["lab.rail"];
-            let palette = shot.tags["lab.palette"];
+            let palette = shot.tags[crate::address::PALETTE];
             let canvas = shot.tags["lab.canvas"];
             let inspector = shot.tags[crate::address::INSPECTOR];
             let appbar = shot.tags["lab.appbar"];
@@ -3773,11 +3777,12 @@ fn r1792_the_switch_caption_is_not_flush_with_its_own_border() {
         // ★ R2078 — parked where the switch is showing. It sits under the
         // roster, which is now the canon's twenty-one roles, so at rest the
         // pane has scrolled past it and this test's subject is not on screen.
-        let shot = palette_scrolled_to(&state, "lab.palette.discovery");
-        let box_rect = shot.tags["lab.palette.discovery"];
-        let track = shot.tags["lab.palette.discovery.track"];
+        let shot = palette_scrolled_to(&state, crate::address::PALETTE_DISCOVERY);
+        let box_rect = shot.tags[crate::address::PALETTE_DISCOVERY];
+        let track = shot.tags[crate::address::PALETTE_DISCOVERY_TRACK];
         let caption = shot.tags[&format!(
-            "lab.palette.discovery{}",
+            "{}{}",
+            crate::address::PALETTE_DISCOVERY,
             pinion_widget_paint::caption::CAPTION_SUFFIX
         )];
         let right = (box_rect.x + box_rect.w) - (caption.x + caption.w);
@@ -3818,12 +3823,13 @@ fn r1813_the_switch_paints_the_position_and_the_pair_would_not_have_moved_it() {
         let state = use_lab_state();
         // ★ R2078 — parked where the switch is showing, for the reason
         // `r1792_the_switch_caption_is_not_flush_with_its_own_border` is.
-        let shot = palette_scrolled_to(&state, "lab.palette.discovery");
+        let shot = palette_scrolled_to(&state, crate::address::PALETTE_DISCOVERY);
         let tag = format!(
-            "lab.palette.discovery{}",
+            "{}{}",
+            crate::address::PALETTE_DISCOVERY,
             pinion_widget_paint::caption::CAPTION_SUFFIX
         );
-        let box_rect = shot.tags["lab.palette.discovery"];
+        let box_rect = shot.tags[crate::address::PALETTE_DISCOVERY];
         let caption = shot.tags[&tag];
         let says = shot.said[&tag].as_str();
 
@@ -4161,7 +4167,7 @@ fn r1669_every_reserved_rail_seat_is_declared_with_its_booking() {
         // the second site to its own.
         let unexpected: Vec<&String> = census
             .keys()
-            .filter(|t| !t.starts_with("lab.rail.") && !t.starts_with("lab.palette.verb."))
+            .filter(|t| !t.starts_with("lab.rail.") && !t.starts_with(super::address::PALETTE_VERB))
             .collect();
         assert!(
             unexpected.is_empty(),
@@ -4479,7 +4485,7 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         press_tag(state, shot, super::address::TOOLBAR_ZOOM_IN);
     }),
     ("toggle discovery", |state, shot| {
-        press_tag(state, shot, "lab.palette.discovery");
+        press_tag(state, shot, super::address::PALETTE_DISCOVERY);
     }),
     // ★ R1678 — the five resets. Four are painted only once their scope has
     // something to put back, which is why every one of them declares a `needs`:
@@ -4579,7 +4585,7 @@ fn press_wire(state: &std::rc::Rc<LabState>, shot: &Painted, from: &str, to: &st
 /// as one — see
 /// `debt-the-palettes-own-parts-sit-behind-the-whole-roster`.
 fn press_tag(state: &std::rc::Rc<LabState>, shot: &Painted, tag: &str) {
-    if tag.starts_with("lab.palette.") && !shot.tags.contains_key(tag) {
+    if tag.starts_with(super::address::PALETTE_SEAT) && !shot.tags.contains_key(tag) {
         let scrolled = palette_scrolled_to(state, tag);
         let at = centre(scrolled.tags[tag]);
         super::move_cursor(state, at.0, at.1);
@@ -8940,13 +8946,13 @@ fn r1862_a_legend_row_shares_one_centre_and_holds_its_text() {
             state.scroll_palette_to(0);
             let _ = palette_scrolled_to_at(
                 &state,
-                &format!("lab.palette.pin.{}", spec::PIN_LEGEND[0].0),
+                &super::address::palette_pin(spec::PIN_LEGEND[0].0),
                 *size,
             );
             let (frame, scene) = painted_and_scene(&state, *size);
             let before = samples;
             for (kind, meaning) in spec::PIN_LEGEND {
-                let Some(pin) = frame.tags.get(&format!("lab.palette.pin.{kind}")).copied() else {
+                let Some(pin) = frame.tags.get(&super::address::palette_pin(kind)).copied() else {
                     continue;
                 };
                 samples += 1;
@@ -9609,7 +9615,7 @@ fn r2047_the_register_greys_a_verb_the_document_refuses() {
         // ★ R2048 — addressed by the definition's ID; see `Hit::Definition` for
         // what keying these on the name cost.
         let refused = census
-            .get(&format!("lab.palette.verb.remove.{}", held.0))
+            .get(&super::address::palette_verb("remove", held.0))
             .expect("★★★★★ the register paints a removal the document refuses as live");
         assert_eq!(
             refused.reason.detail(),
@@ -9630,8 +9636,8 @@ fn r2047_the_register_greys_a_verb_the_document_refuses() {
         );
 
         for open in [
-            format!("lab.palette.verb.remove.{}", spare.0),
-            format!("lab.palette.verb.copy.{}", held.0),
+            super::address::palette_verb("remove", spare.0),
+            super::address::palette_verb("copy", held.0),
         ] {
             assert!(
                 !census.contains_key(&open),
@@ -9646,7 +9652,7 @@ fn r2047_the_register_greys_a_verb_the_document_refuses() {
         let tree = super::NodeLabView::access_node(&(TextFieldState::Idle, 0), None);
         let node = tree
             .iter()
-            .find(|n| n.tag == format!("lab.palette.verb.remove.{}", held.0))
+            .find(|n| n.tag == super::address::palette_verb("remove", held.0))
             .expect("the register is announced");
         assert!(node.state.disabled, "★ announced disabled as well as faded");
         assert!(
@@ -9695,16 +9701,17 @@ fn r2048_a_register_row_says_its_name_reaches_nothing() {
         // ★ R2048 — addressed by the definition's ID, which is this round's own
         // repair: two rows may carry one NAME, so a name-keyed tag would be two
         // nodes under one address exactly in the state being asserted.
-        let id_of = |name: &str| -> u64 {
+        let id_of = |name: &str| -> u32 {
             super::definitions_wire(&state)["definitions"]
                 .as_array()
                 .expect("rows")
                 .iter()
                 .find(|row| row["definition"] == name)
                 .and_then(|row| row["id"].as_u64())
+                .and_then(|id| u32::try_from(id).ok())
                 .expect("the register lists it")
         };
-        let row = format!("lab.palette.part.{}.name", id_of(&copy));
+        let row = super::address::palette_part_word(id_of(&copy), "name");
         assert!(
             announced(&row).is_some_and(|it| !it.contains("answer to this name")),
             "★ distinct names say nothing about sharing: {:?}",
@@ -9748,7 +9755,15 @@ fn r2048_a_register_row_says_its_name_reaches_nothing() {
             .as_array()
             .expect("rows")
             .iter()
-            .map(|held| format!("lab.palette.part.{}.name", held["id"].as_u64().unwrap_or(0)))
+            .map(|held| {
+                super::address::palette_part_word(
+                    held["id"]
+                        .as_u64()
+                        .and_then(|id| u32::try_from(id).ok())
+                        .unwrap_or(0),
+                    "name",
+                )
+            })
             .collect();
         assert_eq!(
             addresses

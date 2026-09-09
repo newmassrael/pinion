@@ -677,3 +677,211 @@ pub fn inspector(word: &str) -> String {
 pub fn inspector_word(tag: &str) -> Option<&str> {
     tag.strip_prefix(INSPECTOR_SEAT)
 }
+
+/// ★★★★★ R2106 — the tag the **node palette** is painted under.
+///
+/// [`TOOLBAR`]'s shape and its reason, measured the same way before declaring:
+/// this family was the head of `python3 tools/painted_addresses.py --owed` once
+/// the inspector left it — **41 walk sites across nine files**, and 77 more in
+/// this crate's own Rust, none of them derived from anything.
+///
+/// ⚠ What makes the palette different from the bar and the panel is that it is
+/// not ONE roster. Four of its families were already declared here — the role
+/// row (R2049), its swatch, the group heading (R2078) and the heading's colour
+/// control (R2085) — each on the round that needed it, and the rest of the pane
+/// was left spelling itself. So this is the round that finishes a family the
+/// project has been converting a corner at a time, and what it adds is the
+/// FIXED seats (below) beside four PARAMETRIC prefixes ([`PALETTE_PIN`],
+/// [`PALETTE_PROTOCOL`], [`PALETTE_PART`], [`PALETTE_VERB`]).
+///
+/// ⚠⚠ The pane's OWN tag, and not a prefix. Its seats hang off
+/// [`PALETTE_SEAT`], which carries the separator, for [`TOOLBAR`]'s reason: a
+/// prefix of the bare tag swallows every seat, so a reader classifying a
+/// snapshot by it would call the whole pane the container. This screen already
+/// relies on that distinction — `spec::PANES` names the pane and `SILENCES`
+/// names the body separately, and they are container and content.
+pub const PALETTE: &str = "lab.palette";
+
+/// [`PALETTE`] with the separator its seats hang off.
+///
+/// A `&'static str` because the seat consts below are `&'static str` too and a
+/// derivation cannot make one; the gate drives it against [`PALETTE`].
+pub const PALETTE_SEAT: &str = "lab.palette.";
+
+/// The scrolling body the pane's content sits in — the region a reader lands
+/// on, and the one a walk scrolls.
+///
+/// ⚠ A layout mark rather than a control: `spec::SILENCES` carries it for that
+/// reason, and it is in this roster because walks reach for it, not because it
+/// speaks.
+pub const PALETTE_BODY: &str = "lab.palette.body";
+
+/// The pane's flip control — see the pair it makes with [`PALETTE_FOLD`].
+pub const PALETTE_FLIP: &str = "lab.palette.flip";
+
+/// The pane's fold control, which leaves the strip a hand grabs to open it.
+pub const PALETTE_FOLD: &str = "lab.palette.fold";
+
+/// The heading over the pin legend — what an appearance means.
+pub const PALETTE_LEGEND: &str = "lab.palette.legend";
+
+/// The switch that turns discovery on.
+pub const PALETTE_DISCOVERY: &str = "lab.palette.discovery";
+
+/// The heading over that switch.
+pub const PALETTE_DISCOVERY_HEAD: &str = "lab.palette.discovery.head";
+
+/// The switch's caption, painted inside it by `caption::captioned`.
+///
+/// ⚠ Declared as well as derived. The painter composes it through the
+/// framework's own name for the suffix, which must stay the composition; this
+/// const is what the specification table — whose rows must be `&'static str` —
+/// takes, and the gate drives the two against each other so a table cannot part
+/// company with the paint.
+pub const PALETTE_DISCOVERY_CAPTION: &str = "lab.palette.discovery.caption";
+
+/// The rail the switch's knob slides along.
+pub const PALETTE_DISCOVERY_TRACK: &str = "lab.palette.discovery.track";
+
+/// The heading over the definitions register.
+pub const PALETTE_PARTS: &str = "lab.palette.parts";
+
+/// ★★★★★ R2106 — every word this screen ADDRESSES under [`PALETTE_SEAT`] as a
+/// FIXED seat, beside the address declared for it.
+///
+/// [`TOOLBAR_SEATS`]'s shape, for the same three readers: the crate's own const
+/// sites, the gate that refuses a second speller, and the wire that hands a
+/// walk the address instead of letting it type one.
+///
+/// ⚠ Fixed only. The pane's parametric families expand over a population — the
+/// pin legend, the transports, the definitions and their verbs — and a roster
+/// of them would be a table the size of the document. Those are published as
+/// PREFIXES instead, the way [`FORM_PARTS`] is, and a walk names the member and
+/// appends it.
+///
+/// ⚠⚠ Not a list of what EXISTS — only the painter knows that. What the gate
+/// holds is two things: every entry's declared address is what [`palette`]
+/// derives from its word, and every fixed tag under this prefix that the
+/// SPECIFICATION declares is in this roster. The second half catches a seat
+/// reaching the paint tree and the announcement without reaching the wire,
+/// which is the direction a walk cannot detect: it would report that the screen
+/// did not paint a mark the screen paints.
+pub const PALETTE_SEATS: &[(&str, &str)] = &[
+    ("body", PALETTE_BODY),
+    ("flip", PALETTE_FLIP),
+    ("fold", PALETTE_FOLD),
+    ("legend", PALETTE_LEGEND),
+    ("discovery", PALETTE_DISCOVERY),
+    ("discovery.head", PALETTE_DISCOVERY_HEAD),
+    ("discovery.caption", PALETTE_DISCOVERY_CAPTION),
+    ("discovery.track", PALETTE_DISCOVERY_TRACK),
+    ("parts", PALETTE_PARTS),
+];
+
+/// The address of the palette seat called `word`.
+///
+/// ★ The runtime half of the consts above, for a caller holding a word rather
+/// than a name. The wire's roster is built through this, so the address a
+/// client reads and the address the paint used are one spelling by
+/// construction.
+#[must_use]
+pub fn palette(word: &str) -> String {
+    format!("{PALETTE_SEAT}{word}")
+}
+
+/// The seat word a palette address names, or `None` when the tag is not one.
+///
+/// ★ The inverse of [`palette`], here rather than at the router, for
+/// [`role_of_row`]'s reason. `None` is a real answer: the pane's own tag is not
+/// one of its seats, and a shrink policy naming the pane is asking about the
+/// container.
+///
+/// ⚠ It answers for the parametric families too — a legend entry's key is a
+/// word under this prefix — because what it reports is what the ADDRESS says,
+/// not which roster the word is in. A caller that wants a fixed seat checks
+/// [`PALETTE_SEATS`]; a caller that wants a member uses the family's own
+/// prefix.
+#[must_use]
+pub fn palette_word(tag: &str) -> Option<&str> {
+    tag.strip_prefix(PALETTE_SEAT)
+}
+
+/// The prefix every entry of the **pin legend** carries.
+pub const PALETTE_PIN: &str = "lab.palette.pin.";
+
+/// [`PALETTE_PIN`] with the population's placeholder, for a specification table
+/// whose rows must be `&'static str`.
+pub const PALETTE_PIN_TEMPLATE: &str = "lab.palette.pin.{}";
+
+/// The address of the legend entry for a pin that appears as `kind`.
+#[must_use]
+pub fn palette_pin(kind: &str) -> String {
+    format!("{PALETTE_PIN}{kind}")
+}
+
+/// The prefix every **transport chip** carries.
+pub const PALETTE_PROTOCOL: &str = "lab.palette.protocol.";
+
+/// [`PALETTE_PROTOCOL`] with the population's placeholder.
+pub const PALETTE_PROTOCOL_TEMPLATE: &str = "lab.palette.protocol.{}";
+
+/// The address of the colour-key chip for the transport called `word`.
+#[must_use]
+pub fn palette_protocol(word: &str) -> String {
+    format!("{PALETTE_PROTOCOL}{word}")
+}
+
+/// The prefix every row of the **definitions register** carries.
+///
+/// ⚠ Keyed by the definition's ID and not its name, which is R2048's finding
+/// and not a preference: two definitions may answer to one name on purpose, so
+/// a name-keyed address cannot say which row a press was about — precisely when
+/// the screen is telling a person the name reaches neither.
+pub const PALETTE_PART: &str = "lab.palette.part.";
+
+/// The words a register row is addressed by, under [`PALETTE_PART`] and the
+/// row's id.
+///
+/// The row's own band takes no word; these are the two runs painted inside it.
+pub const PALETTE_PART_WORDS: &[&str] = &["name", "line"];
+
+/// The address of the register row for the definition `id`.
+#[must_use]
+pub fn palette_part(id: u32) -> String {
+    format!("{PALETTE_PART}{id}")
+}
+
+/// The address of the run called `word` inside that row — see
+/// [`PALETTE_PART_WORDS`].
+#[must_use]
+pub fn palette_part_word(id: u32, word: &str) -> String {
+    format!("{PALETTE_PART}{id}.{word}")
+}
+
+/// The prefix every **register control** carries — a verb over a definition.
+pub const PALETTE_VERB: &str = "lab.palette.verb.";
+
+/// The address of the control that applies `verb` to the definition `id`.
+#[must_use]
+pub fn palette_verb(verb: &str, id: u32) -> String {
+    format!("{PALETTE_VERB}{verb}.{id}")
+}
+
+/// The verb and the definition a register control's address names, or `None`
+/// when the tag is not one.
+///
+/// ★ The inverse of [`palette_verb`], here rather than at the router, for
+/// [`role_of_row`]'s reason — and the verb is matched against a caller-supplied
+/// vocabulary rather than split on the first dot, because a definition's id is
+/// numeric and a verb that gained a dot would otherwise be read as an id.
+///
+/// ⚠ Whether the definition EXISTS is the router's question, not this one's:
+/// this answers what the address says.
+#[must_use]
+pub fn palette_verb_of<'a>(tag: &'a str, verbs: &[&'a str]) -> Option<(&'a str, u32)> {
+    let rest = tag.strip_prefix(PALETTE_VERB)?;
+    verbs.iter().find_map(|verb| {
+        let id = rest.strip_prefix(&format!("{verb}."))?;
+        Some((*verb, id.parse().ok()?))
+    })
+}
