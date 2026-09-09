@@ -5405,13 +5405,34 @@ def filter_saved_prefix(tf, *, ext: str = "/external") -> str:
     return screen_spec(tf, ext)["filter_addresses"]["saved"]
 
 
+def filter_saved_address(prefix: str, index) -> str:
+    """The address of the saved-filter chip at `index`, composed onto a prefix
+    the caller already holds.
+
+    ★★★★★ R2109.1 — [`pin_address`]'s shape one family over, and it was not
+    optional. R2109 handed `r1721` the DECLARED stem, which carries the
+    separator, while every reader in that walk glued its own on; the row then
+    answered NOTHING, and half of the section accepted that silently because an
+    empty answer equals an empty answer. ⇒ A WALK THAT COMPOSES A MEMBER
+    ADDRESS ITSELF IS THIS DEBT WEARING THE SHAPE OF A FIX. The separator lives
+    in one place, and for a caller holding a prefix this is that place.
+
+    ⚠ PURE, and paired with [`filter_saved`] for [`pin_address`]'s reason: that
+    walk reads every chip of the row several times per section, and a query per
+    chip to learn a prefix that does not change is a query per mark.
+    """
+    return f"{prefix}{index}"
+
+
 def filter_saved(tf, index, *, ext: str = "/external") -> str:
     """The address of the saved-filter chip at `index`.
 
     ★★★★★ R2109 — the chips are `spec["saved_filters"]`, so a walk reads how
-    many there are rather than counting them here.
+    many there are rather than counting them here. [`filter_saved_address`] is
+    the door for a caller that already holds the prefix, and the composition
+    itself lives there, so the two cannot drift.
     """
-    return f"{filter_saved_prefix(tf, ext=ext)}{index}"
+    return filter_saved_address(filter_saved_prefix(tf, ext=ext), index)
 
 
 def pin_prefix(tf, *, ext: str = "/external") -> str:

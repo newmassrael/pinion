@@ -84,6 +84,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    filter_saved_address,
     filter_saved_prefix,
     filter_seats,
     run_demo,
@@ -128,19 +129,29 @@ def cursor(app: RpcSubprocess) -> str | None:
     return focus.get("active_descendant")
 
 
-def selected(app: RpcSubprocess, prefix: str) -> list[bool]:
-    """Which chips of the row at `prefix` are on, whichever attribute says so.
+def selected(app: RpcSubprocess, chip_at, chips: int) -> list[bool]:
+    """Which chips of the row are on, whichever attribute says so.
 
     ★ The attribute is part of what the rule derives — `aria-selected` for a
     listbox option, `aria-checked` for a radio or a toggle button — so a reader
     that only knew one of them would pass on one screen and be blind on another.
+
+    ★★★★★ R2109.1 — the caller hands over a COMPOSER and the count the row
+    declares, so this reader neither types a separator nor decides how many
+    members exist. It REFUSES a member it cannot find instead of returning a
+    shorter list: the old form walked until the first miss, so a row that
+    answered nothing answered `[]`, and section D's first check compared that
+    with the `[]` it had read a moment earlier and passed. ⇒ AN ADDRESS THAT
+    ANSWERS NOTHING MUST BE LOUD AT THE READER, not equal to itself two lines
+    later — which is how this walk survived R2109 handing it a stem of the
+    wrong shape until the sweep reached the one check that was not vacuous.
     """
     nodes, _ = tree(app)
     out = []
-    for n in range(64):
-        node = nodes.get(f"{prefix}.{n}")
-        if node is None:
-            break
+    for n in range(chips):
+        tag = chip_at(n)
+        node = nodes.get(tag)
+        assert node is not None, f"FAILED: the row announces no chip at `{tag}`"
         state = node.get("state") or {}
         if "selected" in node:
             out.append(bool(node["selected"]))
@@ -178,20 +189,37 @@ def said(app: RpcSubprocess, slot: str) -> dict | None:
 #: letter from looking for a mark that is not there. So each row says HOW to
 #: find its own addresses, and the resolver runs where the app is live.
 #:
-#: The two rows below that still answer literals are other screens' families and
-#: not this instalment's population; they were left saying so out loud rather
-#: than converted half-way.
+#: The three rows below that still answer literals are other screens' families
+#: and not this instalment's population; they were left saying so out loud
+#: rather than converted half-way.
+#:
+#: ★★★★★ R2109.1 — the second column is a MEMBER COMPOSER and not a stem. R2109
+#: made it a stem, handed this walk the DECLARED one — which carries the
+#: separator, because the declaration is what owns it — and every reader here
+#: glued a second separator on. Two shapes of the same word cannot be told
+#: apart by a reader that concatenates, so the row answered nothing. ⇒ THE
+#: SHAPE OF A HANDED ADDRESS IS PART OF THE ADDRESS: hand over the composition,
+#: not something to compose with, and the question never arises. It also
+#: removes the guess this walk used to carry — `b_` tried a dotted member
+#: address and then an undotted one, because two of these screens number
+#: without a dot, and a reader guessing between two spellings is this same
+#: debt one level down.
 def _pv_filter_saved(app):
-    """The capture viewer's saved-filter row and its chip prefix, from the wire."""
+    """The capture viewer's saved-filter row, and its chips from the wire."""
+    prefix = filter_saved_prefix(app, ext=EXT)
     return (
         filter_seats(screen_spec(app, EXT))["saved"],
-        filter_saved_prefix(app, ext=EXT),
+        lambda n: filter_saved_address(prefix, n),
     )
 
 
-def _literal(row_tag: str, prefix: str):
-    """A row whose family this round did not convert, saying so."""
-    return lambda _app: (row_tag, prefix)
+def _literal(row_tag: str, member: str):
+    """A row whose family this round did not convert, saying so.
+
+    `member` is a template with the chip's index as its one placeholder, so the
+    separator this screen uses is written here ONCE instead of at each reader.
+    """
+    return lambda _app: (row_tag, member.format)
 
 
 ROWS = [
@@ -199,16 +227,16 @@ ROWS = [
     ("hello-packet-view", _pv_filter_saved, "listbox", "option", 1, 3),
     (
         "hello-analyzer-shell",
-        _literal("card.filter#3.chips", "card.filter#3.chip"),
+        _literal("card.filter#3.chips", "card.filter#3.chip.{}"),
         "listbox",
         "option",
         1,
         5,
     ),
-    ("hello-filter-chip", _literal("chip_group", "chip_"), "group", "button", 4, 4),
+    ("hello-filter-chip", _literal("chip_group", "chip_{}"), "group", "button", 4, 4),
     (
         "hello-segmented-button",
-        _literal("view_mode", "view_mode#"),
+        _literal("view_mode", "view_mode#{}"),
         "radiogroup",
         "radio",
         1,
@@ -239,7 +267,7 @@ def a_the_ring_is_the_rules(app, example, row_tag, stops, chips) -> list[str]:
     return walked
 
 
-def b_the_tree_says_what_the_rule_says(app, example, row_tag, prefix, group, member, chips):
+def b_the_tree_says_what_the_rule_says(app, example, row_tag, chip_at, group, member, chips):
     banner(f"B — {example}: the roles are the rule's")
     nodes, _ = tree(app)
     node = nodes.get(row_tag)
@@ -249,10 +277,15 @@ def b_the_tree_says_what_the_rule_says(app, example, row_tag, prefix, group, mem
         node is not None,
     )
     assert_eq(node["role"], group, f"B[{example}]: the bar is a {group}")
-    kinds = {nodes[f"{prefix}.{n}"]["role"] for n in range(chips) if f"{prefix}.{n}" in nodes}
-    if not kinds:
-        # `hello-filter-chip` / `hello-segmented-button` number without a dot.
-        kinds = {nodes[f"{prefix}{n}"]["role"] for n in range(chips) if f"{prefix}{n}" in nodes}
+    absent = [chip_at(n) for n in range(chips) if chip_at(n) not in nodes]
+    ok(
+        f"B[{example}]: ★★★★ every chip the row declares is announced "
+        f"({absent or 'none absent'}) — this check is the one R2109.1 added, "
+        f"because the roles below are read from whatever was FOUND and a row "
+        f"that answers nothing has no roles to disagree with",
+        not absent,
+    )
+    kinds = {nodes[chip_at(n)]["role"] for n in range(chips)}
     assert_eq(
         kinds,
         {member},
@@ -295,13 +328,13 @@ def c_the_cursor_moves(app, example, row_tag, chips):
 # ── D: walking is not applying ──────────────────────────────────────────────
 
 
-def d_walking_is_not_applying(app, example, row_tag, prefix, chips):
+def d_walking_is_not_applying(app, example, row_tag, chip_at, chips):
     banner(f"D — {example}: an arrow moves the cursor and applies nothing")
     app.request("focus/set", {"tag": row_tag})
     app.tick_ms(16)
     app.key(path=row_tag, name="Home")
     app.tick_ms(16)
-    before = selected(app, prefix)
+    before = selected(app, chip_at, chips)
     nodes, _ = tree(app)
     advance = nodes[row_tag]["navigation"]["keys"][0]
     for _ in range(chips - 1):
@@ -309,44 +342,45 @@ def d_walking_is_not_applying(app, example, row_tag, prefix, chips):
         app.tick_ms(16)
     ok(
         f"D[{example}]: ★★★★★ {chips - 1} arrow press(es) across the bar applied "
-        f"nothing ({before} -> {selected(app, prefix)}) — the rule declares "
-        f"`Explicit`, so a reader walks the saved filters without running them",
-        selected(app, prefix) == before,
+        f"nothing ({before} -> {selected(app, chip_at, chips)}) — the rule "
+        f"declares `Explicit`, so a reader walks the saved filters without "
+        f"running them",
+        selected(app, chip_at, chips) == before,
     )
     app.key(path=row_tag, name="Enter")
     app.tick_ms(16)
     ok(
         f"D[{example}]: ★★★★ and `Enter` at the last chip applies it "
-        f"({selected(app, prefix)})",
-        selected(app, prefix) != before,
+        f"({selected(app, chip_at, chips)})",
+        selected(app, chip_at, chips) != before,
     )
 
 
 # ── E: only the rule applies a choice ───────────────────────────────────────
 
 
-def e_at_most_one_is_the_rule(app, example, prefix, chips, slot):
+def e_at_most_one_is_the_rule(app, example, chip_at, chips, slot):
     banner(f"E — {example}: at most one, through the pointer and through the wire")
-    press_tag(app, f"{prefix}.1")
-    after_one = selected(app, prefix)
+    press_tag(app, chip_at(1))
+    after_one = selected(app, chip_at, chips)
     assert_eq(
         after_one,
         [n == 1 for n in range(chips)],
         f"E[{example}]: choosing chip 1 turns it on",
     )
-    press_tag(app, f"{prefix}.2")
+    press_tag(app, chip_at(2))
     ok(
         f"E[{example}]: ★★★★★ choosing chip 2 CLEARED chip 1 "
-        f"({after_one} -> {selected(app, prefix)}) — the rule replaced it, and "
-        f"the tree that says so is built from the same rule",
-        selected(app, prefix) == [n == 2 for n in range(chips)],
+        f"({after_one} -> {selected(app, chip_at, chips)}) — the rule replaced "
+        f"it, and the tree that says so is built from the same rule",
+        selected(app, chip_at, chips) == [n == 2 for n in range(chips)],
     )
-    press_tag(app, f"{prefix}.2")
+    press_tag(app, chip_at(2))
     ok(
         f"E[{example}]: ★★★★★ and choosing it again EMPTIED the row "
-        f"({selected(app, prefix)}) — 'at most one' is a rule the floor cannot "
-        f"express at all: its exclusive set keeps its member chosen",
-        not any(selected(app, prefix)),
+        f"({selected(app, chip_at, chips)}) — 'at most one' is a rule the floor "
+        f"cannot express at all: its exclusive set keeps its member chosen",
+        not any(selected(app, chip_at, chips)),
     )
     heard = said(app, slot)
     ok(
@@ -357,14 +391,14 @@ def e_at_most_one_is_the_rule(app, example, prefix, chips, slot):
 
 def f_the_dashboard_chips_are_operable(app):
     banner("F — the dashboard: a press on a saved filter reaches the saved filter")
-    prefix = "card.filter#3.chip"
-    before = selected(app, prefix)
+    chip_at = "card.filter#3.chip.{}".format
+    before = selected(app, chip_at, 5)
     ok(
         "F: the card opens with the chip the specification lights",
         before == [True, False, False, False, False],
     )
-    press_tag(app, f"{prefix}.3")
-    after = selected(app, prefix)
+    press_tag(app, chip_at(3))
+    after = selected(app, chip_at, 5)
     ok(
         "F: ★★★★★ the press CHANGED the row — measured before this round, "
         f"clicking every one of these five left every `checked` where it was "
@@ -385,20 +419,20 @@ def f_the_dashboard_chips_are_operable(app):
 
 def g_exactly_one_cannot_be_emptied(app):
     banner("G — the segmented button: exactly one, and it cannot be emptied")
-    prefix = "view_mode#"
+    chip_at = "view_mode#{}".format
 
     def chosen() -> list[int]:
         nodes, _ = tree(app)
         return [
             n
             for n in range(3)
-            if (nodes[f"{prefix}{n}"].get("state") or {}).get("checked")
-            or nodes[f"{prefix}{n}"].get("selected")
+            if (nodes[chip_at(n)].get("state") or {}).get("checked")
+            or nodes[chip_at(n)].get("selected")
         ]
 
     opening = chosen()
     ok(f"G: exactly one segment is on to begin with ({opening})", len(opening) == 1)
-    press_tag(app, f"{prefix}1")
+    press_tag(app, chip_at(1))
     moved = chosen()
     ok(
         f"G: ★★★ choosing another segment REPLACES it ({opening} -> {moved})",
@@ -408,7 +442,7 @@ def g_exactly_one_cannot_be_emptied(app):
     # `exactly one` the row must come back with the same one on, because
     # clearing it would leave none — and the floor does the same thing while
     # exposing no rule that says so and saying nothing to anybody.
-    press_tag(app, f"{prefix}1")
+    press_tag(app, chip_at(1))
     ok(
         f"G: ★★★★★ and choosing the one that is ON leaves it on ({chosen()}) — "
         f"`exactly one` means the row cannot be emptied, which is the arm the "
@@ -420,11 +454,11 @@ def g_exactly_one_cannot_be_emptied(app):
 # ── H: the seeing half ──────────────────────────────────────────────────────
 
 
-def h_the_chip_that_is_on_is_drawn_differently(app, example, prefix, chips):
+def h_the_chip_that_is_on_is_drawn_differently(app, example, chip_at, chips):
     banner(f"H — {example}: the chip that is on is painted")
     shot = app.snapshot(source="paint", viewport=(1600, 900))
     rects = abs_rects_of(shot)
-    painted = [f"{prefix}.{n}" for n in range(chips) if f"{prefix}.{n}" in rects]
+    painted = [chip_at(n) for n in range(chips) if chip_at(n) in rects]
     ok(
         f"H[{example}]: ★★★ every chip the tree announces is painted "
         f"({len(painted)} of {chips}) — an announced control nobody drew is the "
@@ -436,10 +470,10 @@ def h_the_chip_that_is_on_is_drawn_differently(app, example, prefix, chips):
 def main() -> int:
     for example, addresses, group, member, stops, chips in ROWS:
         with RpcSubprocess(example) as app:
-            row_tag, prefix = addresses(app)
+            row_tag, chip_at = addresses(app)
             a_the_ring_is_the_rules(app, example, row_tag, stops, chips)
             b_the_tree_says_what_the_rule_says(
-                app, example, row_tag, prefix, group, member, chips
+                app, example, row_tag, chip_at, group, member, chips
             )
             if stops == 1:
                 c_the_cursor_moves(app, example, row_tag, chips)
@@ -447,19 +481,20 @@ def main() -> int:
     with RpcSubprocess("hello-packet-view") as app:
         row, chip_at = _pv_filter_saved(app)
         d_walking_is_not_applying(app, "hello-packet-view", row, chip_at, 3)
-        e_at_most_one_is_the_rule(app, "hello-packet-view", row, 3, "said")
-        h_the_chip_that_is_on_is_drawn_differently(app, "hello-packet-view", row, 3)
+        e_at_most_one_is_the_rule(app, "hello-packet-view", chip_at, 3, "said")
+        h_the_chip_that_is_on_is_drawn_differently(
+            app, "hello-packet-view", chip_at, 3
+        )
 
     with RpcSubprocess("hello-analyzer-shell") as app:
         f_the_dashboard_chips_are_operable(app)
+        card_chip_at = "card.filter#3.chip.{}".format
         d_walking_is_not_applying(
-            app, "hello-analyzer-shell", "card.filter#3.chips", "card.filter#3.chip", 5
+            app, "hello-analyzer-shell", "card.filter#3.chips", card_chip_at, 5
         )
-        e_at_most_one_is_the_rule(
-            app, "hello-analyzer-shell", "card.filter#3.chip", 5, "toast"
-        )
+        e_at_most_one_is_the_rule(app, "hello-analyzer-shell", card_chip_at, 5, "toast")
         h_the_chip_that_is_on_is_drawn_differently(
-            app, "hello-analyzer-shell", "card.filter#3.chip", 5
+            app, "hello-analyzer-shell", card_chip_at, 5
         )
 
     with RpcSubprocess("hello-segmented-button") as app:
