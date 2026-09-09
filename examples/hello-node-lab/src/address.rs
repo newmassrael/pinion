@@ -900,8 +900,9 @@ pub fn palette_verb_of<'a>(tag: &'a str, verbs: &[&'a str]) -> Option<(&'a str, 
 /// owns it, and the card's own address is where a reader asks about that.
 ///
 /// ⚠⚠ Named `PIN` and NOT after the diameter constant this crate also calls
-/// `PIN` — that one was renamed to [`crate::PIN_D`] by the round that declared
-/// this. The two are a FOURTH namespace this campaign has had to check (R2106
+/// `PIN` — that one was renamed `PIN_D` (a private const in `lib.rs`, so it is
+/// named here rather than linked) by the round that declared this. The two are
+/// a FOURTH namespace this campaign has had to check (R2106
 /// counted three: a specification table's keys, a module's own function names,
 /// and the introspection path surface), and it is the silent one: a `const` in
 /// another module is not something the compiler refuses, so `PIN / 2` and
