@@ -58,6 +58,7 @@ from rpc_verify import (  # noqa: E402
     form_part_prefixes,
     inspector_root,
     inspector_tag,
+    pin_tag,
     run_demo,
 )
 
@@ -261,7 +262,7 @@ def assert_chips_answer_for_themselves(tf) -> None:
 def pin_ring(tf, card: str):
     """The colour a card's accept pin is ringed in, read off the paint."""
     node = find_by_tag(
-        tf.snapshot(source="paint", viewport=VIEWPORT), f"lab.pin.{card}.accept"
+        tf.snapshot(source="paint", viewport=VIEWPORT), pin_tag(tf, card, "accept")
     )
     assert node is not None, f"{card} has an accept pin"
     return node.get("style", {}).get("border")
@@ -476,7 +477,7 @@ def body() -> None:
             "★★ and it left the deployable document — taking a row out is a "
             "change to the CONFIGURATION, not to a list of rows on a screen"
         )
-        assert "lab.pin.P-03.accept" in rects(tf), (
+        assert pin_tag(tf, "P-03", "accept") in rects(tf), (
             "★ the pin stays, because the role is what gives a node one"
         )
         assert_eq(

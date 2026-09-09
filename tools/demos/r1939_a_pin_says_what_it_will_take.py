@@ -161,7 +161,16 @@ def takes(app: RpcSubprocess, surface: str) -> list[dict]:
     return js(app.query(f"{surface}/takes"))["pins"]
 
 
-def pin_of(rows: list[dict], card: str, which: str) -> dict:
+def pin_row(rows: list[dict], card: str, which: str) -> dict:
+    """That pin's ROW in the published register.
+
+    ⚠ R2108 renamed this from `pin_of`, which the harness now publishes with a
+    different meaning — it takes a painted ADDRESS apart into `(card, word)`.
+    Nothing was broken: this walk imports neither. But one word meaning two
+    things across the corpus is the defect the address campaign is repaying, and
+    the round that introduced the second meaning is the one that owes the fix.
+    `pin_row` is what this returns.
+    """
     return next(row for row in rows if row["card"] == card and row["pin"] == which)
 
 
@@ -267,7 +276,7 @@ def body() -> None:
         # ★ So the difference is CAUSED rather than found: R1937's verb makes
         # one card accept another transport, and every sentence that reads off
         # that address has to follow.
-        was = pin_of(rows, subject, "dial")["wants"]
+        was = pin_row(rows, subject, "dial")["wants"]
         said = app.invoke(f"{surface}/set_pin_transport", f"{listener},accept,udp")
         app.tick_ms(16)
         ok(
@@ -296,7 +305,7 @@ def body() -> None:
         )
         # ★★★★★ And the chain: the pin that moved is on ANOTHER card, because a
         # dial reads its scheme off the endpoint it lands on.
-        now = pin_of(rows, subject, "dial")["wants"]
+        now = pin_row(rows, subject, "dial")["wants"]
         ok(
             f"B: ★★★★★ a card that DIALS the edited one followed it, without "
             f"being edited — {was!r} -> {now!r}",
@@ -304,7 +313,7 @@ def body() -> None:
         )
         # ★★★★★ Two pins of ONE card wanting different addresses is the sharpest
         # form of this section's claim: no global rule can produce it.
-        subject_accept = pin_of(rows, subject, "accept")["wants"]
+        subject_accept = pin_row(rows, subject, "accept")["wants"]
         ok(
             f"B: ★★★★★ and the SAME card wants different addresses at its two "
             f"pins — accept {subject_accept!r} vs dial {now!r}",
@@ -322,7 +331,7 @@ def body() -> None:
         )
 
         banner("C — ★★★★★ the edit refuses what the pin will not take")
-        before = pin_of(takes(app, surface), subject, "dial")["carries"]
+        before = pin_row(takes(app, surface), subject, "dial")["carries"]
         why = refusal(app, f"{surface}/set_pin_locator", f"{subject},dial,not-an-address")
         ok(f"C: ★★★★★ the edit was refused — {why!r}", why is not None)
         ok(
@@ -333,7 +342,7 @@ def body() -> None:
         app.tick_ms(16)
         ok(
             "C: ★★★★★ and NOTHING changed: a refused edit is not a partial one",
-            pin_of(takes(app, surface), subject, "dial")["carries"] == before,
+            pin_row(takes(app, surface), subject, "dial")["carries"] == before,
         )
 
         banner("D — ★★★★★ the refusal hands back the address it WOULD take")
@@ -359,7 +368,7 @@ def body() -> None:
             f"{said!r}",
             "now rests at" in str(said),
         )
-        landed = pin_of(takes(app, surface), subject, "dial")
+        landed = pin_row(takes(app, surface), subject, "dial")
         ok(
             f"D: ★ and the register agrees it stands now — {landed}",
             landed["carries"] == offered and landed["stands"] is True,

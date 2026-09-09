@@ -52,6 +52,7 @@ from rpc_verify import (  # noqa: E402
     frame_tag,
     inspector_tag,
     palette_tag,
+    pin_tag,
     press_painted_tag,
     run_demo,
     toolbar_tag,
@@ -212,8 +213,8 @@ def press_wire(tf, frm: str, to: str) -> None:
     from the two things that do have rectangles: the pins it runs between.
     """
     painted = rects(tf)
-    a = centre(painted[f"lab.pin.{frm}.dial"])
-    b = centre(painted[f"lab.pin.{to}.accept"])
+    a = centre(painted[pin_tag(tf, frm, "dial")])
+    b = centre(painted[pin_tag(tf, to, "accept")])
     tf.click(at=((a[0] + b[0]) // 2, (a[1] + b[1]) // 2))
 
 
@@ -333,14 +334,14 @@ GESTURES = {
     ),
     # a link's life
     "author a link": lambda tf: drag_onto(
-        tf, "lab.pin.S-01.dial", "lab.pin.P-02.accept"
+        tf, pin_tag(tf, "S-01", "dial"), pin_tag(tf, "P-02", "accept")
     ),
     "delete a link": lambda tf: (
         press_wire(tf, "Q-01", "R-01"),
         press(tf, "lab.link.act"),
     ),
     "rewire a link": lambda tf: drag_onto(
-        tf, "lab.pin.R-01.accept", "lab.pin.P-03.accept"
+        tf, pin_tag(tf, "R-01", "accept"), pin_tag(tf, "P-03", "accept")
     ),
     "select a link endpoint": lambda tf: press(tf, "lab.link.endpoint.1"),
     "adopt an observed link": lambda tf: (

@@ -59,6 +59,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    pin_address,
+    pin_prefix,
     run_demo,
 )
 
@@ -141,6 +143,12 @@ def body() -> None:
             app.query(f"{EXT}/nav") == SEAT,
         )
         surface = surface_of(app, SEAT)
+        # ★★★★★ R2108 — the prefix a card's pins hang off, asked once. This walk
+        # composes one address per member, and a member address is exactly the
+        # shape whose spelling this round's declaration exists for: it carries
+        # two dots, and a reader that put the split in the wrong one is what
+        # R1915 — this walk's own round — was written about.
+        pins = pin_prefix(app, ext=surface)
 
         banner("A — a dial pin splits, and both halves are on the frame")
         published = cards(app, surface)
@@ -152,14 +160,16 @@ def body() -> None:
         app.invoke(f"{surface}/split_pin", f"{dialler},dial")
         app.tick_ms(16)
         frame = boxes(app)
-        member_tags = [f"lab.pin.{dialler}.dial.{part}" for part in PARTS]
+        member_tags = [
+            pin_address(pins, dialler, f"dial.{part}") for part in PARTS
+        ]
         ok(
             f"A: {dialler}'s dial halves are painted — {member_tags}",
             all(tag in frame for tag in member_tags),
         )
         ok(
             "A: and the parent is not, because it is split",
-            f"lab.pin.{dialler}.dial" not in frame,
+            pin_address(pins, dialler, "dial") not in frame,
         )
 
         banner("B/C — WHICH half the drag starts on decides what happens")
@@ -184,7 +194,7 @@ def body() -> None:
         app.invoke(f"{surface}/split_pin", f"{listener},accept")
         app.tick_ms(16)
         frame = boxes(app)
-        target = f"lab.pin.{listener}.accept.{PARTS[0]}"
+        target = pin_address(pins, listener, f"accept.{PARTS[0]}")
         ok(f"B: the new card's host half is on the frame ({target})", target in frame)
 
         # ★★★★★ THE OBSERVATION A BOOLEAN COULD NOT PRODUCE. Both drags start on
@@ -226,7 +236,7 @@ def body() -> None:
         held = len(links_of(app, surface))
         app.drag(
             from_at=centre(frame[member_tags[1]]),
-            to_at=centre(frame[f"lab.pin.{whole}.accept"]),
+            to_at=centre(frame[pin_address(pins, whole, "accept")]),
         )
         app.tick_ms(16)
         ok(

@@ -63,6 +63,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_action_refused,
+    pin_tag,
     run_demo,
     walk_nodes,
 )
@@ -175,7 +176,7 @@ def body() -> None:
         _scheme, rest = carrying.split("/", 1)
         want_host, want_service = rest.rsplit(":", 1)
 
-        parent_tag = f"lab.pin.{subject}.{pin}"
+        parent_tag = pin_tag(app, subject, pin, ext=surface)
         ok(
             f"A: the pin is on the frame ({parent_tag})",
             parent_tag in painted(app),

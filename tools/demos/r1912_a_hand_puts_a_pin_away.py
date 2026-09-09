@@ -85,6 +85,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_action_refused,
+    pin_address,
+    pin_prefix,
     run_demo,
     walk_nodes,
 )
@@ -133,8 +135,17 @@ def painted(app: RpcSubprocess) -> set[str]:
     return {found["tag"] for _, found in walk_nodes(snap) if found.get("tag")}
 
 
-def pin_tags(name: str) -> tuple[str, str]:
-    return f"lab.pin.{name}.dial", f"lab.pin.{name}.accept"
+def pin_tags(app: RpcSubprocess, surface: str, name: str) -> tuple[str, str]:
+    """Both of a card's root pins, at the address the screen publishes.
+
+    ★★★★★ R2108 — the prefix is asked for once and the two words composed onto
+    it, so this walk holds no spelling of an address the paint might have moved.
+
+    ⚠ Asked of the MOUNTED lab's own surface, not of the shell's: the prefix
+    lives in the lab's specification, and the shell publishes a different one.
+    """
+    prefix = pin_prefix(app, ext=surface)
+    return pin_address(prefix, name, "dial"), pin_address(prefix, name, "accept")
 
 
 def body() -> None:
@@ -184,7 +195,7 @@ def body() -> None:
         )
         app.invoke(f"{surface}/select", subject)
         app.tick_ms(16)
-        dial_tag, accept_tag = pin_tags(subject)
+        dial_tag, accept_tag = pin_tags(app, surface, subject)
         frame = painted(app)
         ok(
             f"A: {subject}'s dial pin is on the frame ({dial_tag})",

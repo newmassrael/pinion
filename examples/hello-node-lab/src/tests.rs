@@ -1673,6 +1673,111 @@ fn r2106_every_palette_address_is_derived() {
     );
 }
 
+/// ★★★★★ R2108 — **a pin's address is typed in ONE place, and this counts.**
+///
+/// The eleventh instalment of the address debt, and the first family with TWO
+/// parametric levels: `<prefix><card>.<word>`. There is no roster to compare
+/// against, so this gate is the stem alone — the palette's shape, and for the
+/// palette's reason.
+///
+/// ⚠ The needle is assembled with `concat!`, because this file is one of the
+/// sources it reads. R2105 found out the hard way: a mechanical replacement fed
+/// the gate its own needle.
+#[test]
+fn r2108_a_pin_address_is_typed_in_one_place() {
+    const PIN_ANY: &str = concat!("lab.", "pin.");
+    let sources = crate_sources();
+    let spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(PIN_ANY).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ a pin's address is declared in `address.rs` and taken from there \
+         everywhere else; these file(s) spell it themselves"
+    );
+}
+
+/// ★★★★★ R2108 — **the pin address a reader composes, the one a reader takes
+/// apart, and the one the wire hands a walk are the same address.**
+///
+/// The second half of the gate above, split from it for the reason
+/// `r2106_every_palette_address_is_derived` states: *nobody re-spells it* and
+/// *the declarations agree* are two claims.
+///
+/// ★★ The round trip is what this family needs most. Its two levels are why:
+/// R1915 measured a reader splitting the address at the LAST dot instead of the
+/// first, which made every member pin unreachable — drawn, announced, and
+/// answering nothing — and R2108 found the same choice still standing in the
+/// paint sweep's own `must_answer`, twelve thousand lines from the comment
+/// warning about it. A composition without its inverse beside it is how one
+/// rule comes to have two implementations that disagree only in the corner
+/// nobody sweeps.
+#[test]
+fn r2108_every_pin_address_is_derived() {
+    // The composition hangs off the declared prefix, so a `format!` that lost
+    // the separator could not leave the two agreeing.
+    assert_eq!(
+        super::address::pin("P-01", "dial"),
+        format!("{}P-01.dial", super::address::PIN)
+    );
+    // ★ The inverse gives back BOTH levels, for a root pin and for a member.
+    for (card, word) in [
+        ("P-01", "dial"),
+        ("P-01", "accept"),
+        ("Group Output", "accept"),
+        ("R-01", "accept.host"),
+        ("S-01", "dial.service"),
+    ] {
+        assert_eq!(
+            super::address::pin_of(&super::address::pin(card, word)),
+            Some((card, word)),
+            "★ `{card}` / `{word}` does not round-trip through its own address"
+        );
+    }
+    // ★★ And the member word stays with the WORD rather than being read as the
+    // card's name — the split is at the first dot, which is the whole of R1915.
+    assert_eq!(
+        super::address::pin_of(&super::address::pin("R-01", "accept.host")),
+        Some(("R-01", "accept.host")),
+        "★★★★★ a reader splitting at the last dot answers `R-01.accept` / \
+         `host`, which resolves to no card and leaves a drawn pin unpressable"
+    );
+    // ★★★ A tag of another family is not one of these, and neither is a bare
+    // card address — the prefix carries its separator so `lab.pinned…` cannot
+    // be swallowed either.
+    for other in [
+        super::address::PALETTE_BODY,
+        super::address::TOOLBAR,
+        "lab.node.P-01",
+    ] {
+        assert_eq!(
+            super::address::pin_of(other),
+            None,
+            "★ `{other}` is not a pin address"
+        );
+    }
+    assert_eq!(
+        super::address::pin_of(super::address::PIN),
+        None,
+        "★★ the bare prefix names no pin: this family has no container of its \
+         own, so there is nothing for it to resolve to"
+    );
+    // ★★★★ The WIRE carries the declaration itself. This is the half the walks
+    // stand on — they are Python and cannot call any of the above — and a
+    // prefix that stopped agreeing here would hand nine walks an address that
+    // matches no mark, which reads to every one of them as *the screen did not
+    // paint it* rather than as a typo.
+    assert_eq!(
+        super::spec_json()["pin_addresses"]["prefix"].as_str(),
+        Some(super::address::PIN),
+        "★★★★★ the specification publishes a pin prefix that is not the one the \
+         paint is composed from"
+    );
+}
+
 /// ★★★★★ R2105 — **no two entries of the published specification claim the same
 /// name.**
 ///
@@ -6728,7 +6833,7 @@ fn r1916_resting_on_a_pin_shows_what_it_is_for() {
 
         let (tag, sentence) =
             super::pin_description_shown(&state).expect("★ resting on the dial pin shows one");
-        assert_eq!(tag, format!("lab.pin.{name}.dial"));
+        assert_eq!(tag, super::address::pin(&name, "dial"));
         // ★★★★★ The sentence is the SUBSTRATE's composition — the type's half
         // and the port's own half — not a string this screen wrote. The
         // reference's base implementation hands the description straight back
@@ -6753,7 +6858,7 @@ fn r1916_resting_on_a_pin_shows_what_it_is_for() {
         assert_eq!(tips[0].name.as_deref(), Some(sentence.as_str()));
         let anchor = nodes
             .iter()
-            .find(|n| n.tag == format!("lab.pin.{name}.dial"))
+            .find(|n| n.tag == super::address::pin(&name, "dial"))
             .expect("the pin is announced");
         assert_eq!(
             anchor.described_by.as_deref(),
@@ -6922,8 +7027,11 @@ fn r1926_a_split_draws_its_halves_in_their_own_colours() {
             .cards()
             .into_iter()
             .find(|node| {
-                painted_border(&opening, &format!("lab.pin.{}.dial", state.name_of(*node)))
-                    .is_drawn()
+                painted_border(
+                    &opening,
+                    &super::address::pin(&state.name_of(*node), "dial"),
+                )
+                .is_drawn()
                     && state
                         .doc
                         .borrow()
@@ -6974,7 +7082,7 @@ fn r1926_a_split_draws_its_halves_in_their_own_colours() {
         let name = state.name_of(card);
         let mut painted = Vec::new();
         for (path, _) in &members {
-            let tag = format!("lab.pin.{name}.{}", super::pin_word(Side::Output, path));
+            let tag = super::address::pin(&name, &super::pin_word(Side::Output, path));
             painted.push(match painted_border(&scene, &tag) {
                 PaintedEdge::Ink(colour) => colour,
                 PaintedEdge::Bare => panic!("{tag} is drawn with no border"),
@@ -7702,7 +7810,7 @@ fn r1966_the_canvas_draws_kinds_and_the_pins_draw_wires(state: &std::rc::Rc<LabS
         // ★ And the pins still wear the WIRE, because the transport palette was
         // moved rather than deleted: that is where the canon keeps it, and the
         // legend this screen draws reads it there.
-        let ring = match painted_border(&scene, "lab.pin.P-01.accept") {
+        let ring = match painted_border(&scene, &super::address::pin("P-01", "accept")) {
             PaintedEdge::Ink(colour) => (colour.r, colour.g, colour.b),
             other => panic!("the peer's accept pin carries no colour: {other:?}"),
         };

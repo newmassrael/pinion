@@ -71,7 +71,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcSubprocess, access_node_by_tag, run_demo  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    RpcSubprocess,
+    access_node_by_tag,
+    pin_address,
+    pin_prefix,
+    run_demo,
+)
 
 SHELL = "hello-analyzer-shell"
 EXT = "/external"
@@ -125,9 +131,15 @@ def access(app: RpcSubprocess) -> dict:
     return resp.result
 
 
-def spoken(app: RpcSubprocess, card: str, side: str) -> str | None:
-    """What a reader who cannot see the canvas is told about that pin."""
-    node = access_node_by_tag(access(app), f"lab.pin.{card}.{side}")
+def spoken(app: RpcSubprocess, pins: str, card: str, side: str) -> str | None:
+    """What a reader who cannot see the canvas is told about that pin.
+
+    ★★★★★ R2108 — the address is composed onto the prefix the screen publishes.
+    The announcement carries the same tag the paint does, so a spelling written
+    here would report a SILENT pin whenever the letter was wrong — the failure
+    this address debt exists to stop looking like a screen defect.
+    """
+    node = access_node_by_tag(access(app), pin_address(pins, card, side))
     return None if node is None else node.get("name")
 
 
@@ -141,6 +153,8 @@ def body() -> None:
             app.query(f"{EXT}/nav") == SEAT,
         )
         surface = surface_of(app, SEAT)
+        # ★★★★★ R2108 — the prefix a card's pins hang off, from the screen.
+        pins = pin_prefix(app, ext=surface)
 
         banner("A — every port's name, and who chose it")
         rows = register(app, surface)
@@ -194,13 +208,13 @@ def body() -> None:
         named = [r for r in rows if r["name"] and r["index"] == 0]
         ok(f"B: there are named first ports to check — {len(named)}", named != [])
         for row in named:
-            said = spoken(app, row["card"], row["side"])
+            said = spoken(app, pins,row["card"], row["side"])
             ok(
                 f"B: {row['card']}'s {row['side']} pin is announced, and the "
                 f"sentence carries {row['name']!r} — {said!r}",
                 isinstance(said, str) and row["name"] in said,
             )
-        heard = {spoken(app, r["card"], "accept") for r in by_item if r["index"] == 0}
+        heard = {spoken(app, pins,r["card"], "accept") for r in by_item if r["index"] == 0}
         ok(
             f"B: ★★★★★ and the accept pins no longer all say the same thing — "
             f"{len(heard)} distinct sentence(s) over {len([r for r in by_item if r['index'] == 0])} card(s)",
@@ -216,7 +230,7 @@ def body() -> None:
             and silent["name"] is None
             and silent["source"] == "node",
         )
-        hushed = spoken(app, SILENT_CARD, "accept")
+        hushed = spoken(app, pins,SILENT_CARD, "accept")
         ok(
             f"C: ★ the pin is STILL announced — suppressing a name is not "
             f"removing a pin — {hushed!r}",
@@ -245,7 +259,7 @@ def body() -> None:
             f"was {silent!r}, now {now!r}",
             now is not None and now["source"] != "node" and now["name"] is not None,
         )
-        said = spoken(app, SILENT_CARD, "accept")
+        said = spoken(app, pins,SILENT_CARD, "accept")
         ok(
             f"D: ★★★★★ and the SENTENCE moved with it, so the paint is a "
             f"rendering of the model rather than a second answer — {said!r}",
@@ -266,7 +280,7 @@ def body() -> None:
         for row in final:
             if row["index"] != 0:
                 continue
-            said = spoken(app, row["card"], row["side"])
+            said = spoken(app, pins,row["card"], row["side"])
             if said is None:
                 continue
             if row["name"] is None:

@@ -53,6 +53,8 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     find_by_tag,
+    pin_of,
+    pin_prefix,
     run_demo,
 )
 
@@ -91,17 +93,30 @@ def links(app: RpcSubprocess, surface: str) -> str:
     return str(app.query(f"{surface}/links"))
 
 
-def pin_edges(app: RpcSubprocess) -> dict[str, object]:
+def pin_edges(app: RpcSubprocess, pins: str) -> dict[str, object]:
     """Every accept pin's tag and the BORDER it is drawn with.
 
     ★ R1919's lesson, applied: what changes when a pin is lit is its edge, and
     a walk that compared rectangles would see a screen that had lit nothing as
     identical to one that had lit everything.
+
+    ★★★★★ R2108 — `pins` is the prefix the screen publishes, and the family is
+    recognised by taking a tag APART rather than by a prefix-and-suffix pair.
+
+    ⚠ Stated as it was MEASURED, because the first draft of this line claimed
+    more: over this screen's vocabulary the two forms agree everywhere but one
+    tag, `<prefix>accept`, which the suffix test accepts and which names no card
+    at all. Both forms see only UNSPLIT accept pins — a split one is addressed
+    `<card>.accept.<member>` and its parent is not painted — so that is a
+    property of the SCREEN, not a difference this round made. What the change
+    buys is one rule in one place, which is this debt's whole subject, and not a
+    behaviour repair.
     """
     snap = app.snapshot(source="paint", viewport=VIEWPORT)
     out: dict[str, object] = {}
     for tag in abs_rects_of(snap):
-        if tag.startswith("lab.pin.") and tag.endswith(".accept"):
+        found = pin_of(pins, tag)
+        if found is not None and found[1] == "accept":
             node = find_by_tag(snap, tag)
             out[tag] = (node or {}).get("style", {}).get("border")
     return out
@@ -129,9 +144,11 @@ def body() -> None:
             app.query(f"{EXT}/nav") == SEAT,
         )
         surface = surface_of(app, SEAT)
+        # ★★★★★ R2108 — the prefix a card's pins hang off, from the screen.
+        pins = pin_prefix(app, ext=surface)
 
         banner("A — a picked wire publishes a verdict for every card")
-        resting = pin_edges(app)
+        resting = pin_edges(app, pins)
         picked = rewire(app, surface)
         ok(
             f"the opening canvas already has a wire picked — {picked['picked']!r}",
@@ -262,10 +279,15 @@ def body() -> None:
                 )
 
         banner("D — ★★★★★ picking it up LIGHTS exactly what would take it")
-        pin_of = {}
+        # ⚠ `accepting` and not `pin_of`, which this block used to call it: the
+        # harness now publishes a function of that name, and R2104 measured what
+        # a name collision costs in a walk being converted — a rebound loop
+        # variable turned an address into a `KeyError` two hundred lines later.
+        accepting = {}
         for tag in resting:
-            pin_of[tag.removeprefix("lab.pin.").removesuffix(".accept")] = tag
-        held = pin_of[standing[0]]
+            card, _word = pin_of(pins, tag)
+            accepting[card] = tag
+        held = accepting[standing[0]]
         app.pointer_button("left", "down", path=held)
         app.tick_ms(16)
         carried = rewire(app, surface)
@@ -273,10 +295,10 @@ def body() -> None:
             f"D: the wire is in the hand — carried={carried['carried']}",
             carried["carried"] is True,
         )
-        lit = pin_edges(app)
+        lit = pin_edges(app, pins)
         marked, unmarked = [], []
         for row in carried["cards"]:
-            tag = pin_of.get(row["card"])
+            tag = accepting.get(row["card"])
             if tag is None or tag not in lit or tag not in resting:
                 continue
             changed = lit[tag] != resting[tag]
@@ -302,7 +324,7 @@ def body() -> None:
         banner("E — ★★★★★ the reason is SAID before the hand lets go")
         was = links(app, surface)
         refuser = refusers[0]
-        app.hover(at=centre(app, pin_of[refuser]))
+        app.hover(at=centre(app, accepting[refuser]))
         app.tick_ms(16)
         heard = said(app, surface)
         ok(
@@ -315,7 +337,7 @@ def body() -> None:
             links(app, surface) == was,
         )
         taker = takers[0]
-        app.hover(at=centre(app, pin_of[taker]))
+        app.hover(at=centre(app, accepting[taker]))
         app.tick_ms(16)
         # R1930 — the sentence depends on WHICH way the wire lands, and both
         # sentences are a yes: a pin that is there takes it, and a card with
@@ -333,7 +355,7 @@ def body() -> None:
         )
 
         banner("F — the drop agrees with the question")
-        app.pointer_button("left", "up", at=centre(app, pin_of[refuser]))
+        app.pointer_button("left", "up", at=centre(app, accepting[refuser]))
         app.tick_ms(16)
         ok(
             f"F: ★ dropped on {refuser}, which the screen had refused, the "
@@ -342,12 +364,12 @@ def body() -> None:
         )
         ok(
             "F: and the lit pins went out with the gesture",
-            pin_edges(app) == resting,
+            pin_edges(app, pins) == resting,
         )
 
         app.pointer_button("left", "down", path=held)
         app.tick_ms(16)
-        app.pointer_button("left", "up", at=centre(app, pin_of[taker]))
+        app.pointer_button("left", "up", at=centre(app, accepting[taker]))
         app.tick_ms(16)
         ok(
             f"F: ★★★★★ dropped on {taker}, which the screen had accepted, the "

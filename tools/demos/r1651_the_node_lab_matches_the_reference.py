@@ -44,6 +44,8 @@ from rpc_verify import (  # noqa: E402
     find_by_tag,
     inspector_seats,
     palette_seats,
+    pin_address,
+    pin_of,
     run_demo,
     toolbar_seats,
     walk_nodes,
@@ -222,6 +224,12 @@ def body() -> None:
         pal_part = spec["palette_addresses"]["part"]
         pal_part_words = spec["palette_addresses"]["part_words"]
         pal_verb = spec["palette_addresses"]["verb"]
+        # ★★★★★ R2108 — the prefix a CARD's pins are painted under. A prefix and
+        # not a roster: this family's members are the cards times their pins
+        # times whatever a split has put under them, so the wire publishes where
+        # they hang and `pin_address` composes. Hoisted here beside its
+        # neighbours because the blocks below compose one per card.
+        pins = spec["pin_addresses"]["prefix"]
         assert_eq(q(tf, "graph"), spec["graph"], "the graph is the one declared")
         assert_eq(q(tf, "zoom"), spec["zoom"], "and it opens at the declared zoom")
         assert_eq(
@@ -385,7 +393,7 @@ def body() -> None:
                 node["tag"],
                 f"{node['tag']}.id",
                 f"{node['tag']}.badge",
-                f"lab.pin.{node['id']}.dial",
+                pin_address(pins, node["id"], "dial"),
             ):
                 if tag not in painted:
                     missing.append(tag)
@@ -540,8 +548,8 @@ def body() -> None:
             # `PINION_ASSUME_BUILT=1` against a `hello-node-lab` binary that
             # predated the mark.
             declared.add(f"{node['tag']}.issue")
-            declared.add(f"lab.pin.{node['id']}.dial")
-            declared.add(f"lab.pin.{node['id']}.accept")
+            declared.add(pin_address(pins, node["id"], "dial"))
+            declared.add(pin_address(pins, node["id"], "accept"))
         for field in spec["fields"]:
             declared.add(field["control"])
             declared.add(f"{parts['applies']}{field['key']}")
@@ -1163,8 +1171,14 @@ def body() -> None:
             for family in ("option", "step", "toggle", "item"):
                 if tag.startswith(parts[family]):
                     return f"{family}.{tag[len(parts[family]):]}"
-            if tag.startswith("lab.pin."):
-                node, _, side = tag[len("lab.pin."):].rpartition(".")
+            # ★★★★★ R2108 — the screen's own inverse, which splits at the FIRST
+            # dot. This line read the LAST one, which for a member pin names a
+            # card that does not exist — R1915's finding, and the same choice
+            # was still standing in the screen's own paint sweep when this
+            # family got a declaring site.
+            found = pin_of(pins, tag)
+            if found is not None:
+                node, side = found
                 return f"pin:{node}:{side}"
             if tag.startswith(cards) and tag.count(".") == 2:
                 return f"node:{tag[len(cards):]}"
@@ -1319,9 +1333,9 @@ def body() -> None:
 
         # 4. drag a pin = author a link
         links_before = len(json.loads(q(tf, "links")))
-        inv(tf, "point", at(tf, "lab.pin.T-01.dial"))
+        inv(tf, "point", at(tf, pin_address(pins, "T-01", "dial")))
         inv(tf, "send", "PointerDown")
-        inv(tf, "point", at(tf, "lab.pin.P-03.accept"))
+        inv(tf, "point", at(tf, pin_address(pins, "P-03", "accept")))
         inv(tf, "send", "PointerUp")
         links_after = json.loads(q(tf, "links"))
         assert_eq(
@@ -1563,9 +1577,9 @@ def body() -> None:
         # P4. Re-aiming at another node, by dragging the accept pin it lands on.
         #     Pressing an accept pin PICKS UP what arrived there.
         before = len(links_now())
-        inv(tf, "point", at(tf, "lab.pin.R-01.accept"))
+        inv(tf, "point", at(tf, pin_address(pins, "R-01", "accept")))
         inv(tf, "send", "PointerDown")
-        inv(tf, "point", at(tf, "lab.pin.P-03.accept"))
+        inv(tf, "point", at(tf, pin_address(pins, "P-03", "accept")))
         inv(tf, "send", "PointerUp")
         after = links_now()
         assert_eq(len(after), before, "a re-aimed link is moved, not added")
@@ -1577,7 +1591,7 @@ def body() -> None:
         # P5. Dropping a picked-up link on empty canvas lets it go, which is the
         #     rule every node editor has.
         before = len(links_now())
-        inv(tf, "point", at(tf, "lab.pin.P-03.accept"))
+        inv(tf, "point", at(tf, pin_address(pins, "P-03", "accept")))
         inv(tf, "send", "PointerDown")
         inv(tf, "point", "300,860")
         inv(tf, "send", "PointerUp")

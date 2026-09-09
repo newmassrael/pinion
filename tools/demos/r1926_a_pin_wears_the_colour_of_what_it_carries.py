@@ -61,7 +61,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcSubprocess, find_by_tag, run_demo  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    RpcSubprocess,
+    find_by_tag,
+    pin_address,
+    pin_prefix,
+    run_demo,
+)
 
 SHELL = "hello-analyzer-shell"
 EXT = "/external"
@@ -137,6 +143,16 @@ def body() -> None:
             app.query(f"{EXT}/nav") == SEAT,
         )
         surface = surface_of(app, SEAT)
+        # ★★★★★ R2108 — the prefix a card's pins hang off, from the screen.
+        #
+        # ⚠ `pin_at` and NOT `pins`, which section B below binds to the model's
+        # pin table. Written as `pins` first, this walk went red at section C
+        # with a border of `None`: by then the name was a dict, the composed tag
+        # was its `repr` with a card glued on, and the mark it looked for could
+        # not exist. R2104 recorded this class from the other side — a rebound
+        # loop variable — and its rule is the one that applies: a repair that
+        # turns an address into a variable has to measure the FILE's namespace.
+        pin_at = pin_prefix(app, ext=surface)
 
         banner("A — the taxonomy's colours are published")
         table = inks(app, surface)
@@ -248,7 +264,7 @@ def body() -> None:
         drawn = 0
         for name, row in sorted(halves.items()):
             card_name, word = name.split(".", 1)
-            painted = as_hex(pin_border(app, f"lab.pin.{card_name}.{word}"))
+            painted = as_hex(pin_border(app, pin_address(pin_at, card_name, word)))
             ok(f"C: {name} is on the frame with a border — {painted!r}", painted is not None)
             drawn += 1
             ok(

@@ -885,3 +885,57 @@ pub fn palette_verb_of<'a>(tag: &'a str, verbs: &[&'a str]) -> Option<(&'a str, 
         Some((*verb, id.parse().ok()?))
     })
 }
+
+/// ★★★★★ R2108 — the prefix every **pin of a card** is painted under.
+///
+/// A card draws two pins and a split puts members under them, so this family's
+/// address is `<prefix><card>.<word>` — two parametric levels where every
+/// family before it had one. The card's name comes from the graph and the word
+/// from `pin_word`, which is why neither is declared here: this module owns the
+/// SHAPE of an address, not the vocabularies its levels are drawn from.
+///
+/// ⚠ Carried with its separator, because every reader of this family either
+/// composes onto it or strips it off. There is no mark at the bare `lab.pin`:
+/// this family has no container of its own — a pin is drawn on the card that
+/// owns it, and the card's own address is where a reader asks about that.
+///
+/// ⚠⚠ Named `PIN` and NOT after the diameter constant this crate also calls
+/// `PIN` — that one was renamed to [`crate::PIN_D`] by the round that declared
+/// this. The two are a FOURTH namespace this campaign has had to check (R2106
+/// counted three: a specification table's keys, a module's own function names,
+/// and the introspection path surface), and it is the silent one: a `const` in
+/// another module is not something the compiler refuses, so `PIN / 2` and
+/// `address::PIN` would have sat in one file as one word meaning a length on
+/// one line and a prefix on the next. Every declaration here is named for the
+/// segment it addresses, so the address keeps the word and the geometry
+/// constant says what it measures.
+pub const PIN: &str = "lab.pin.";
+
+/// The address of the pin that `word` names on the card called `card`.
+///
+/// `word` is `pin_word`'s output — `dial`, `accept`, or one of those with a
+/// member's name behind a dot — so the tag a client presses, the address
+/// `split_pin` accepts and the name the accessibility tree carries are one
+/// spelling by construction.
+#[must_use]
+pub fn pin(card: &str, word: &str) -> String {
+    format!("{PIN}{card}.{word}")
+}
+
+/// The card and the pin word an address names, or `None` when the tag is not
+/// one of this family.
+///
+/// ★★★★★ [`pin`]'s inverse, and it splits at the FIRST dot. R1915 measured what
+/// the other choice costs: a reader splitting at the last one read
+/// `accept.host` as a member word `host` belonging to a card called
+/// `<name>.accept`, matched nothing, and answered *nothing* — a pin that was
+/// drawn, announced, and unreachable by any press. A card's name cannot carry a
+/// dot, and the caller asks the graph whether the name it is handed is a card,
+/// so splitting first is correct rather than merely different.
+///
+/// ⚠ Whether the card EXISTS is the caller's question, not this one's: this
+/// answers what the address says. [`palette_verb_of`] draws the same line.
+#[must_use]
+pub fn pin_of(tag: &str) -> Option<(&str, &str)> {
+    tag.strip_prefix(PIN)?.split_once('.')
+}

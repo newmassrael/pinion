@@ -62,6 +62,7 @@ from rpc_verify import (  # noqa: E402
     form_part_prefixes,
     form_part_tag,
     palette_seats,
+    pin_tag,
     run_demo,
     voice_defects,
     voice_partition_sum,
@@ -502,7 +503,7 @@ def body() -> None:
         made_tag = card_tag(tf, made)
         assert_eq(rows_grown[made_tag]["voice"], "announced")
         assert_eq(rows_grown[f"{made_tag}.id"]["voice"], "silent")
-        assert_eq(rows_grown[f"lab.pin.{made}.dial"]["voice"], "announced")
+        assert_eq(rows_grown[pin_tag(tf, made, "dial")]["voice"], "announced")
         tf.invoke(f"{EXT}/delete_node", made)
         # ★ Put the selection back first. A delete moves it to another card, and
         # the inspector then shows THAT card's form — a different number of

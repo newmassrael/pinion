@@ -5355,6 +5355,81 @@ def palette_verb(tf, verb: str, held: Any, *, ext: str = "/external") -> str:
     return f'{screen_spec(tf, ext)["palette_addresses"]["verb"]}{verb}.{held}'
 
 
+def pin_prefix(tf, *, ext: str = "/external") -> str:
+    """The prefix every pin of every card on the node graph is painted under.
+
+    ★★★★★ R2108 — a PREFIX and not a roster, and this family forces it harder
+    than the palette's four did: its population is the cards times their pins
+    times whatever a split has put under them, so a roster of it would be a
+    table that changes on every gesture. The live register at the `pins` read
+    path IS that table and carries each pin's own `tag`, so a walk asking about
+    a pin the canvas HOLDS reads the address there; this is for the other case —
+    a pin on a card about to be made, just deleted, or asserted absent.
+
+    Ask once and hold it when classifying a whole snapshot; [`pin_tag`] and
+    [`pin_of`] are the per-address doors.
+    """
+    return screen_spec(tf, ext)["pin_addresses"]["prefix"]
+
+
+def pin_address(prefix: str, card: str, word: str) -> str:
+    """The address the pin `word` names on the card called `card`, composed onto
+    a prefix the caller already holds.
+
+    ★★★★★ R2108 — the walks' half of the pin address declaration: **39 sites
+    across fourteen walks** typed one of these out.
+
+    ⚠ The head of the ANALYSIS-TOOL families, not of `--owed`, which is a
+    distinction the last four instalments each blurred. Measured at entry,
+    `chart.inspect` (53) and `chart.series` (43) are larger and live in
+    `hello_chart_*` — another screen. Standing rule 6 puts this tool first, so
+    the choice was right and the looser sentence would not have been.
+
+    `word` is the screen's own pin vocabulary — `dial`, `accept`, or one of
+    those with a member's name behind a dot — the same spelling `split_pin`
+    accepts and the accessibility tree carries.
+
+    ⚠ PURE, and paired with [`pin_tag`] for the reason `toolbar_seats` and
+    `toolbar_tag` are a pair: several of these walks compose one address per
+    card of the opening graph, and going through the wire for each would be a
+    query per card to learn a prefix that does not change. The shape a caller
+    has decides which door it comes in at, and neither is a second copy of the
+    rule.
+    """
+    return f"{prefix}{card}.{word}"
+
+
+def pin_tag(tf, card: str, word: str, *, ext: str = "/external") -> str:
+    """The address the pin `word` names on the card called `card`.
+
+    ★★★★★ R2108 — [`pin_address`]'s other door, for a walk that wants one
+    address rather than a family of them. `card_tag` is the same convenience one
+    family over.
+    """
+    return pin_address(pin_prefix(tf, ext=ext), card, word)
+
+
+def pin_of(prefix: str, tag: str) -> Optional[tuple]:
+    """The card and the pin word a painted address names, or `None` when the tag
+    is not one of that family.
+
+    ★★★★★ R2108 — [`pin_tag`]'s inverse, PURE over the prefix a caller already
+    holds, because its callers run it over every tag in a snapshot and a round
+    trip per tag is a round trip per mark on the screen.
+
+    ⚠ It splits at the FIRST dot, which is the screen's own rule and not a
+    convenience. R1915 measured the other choice: a reader splitting at the last
+    one reads `accept.host` as a member word `host` on a card named
+    `<name>.accept`, matches nothing, and reports that the screen painted no
+    such pin. A card's name cannot carry a dot, which is what makes splitting
+    first correct rather than merely different.
+    """
+    if not tag.startswith(prefix):
+        return None
+    card, dot, word = tag[len(prefix) :].partition(".")
+    return (card, word) if dot else None
+
+
 def access_node_by_tag(result: Any, tag: str) -> Optional[dict]:
     """The `scene/access` node carrying this `tag`, or `None` when absent.
 

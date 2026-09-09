@@ -1264,7 +1264,14 @@ const PAL_HEAD_H: u32 = 22;
 /// be the tallest thing on a heading line — a heading is not a toolbar.
 const PAL_INK_CHIP: u32 = 12;
 /// A pin's diameter.
-const PIN: u32 = 11;
+///
+/// ★★★★★ R2108 — `PIN_D` and not `PIN`, which now belongs to
+/// [`address::PIN`], the prefix this screen paints a pin's tag under. The
+/// compiler would not have refused the pair — one is this module's `const` and
+/// the other another module's — so the collision would have been SILENT, and a
+/// reader of this file would have met one word meaning a length on one line and
+/// an address on the next.
+const PIN_D: u32 = 11;
 /// The zoom range, in percent, and the step a press moves it.
 const ZOOM_MIN: u32 = 25;
 const ZOOM_MAX: u32 = 400;
@@ -5327,7 +5334,7 @@ fn drawn_boxes(state: &LabState) -> Vec<((i32, i32), Extent)> {
 /// pressed at all — the painted screen offered a control the pointer could
 /// never reach, which is the class this round exists to make visible.
 fn pin_rect(state: &LabState, card: Rect, dial: bool) -> Rect {
-    let pin = scaled(state, PIN).max(3);
+    let pin = scaled(state, PIN_D).max(3);
     // ★ R1656 — the header's HALF, read from the same derivation the card is
     // built from. It was `scaled(CARD_HDR)/2` against a constant the card no
     // longer uses, which is one fact in two places by construction.
@@ -6188,7 +6195,7 @@ impl Hit {
             .stack_at(wx, wy)
             .filter(|(tag, _)| {
                 tag.starts_with("lab.node.")
-                    || tag.starts_with("lab.pin.")
+                    || tag.starts_with(address::PIN)
                     || tag.starts_with("lab.link.")
                     // ★★★★★ R2001 — the advanced-fold chip's own family. A
                     // filter that drops a family HIDES it from every press,
@@ -6295,7 +6302,7 @@ impl Hit {
         // R1885 — read BEFORE the `lab.node.` prefix below, which would
         // otherwise swallow `lab.node.build.reference` and look for a card of
         // that name. The longer prefix wins, which is the rule this router
-        // already follows for `lab.pin.` and `lab.link.endpoint.`.
+        // already follows for [`address::PIN`] and `lab.link.endpoint.`.
         if let Some(word) = tag.strip_prefix("lab.node.build.")
             && let Some(stack) = Stack::from_word(word)
         {
@@ -6326,20 +6333,24 @@ impl Hit {
         {
             return Self::Node(id);
         }
-        // ★★★★★ R1915 — `lab.pin.<card>.<pin>[.<member>…]`, split at the FIRST
-        // dot after the card's name rather than the last.
+        // ★★★★★ R1915 — a pin address is split at the FIRST dot after the
+        // card's name rather than the last.
         //
         // 🟥 `rsplit_once` was the defect: it read the last dotted segment as
-        // the side, so `…accept.host` resolved its side to `host`, matched
-        // nothing and answered `Nothing` — a member pin that was drawn,
+        // the side, so an `accept.host` member resolved its side to `host`,
+        // matched nothing and answered `Nothing` — a member pin that was drawn,
         // announced, and unreachable by any press. The card's name cannot
         // contain a dot (`node_of` is asked, so an unknown name still answers
         // nothing), which is what makes splitting at the first dot correct
         // rather than merely different.
-        if let Some(rest) = tag.strip_prefix("lab.pin.")
-            && let Some((name, address)) = rest.split_once('.')
+        //
+        // ★★★★★ R2108 — and that rule is [`address::pin_of`]'s now, beside the
+        // composition it inverts. It was stated in this arm and re-derived by
+        // every other reader of the family, one of which (the paint sweep's
+        // `must_answer`) had made exactly the choice this comment warns about.
+        if let Some((name, word)) = address::pin_of(tag)
             && let Some(node) = state.node_of(name)
-            && let Some((side, at)) = pin_address(address).ok()
+            && let Some((side, at)) = pin_address(word).ok()
         {
             return Self::Pin { node, side, at };
         }
@@ -10762,10 +10773,10 @@ fn palette_legend(ink: Ink) -> Vec<Scene> {
         // position, exactly as R1859 found on the inspector's rename row.
         children.push(box_at(
             &address::palette_pin(kind),
-            band_in(row, row.x, PIN, PIN),
+            band_in(row, row.x, PIN_D, PIN_D),
             if *kind == "dial" { colour } else { ink.surface },
             Some(colour),
-            PIN / 2,
+            PIN_D / 2,
         ));
         children.push(label(
             *meaning,
@@ -13076,6 +13087,14 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, ink: Ink) -> Vec<Scen
         // pin a person sees, the word `pins_wire` publishes, the legend beside
         // the canvas and the refusal the document gives are one fact.
         let wears = |side: Side| pin_appearance(state, node, side);
+        // ★★★★★ R2108 — the last segment of a pin's ADDRESS is [`pin_word`]'s
+        // output and not the appearance word beside it. The two vocabularies
+        // share the letters `dial` and `accept` and mean different things —
+        // what a pin IS, and how it is drawn — so composing the tag from the
+        // appearance would agree by coincidence for two of three words and
+        // disagree for `closed`. The router parses `pin_word`'s output back, so
+        // that is what the address is made of.
+        let root = PortPath::root(0);
         // ★ R1961 — the node's OWN socket type, through the one function that
         // turns a transport into one. The `unwrap_or(Transport::Tcp)` that
         // stood here answered for two different absences with one colour — a
@@ -13098,11 +13117,11 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, ink: Ink) -> Vec<Scen
             });
         if wears(Side::Output) == Some("dial") {
             children.push(box_at(
-                &format!("lab.pin.{name}.dial"),
+                &address::pin(&name, &pin_word(Side::Output, &root)),
                 pin_rect(state, card, true),
                 ink.accent,
                 Some(ink.accent),
-                PIN / 2,
+                PIN_D / 2,
             ));
         }
         // ★ R2084 — every card has an accepting side now, so what varies is
@@ -13123,7 +13142,7 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, ink: Ink) -> Vec<Scen
             // `lit` publishes it.
             let lit = state.rewire_targets.borrow().contains(&node);
             children.push(box_at(
-                &format!("lab.pin.{name}.accept"),
+                &address::pin(&name, &pin_word(Side::Input, &root)),
                 pin_rect(state, card, false),
                 ink.surface,
                 Some(if lit {
@@ -13135,7 +13154,7 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, ink: Ink) -> Vec<Scen
                 } else {
                     ink.text_3
                 }),
-                PIN / 2,
+                PIN_D / 2,
             ));
         }
         // ★★★★★ R1914 — the pins a SPLIT put there, under the parent's place.
@@ -13156,7 +13175,7 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, ink: Ink) -> Vec<Scen
                     // same function `Hit::of_tag` parses back and the same one
                     // `split_pin` accepts. One spelling, so a client can press
                     // what it read.
-                    &format!("lab.pin.{name}.{}", pin_word(side, &path)),
+                    &address::pin(&name, &pin_word(side, &path)),
                     member_pin_rect(state, card, dial, ordinal),
                     ink.surface,
                     // ★★★★★ R1926 — the MEMBER's own type colour, asked of the
@@ -13174,7 +13193,7 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, ink: Ink) -> Vec<Scen
                             .own()
                             .map_or(ink.text_3, ink_of),
                     ),
-                    PIN / 2,
+                    PIN_D / 2,
                 ));
             }
         }
@@ -18252,6 +18271,21 @@ fn palette_addresses_wire() -> serde_json::Value {
     })
 }
 
+/// ★★★★★ R2108 — the prefix every pin of every card is painted under.
+///
+/// A PREFIX and not a roster, which is [`palette_addresses_wire`]'s answer to
+/// the same question and forced here for a sharper reason than there: this
+/// family's population is the cards times their pins times whatever a split has
+/// put under them, so a roster of it would be a table that changes on every
+/// gesture. The live register at the `pins` read path is that table, and it
+/// already carries each pin's own `tag` — so a walk asking about a pin the
+/// canvas HOLDS reads the address, and a walk asking about one it is about to
+/// make, has just deleted, or is asserting the absence of composes it from
+/// here. The harness's `card_prefix` draws the same line one family over.
+fn pin_addresses_wire() -> serde_json::Value {
+    serde_json::json!({ "prefix": address::PIN })
+}
+
 /// ★★★★★ R2053 — the prefix each part of a form row is addressed under.
 ///
 /// Its own function for the reason the rosters beside it have one — the
@@ -18628,6 +18662,15 @@ fn spec_json() -> serde_json::Value {
         // chosen colours. That last one nothing would have caught: the two
         // would have sat on one wire under one word meaning different things.
         "palette_addresses": palette_addresses_wire(),
+        // ★★★★★ R2108 — **the prefix a card's pins are painted under.**
+        //
+        // ⚠ Under `pin_addresses` and not `pins`, which is taken by the LIVE
+        // register on the introspection path — the pins the canvas is holding
+        // right now, each beside its own address. The three namespaces R2106
+        // had to check were all clear for the bare word in this table; the
+        // fourth, which R2108 found, was this crate's own `const PIN` — a pin's
+        // diameter — and nothing but a reader would ever have caught that one.
+        "pin_addresses": pin_addresses_wire(),
         "addable": spec::ADDABLE,
         "gestures": spec::GESTURES.iter().map(|(g, w)| serde_json::json!([g, w])).collect::<Vec<_>>(),
         // ★ R1678 — the reset affordances, and which of them are CONDITIONAL.
@@ -21309,7 +21352,8 @@ fn land_on_wire(state: &Rc<LabState>, between: (NodeId, NodeId), node: NodeId) {
 /// The pin vocabulary is [`pin_address`]'s, because a pin is a pin whichever
 /// verb reaches for it, and the card's name is split at the FIRST dot — a card
 /// name cannot contain one and a pin address can, which is the same rule the
-/// press path follows for `lab.pin.` tags.
+/// press path follows for a pin's tag — [`address::pin_of`], which is where
+/// that rule lives since R2108.
 fn pin_socket(state: &LabState, word: &str) -> Result<(Side, Socket), InvokeError> {
     let (card, address) = word
         .trim()
@@ -25604,7 +25648,7 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
         // painter reads it as `unwrap_or(Role::Peer)` and draws both pins. So
         // one fact had two accounts: the pins were on the frame and announced
         // by nothing. Measured the moment the paint sweep first stood inside a
-        // subgraph: *lab.pin.Group Output.accept (unvoiced)*, and the voice
+        // subgraph: *the accepting pin of `Group Output` (unvoiced)*, and the voice
         // census is total, so an unclassified region is a reader told nothing.
         //
         // ⚠ Stated rather than left: `Peer` was the painter's word for "a card
@@ -25651,32 +25695,36 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
         };
         if shows(Side::Output, 0) {
             nodes.push(
-                AccessNode::new(format!("lab.pin.{name}.dial"), AriaRole::Button).with_name(
-                    pin_announcement(
-                        state,
-                        node,
-                        PortRef::output(0),
-                        &name,
-                        "dial pin",
-                        "drag to author a link",
-                    ),
-                ),
+                AccessNode::new(
+                    address::pin(&name, &pin_word(Side::Output, &PortPath::root(0))),
+                    AriaRole::Button,
+                )
+                .with_name(pin_announcement(
+                    state,
+                    node,
+                    PortRef::output(0),
+                    &name,
+                    "dial pin",
+                    "drag to author a link",
+                )),
             );
         }
         // ★ R2084 — `shows` alone: every card has an accepting side now, and
         // whether its pin is there is the crate's own answer about this node.
         if shows(Side::Input, 0) {
             nodes.push(
-                AccessNode::new(format!("lab.pin.{name}.accept"), AriaRole::Button).with_name(
-                    pin_announcement(
-                        state,
-                        node,
-                        PortRef::input(0),
-                        &name,
-                        "accept pin",
-                        "drop a link here",
-                    ),
-                ),
+                AccessNode::new(
+                    address::pin(&name, &pin_word(Side::Input, &PortPath::root(0))),
+                    AriaRole::Button,
+                )
+                .with_name(pin_announcement(
+                    state,
+                    node,
+                    PortRef::input(0),
+                    &name,
+                    "accept pin",
+                    "drop a link here",
+                )),
             );
         }
         // ★★★★★ R1914 — a member pin a split put on the frame is a thing on
@@ -25687,7 +25735,7 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
             for (path, port) in member_pins(state, node, side) {
                 nodes.push(
                     AccessNode::new(
-                        format!("lab.pin.{name}.{}", pin_word(side, &path)),
+                        address::pin(&name, &pin_word(side, &path)),
                         AriaRole::Button,
                     )
                     .with_name(format!("{name} {word} pin — its {} half", port.name)),
@@ -25773,10 +25821,7 @@ fn drawn_pins(state: &LabState, node: NodeId) -> Vec<(String, String)> {
                 continue;
             }
             if let Some(tip) = doc.port_tooltip(state.here(), node, side, &path) {
-                out.push((
-                    format!("lab.pin.{name}.{}", pin_word(side, &path)),
-                    tip.sentence(),
-                ));
+                out.push((address::pin(&name, &pin_word(side, &path)), tip.sentence()));
             }
         }
     }
@@ -25810,8 +25855,8 @@ fn drawn_pins(state: &LabState, node: NodeId) -> Vec<(String, String)> {
 ///
 /// ⚠ Carried as a member's own flag rather than recovered from the tag's
 /// prefix at each reader, which is the address-retyping class this tree has
-/// been paying off since R2049: a predicate spelling `lab.pin.` here would be
-/// a second, silent definition of what a pin is.
+/// been paying off since R2049: a predicate spelling the pin prefix here would
+/// be a second, silent definition of what a pin is.
 fn card_stops(state: &LabState, node: NodeId) -> Vec<Member> {
     let mut stops: Vec<Member> = Vec::new();
     for (tag, _) in drawn_pins(state, node) {
@@ -28381,7 +28426,7 @@ fn pins_wire(state: &Rc<LabState>) -> serde_json::Value {
                     "pin": pin_word(side, &root),
                     // The painted address, so a walk aims at what it read
                     // rather than re-typing a prefix (R2049's rule).
-                    "tag": format!("lab.pin.{name}.{}", pin_word(side, &root)),
+                    "tag": address::pin(&name, &pin_word(side, &root)),
                     "appearance": worn,
                 }));
             }
@@ -28390,7 +28435,7 @@ fn pins_wire(state: &Rc<LabState>) -> serde_json::Value {
                 rows.push(serde_json::json!({
                     "card": name,
                     "pin": word,
-                    "tag": format!("lab.pin.{name}.{word}"),
+                    "tag": address::pin(&name, &word),
                     "appearance": serde_json::Value::Null,
                 }));
             }
@@ -28792,11 +28837,9 @@ fn pin_description_shown(state: &LabState) -> Option<(String, String)> {
     // a window nobody is pointing at, which is the state R1916 measured on the
     // running shell before this guard existed.
     let hovered = match Hit::at(state, cursor.0, cursor.1) {
-        Hit::Pin { node, side, at } if state.pointer_inside.get() => Some(format!(
-            "lab.pin.{}.{}",
-            state.name_of(node),
-            pin_word(side, &at)
-        )),
+        Hit::Pin { node, side, at } if state.pointer_inside.get() => {
+            Some(address::pin(&state.name_of(node), &pin_word(side, &at)))
+        }
         _ => None,
     };
     // ★★★★★ The KEYBOARD reader's half, and it is not decoration. The behaviour

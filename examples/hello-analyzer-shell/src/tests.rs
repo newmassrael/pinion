@@ -9415,6 +9415,11 @@ fn r2105_the_shell_does_not_spell_the_labs_addresses() {
     const TOOLBAR: &str = concat!("\"lab.", "toolbar\"");
     const PALETTE: &str = concat!("\"lab.", "palette\"");
     const PALETTE_ANY: &str = concat!("lab.", "palette.");
+    // ★★★★★ R2108 — the pins, and a STEM like the palette's for the same reason
+    // the palette needs one: this family has no closed roster to name. Its
+    // members are the cards times their pins times whatever a split has put
+    // under them, so what a re-spelled member would be is not any one address.
+    const PIN_ANY: &str = concat!("lab.", "pin.");
     let spellers: Vec<(&str, usize)> = shell_sources()
         .iter()
         .map(|(name, body)| {
@@ -9423,7 +9428,8 @@ fn r2105_the_shell_does_not_spell_the_labs_addresses() {
                 body.matches(INSPECTOR).count()
                     + body.matches(TOOLBAR).count()
                     + body.matches(PALETTE).count()
-                    + body.matches(PALETTE_ANY).count(),
+                    + body.matches(PALETTE_ANY).count()
+                    + body.matches(PIN_ANY).count(),
             )
         })
         .filter(|(_, count)| *count > 0)

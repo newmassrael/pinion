@@ -64,6 +64,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    pin_tag,
     run_demo,
 )
 
@@ -144,7 +145,7 @@ def body() -> None:
 
         banner("B/C — resting on a pin draws one, and announces it")
         subject = sorted(cards(app, surface))[0]
-        pin = f"lab.pin.{subject}.dial"
+        pin = pin_tag(app, subject, "dial", ext=surface)
         ok(f"B: the pin is on the frame ({pin})", pin in boxes(app))
         app.hover(path=pin)
         app.tick_ms(16)
@@ -180,7 +181,7 @@ def body() -> None:
         )
         app.invoke(f"{surface}/split_pin", f"{splittable},dial")
         app.tick_ms(16)
-        half = f"lab.pin.{splittable}.dial.host"
+        half = pin_tag(app, splittable, "dial.host", ext=surface)
         ok(f"E: the member pin is on the frame ({half})", half in boxes(app))
         app.hover(path=half)
         app.tick_ms(16)

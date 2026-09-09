@@ -57,7 +57,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcSubprocess, abs_rects_of, run_demo  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    RpcSubprocess,
+    abs_rects_of,
+    pin_address,
+    pin_prefix,
+    run_demo,
+)
 
 SHELL = "hello-analyzer-shell"
 EXT = "/external"
@@ -131,6 +137,8 @@ def body() -> None:
             app.query(f"{EXT}/nav") == SEAT,
         )
         surface = surface_of(app, SEAT)
+        # ★★★★★ R2108 — the prefix a card's pins hang off, from the screen.
+        pins = pin_prefix(app, ext=surface)
 
         banner("A — every card answers, and all FOUR words are reached")
         rows = verdicts(app, surface)
@@ -261,7 +269,9 @@ def body() -> None:
             no_pin = "no accept pin" in (row["because"] or "")
             if no_pin or "·" in name:
                 continue
-            app.pointer_button("left", "down", path=f"lab.pin.{name}.accept")
+            app.pointer_button(
+                "left", "down", path=pin_address(pins, name, "accept")
+            )
             app.tick_ms(16)
             held_now = rewire(app, surface)
             found = {
@@ -275,7 +285,7 @@ def body() -> None:
             if len(found) == 2:
                 standing_now, carried, both = name, held_now, found
                 break
-            app.pointer_button("left", "up", path=f"lab.pin.{name}.accept")
+            app.pointer_button("left", "up", path=pin_address(pins, name, "accept"))
             app.tick_ms(16)
         ok(
             f"D: the wire is in the hand — carried={carried['carried']}, "
@@ -305,7 +315,7 @@ def body() -> None:
             reached == {"standing", "takes", "grows", "refuses"},
         )
         for verdict, name in sorted(both.items()):
-            app.hover(at=centre(app, f"lab.pin.{name}.accept"))
+            app.hover(at=centre(app, pin_address(pins, name, "accept")))
             app.tick_ms(16)
             heard = said(app, surface)
             wanted = "will take it" if verdict == "takes" else "will grow a pin"
@@ -332,7 +342,9 @@ def body() -> None:
             f"{len(held)}",
             lit != [] and len(lit) < len(held),
         )
-        app.pointer_button("left", "up", at=centre(app, f"lab.pin.{standing_now}.accept"))
+        app.pointer_button(
+            "left", "up", at=centre(app, pin_address(pins, standing_now, "accept"))
+        )
         app.tick_ms(16)
 
     print(f"\n{len(CHECKS)} check(s) held.")

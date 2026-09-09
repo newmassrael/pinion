@@ -55,6 +55,7 @@ from rpc_verify import (  # noqa: E402
     assert_router_press_moves,
     card_prefix,
     inspector_seats,
+    pin_tag,
     run_demo,
 )
 
@@ -157,7 +158,7 @@ def body() -> None:
         wired = set(cards(tf)["P-03"]["pins"]["wired"])
         assert wired, "★ P-03 has a wired pin, or this check measures nothing"
         for side in ("dial", "accept"):
-            tag = f"lab.pin.P-03.{side}"
+            tag = pin_tag(tf, "P-03", side)
             if side not in wired:
                 assert tag not in painted, (
                     f"★ {tag} is unwired, and a collapsed card shows only its "

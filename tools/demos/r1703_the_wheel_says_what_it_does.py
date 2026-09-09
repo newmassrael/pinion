@@ -64,6 +64,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     card_tag,
+    pin_tag,
     run_demo,
 )
 
@@ -188,8 +189,8 @@ def hint_strip_gestures(tf: RpcSubprocess) -> int:
             tf.drag(from_at=here, to_at=(here[0] + 40, here[1] + 24))
         elif name == "drag a pin":
             tf.drag(
-                from_at=centre(shot["lab.pin.Q-01.dial"]),
-                to_at=centre(shot["lab.pin.P-02.accept"]),
+                from_at=centre(shot[pin_tag(tf, "Q-01", "dial")]),
+                to_at=centre(shot[pin_tag(tf, "P-02", "accept")]),
             )
         # ★★★★★ R2082 — the two membership gestures. Held through
         # `scene/modifiers`, the shell's absolute cache, which is how a chord

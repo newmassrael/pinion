@@ -506,7 +506,7 @@ const STATES: &[SweptState] = &[
 //     declared elements (the two host frames, their captions, the two group
 //     pins) cannot be painted from inside a subgraph. `spec::VOICE` and its
 //     siblings would have to say WHICH screen they describe.
-//   * `r1691` — `lab.pin.Group Output.accept` is unvoiced: an interface card's
+//   * `r1691` — the accepting pin of `Group Output` is unvoiced: an interface card's
 //     pins are painted by the same code as any card's and the voice table has
 //     no row for them.
 //   * `r1655` (drag) — dragging `Group Output` moves nothing; an interface end
@@ -1146,7 +1146,7 @@ fn declared_tags(state: &LabState) -> Vec<String> {
             .resolved_ports(state.here(), node, pinion_node_graph::Side::Output)
             .is_empty()
         {
-            want.push(format!("lab.pin.{id}.dial"));
+            want.push(super::address::pin(&id, "dial"));
         }
         // ★★★★★ R2084 — **and its accepting side, on the same derivation.**
         //
@@ -1167,7 +1167,7 @@ fn declared_tags(state: &LabState) -> Vec<String> {
             .resolved_ports(state.here(), node, pinion_node_graph::Side::Input)
             .is_empty()
         {
-            want.push(format!("lab.pin.{id}.accept"));
+            want.push(super::address::pin(&id, "accept"));
         }
     }
     if let Some(form) = super::selected_form(state) {
@@ -1296,9 +1296,34 @@ fn must_answer(tag: &str) -> Option<String> {
             return Some(format!("{family}.{rest}"));
         }
     }
-    if let Some(rest) = tag.strip_prefix("lab.pin.") {
-        let (node, side) = rest.rsplit_once('.')?;
-        return Some(format!("pin:{node}:{side}"));
+    // ★★★★★ R2108 — the screen's own inverse, and this line is why the
+    // composition and the parse are declared as a PAIR. What stood here split
+    // at the LAST dot, which is the defect R1915 measured in the router and
+    // wrote a paragraph about: a member pin's address ends in the member's
+    // name, so `<card>.accept.host` answered `pin:<card>.accept:host` while
+    // `Hit::of_tag` resolves `pin:<card>:accept.host`. Two derivations that
+    // this function exists to make meet, disagreeing — and the comment warning
+    // against it lived twelve thousand lines away, in the other reader.
+    //
+    // ⚠ It was LATENT, and that is MEASURED rather than inferred from the
+    // repair: restoring the last-dot split and running this crate's suite
+    // leaves it at 245 passed, 0 failed. Nothing in [`STATES`] takes a pin
+    // apart, so no member address has ever been painted here and this arm has
+    // never been asked about one. ⇒ the repair above is *correct* and
+    // *ungated*, and the second half is its own debt: every general gate on
+    // this screen describes a screen where no pin has come apart.
+    //
+    // ⚠⚠ The dates were measured too, and they are worse than the natural
+    // reading. `git log -S` puts this split at **R1653**, so it stood for 455
+    // rounds — and R1915's own commit EDITED THIS FILE, changing eleven lines a
+    // few screens below to lift `r1655`'s hit description to `pin_word(side,
+    // at)` with the comment *"the member is in the word"*. The round that named
+    // the rule applied it here and did not see the same defect in the same
+    // file, twenty screens up. ⇒ the class is not "one wrong letter is silent";
+    // it is "a reader who has just named the rule does not see the second
+    // copy", which is what a declaring site is for.
+    if let Some((node, word)) = super::address::pin_of(tag) {
+        return Some(format!("pin:{node}:{word}"));
     }
     if let Some(rest) = tag.strip_prefix("lab.node.")
         && !rest.contains('.')
@@ -1418,7 +1443,7 @@ fn owning_pane(tag: &str) -> Option<Rect> {
         || tag.starts_with("lab.gate")
         || tag.starts_with("lab.hint")
         || tag.starts_with("lab.crumb")
-        || tag.starts_with("lab.pin.")
+        || tag.starts_with(super::address::PIN)
     {
         return Some(canvas_rect());
     }
@@ -1446,7 +1471,7 @@ fn is_graph_content(tag: &str) -> bool {
     tag.starts_with("lab.node.")
         || tag.starts_with("lab.frame.")
         || tag.starts_with("lab.link.")
-        || tag.starts_with("lab.pin.")
+        || tag.starts_with(super::address::PIN)
         || tag.starts_with("lab.gate")
 }
 
@@ -1915,7 +1940,7 @@ fn r2001_the_advanced_chip_sits_on_the_card_it_folds_and_a_wired_pin_stays() {
             after.h
         );
         assert!(
-            !shot.tags.contains_key(&format!("lab.pin.{name}.dial")),
+            !shot.tags.contains_key(&super::address::pin(&name, "dial")),
             "★★★★★ the folded pin is off the frame, which is the whole point \
              of the class"
         );
@@ -1933,7 +1958,7 @@ fn r2001_the_advanced_chip_sits_on_the_card_it_folds_and_a_wired_pin_stays() {
         super::release(&state);
         let shot = painted(&state);
         assert!(
-            shot.tags.contains_key(&format!("lab.pin.{name}.dial")),
+            shot.tags.contains_key(&super::address::pin(&name, "dial")),
             "★ unfolded, the pin is drawn again — and it was a PRESS on the \
              chip that did it"
         );
@@ -1951,7 +1976,8 @@ fn r2001_the_advanced_chip_sits_on_the_card_it_folds_and_a_wired_pin_stays() {
         super::classify_pin(&state, router, "accept", "advanced").expect("a person may");
         let shot = painted(&state);
         assert!(
-            shot.tags.contains_key("lab.pin.R-01.accept"),
+            shot.tags
+                .contains_key(&super::address::pin("R-01", "accept")),
             "★★★★★ folding a class must not hide a socket a wire ends on — a \
              fold that did would leave the wire ending in mid-air"
         );
@@ -2216,7 +2242,8 @@ fn r2084_the_register_and_the_paint_name_the_same_pins(
             let Some(tag) = node.tag.as_deref() else {
                 return;
             };
-            if let (true, Some(border)) = (tag.starts_with("lab.pin."), node.style.border) {
+            if let (true, Some(border)) = (tag.starts_with(super::address::PIN), node.style.border)
+            {
                 borders.insert(tag.to_owned(), border.color);
             }
         }
@@ -2248,7 +2275,11 @@ fn r2084_the_register_and_the_paint_name_the_same_pins(
         "★ and the comparison is not vacuous: {compared} pin(s) of cards the \
          window holds were checked"
     );
-    for tag in shot.tags.keys().filter(|t| t.starts_with("lab.pin.")) {
+    for tag in shot
+        .tags
+        .keys()
+        .filter(|t| t.starts_with(super::address::PIN))
+    {
         assert!(
             rows.iter()
                 .any(|row| row["tag"].as_str() == Some(tag.as_str())),
@@ -2261,7 +2292,7 @@ fn r2084_the_register_and_the_paint_name_the_same_pins(
     let mut closed_inks: BTreeSet<[u8; 4]> = BTreeSet::new();
     let mut open_inks: BTreeSet<[u8; 4]> = BTreeSet::new();
     for (card, worn) in accepting.iter().filter(|(card, _)| on_screen(card)) {
-        let tag = format!("lab.pin.{card}.accept");
+        let tag = super::address::pin(card, "accept");
         let ink = *borders.get(&tag).unwrap_or_else(|| {
             panic!("{tag} is painted with a border, which is where its identity lives")
         });
@@ -2752,7 +2783,7 @@ fn r1653_the_painted_screen_invented_nothing() {
             ("lab.observed.", Some(spec::OBSERVED.len())),
             ("lab.gate", None),
             ("lab.node.", None),
-            ("lab.pin.", None),
+            (super::address::PIN, None),
             ("lab.frame.", None),
             (form_stem.as_str(), None),
             (super::address::INSPECTOR_SEAT, None),
@@ -3108,8 +3139,8 @@ fn r1969_a_dial_lands_on_an_accept_of_another_scheme_and_the_link_is_authored() 
         drag_between(
             &state,
             &shot,
-            &format!("lab.pin.{dialer}.dial"),
-            &format!("lab.pin.{acceptor}.accept"),
+            &super::address::pin(dialer, "dial"),
+            &super::address::pin(acceptor, "accept"),
         );
         assert_eq!(
             link_count(&state),
@@ -4443,7 +4474,12 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         press_tag(state, &painted(state), crate::address::INSPECTOR_RENAME);
     }),
     ("author a link", |state, shot| {
-        drag_between(state, shot, "lab.pin.S-01.dial", "lab.pin.P-02.accept");
+        drag_between(
+            state,
+            shot,
+            &crate::address::pin("S-01", "dial"),
+            &crate::address::pin("P-02", "accept"),
+        );
     }),
     // ★★ R1681 — a link's life. The act seat is painted on the PICKED link, so
     // each of these picks one with the pointer first: pressing the wire is how
@@ -4462,8 +4498,8 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         drag_between(
             state,
             &painted(state),
-            "lab.pin.R-01.accept",
-            "lab.pin.P-03.accept",
+            &crate::address::pin("R-01", "accept"),
+            &crate::address::pin("P-03", "accept"),
         );
     }),
     ("select a link endpoint", |state, shot| {
@@ -4548,8 +4584,8 @@ fn press_wire(state: &std::rc::Rc<LabState>, shot: &Painted, from: &str, to: &st
                 .unwrap_or_else(|| panic!("{tag} is painted, so the wire has an end there")),
         )
     };
-    let a = seat(format!("lab.pin.{from}.dial"));
-    let b = seat(format!("lab.pin.{to}.accept"));
+    let a = seat(super::address::pin(from, "dial"));
+    let b = seat(super::address::pin(to, "accept"));
     let at = (u32::midpoint(a.0, b.0), u32::midpoint(a.1, b.1));
     super::move_cursor(state, at.0, at.1);
     super::press(state);
@@ -4990,7 +5026,12 @@ const HINT_GESTURES: &[HintDriver] = &[
         },
     ),
     ("drag a pin", "author a link", |state, shot| {
-        drag_between(state, shot, "lab.pin.Q-01.dial", "lab.pin.P-02.accept");
+        drag_between(
+            state,
+            shot,
+            &crate::address::pin("Q-01", "dial"),
+            &crate::address::pin("P-02", "accept"),
+        );
     }),
 ];
 
@@ -7161,7 +7202,7 @@ fn r1691_every_addressable_region_is_classified_in_every_state() {
                 // so every one of them could go silent and 57 would still clear
                 // the floor. What catches that is the classification's
                 // TOTALITY above — which is exactly what named
-                // `lab.pin.Group Output.accept` this round, and then named the
+                // the accepting pin of `Group Output` this round, and then named the
                 // three ghosts the first repair produced.
                 let floor = if state.inside() {
                     55

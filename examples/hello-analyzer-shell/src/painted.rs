@@ -7468,7 +7468,7 @@ fn lab_pins(scene: &Scene) -> BTreeMap<String, Rect> {
     let mut out = BTreeMap::new();
     scene.for_each_node(&mut |visit| {
         if let (Some(tag), Some(rect)) = (visit.node.tag(), visit.absolute_rect())
-            && tag.starts_with("lab.pin.")
+            && tag.starts_with(hello_node_lab::address::PIN)
         {
             out.entry(tag.to_owned()).or_insert(rect);
         }
@@ -9176,8 +9176,12 @@ fn a_wire_is_let_go_over_empty_canvas(state: &std::rc::Rc<ShellState>) -> Waitin
         .tags
         .keys()
         .filter_map(|tag| {
-            let name = tag.strip_prefix("lab.pin.")?.strip_suffix(".dial")?;
-            (!name.contains('.')).then(|| (tag.clone(), name.to_owned()))
+            // ★★★★★ R2108 — the lab's own inverse, so "a card's ROOT dial pin"
+            // is one predicate rather than a prefix, a suffix and a guard that
+            // between them re-derive where the card's name ends. A member pin's
+            // word is `dial.<member>`, which this comparison rejects.
+            let (name, word) = hello_node_lab::address::pin_of(tag)?;
+            (word == "dial").then(|| (tag.clone(), name.to_owned()))
         })
         .min()
         .expect("the opening graph draws at least one dial pin");
@@ -15030,7 +15034,7 @@ fn every_card_has_an_accepting_pin_the_legend_explains(state: &std::rc::Rc<Shell
 /// register published, and inside the canvas a person is looking at.
 fn the_mounted_screen_paints_what_the_register_publishes(closed: &str) {
     let shot = painted();
-    let tag = format!("lab.pin.{closed}.accept");
+    let tag = hello_node_lab::address::pin(closed, "accept");
     let pin = shot.tags.get(&tag).copied().unwrap_or_else(|| {
         panic!(
             "★★★★★ the mounted lab publishes {tag} and the assembled screen \
