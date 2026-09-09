@@ -80,6 +80,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     access_node_by_tag,
     assert_eq,
+    filter_tag,
     run_demo,
 )
 
@@ -203,15 +204,17 @@ def make_refused(tf, example: str) -> str:
         select_afresh(tf, "R-01")
         return refuse(tf, "rename", "R-01,P-01")
     if example == "hello-packet-view":
-        focus_by_tab(tf, "pv.filter.query")
+        # ★★★★★ R2109 — the box's address from the screen, not typed here.
+        box = filter_tag(tf, "query", ext=EXT)
+        focus_by_tab(tf, box)
         for ch in "nosuchcolumn = 1":
             # A single codepoint routes through the character path, which is
             # the door a real keystroke comes in by — a space included.
-            tf.key(path="pv.filter.query", name=ch)
+            tf.key(path=box, name=ch)
         # ★ Typing is live and SILENT here — the list re-derives from the
         # buffer on every keystroke, so there is nothing for it to apply — and
         # Enter is what says where the query got to. R1707's own note.
-        tf.key(path="pv.filter.query", name="Enter")
+        tf.key(path=box, name="Enter")
         return said(tf)["clause"]
     press_tag(tf, "shell.palette.overlay")
     return said(tf)["clause"]

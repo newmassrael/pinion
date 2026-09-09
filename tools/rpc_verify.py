@@ -5355,6 +5355,65 @@ def palette_verb(tf, verb: str, held: Any, *, ext: str = "/external") -> str:
     return f'{screen_spec(tf, ext)["palette_addresses"]["verb"]}{verb}.{held}'
 
 
+def filter_root(tf, *, ext: str = "/external") -> str:
+    """The tag the capture viewer's FILTER BAR itself is painted under.
+
+    ★★★★★ R2109 — published beside the seat roster rather than as its first row,
+    for [`toolbar_root`]'s reason: the container's address is the prefix WITHOUT
+    the separator, so a row for it would hand every later reader a prefix that
+    composes `pv.filterquery`.
+    """
+    return screen_spec(tf, ext)["filter_addresses"]["tag"]
+
+
+def filter_seats(spec: Any) -> dict:
+    """Every FIXED seat of the filter bar, keyed by the word the screen declares
+    it under — from a specification a caller has ALREADY read.
+
+    ★★★★★ R2109 — [`toolbar_seats`]'s pair of doors, for the same reason: a walk
+    holding the specification should not pay a round trip per seat, and one
+    without it should not fetch it by hand.
+
+    ⚠ FIXED only. The saved-filter chips expand over whatever a person has
+    saved, so they are published as a prefix and reached through
+    [`filter_saved`].
+    """
+    return {row["word"]: row["tag"] for row in spec["filter_addresses"]["seats"]}
+
+
+def filter_tag(tf, word: str, *, ext: str = "/external") -> str:
+    """The address the filter bar's seat called `word` is painted under.
+
+    ★★★★★ R2109 — the walks' half of this bar's address declaration: **34 sites
+    across seven walks** typed one of these out, beside 38 in the crate.
+
+    Takes the seat's WORD, which is what the screen declares and the wire
+    publishes, so the address a walk reads and the address the paint used are
+    one spelling by construction. A word the bar does not address is a
+    `KeyError` naming it.
+    """
+    return filter_seats(screen_spec(tf, ext))[word]
+
+
+def filter_saved_prefix(tf, *, ext: str = "/external") -> str:
+    """The prefix every saved-filter chip is painted under.
+
+    ★★★★★ R2109 — a PREFIX because the population is whatever a person has
+    saved. Ask once and hold it when classifying a snapshot by family; use
+    [`filter_saved`] for one chip.
+    """
+    return screen_spec(tf, ext)["filter_addresses"]["saved"]
+
+
+def filter_saved(tf, index, *, ext: str = "/external") -> str:
+    """The address of the saved-filter chip at `index`.
+
+    ★★★★★ R2109 — the chips are `spec["saved_filters"]`, so a walk reads how
+    many there are rather than counting them here.
+    """
+    return f"{filter_saved_prefix(tf, ext=ext)}{index}"
+
+
 def pin_prefix(tf, *, ext: str = "/external") -> str:
     """The prefix every pin of every card on the node graph is painted under.
 

@@ -67,7 +67,11 @@ use crate::VIEW_TAG;
 use crate::spec;
 
 /// Where the filter bar's parts are addressed.
-const FILTER: &str = "pv.filter.";
+///
+/// ★ R2109 — taken from the declaration rather than typed. This const stays
+/// because the table below wants a local name beside its five siblings; what
+/// changed is that a wrong letter here is now impossible rather than silent.
+const FILTER: &str = crate::address::FILTER_SEAT;
 /// Where the session-context strip's parts are addressed.
 const CONTEXT: &str = "pv.context.";
 /// Where the message list's column headers are addressed.

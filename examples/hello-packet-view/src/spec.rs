@@ -2012,12 +2012,12 @@ pub const VOICES: &[VoiceSpec] = &[
     // or off, and a reader who is told "button" and not which way it is set
     // cannot know what the count below is counting.
     VoiceSpec {
-        tag: "pv.filter",
+        tag: crate::address::FILTER,
         role: "group",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "pv.filter.query",
+        tag: crate::address::FILTER_QUERY,
         role: "textbox",
         population: Population::One,
     },
@@ -2028,17 +2028,17 @@ pub const VOICES: &[VoiceSpec] = &[
     // census and the screen read one declaration, so this table cannot check a
     // role somebody typed against a role somebody else typed.
     VoiceSpec {
-        tag: "pv.filter.saved",
+        tag: crate::address::FILTER_SAVED,
         role: pinion_a11y::group_role(SAVED_ROW).aria_name(),
         population: Population::One,
     },
     VoiceSpec {
-        tag: "pv.filter.saved.{}",
+        tag: crate::address::FILTER_SAVED_TEMPLATE,
         role: pinion_a11y::member_role(SAVED_ROW).aria_name(),
         population: Population::SavedFilters,
     },
     VoiceSpec {
-        tag: "pv.filter.count",
+        tag: crate::address::FILTER_COUNT,
         role: "status",
         population: Population::One,
     },
@@ -2168,7 +2168,11 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     // painter tags the run separately from the box so a caret can be placed in
     // it; a reader is told the box's value once, by the box, and a second stop
     // reading the same characters back would be the field announced twice.
-    ("pv.filter.query-text", Population::One, "part_of"),
+    (
+        crate::address::FILTER_QUERY_TEXT,
+        Population::One,
+        "part_of",
+    ),
     // Titles painted inside the pane they name.
     ("pv.tree.title", Population::One, "name_of"),
     ("pv.bytes.title", Population::One, "name_of"),

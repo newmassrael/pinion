@@ -75,9 +75,12 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    filter_saved_prefix,
+    filter_seats,
     png_pixel,
     read_png_rgba8,
     run_demo,
+    screen_spec,
     text_of_tag,
 )
 
@@ -145,22 +148,28 @@ def main() -> None:
 
 def body(tf: RpcSubprocess) -> None:
     checks = 0
+    # ★★★★★ R2109 — the bar's fixed seats by word, and the prefix its saved
+    # chips hang off, both from the screen. Twelve sites in this walk typed one
+    # of these out; a wrong letter in any of them looks for a mark that is not
+    # there, which reads as *the screen did not paint it* rather than as a typo.
+    seat = filter_seats(screen_spec(tf, EXT))
+    saved_at = filter_saved_prefix(tf, ext=EXT)
 
     # ── A. the query bar is a field a person can type in ───────────────────
     print("\n== A. the bar is a real text field ==")
     assert_eq(tf.query(f"{EXT}/query"), "", "the screen opens unfiltered")
     assert_eq(len(kept(tf)), HELD, "and holds the whole capture")
     rects = abs_rects_of(tf.snapshot(source="paint"))
-    box = rects["pv.filter.query"]
+    box = rects[seat["query"]]
     print(f"  the query box is painted at {box}")
 
     stops = walk_tab_ring(tf)
-    assert "pv.filter.query" in stops, f"the box has to be a Tab stop; ring={stops}"
+    assert seat["query"] in stops, f"the box has to be a Tab stop; ring={stops}"
     checks += 1
 
     tf.click(centre(box))
     tf.tick(16)
-    assert_eq(focus_tag(tf), "pv.filter.query", "a press focuses the box")
+    assert_eq(focus_tag(tf), seat["query"], "a press focuses the box")
     checks += 1
 
     # Typed one character at a time, through the key channel a keyboard uses —
@@ -171,7 +180,7 @@ def body(tf: RpcSubprocess) -> None:
     for ch in "type = Query":
         # A single codepoint routes through the character path, which is the
         # door a real keystroke comes in by — a space included.
-        tf.key(path="pv.filter.query", name=ch)
+        tf.key(path=seat["query"], name=ch)
         typed += ch
         if narrowed_at is None and len(kept(tf)) < HELD:
             narrowed_at = typed
@@ -252,12 +261,12 @@ def body(tf: RpcSubprocess) -> None:
     # ── E. the count is derived ────────────────────────────────────────────
     print("\n== E. the count says what the list shows ==")
     tf.invoke(f"{EXT}/filter", tf.query(f"{EXT}/spec")["example_query"])
-    count = text_of_tag(tf, "pv.filter.count")
+    count = text_of_tag(tf, seat["count"])
     assert_eq(count, f"{len(EXPECTED_KEPT)} of {HELD} shown", "the count is derived")
     checks += 1
     tf.invoke(f"{EXT}/filter", "")
     assert_eq(
-        text_of_tag(tf, "pv.filter.count"),
+        text_of_tag(tf, seat["count"]),
         "12,418 / 184,392",
         "unfiltered it is the capture's own scale",
     )
@@ -274,7 +283,7 @@ def body(tf: RpcSubprocess) -> None:
         "the accessibility tree holds the kept rows and no others",
     )
     checks += 1
-    box_node = nodes["pv.filter.query"]
+    box_node = nodes[seat["query"]]
     assert_eq(box_node["role"], "textbox", "the query box announces itself a text box")
     assert box_node.get("value"), f"and says what it holds: {box_node}"
     checks += 1
@@ -311,9 +320,9 @@ def body(tf: RpcSubprocess) -> None:
 
     # Half-typed, through the box: kept on screen rather than flashed away.
     tf.invoke(f"{EXT}/filter", "")
-    tf.click(centre(abs_rects_of(tf.snapshot(source="paint"))["pv.filter.query"]))
+    tf.click(centre(abs_rects_of(tf.snapshot(source="paint"))[seat["query"]]))
     for ch in "type":
-        tf.key(path="pv.filter.query", name=ch)
+        tf.key(path=seat["query"], name=ch)
     assert_eq(
         len(kept(tf)),
         HELD,
@@ -324,7 +333,7 @@ def body(tf: RpcSubprocess) -> None:
     assert fault, "and says, in the bar, that it is not a query yet"
     print(f"  half-typed `type` -> the bar says: {fault}")
     checks += 1
-    assert "pv.filter.fault" in abs_rects_of(tf.snapshot(source="paint")), (
+    assert seat["fault"] in abs_rects_of(tf.snapshot(source="paint")), (
         "the fault is PAINTED — a reason only the wire carries is a reason "
         "the person at the screen does not get"
     )
@@ -336,13 +345,13 @@ def body(tf: RpcSubprocess) -> None:
     spec = tf.query(f"{EXT}/spec")
     for n, saved in enumerate(spec["saved_filters"]):
         rects = abs_rects_of(tf.snapshot(source="paint"))
-        tf.click(centre(rects[f"pv.filter.saved.{n}"]))
+        tf.click(centre(rects[f"{saved_at}{n}"]))
         assert_eq(tf.query(f"{EXT}/query"), saved["query"], f"chip {n} runs its query")
         narrowed = kept(tf)
         assert 0 < len(narrowed) < HELD, f"{saved['name']} kept {narrowed}"
         print(f"  {saved['name']:<18} -> {len(narrowed)} of {HELD}: {narrowed}")
         rects = abs_rects_of(tf.snapshot(source="paint"))
-        tf.click(centre(rects[f"pv.filter.saved.{n}"]))
+        tf.click(centre(rects[f"{saved_at}{n}"]))
         assert_eq(len(kept(tf)), HELD, f"pressing {saved['name']} again clears")
         checks += 2
 

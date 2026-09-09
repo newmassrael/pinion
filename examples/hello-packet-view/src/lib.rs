@@ -37,6 +37,7 @@
 //!
 //! See `tools/demos/r1663_a_field_says_which_bytes.py`.
 
+pub mod address;
 mod judge;
 mod spec;
 
@@ -103,7 +104,7 @@ const VIEW_TAG: &str = "packet_view";
 const MAP_TAG: &str = "pv.map";
 /// R1707 — the query box: the tag the field's own external is addressed by, the
 /// tag its buffer is keyed on, and the tag it is painted under. One name.
-const QUERY_TAG: &str = "pv.filter.query";
+const QUERY_TAG: &str = address::FILTER_QUERY;
 const THEME_TAG: &str = "app";
 
 const APP_BAR_H: u32 = spec::APP_BAR_H;
@@ -1420,9 +1421,7 @@ impl Hit {
         {
             return Self::Header(n);
         }
-        if let Some(n) = tag
-            .strip_prefix("pv.filter.saved.")
-            .and_then(|n| n.parse::<usize>().ok())
+        if let Some(n) = address::filter_saved_index(tag)
             && n < spec::SAVED_FILTERS.len()
         {
             return Self::Saved(n);
@@ -1838,7 +1837,7 @@ fn saved_stops() -> Vec<String> {
 }
 
 /// The bar's own tag — the group node, and the Tab stop the rule derives.
-const SAVED_TAG: &str = "pv.filter.saved";
+const SAVED_TAG: &str = address::FILTER_SAVED;
 
 fn toggle_saved(state: &Rc<ViewState>, n: usize) {
     let mut row = saved_row(state);
@@ -2422,7 +2421,7 @@ fn filter_bar(
     // indistinguishable from one that answered a correct query with no matches.
     if let Some(why) = &fault {
         children.push(tagged_label(
-            "pv.filter.fault",
+            address::FILTER_FAULT,
             why.clone(),
             Rect::new(PAD + QUERY_W + 12, 17, 300, 13),
             FONT_SMALL,
@@ -2473,13 +2472,19 @@ fn filter_bar(
         .with_focusable(row_group.is_a_stop(SAVED_TAG)),
     );
     children.push(tagged_label(
-        "pv.filter.count",
+        address::FILTER_COUNT,
         count_line(state),
         Rect::new(rect.w.saturating_sub(196), 16, 180, 14),
         FONT_SMALL,
         ink.text_2,
     ));
-    panel("pv.filter", rect, ink.surface, Some(ink.outline), children)
+    panel(
+        address::FILTER,
+        rect,
+        ink.surface,
+        Some(ink.outline),
+        children,
+    )
 }
 
 /// ★★★ R1707 — what the bar's right end says.
@@ -4221,6 +4226,32 @@ fn spec_json() -> serde_json::Value {
         "saved_filters": spec::SAVED_FILTERS.iter().map(|f| serde_json::json!({
             "name": f.name, "query": f.query,
         })).collect::<Vec<_>>(),
+        // ★★★★★ R2109 — **the filter bar: its own tag, every fixed seat's, and
+        // the prefix its saved chips hang off.**
+        //
+        // A walk is Python and cannot call `address::filter`, so before this
+        // every walk that drove the bar re-typed the address — measured at
+        // entry, 34 sites across seven walks beside 38 in this crate.
+        //
+        // ⚠ The bar is a `tag` BESIDE the seats rather than their first row,
+        // and that is forced by the recovery rather than chosen: a roster's
+        // prefix is recovered by taking a row's own key off the end of its
+        // address, and the bar's address is the prefix WITHOUT the separator —
+        // a row for it would hand every later reader a prefix that runs the
+        // bar's own tag straight into a seat's word, with no dot between them.
+        //
+        // ⚠⚠ `saved` appears twice on purpose: once as a fixed seat (the chip
+        // row's container, which is a mark and a Tab stop) and once as `saved`,
+        // the prefix its members hang off. They are two different questions
+        // about one word, and a reader that had only the seat would compose a
+        // member address by guessing where the dot goes.
+        "filter_addresses": serde_json::json!({
+            "tag": address::FILTER,
+            "seats": address::FILTER_SEATS.iter().map(|(word, tag)| serde_json::json!({
+                "word": word, "tag": tag,
+            })).collect::<Vec<_>>(),
+            "saved": address::FILTER_SAVED_SEAT,
+        }),
         // ★★★ R1707 — what this screen tells a person the mouse and keyboard
         // do. Published rather than painted: the sibling screen prints a hint
         // strip because the reference's node canvas does, and the reference's
@@ -4590,16 +4621,16 @@ fn app_bar_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
 /// The filter bar: the query box, the saved filters as toggles, and how much of
 /// the capture matched.
 fn filter_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
-    let mut group = AccessNode::new("pv.filter", AriaRole::Group).with_name("Filter");
+    let mut group = AccessNode::new(address::FILTER, AriaRole::Group).with_name("Filter");
     let mut nodes = Vec::new();
     // ★★★ R1707 — the query is a text box, and it announces what it holds and
     // what became of it. A screen reader hearing "Filter" and nothing else
     // would be in the position the sighted reader was in before this round:
     // told there is a filter and unable to find out what it did.
-    group = group.with_child("pv.filter.query");
+    group = group.with_child(QUERY_TAG);
     let typed = state.query.text();
     nodes.push(
-        AccessNode::new("pv.filter.query", AriaRole::TextInput)
+        AccessNode::new(QUERY_TAG, AriaRole::TextInput)
             .with_name("Filter query")
             .with_value(pinion_a11y::AccessValue::Text(if typed.is_empty() {
                 spec::QUERY_PLACEHOLDER.to_owned()
@@ -4608,8 +4639,8 @@ fn filter_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
             })),
     );
     if let Some(why) = state.query_fault() {
-        group = group.with_child("pv.filter.fault");
-        nodes.push(AccessNode::new("pv.filter.fault", AriaRole::Status).with_name(why));
+        group = group.with_child(address::FILTER_FAULT);
+        nodes.push(AccessNode::new(address::FILTER_FAULT, AriaRole::Status).with_name(why));
     }
     // ★★★★★ R1721 — the bar's whole subtree comes from its rule. It used to be
     // three `button`s with `aria-pressed`, hand-written here, over a set that can
@@ -4623,8 +4654,8 @@ fn filter_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
         &saved_row(state),
         focus_state::focused().as_deref(),
     ));
-    group = group.with_child("pv.filter.count");
-    nodes.push(AccessNode::new("pv.filter.count", AriaRole::Status));
+    group = group.with_child(address::FILTER_COUNT);
+    nodes.push(AccessNode::new(address::FILTER_COUNT, AriaRole::Status));
     nodes.insert(0, group);
     nodes
 }

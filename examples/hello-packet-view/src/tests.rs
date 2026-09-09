@@ -823,7 +823,7 @@ fn r1721_the_tree_reports_the_saved_filter_that_is_on() {
         let selected = |state: &std::rc::Rc<super::ViewState>| -> Vec<bool> {
             super::filter_nodes(state)
                 .into_iter()
-                .filter(|node| node.tag.starts_with("pv.filter.saved."))
+                .filter(|node| node.tag.starts_with(super::address::FILTER_SAVED_SEAT))
                 .map(|node| node.selected == Some(true))
                 .collect()
         };
@@ -1070,7 +1070,7 @@ fn r1693_the_screen_is_a_keyboard_ring_of_its_composites_and_buttons() {
         // R1707 — the query box. A filter a person cannot Tab to is a filter
         // only a mouse has. Named here because it is the one stop that owns no
         // cursor: a text field is a single control, not a composite.
-        want.push("pv.filter.query".to_owned());
+        want.push(super::address::FILTER_QUERY.to_owned());
         // ★★★★★ R1721 — the saved-filter bar's stops come from its RULE, and
         // this is what the derivation costs a keyboard: three stops became one,
         // with arrows, `Home`, `End` and `Enter` inside it. The list is not
@@ -1306,7 +1306,7 @@ fn r1698_an_arrow_on_a_plain_button_moves_no_pane() {
             })
             .collect();
         for n in 0..spec::SAVED_FILTERS.len() {
-            let chip = format!("pv.filter.saved.{n}");
+            let chip = super::address::filter_saved(n);
             assert!(pane_cursor(state, &chip).is_none(), "{chip} owns no cursor");
             assert!(
                 !press_key(Some(&chip), "ArrowDown"),
@@ -1501,7 +1501,7 @@ fn r1699_a_filter_chip_is_pressed_from_the_keyboard() {
     with_state(|state| {
         for (n, saved) in spec::SAVED_FILTERS.iter().enumerate() {
             let name = saved.name;
-            let chip = format!("pv.filter.saved.{n}");
+            let chip = super::address::filter_saved(n);
             let before = state.saved.get();
             assert!(
                 press_key(Some(&chip), "Enter"),
@@ -1548,7 +1548,7 @@ fn r1699_every_cursor_member_resolves_to_the_hit_its_tag_names() {
             }
         }
         for n in 0..spec::SAVED_FILTERS.len() {
-            tags.push(format!("pv.filter.saved.{n}"));
+            tags.push(super::address::filter_saved(n));
         }
 
         let mut wrong = Vec::new();
@@ -2549,4 +2549,187 @@ fn r1845_the_strips_totals_are_in_the_accessibility_tree() {
             "the totals announce the LANE ROSTER as the carrying count: {said}",
         );
     });
+}
+
+/// Every module of this crate, so a gate that counts by READING source has a
+/// population it did not choose.
+///
+/// ★★★★★ R2053's finding, applied to this crate before it could cost anything:
+/// that round found a sibling gate reading 6 of a crate's 11 modules, and the
+/// module nobody was reading had been spelling addresses the whole time. A
+/// hand-written list is this very debt one level up, so the roster is asserted
+/// against `lib.rs`'s own `mod` lines by the test below.
+fn crate_sources() -> [(&'static str, &'static str); 6] {
+    [
+        ("address.rs", include_str!("address.rs")),
+        ("lib.rs", include_str!("lib.rs")),
+        ("spec.rs", include_str!("spec.rs")),
+        ("judge.rs", include_str!("judge.rs")),
+        ("painted.rs", include_str!("painted.rs")),
+        ("tests.rs", include_str!("tests.rs")),
+    ]
+}
+
+/// ★★★★★ R2109 — **every module this crate declares is one the address gate
+/// reads.**
+///
+/// Derived from `lib.rs`'s own `mod` lines rather than compared with a second
+/// list, so the next module to spell an address is caught by a gate that
+/// already exists rather than by the round after it.
+#[test]
+fn r2109_every_module_is_read() {
+    const LIB: &str = include_str!("lib.rs");
+    let mut declared: Vec<&str> = LIB
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let rest = line
+                .strip_prefix("mod ")
+                .or_else(|| line.strip_prefix("pub mod "))?;
+            rest.strip_suffix(';')
+        })
+        .collect();
+    declared.push("lib");
+    declared.sort_unstable();
+    declared.dedup();
+    assert!(
+        declared.len() >= 5,
+        "★ the module scan found {} declaration(s), which is not this crate: \
+         the scan is broken rather than the crate being small",
+        declared.len()
+    );
+    let mut read: Vec<&str> = crate_sources()
+        .iter()
+        .map(|(name, _)| name.trim_end_matches(".rs"))
+        .collect();
+    read.sort_unstable();
+    assert_eq!(
+        declared, read,
+        "★★★★★ the modules `lib.rs` declares and the ones the address gate \
+         reads are not the same set"
+    );
+}
+
+/// ★★★★★ R2109 — **a filter-bar address is typed in ONE place, and this
+/// counts.**
+///
+/// The twelfth instalment of an address debt whose shape eleven rounds settled:
+/// a painted address had no declaring site, so every reader re-typed it and one
+/// wrong letter compiled, painted, and made every query looking for the mark
+/// answer nothing.
+///
+/// ⚠ The needle is assembled with `concat!`, because this file is one of the
+/// sources it reads — a gate that counts by reading source has its own source
+/// in the population, and assembling puts it there on the same terms as the
+/// rest instead of excusing it by name.
+#[test]
+fn r2109_a_filter_address_is_typed_in_one_place() {
+    const FILTER_ANY: &str = concat!("pv.", "filter");
+    let sources = crate_sources();
+    let spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(FILTER_ANY).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ a filter-bar address is declared in `address.rs` and taken from \
+         there everywhere else; these file(s) spell it themselves"
+    );
+}
+
+/// ★★★★★ R2109 — **every filter-bar address is what its declaration derives,
+/// and the roster agrees with what the wire publishes.**
+///
+/// The second half of the gate above, and a test of its own rather than an
+/// `allow` on the workspace's hundred-line refusal: *nobody re-spells the
+/// address* and *the declarations agree with each other* are two claims.
+#[test]
+fn r2109_every_filter_address_is_derived() {
+    use super::address;
+    // The two forms of the prefix agree, so a reader composing on the separator
+    // form cannot drift from one classifying by the bare one.
+    assert_eq!(address::FILTER_SEAT, format!("{}.", address::FILTER));
+    // ★ Every declared seat IS the derivation of its word, and the inverse
+    // gives the word back.
+    for (word, tag) in address::FILTER_SEATS {
+        assert_eq!(
+            &address::filter(word),
+            tag,
+            "★ the declared address for `{word}` is not what `filter()` derives"
+        );
+        assert_eq!(
+            address::filter_word(tag),
+            Some(*word),
+            "★ `{tag}` does not round-trip back to its word"
+        );
+    }
+    assert_eq!(
+        address::filter_word(address::FILTER),
+        None,
+        "★★ the bar's own tag is not one of its seats — the two are container \
+         and content, and a prefix that swallowed the separator would resolve a \
+         reader asking about the BAR to whichever seat sorted first"
+    );
+    // ★★★ The parametric half: the chip prefix is the `saved` seat plus a dot,
+    // the template is that prefix with the placeholder, and the composition and
+    // its inverse are each other's undo.
+    assert_eq!(
+        address::FILTER_SAVED_SEAT,
+        format!("{}.", address::FILTER_SAVED)
+    );
+    assert_eq!(
+        address::FILTER_SAVED_TEMPLATE,
+        format!("{}{{}}", address::FILTER_SAVED_SEAT)
+    );
+    for n in 0..spec::SAVED_FILTERS.len() {
+        assert_eq!(
+            address::filter_saved_index(&address::filter_saved(n)),
+            Some(n),
+            "★ chip {n} does not round-trip through its own address"
+        );
+    }
+    assert_eq!(
+        address::filter_saved_index(address::FILTER_SAVED),
+        None,
+        "★★ the row's own tag is not one of its chips"
+    );
+    assert_eq!(
+        address::filter_saved_index(&format!("{}all", address::FILTER_SAVED_SEAT)),
+        None,
+        "★★ a non-numeric tail is not a chip index — answering `Some` there \
+         would make the router accept a mark that is never painted"
+    );
+    // ★★★★ The WIRE carries the declaration itself. This is the half the walks
+    // stand on — they are Python and cannot call any of the above — and a seat
+    // that stopped agreeing here would hand seven walks an address matching no
+    // mark, which reads to every one of them as *the screen did not paint it*.
+    let wire = super::spec_json();
+    let published = &wire["filter_addresses"];
+    assert_eq!(published["tag"].as_str(), Some(address::FILTER));
+    assert_eq!(
+        published["saved"].as_str(),
+        Some(address::FILTER_SAVED_SEAT)
+    );
+    let seats: Vec<(String, String)> = published["seats"]
+        .as_array()
+        .expect("the wire publishes the bar's seats as a list")
+        .iter()
+        .map(|row| {
+            (
+                row["word"].as_str().unwrap_or_default().to_owned(),
+                row["tag"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    let declared: Vec<(String, String)> = address::FILTER_SEATS
+        .iter()
+        .map(|(word, tag)| ((*word).to_owned(), (*tag).to_owned()))
+        .collect();
+    assert_eq!(
+        seats, declared,
+        "★★★★★ the seats the wire publishes and the ones `address::FILTER_SEATS` \
+         declares are not the same list, in the same order"
+    );
 }

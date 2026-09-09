@@ -39,7 +39,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcSubprocess, assert_eq, run_demo  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    RpcSubprocess,
+    assert_eq,
+    filter_seats,
+    run_demo,
+    screen_spec,
+)
 
 EXT = "/external"
 CHECKS: list[str] = []
@@ -228,6 +234,10 @@ def dashboard(app: RpcSubprocess) -> None:
 
 def capture(app: RpcSubprocess) -> None:
     banner("E — the capture viewer: each pane's arrows move that pane's cursor")
+    # ★★★★★ R2109 — the filter bar's seats, by the word the screen declares them
+    # under. `app` here is the capture viewer itself, so `EXT` is its own
+    # external and the seats come from the screen that paints them.
+    seat = filter_seats(screen_spec(app, EXT))
     walked = stops(app)
     # R1708 — asserted BY NAME rather than by count. This line was a
     # hand-written `== 6`, and when R1707 gave the filter bar a real query field
@@ -250,8 +260,8 @@ def capture(app: RpcSubprocess) -> None:
     assert_eq(
         walked,
         [
-            "pv.filter.query",
-            "pv.filter.saved",
+            seat["query"],
+            seat["saved"],
             "pv.list",
             "pv.list.header",
             "pv.tree",
@@ -316,14 +326,14 @@ def capture(app: RpcSubprocess) -> None:
     #     still leaves the message list alone, which the chips could not show
     #     because they had no cursor to move.
     row_before = app.query(f"{EXT}/selected_row")
-    app.request("focus/set", {"tag": "pv.filter.query"})
+    app.request("focus/set", {"tag": seat["query"]})
     app.tick(16)
     nodes, _ = tree(app)
     ok(
         "F: the query box publishes no roster",
-        nodes["pv.filter.query"].get("navigation") is None,
+        nodes[seat["query"]].get("navigation") is None,
     )
-    app.key(path="pv.filter.query", name="ArrowDown")
+    app.key(path=seat["query"], name="ArrowDown")
     app.tick(16)
     assert_eq(
         app.query(f"{EXT}/selected_row"),
@@ -331,10 +341,10 @@ def capture(app: RpcSubprocess) -> None:
         "F: ★ standing on the query box, ArrowDown does not move the message list",
     )
 
-    app.request("focus/set", {"tag": "pv.filter.saved"})
+    app.request("focus/set", {"tag": seat["saved"]})
     app.tick(16)
     nodes, _ = tree(app)
-    bar = nodes["pv.filter.saved"]
+    bar = nodes[seat["saved"]]
     ok(
         "F: ★★★ the saved-filter bar publishes a roster where three plain buttons "
         "used to be — its rule made it a composite",
@@ -347,7 +357,7 @@ def capture(app: RpcSubprocess) -> None:
         "queries would run two on the way to the third chip",
     )
     seat_before = cursor(app)
-    app.key(path="pv.filter.saved", name=bar["navigation"]["keys"][0])
+    app.key(path=seat["saved"], name=bar["navigation"]["keys"][0])
     app.tick(16)
     assert_eq(
         cursor(app) != seat_before,

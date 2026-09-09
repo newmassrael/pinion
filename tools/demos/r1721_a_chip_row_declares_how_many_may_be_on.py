@@ -84,7 +84,10 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    filter_saved_prefix,
+    filter_seats,
     run_demo,
+    screen_spec,
 )
 
 EXT = "/external"
@@ -167,20 +170,50 @@ def said(app: RpcSubprocess, slot: str) -> dict | None:
 #: `stops` is the number of Tab stops the row's rule buys, and it is written here
 #: as the OUTCOME being asserted rather than read from the screen — a test that
 #: asked the screen how many stops it has would pass whatever the screen said.
+#: ★★★★★ R2109 — a row's two ADDRESS columns are a callable, not a literal.
+#:
+#: This table is module-level, so it cannot ask a screen anything: nothing is
+#: running yet. Writing the address here anyway is exactly the defect the paint
+#: address debt is repaying — a second copy of what the screen composes, one
+#: letter from looking for a mark that is not there. So each row says HOW to
+#: find its own addresses, and the resolver runs where the app is live.
+#:
+#: The two rows below that still answer literals are other screens' families and
+#: not this instalment's population; they were left saying so out loud rather
+#: than converted half-way.
+def _pv_filter_saved(app):
+    """The capture viewer's saved-filter row and its chip prefix, from the wire."""
+    return (
+        filter_seats(screen_spec(app, EXT))["saved"],
+        filter_saved_prefix(app, ext=EXT),
+    )
+
+
+def _literal(row_tag: str, prefix: str):
+    """A row whose family this round did not convert, saying so."""
+    return lambda _app: (row_tag, prefix)
+
+
 ROWS = [
-    # example, row tag, chip prefix, group role, member role, stops, chips
-    ("hello-packet-view", "pv.filter.saved", "pv.filter.saved", "listbox", "option", 1, 3),
+    # example, address resolver, group role, member role, stops, chips
+    ("hello-packet-view", _pv_filter_saved, "listbox", "option", 1, 3),
     (
         "hello-analyzer-shell",
-        "card.filter#3.chips",
-        "card.filter#3.chip",
+        _literal("card.filter#3.chips", "card.filter#3.chip"),
         "listbox",
         "option",
         1,
         5,
     ),
-    ("hello-filter-chip", "chip_group", "chip_", "group", "button", 4, 4),
-    ("hello-segmented-button", "view_mode", "view_mode#", "radiogroup", "radio", 1, 3),
+    ("hello-filter-chip", _literal("chip_group", "chip_"), "group", "button", 4, 4),
+    (
+        "hello-segmented-button",
+        _literal("view_mode", "view_mode#"),
+        "radiogroup",
+        "radio",
+        1,
+        3,
+    ),
 ]
 
 
@@ -401,8 +434,9 @@ def h_the_chip_that_is_on_is_drawn_differently(app, example, prefix, chips):
 
 
 def main() -> int:
-    for example, row_tag, prefix, group, member, stops, chips in ROWS:
+    for example, addresses, group, member, stops, chips in ROWS:
         with RpcSubprocess(example) as app:
+            row_tag, prefix = addresses(app)
             a_the_ring_is_the_rules(app, example, row_tag, stops, chips)
             b_the_tree_says_what_the_rule_says(
                 app, example, row_tag, prefix, group, member, chips
@@ -411,11 +445,10 @@ def main() -> int:
                 c_the_cursor_moves(app, example, row_tag, chips)
 
     with RpcSubprocess("hello-packet-view") as app:
-        d_walking_is_not_applying(app, "hello-packet-view", "pv.filter.saved", "pv.filter.saved", 3)
-        e_at_most_one_is_the_rule(app, "hello-packet-view", "pv.filter.saved", 3, "said")
-        h_the_chip_that_is_on_is_drawn_differently(
-            app, "hello-packet-view", "pv.filter.saved", 3
-        )
+        row, chip_at = _pv_filter_saved(app)
+        d_walking_is_not_applying(app, "hello-packet-view", row, chip_at, 3)
+        e_at_most_one_is_the_rule(app, "hello-packet-view", row, 3, "said")
+        h_the_chip_that_is_on_is_drawn_differently(app, "hello-packet-view", row, 3)
 
     with RpcSubprocess("hello-analyzer-shell") as app:
         f_the_dashboard_chips_are_operable(app)

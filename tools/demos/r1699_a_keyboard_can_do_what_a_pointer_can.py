@@ -49,7 +49,9 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     address_prefix,
     assert_eq,
+    filter_seats,
     run_demo,
+    screen_spec,
 )
 
 EXT = "/external"
@@ -316,6 +318,8 @@ def dashboard(app: RpcSubprocess) -> None:
 
 def capture(app: RpcSubprocess) -> None:
     banner("H — ★ a message row is entered and its cells are walked (the grid pattern)")
+    # ★★★★★ R2109 — the filter bar's seats, from the screen that paints them.
+    seat = filter_seats(screen_spec(app, EXT))
     walked = stops(app)
     # R1708 — by name, not by count. See the sibling note in
     # `r1698_a_composite_has_a_cursor_inside_it.py`: a hand-written `6` reported
@@ -331,8 +335,8 @@ def capture(app: RpcSubprocess) -> None:
     assert_eq(
         walked,
         [
-            "pv.filter.query",
-            "pv.filter.saved",
+            seat["query"],
+            seat["saved"],
             "pv.list",
             "pv.list.header",
             "pv.tree",
@@ -410,7 +414,7 @@ def capture(app: RpcSubprocess) -> None:
     # one stop with a cursor and a filter is reached by walking to it. The two
     # facts R1699 built this section for — a keyboard can do what a pointer can,
     # and one verb answers two keys — are asserted through that route.
-    BAR = "pv.filter.saved"
+    BAR = seat["saved"]
     app.request("focus/set", {"tag": BAR})
     app.tick_ms(16)
     nodes, _ = tree(app)

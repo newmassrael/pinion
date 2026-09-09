@@ -88,6 +88,7 @@ from memory.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -98,8 +99,10 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     address_prefix,
     assert_eq,
+    filter_seats,
     resize_and_settle,
     run_demo,
+    screen_spec,
     text_of_tag,
     without_extent,
 )
@@ -113,8 +116,11 @@ SEAT = "packets"
 #: `selection` is absent on purpose — its three parts are a RELATION between
 #: three regions rather than three tags under one stem, and section E counts
 #: them separately instead of quietly skipping them.
+#: ★★★★★ R2109 — `filter_bar` is absent here on purpose: its stem is ASKED of
+#: the mounted capture viewer in section E rather than written down, because
+#: this table is module-level and cannot query anything. The other four are
+#: families this instalment did not convert and still say their own stem.
 STEMS = {
-    "filter_bar": "pv.filter.",
     "context": "pv.context.",
     "list_columns": "pv.list.head.",
     "decode_layers": "pv.tree.field.",
@@ -554,13 +560,29 @@ def section_e(app: RpcSubprocess) -> None:
     for chrome in ("shell.appbar", "shell.rail", f"{seat_tag}{SEAT}"):
         ok(f"E: the host's {chrome} survives the capture viewer being on it", chrome in rects)
 
+    # ★★★★★ R2109 — the filter bar's stem, from the capture viewer MOUNTED in
+    # this shell. `STEMS` is module-level and cannot ask a screen anything, so
+    # the one family this round converted is resolved here, where the
+    # application is live, and joined to the four that still spell themselves.
+    published = app.query(f"{EXT}/destinations")
+    if isinstance(published, str):
+        published = json.loads(published)
+    mounted = next(
+        row["screen"]["address"]
+        for row in published["destinations"]
+        if row["key"] == SEAT
+    )
+    seats = filter_seats(screen_spec(app, mounted))
+    stems = dict(STEMS, filter_bar=address_prefix(
+        [{"key": word, "tag": tag} for word, tag in seats.items()]
+    ))
     pin = packets_spec()
     missing: list[str] = []
     compared = 0
     related = 0
     for name in surfaces(pin):
         for part in pin[name]["canon"]:
-            stem = STEMS.get(name)
+            stem = stems.get(name)
             if stem is None:
                 related += 1
                 continue

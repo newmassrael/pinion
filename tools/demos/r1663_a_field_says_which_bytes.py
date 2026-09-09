@@ -40,6 +40,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     assert_router_press_moves,
+    filter_saved,
     run_demo,
 )
 
@@ -338,7 +339,11 @@ def body() -> None:
                 f"pv.bytes.cell.{byte_index}",
                 lambda: q(app, VIEW, "selected_field"),
             ),
-            ("a saved filter", "pv.filter.saved.1", lambda: q(app, VIEW, "saved")),
+            (
+                "a saved filter",
+                filter_saved(app, 1, ext=f"/{VIEW}/external"),
+                lambda: q(app, VIEW, "saved"),
+            ),
             ("a layer chevron", "pv.tree.layer.l1", lambda: q(app, VIEW, "folded")),
         ]
         for what, tag, read in targets:

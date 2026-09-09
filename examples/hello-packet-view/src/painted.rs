@@ -354,8 +354,8 @@ fn r1663_every_declared_element_of_the_screen_is_painted() {
             "pv.appbar".into(),
             "pv.appbar.interface".into(),
             "pv.appbar.rate".into(),
-            "pv.filter".into(),
-            "pv.filter.count".into(),
+            super::address::FILTER.into(),
+            super::address::FILTER_COUNT.into(),
             "pv.context".into(),
             "pv.context.session".into(),
             "pv.reassembly".into(),
@@ -388,12 +388,12 @@ fn r1663_every_declared_element_of_the_screen_is_painted() {
             }
         }
         for n in 0..spec::SAVED_FILTERS.len() {
-            wanted.push(format!("pv.filter.saved.{n}"));
+            wanted.push(super::address::filter_saved(n));
         }
         // ★ R1707 — the query is a box, not three painted constants. What has
         // to be there is the box; what is IN it is the person's text and is
         // judged by the query gate below.
-        wanted.push("pv.filter.query".to_owned());
+        wanted.push(super::address::FILTER_QUERY.to_owned());
         for value in spec::CONTEXT {
             wanted.push(format!("pv.context.{}", value.key.replace(' ', "_")));
         }
@@ -512,7 +512,7 @@ fn r1663_every_painted_tag_belongs_to_a_declared_family() {
         crate::VIEW_TAG,
         "pv.root",
         "pv.appbar",
-        "pv.filter",
+        super::address::FILTER,
         "pv.context",
         "pv.list",
         "pv.tree",
@@ -579,7 +579,7 @@ fn r1663_the_fixed_families_are_the_size_the_specification_gives_them() {
             "{case}: column headers"
         );
         assert_eq!(
-            shot.family("pv.filter.saved.").len(),
+            shot.family(super::address::FILTER_SAVED_SEAT).len(),
             spec::SAVED_FILTERS.len(),
             "{case}: saved filters"
         );
@@ -673,7 +673,7 @@ fn r1663_every_painted_control_answers_at_the_centre_of_its_own_rectangle() {
                 what: "saved-filter chips",
                 source: Expectation::Painter,
                 members: (0..spec::SAVED_FILTERS.len())
-                    .map(|n| (format!("pv.filter.saved.{n}"), Hit::Saved(n)))
+                    .map(|n| (super::address::filter_saved(n), Hit::Saved(n)))
                     .collect(),
                 least: 1,
             },
@@ -1298,7 +1298,7 @@ fn r1696_every_composite_pane_and_chip_is_a_keyboard_stop() {
         }
         // R1707 — the query box is a stop too, and it is the first one: a
         // filter a person cannot Tab to is a filter only a mouse has.
-        want.insert(0, "pv.filter.query".to_owned());
+        want.insert(0, super::address::FILTER_QUERY.to_owned());
         assert_eq!(
             walked, want,
             "{case}: the Tab ring is not the panes and chips this screen \
@@ -1549,7 +1549,7 @@ fn r1707_a_press_in_the_query_box_lands_on_a_byte_of_the_query() {
         let (shot, scene) = painted_at(&state, (WIN_W, WIN_H));
         let r = *shot
             .tags
-            .get("pv.filter.query")
+            .get(super::address::FILTER_QUERY)
             .expect("the query box is painted, or there is no filter");
         // The shell states a pointer in logical pixels, and a window coordinate
         // is small — so the conversion goes through `u16`, which is lossless
@@ -1574,7 +1574,7 @@ fn r1707_a_press_in_the_query_box_lands_on_a_byte_of_the_query() {
         let mut inside = Vec::new();
         for px in [r.x + 1, r.x + r.w / 2, r.x + r.w - 2] {
             for py in [r.y + 1, r.y + r.h / 2, r.y + r.h - 2] {
-                let at = caret(px, py, Some("pv.filter.query"));
+                let at = caret(px, py, Some(super::address::FILTER_QUERY));
                 assert!(
                     at.is_some(),
                     "({px}, {py}) is inside the painted box and resolved to no \
@@ -1593,7 +1593,11 @@ fn r1707_a_press_in_the_query_box_lands_on_a_byte_of_the_query() {
         // Outside the box: nothing. Without this the containment check could be
         // deleted and the nine assertions above would still pass.
         assert_eq!(
-            caret(r.x + r.w + 40, r.y + r.h / 2, Some("pv.filter.query")),
+            caret(
+                r.x + r.w + 40,
+                r.y + r.h / 2,
+                Some(super::address::FILTER_QUERY),
+            ),
             None,
             "a point beside the box is not a byte of the query"
         );
@@ -1901,7 +1905,7 @@ fn r1747_a_focus_owning_widget_is_a_surface_and_not_a_mark_of_its_host() {
              the bar has a query on it",
         );
         assert!(
-            pinion_core::painted::painted_regions("pv.filter.saved").is_none(),
+            pinion_core::painted::painted_regions(super::address::FILTER_SAVED).is_none(),
             "while a part that is NOT a surface has no store of its own -- \
              without this the assertion above would pass for any tag at all",
         );
@@ -2333,7 +2337,7 @@ fn r1774_the_sweep_reaches_both_sides_of_every_clamp() {
             (
                 "filter: saved chips",
                 (0..spec::SAVED_FILTERS.len())
-                    .map(|n| format!("pv.filter.saved.{n}"))
+                    .map(super::address::filter_saved)
                     .collect(),
                 false,
             ),
