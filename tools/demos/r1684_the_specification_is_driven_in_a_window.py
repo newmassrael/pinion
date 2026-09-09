@@ -52,6 +52,7 @@ from rpc_verify import (  # noqa: E402
     frame_tag,
     press_painted_tag,
     run_demo,
+    toolbar_tag,
 )
 
 EXAMPLE = "hello-node-lab"
@@ -116,7 +117,8 @@ def witness(tf, slot: str) -> str:
 def press(tf, tag: str) -> None:
     # ★★★★★ R1795 — through the shared press, which opens the toolbar's overflow
     # control first when it is holding this seat. R1791 gave the row the ability
-    # to give a group up, so `lab.toolbar.config` is on the row at one width and
+    # to give a group up, so the configuration export is on the row at one width
+    # and
     # one press away at another; a demo that aimed at its rectangle stopped
     # finding one. This is the third demo to learn it and the second to learn it
     # from CI rather than from the round that caused it — see
@@ -319,7 +321,10 @@ GESTURES = {
     ),
     # the view
     "pan": lambda tf: drag_from_canvas(tf, (-30, 20)),
-    "zoom": lambda tf: press(tf, "lab.toolbar.zoom.in"),
+    # ★★★★★ R2104 — the seat's WORD, and the screen hands back the address it
+    # painted it under. Spelled here until this round, which is a second copy of
+    # a composition this walk cannot call.
+    "zoom": lambda tf: press(tf, toolbar_tag(tf, "zoom.in", ext=EXT)),
     "toggle discovery": lambda tf: press(tf, "lab.palette.discovery"),
     # putting things back
     "reset the node set": lambda tf: press(tf, "lab.reset.nodes"),
@@ -329,14 +334,14 @@ GESTURES = {
     "reset the view": lambda tf: press(tf, "lab.reset.view"),
     # ★★ R1687 — what leaves the screen, from the two seats the reference puts
     # side by side. They were the last pair absent on BOTH channels.
-    "export the configuration": lambda tf: press(tf, "lab.toolbar.config"),
-    "produce the launch script": lambda tf: press(tf, "lab.toolbar.script"),
+    "export the configuration": lambda tf: press(tf, toolbar_tag(tf, "config", ext=EXT)),
+    "produce the launch script": lambda tf: press(tf, toolbar_tag(tf, "script", ext=EXT)),
     # ★★★ R1688 — the last two rows of the table, and with them the absence
     # count reaches zero. The fit is the zoom pill's trailing seat, where the
     # reference puts it; the jump is the LAUNCH CHIP, which had been on screen
     # saying the verdict and answering no press at all.
-    "fit the graph to the view": lambda tf: press(tf, "lab.toolbar.fit"),
-    "go to the first problem": lambda tf: press(tf, "lab.toolbar.gate"),
+    "fit the graph to the view": lambda tf: press(tf, toolbar_tag(tf, "fit", ext=EXT)),
+    "go to the first problem": lambda tf: press(tf, toolbar_tag(tf, "gate", ext=EXT)),
 }
 
 

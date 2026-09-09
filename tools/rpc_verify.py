@@ -5141,6 +5141,52 @@ def frame_tag(tf, name: str, *, ext: str = "/external") -> str:
     return f"{frame_prefix(tf, ext=ext)}{name}"
 
 
+def toolbar_root(tf, *, ext: str = "/external") -> str:
+    """The tag the canvas toolbar ITSELF is painted under — the bar, not a seat.
+
+    ★★★★★ R2104 — published beside the seat roster rather than as its first row,
+    because a roster's prefix is recovered by taking a row's own key off the end
+    of its address and the bar's address is the prefix WITHOUT the separator: a
+    row for it would hand every later reader a prefix that composes
+    `lab.toolbarrun`. So the container is asked for by name and the contents by
+    word.
+    """
+    return screen_spec(tf, ext)["toolbar"]["tag"]
+
+
+def toolbar_seats(spec: Any) -> dict:
+    """Every toolbar seat's address, keyed by the word the screen declares it
+    under — from a specification a caller has ALREADY read.
+
+    ★★★★★ R2104 — the one derivation both entry points share. A walk that holds
+    the specification (most of them do; it is one query and they read a dozen
+    tables out of it) should not pay a second round trip per seat, and a walk
+    that does not hold one should not have to fetch it by hand — so the shape a
+    caller has decides which door it comes in at, and neither is a second copy
+    of the rule. [`form_part_prefixes`] is the same pair with only one door,
+    which is why `r1651` reads `spec["form_parts"]` itself.
+    """
+    return {row["word"]: row["tag"] for row in spec["toolbar"]["seats"]}
+
+
+def toolbar_tag(tf, word: str, *, ext: str = "/external") -> str:
+    """The address the toolbar seat called `word` is painted under.
+
+    ★★★★★ R2104 — the walks' half of the toolbar's address declaration, and the
+    largest family this debt had left: **73 sites across eight walks** typed one
+    of these out. A wrong letter there is not a red — it looks for a mark that
+    is not there, so the walk reports that the SCREEN did not paint the seat.
+
+    Takes the seat's WORD because that is what the screen declares and what the
+    wire publishes, so the address a walk presses and the address the paint used
+    are one spelling by construction. A word the screen does not address is a
+    `KeyError` naming it — the answer worth having, and the same one
+    [`form_part_prefixes`] gives: the shape this replaces was a spelled literal,
+    and a wrong letter there read as *the screen did not paint it*.
+    """
+    return toolbar_seats(screen_spec(tf, ext))[word]
+
+
 def access_node_by_tag(result: Any, tag: str) -> Optional[dict]:
     """The `scene/access` node carrying this `tag`, or `None` when absent.
 
@@ -6278,7 +6324,7 @@ def press_painted_tag(
 
     The same rule the in-process paint gates learned, on the other channel: a
     control the row gave up is one press away rather than gone, so a caller
-    aiming at `lab.toolbar.config` goes on meaning the configuration export
+    aiming at the configuration export goes on meaning it
     whether or not the window is wide enough to keep it on the row. Two demos
     wrote this press by hand and both broke the moment a group moved; the rule
     belongs here so a third does not have to learn it.
@@ -6305,7 +6351,7 @@ def press_painted_tag(
     """
     if tag in behind_an_overflow(app, external):
         control = abs_rects_of(app.snapshot(source="paint", viewport=viewport))[
-            "lab.toolbar.more"
+            toolbar_tag(app, "more", ext=external)
         ]
         app.click(at=(control[0] + control[2] // 2, control[1] + control[3] // 2))
         app.tick_ms(16)

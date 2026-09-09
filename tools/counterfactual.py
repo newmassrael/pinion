@@ -193,6 +193,18 @@ FAILURE_MARKERS_BY_HARNESS = {
     # `tools/test_hooks.sh`'s `ok`, which is what gates the hook libraries.
     # Anchored: unanchored it would swallow the walk harness's line too.
     "test_hooks.sh": ("^FAIL: ",),
+    # ★★★★★ R2104 — a RATCHET. This tree has a growing set of gates whose whole
+    # job is "this number may fall or hold, never rise", and none of them speaks
+    # any of the vocabularies above: `painted_addresses.py --check` refuses with
+    # `painted-addresses: a walk spells a painted address it could ask for`,
+    # which contains no `FAIL`, no `----` and no `[demo]`. Measured here by two
+    # counterfactuals that were REALLY caught — the gate went red at both, with
+    # the file and line named — and reported UNREADABLE, which does not count.
+    #
+    # ⚠ The marker is the SENTENCE and not the tool's name prefix: every line
+    # this tool prints starts `painted-addresses:`, its green summary included,
+    # so a prefix marker would classify a passing run as a failure.
+    "painted-addresses ratchet": ("a walk spells a painted address it could ask for",),
 }
 
 #: Flattened, for the reader that only needs "does this line name a failure".
@@ -476,6 +488,9 @@ def selftest() -> int:
         "demo walk": "[demo] FAIL: the pin took it anyway",
         "python --selftest": "counterfactual selftest: FAIL (1 failure(s))",
         "test_hooks.sh": "FAIL: a hook library said the wrong thing",
+        "painted-addresses ratchet": (
+            "painted-addresses: a walk spells a painted address it could ask for"
+        ),
     }
     held(
         "★ the sample table names every declared harness, so no harness is "

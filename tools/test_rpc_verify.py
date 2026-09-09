@@ -391,6 +391,47 @@ def test_absent_id_is_composed_and_carries_the_kind() -> None:
     )
 
 
+def test_toolbar_seats_is_keyed_by_the_word_the_screen_declares() -> None:
+    """R2104 — the toolbar roster is read as word to address, not order to
+    address.
+
+    The whole reason the wire carries a `word` beside each `tag` is that a walk
+    names the seat it means. Read positionally — `seats[3]["tag"]` — a screen
+    that reordered its own row would silently point every walk at a different
+    control, which is the failure this family's addresses already had in the
+    other direction.
+
+    ⚠ The fixture is a hand-written spec and NOT this screen's, deliberately:
+    pinning the case to today's roster would make it re-assert the roster rather
+    than the reading rule, and it would go stale the first time a seat joins.
+    What is fixed here is the SHAPE.
+    """
+    spec = {
+        "toolbar": {
+            "tag": "scr.bar",
+            "seats": [
+                {"word": "gate", "tag": "scr.bar.gate"},
+                {"word": "zoom.in", "tag": "scr.bar.zoom.in"},
+            ],
+        }
+    }
+    seats = rpc_verify.toolbar_seats(spec)
+    check(seats["gate"] == "scr.bar.gate", f"the word is the key: {seats!r}")
+    check(
+        seats["zoom.in"] == "scr.bar.zoom.in",
+        f"a word with a dot in it is one key, not a path: {seats!r}",
+    )
+    # ★ A word the screen does not address raises naming it, rather than
+    # composing a plausible tag nothing carries — which would read to every
+    # later assertion as "the screen did not paint it".
+    try:
+        seats["fit"]
+    except KeyError as exc:
+        check("fit" in str(exc), f"the refusal names the word: {exc!r}")
+    else:
+        check(False, "a word nothing declares must not resolve")
+
+
 def test_hostile_args_compose_through_the_declaring_site() -> None:
     """R2103 — and the one caller in this file really goes through it.
 

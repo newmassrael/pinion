@@ -255,7 +255,7 @@ fn r1822_the_app_bars_pane_is_absent_from_the_scene_the_host_draws_one_in() {
                     .collect::<Vec<_>>()
             );
             assert!(
-                mounted.iter().any(|t| t == "lab.toolbar.title"),
+                mounted.iter().any(|t| t == super::address::TOOLBAR_TITLE),
                 "★ and the page it leaves behind is still the node lab"
             );
         });
@@ -338,7 +338,8 @@ fn r1822_the_height_floor_drops_every_strip_the_host_provides() {
 /// ★★★★★ R1822 — **the graph's name is announced by exactly one stop, in both
 /// configurations**, which is the half of this round a rectangle cannot show.
 ///
-/// `lab.toolbar.title` is silenced `name_of("lab.appbar")`: a silence is a
+/// [`crate::address::TOOLBAR_TITLE`] is silenced `name_of("lab.appbar")`: a
+/// silence is a
 /// REFERENCE to the node that does say the word. Where the host draws the
 /// application bar this screen draws none — so left alone, that reference
 /// points at a node that is not in the tree and the graph's name is announced
@@ -353,7 +354,7 @@ fn r1822_the_graphs_name_is_announced_by_one_stop_in_both_configurations() {
 
     use pinion_core::voice::{Announcement, Voice, voice_census};
 
-    /// The census VERDICT on `lab.toolbar.title`, judged against the tree this
+    /// The census VERDICT on the toolbar's title, judged against the tree this
     /// screen actually publishes.
     ///
     /// 🟥 ★★★★★ R1825 — this used to answer `silence.is_some()`, and that is
@@ -390,7 +391,7 @@ fn r1822_the_graphs_name_is_announced_by_one_stop_in_both_configurations() {
         voice_census(&scene, &announced, &std::collections::BTreeSet::new())
             .nodes
             .iter()
-            .find(|n| n.tag == "lab.toolbar.title")
+            .find(|n| n.tag == super::address::TOOLBAR_TITLE)
             .expect("the toolbar paints the graph's name")
             .voice
     }
@@ -1184,6 +1185,94 @@ fn every_module_is_read() {
         missing,
         Vec::<&str>::new(),
         "★★★★★ these module(s) are declared and no address gate reads them"
+    );
+}
+
+/// ★★★★★ R2104 — **a toolbar seat's address is typed in ONE place, and this
+/// counts.**
+///
+/// [`r2049_a_role_address_is_typed_in_one_place`]'s shape, for the family that
+/// was the largest remaining entry in `tools/painted_addresses.py --owed`. The
+/// needle is the bar's whole stem, so a reader that spells ANY seat is refused
+/// — R2053's lesson, which found a per-family needle true of a twenty-first of
+/// the surface it was believed to hold.
+///
+/// ⚠ The needle is assembled, because this file is one of the sources it reads.
+///
+/// ⚠⚠ The bar's own tag (`lab.toolbar`, no separator) is NOT in this count and
+/// cannot be: as a substring it occurs inside every seat address, so a count of
+/// it would be the seats' count over again. What holds it instead is the pair
+/// of assertions below — the separator form is the bare form plus a dot, and
+/// every declared seat is what the derivation makes of its word — so a second
+/// speller of the bare tag is a file that has to name the const anyway.
+#[test]
+fn r2104_a_toolbar_seat_address_is_typed_in_one_place() {
+    const TOOLBAR_ANY: &str = concat!("lab.toolbar", ".");
+    let sources = crate_sources();
+    let spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(TOOLBAR_ANY).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ a toolbar seat's address is declared in `address.rs` and taken \
+         from there everywhere else; these file(s) spell it themselves"
+    );
+    // The two forms of the prefix agree, so a const built on the separator form
+    // cannot drift from a reader classifying by the bare one.
+    assert_eq!(
+        super::address::TOOLBAR_SEAT,
+        format!("{}.", super::address::TOOLBAR)
+    );
+    // ★★ Every declared seat IS the derivation of its word, and the inverse
+    // gives the word back. A const that stopped agreeing with `toolbar()` would
+    // put the wire and the paint on two spellings — which is this debt.
+    for (word, tag) in super::address::TOOLBAR_SEATS {
+        assert_eq!(
+            &super::address::toolbar(word),
+            tag,
+            "★ the declared address for `{word}` is not what `toolbar()` derives"
+        );
+        assert_eq!(
+            super::address::toolbar_word(tag),
+            Some(*word),
+            "★ `{tag}` does not round-trip back to its word"
+        );
+    }
+    assert_eq!(
+        super::address::toolbar_word(super::address::TOOLBAR),
+        None,
+        "★★ the bar's own tag is not one of its seats — the two are container \
+         and content, and a prefix that swallowed the separator would resolve a \
+         reader asking about the bar to whichever seat sorted first"
+    );
+    assert_eq!(
+        super::address::toolbar_word("lab.reset.view"),
+        None,
+        "★ and neither is the seat of another family that sits on this row"
+    );
+    // ★★★★★ Every tag a `ToolGroup` claims to paint under this prefix is in the
+    // published roster. This is the half that catches a seat joining a group
+    // without joining the wire — the walks read the roster, so a seat missing
+    // from it is a seat they cannot be handed the address of, and the failure
+    // they would report is "the screen did not paint it".
+    let unpublished: Vec<&str> = super::ToolGroup::IN_ROW
+        .iter()
+        .flat_map(|group| group.tags())
+        .filter(|tag| super::address::toolbar_word(tag).is_some())
+        .filter(|tag| {
+            !super::address::TOOLBAR_SEATS
+                .iter()
+                .any(|(_, declared)| declared == tag)
+        })
+        .collect();
+    assert_eq!(
+        unpublished,
+        Vec::<&str>::new(),
+        "★★★★★ these toolbar tag(s) are painted by a group and are not in \
+         `address::TOOLBAR_SEATS`, so nothing publishes their address"
     );
 }
 

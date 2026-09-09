@@ -8781,7 +8781,7 @@ fn r1958_a_press_reaches_a_mounted_screens_control() {
         state.go("lab").expect("the node lab section is open");
         let (shot, scene) = painted_at((WIN_W, WIN_H));
         let control = shot
-            .rect("lab.toolbar.more")
+            .rect(hello_node_lab::address::TOOLBAR_MORE)
             .expect("at this size the lab's toolbar overflows, so the `…` control is painted");
 
         // A press over the mounted screen resolves to THE SCREEN, which is what
@@ -8839,7 +8839,7 @@ fn r1958_a_press_reaches_a_mounted_screens_control() {
             opened
                 .tags
                 .keys()
-                .filter(|t| t.starts_with("lab.toolbar"))
+                .filter(|t| t.starts_with(hello_node_lab::address::TOOLBAR))
                 .collect::<Vec<_>>(),
         );
 
@@ -10971,15 +10971,15 @@ fn focus_standing(wire: &serde_json::Value, card: &str) -> (bool, Vec<String>) {
 /// the row first.
 fn press_the_focus_chip() {
     let (shot, scene) = painted_at((WIN_W, WIN_H));
-    if shot.rect("lab.toolbar.focus").is_none() {
+    if shot.rect(hello_node_lab::address::TOOLBAR_FOCUS).is_none() {
         let mut open = hand_on(scene);
-        open.cursor(aim(&shot, "lab.toolbar.more"));
+        open.cursor(aim(&shot, hello_node_lab::address::TOOLBAR_MORE));
         open.press();
         open.release();
     }
     let (shot, scene) = painted_at((WIN_W, WIN_H));
     let mut press = hand_on(scene);
-    press.cursor(aim(&shot, "lab.toolbar.focus"));
+    press.cursor(aim(&shot, hello_node_lab::address::TOOLBAR_FOCUS));
     press.press();
     press.release();
 }
@@ -13831,21 +13831,21 @@ fn press_the_home_seat() {
     let (shot, scene) = painted_at((WIN_W, WIN_H));
     // Room on the row: press it where it is drawn. Otherwise it is behind the
     // `…` control — open that, and the seat is painted inside.
-    let seat = if shot.rect("lab.toolbar.home").is_some() {
-        aim(&shot, "lab.toolbar.home")
+    let seat = if shot.rect(hello_node_lab::address::TOOLBAR_HOME).is_some() {
+        aim(&shot, hello_node_lab::address::TOOLBAR_HOME)
     } else {
         let mut open = hand_on(scene);
-        open.cursor(aim(&shot, "lab.toolbar.more"));
+        open.cursor(aim(&shot, hello_node_lab::address::TOOLBAR_MORE));
         open.press();
         open.release();
         let (opened, _) = painted_at((WIN_W, WIN_H));
         assert!(
-            opened.rect("lab.toolbar.home").is_some(),
+            opened.rect(hello_node_lab::address::TOOLBAR_HOME).is_some(),
             "★★★★★ Home moved off the row, so the overflow must hold it — a \
              group that is neither drawn nor in the menu is a control a person \
              cannot reach at all"
         );
-        aim(&opened, "lab.toolbar.home")
+        aim(&opened, hello_node_lab::address::TOOLBAR_HOME)
     };
     let (_, scene) = painted_at((WIN_W, WIN_H));
     let mut press = hand_on(scene);
@@ -14762,7 +14762,8 @@ fn reach_of_mark(
 /// # The claim, and why rule (7) wants it here
 ///
 /// R1957 measured that this walk could not press a control on a mounted screen
-/// at all, and R1958 repaid it for ONE control of ONE screen — `lab.toolbar.more`,
+/// at all, and R1958 repaid it for ONE control of ONE screen — the node lab's
+/// overflow control,
 /// which is what [`r1958_a_press_reaches_a_mounted_screens_control`] still
 /// asserts end to end. That left the general claim unmade: this application
 /// mounts **six** screens, and a press reaching one of them says nothing about

@@ -1595,12 +1595,12 @@ pub const VOICES: &[VoiceSpec] = &[
     },
     // The toolbar and the two floating panels.
     VoiceSpec {
-        tag: "lab.toolbar",
+        tag: crate::address::TOOLBAR,
         role: "toolbar",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.toolbar.meta",
+        tag: crate::address::TOOLBAR_META,
         role: "status",
         population: Population::One,
     },
@@ -1753,7 +1753,7 @@ pub const VOICES: &[VoiceSpec] = &[
 pub const SILENCES: &[(&str, Population, &str)] = &[
     // The graph's name, painted three times and announced once.
     ("lab.appbar.graph", Population::One, "name_of"),
-    ("lab.toolbar.title", Population::One, "name_of"),
+    (crate::address::TOOLBAR_TITLE, Population::One, "name_of"),
     // Colour keys. A reader who never sees the colours loses the membership of
     // the transport set, which the palette announces as its value — so the
     // chips are part of that rather than five stops saying one word each.
@@ -1771,8 +1771,12 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     ("lab.node.{}.id", Population::Nodes, "name_of"),
     ("lab.node.{}.badge", Population::Nodes, "part_of"),
     // Captions inside the seat they name.
-    ("lab.toolbar.run.label", Population::One, "name_of"),
-    ("lab.toolbar.zoom", Population::One, "name_of"),
+    (
+        crate::address::TOOLBAR_RUN_LABEL,
+        Population::One,
+        "name_of",
+    ),
+    (crate::address::TOOLBAR_ZOOM, Population::One, "name_of"),
     ("lab.gate.head", Population::One, "name_of"),
     ("lab.gate.verdict", Population::One, "part_of"),
     ("lab.hint.text", Population::One, "name_of"),

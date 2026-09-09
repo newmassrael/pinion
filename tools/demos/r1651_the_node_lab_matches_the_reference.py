@@ -42,6 +42,7 @@ from rpc_verify import (  # noqa: E402
     call,
     find_by_tag,
     run_demo,
+    toolbar_seats,
     walk_nodes,
 )
 
@@ -191,6 +192,18 @@ def body() -> None:
         # address the paint used, so a card's prefix here and the card's address
         # in `nodes` cannot be two different strings.
         cards = address_prefix(spec["nodes"], key="id")
+        # ★★★★★ R2104 — and the toolbar's seats, by the word the screen declares
+        # each one under. The largest family this address debt had left: 73
+        # sites across eight walks typed one of these addresses out, and a wrong
+        # letter in one is a press that lands on nothing.
+        # ⚠ `seat_tag` and not `seat`: this walk binds `seat` twice as a LOOP
+        # variable over the rail's rows, so a map called `seat` is a rail row by
+        # the time the toolbar's block reads it — measured, as a `KeyError` on
+        # the first run.
+        seat_tag = toolbar_seats(spec)
+        # The bar itself, which is a place rather than one of its seats — see
+        # `toolbar_root` for why the wire keeps the two apart.
+        bar = spec["toolbar"]["tag"]
         assert_eq(q(tf, "graph"), spec["graph"], "the graph is the one declared")
         assert_eq(q(tf, "zoom"), spec["zoom"], "and it opens at the declared zoom")
         assert_eq(
@@ -389,11 +402,11 @@ def body() -> None:
             if tag not in painted:
                 missing.append(tag)
         for tag in (
-            "lab.toolbar.title",
-            "lab.toolbar.meta",
-            "lab.toolbar.gate",
-            "lab.toolbar.zoom",
-            "lab.toolbar.run",
+            seat_tag["title"],
+            seat_tag["meta"],
+            seat_tag["gate"],
+            seat_tag["zoom"],
+            seat_tag["run"],
             "lab.gate",
             "lab.gate.verdict",
             "lab.hint",
@@ -664,7 +677,7 @@ def body() -> None:
             # measured that Home sits ON THE ROW at the lab's own design width,
             # where the assembled shell mounts the lab narrower and puts it
             # behind the `…` control.
-            "lab.toolbar": 19,
+            bar: 19,
             # ★★★★★ R2074 — 7 -> 8, and the one that arrived is a finding the
             # screen has something TRUE to say about on its first frame.
             # `spec::LINKS` had three of its seven wires transcribed the way the
@@ -1121,11 +1134,11 @@ def body() -> None:
             if tag.startswith(cards) and tag.count(".") == 2:
                 return f"node:{tag[len(cards):]}"
             return {
-                "lab.toolbar.zoom.in": "zoom:in",
-                "lab.toolbar.zoom.out": "zoom:out",
-                "lab.toolbar.config": "config",
-                "lab.toolbar.script": "script",  # R1687
-                "lab.toolbar.run": "run",
+                seat_tag["zoom.in"]: "zoom:in",
+                seat_tag["zoom.out"]: "zoom:out",
+                seat_tag["config"]: "config",
+                seat_tag["script"]: "script",  # R1687
+                seat_tag["run"]: "run",
                 "lab.palette.discovery": "discovery",
             }.get(tag)
 
@@ -1440,7 +1453,7 @@ def body() -> None:
             tf, f"{cards}P-02", lambda: q(tf, "selected"), "O: a node card"
         )
         assert_router_press_moves(
-            tf, "lab.toolbar.zoom.in", lambda: q(tf, "zoom"), "O: a toolbar stepper"
+            tf, seat_tag["zoom.in"], lambda: q(tf, "zoom"), "O: a toolbar stepper"
         )
         # ★ The negative control: same verb, a decorative point, nothing moves.
         before = (q(tf, "selected"), q(tf, "zoom"))

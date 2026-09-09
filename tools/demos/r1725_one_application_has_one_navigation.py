@@ -50,6 +50,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     run_demo,
+    toolbar_tag,
 )
 
 SHELL = "hello-analyzer-shell"
@@ -154,8 +155,16 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             "A: ★★★★★ and the graph's name is still announced by exactly one "
             "stop -- the toolbar's copy, which the strip's removal must not "
             "have left saying nothing",
+            # ★★★★★ R2104 — the title's address from the MOUNTED screen, whose
+            # external lives under its destination (R1989). Spelled here until
+            # this round, and a wrong letter would have made this assertion read
+            # "the name is announced by nobody" when it is.
             "lab.appbar" not in tree
-            and bool(tree.get("lab.toolbar.title", {}).get("name")),
+            and bool(
+                tree.get(toolbar_tag(app, "title", ext="/node_lab/external"), {}).get(
+                    "name"
+                )
+            ),
         )
 
         # 🟥🟥🟥 ★★★★★ R1825 — **a mounted guest must hit-test the screen it

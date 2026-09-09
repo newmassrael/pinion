@@ -381,3 +381,145 @@ pub fn way_in(card: &str) -> String {
 pub fn card_of_way_in(tag: &str) -> Option<&str> {
     tag.strip_prefix(WAY_IN)
 }
+
+/// ★★★★★ R2104 — the tag the canvas **toolbar itself** is painted under.
+///
+/// Declared for [`ROLE_ROW`]'s reason, and measured before declaring: this
+/// family was the largest remaining entry in
+/// `python3 tools/painted_addresses.py --owed` — **73 walk sites across eight
+/// files**, and 106 more in Rust across two binaries, none of them derived from
+/// anything. A toolbar seat is the most pressed thing on this screen, so a
+/// wrong letter here is not only a mark nobody finds; it is a press that lands
+/// on nothing and a screen that does not respond.
+///
+/// ⚠ The bar's OWN tag, and not a prefix. Its seats hang off
+/// [`TOOLBAR_SEAT`], which carries the separator — this screen's standing rule
+/// about prefixes speaking ([`WAY_IN`], [`GROUP_INK`]): a prefix of
+/// `lab.toolbar` alone would swallow every seat, and a reader classifying a
+/// snapshot by it would call the whole cluster the bar.
+pub const TOOLBAR: &str = "lab.toolbar";
+
+/// [`TOOLBAR`] with the separator its seats hang off.
+///
+/// A `&'static str` because the seat consts below are `&'static str` too and a
+/// derivation cannot make one; the gate drives it against [`TOOLBAR`].
+pub const TOOLBAR_SEAT: &str = "lab.toolbar.";
+
+/// The graph's name, painted on the bar.
+pub const TOOLBAR_TITLE: &str = "lab.toolbar.title";
+
+/// The bar's status line — what the graph is, beside its name.
+pub const TOOLBAR_META: &str = "lab.toolbar.meta";
+
+/// The launch verdict chip, in the left cluster.
+pub const TOOLBAR_GATE: &str = "lab.toolbar.gate";
+
+/// The focus chip — see `ToolGroup::Focus`.
+pub const TOOLBAR_FOCUS: &str = "lab.toolbar.focus";
+
+/// The focus chip's caption, painted inside it by `caption::captioned`.
+pub const TOOLBAR_FOCUS_CAPTION: &str = "lab.toolbar.focus.caption";
+
+/// The zoom read-out.
+///
+/// ⚠ Not a seat: it is a caption painted inside `lab.reset.view`, which is a
+/// seat of ANOTHER family sitting on this row. That is why `ToolGroup::labels`
+/// carries this word and `ToolGroup::seats` does not, and why a reader must not
+/// take it for a control.
+pub const TOOLBAR_ZOOM: &str = "lab.toolbar.zoom";
+
+/// The zoom-in stepper.
+pub const TOOLBAR_ZOOM_IN: &str = "lab.toolbar.zoom.in";
+
+/// The zoom-out stepper.
+pub const TOOLBAR_ZOOM_OUT: &str = "lab.toolbar.zoom.out";
+
+/// Fit the graph to the view.
+pub const TOOLBAR_FIT: &str = "lab.toolbar.fit";
+
+/// Go to where the graph ends up — see `ToolGroup::Home`.
+pub const TOOLBAR_HOME: &str = "lab.toolbar.home";
+
+/// Export the configuration.
+pub const TOOLBAR_CONFIG: &str = "lab.toolbar.config";
+
+/// Produce the launch script.
+pub const TOOLBAR_SCRIPT: &str = "lab.toolbar.script";
+
+/// Save the graph.
+pub const TOOLBAR_SAVE: &str = "lab.toolbar.save";
+
+/// Open the saved graph.
+pub const TOOLBAR_OPEN: &str = "lab.toolbar.open";
+
+/// Clear back to the graph this screen opens with.
+pub const TOOLBAR_CLEAR: &str = "lab.toolbar.clear";
+
+/// The launch seat.
+pub const TOOLBAR_RUN: &str = "lab.toolbar.run";
+
+/// The launch seat's caption, which says what is running.
+pub const TOOLBAR_RUN_LABEL: &str = "lab.toolbar.run.label";
+
+/// The overflow control — the seat that holds the groups the row gave up.
+pub const TOOLBAR_MORE: &str = "lab.toolbar.more";
+
+/// The overflow control's caption, which names what it is holding.
+pub const TOOLBAR_MORE_LABEL: &str = "lab.toolbar.more.label";
+
+/// ★★★★★ R2104 — every word this screen ADDRESSES under [`TOOLBAR_SEAT`],
+/// beside the address declared for it.
+///
+/// [`FORM_PARTS`]'s shape, for the same three readers: the crate's own const
+/// sites, the gate that refuses a second speller, and the wire that hands a
+/// walk the address instead of letting it type one.
+///
+/// ⚠ Not a list of what EXISTS — only the painter knows that, and a caption
+/// nothing here reaches for is not a defect in the painter. What the gate holds
+/// is two things: every entry's declared address is what [`toolbar`] derives
+/// from its word, and every tag `ToolGroup` claims to paint under this prefix
+/// is in this roster. The second is the half that catches a seat joining a
+/// group without joining the wire.
+pub const TOOLBAR_SEATS: &[(&str, &str)] = &[
+    ("title", TOOLBAR_TITLE),
+    ("meta", TOOLBAR_META),
+    ("gate", TOOLBAR_GATE),
+    ("focus", TOOLBAR_FOCUS),
+    ("focus.caption", TOOLBAR_FOCUS_CAPTION),
+    ("zoom", TOOLBAR_ZOOM),
+    ("zoom.in", TOOLBAR_ZOOM_IN),
+    ("zoom.out", TOOLBAR_ZOOM_OUT),
+    ("fit", TOOLBAR_FIT),
+    ("home", TOOLBAR_HOME),
+    ("config", TOOLBAR_CONFIG),
+    ("script", TOOLBAR_SCRIPT),
+    ("save", TOOLBAR_SAVE),
+    ("open", TOOLBAR_OPEN),
+    ("clear", TOOLBAR_CLEAR),
+    ("run", TOOLBAR_RUN),
+    ("run.label", TOOLBAR_RUN_LABEL),
+    ("more", TOOLBAR_MORE),
+    ("more.label", TOOLBAR_MORE_LABEL),
+];
+
+/// The address of the toolbar seat called `word`.
+///
+/// ★ The runtime half of the consts above, for a caller holding a word rather
+/// than a name. The wire's roster is built through this, so the address a
+/// client presses and the address the paint used are one spelling by
+/// construction.
+#[must_use]
+pub fn toolbar(word: &str) -> String {
+    format!("{TOOLBAR_SEAT}{word}")
+}
+
+/// The seat word a toolbar address names, or `None` when the tag is not one.
+///
+/// ★ The inverse of [`toolbar`], here rather than at the router, for
+/// [`role_of_row`]'s reason. `None` is a real answer twice over: the bar's own
+/// tag is not a seat, and neither is `lab.reset.view`, which sits on this row
+/// and belongs to another family.
+#[must_use]
+pub fn toolbar_word(tag: &str) -> Option<&str> {
+    tag.strip_prefix(TOOLBAR_SEAT)
+}

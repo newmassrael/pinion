@@ -58,6 +58,7 @@ from rpc_verify import (  # noqa: E402
     address_prefix,
     assert_eq,
     run_demo,
+    toolbar_seats,
 )
 
 EXAMPLE = "hello-node-lab"
@@ -165,6 +166,12 @@ def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         # ── (A) the declaration ─────────────────────────────────────
         spec = json.loads(q(tf, "spec"))
+        # ★★★★★ R2104 — every toolbar seat's address, by the word the screen
+        # declares it under. This walk is about the canvas controls, so it named
+        # the pill's four seats and the launch chip twenty-eight times over; a
+        # wrong letter in any of them looks for a mark that is not there, which
+        # reads as the screen not painting the seat rather than as a typo.
+        seat = toolbar_seats(spec)
         rows = {row["name"]: row for row in spec["operations"]}
         for name, verb in (
             ("fit the graph to the view", "fit"),
@@ -193,13 +200,13 @@ def body() -> None:
         pill = [
             painted[tag]
             for tag in (
-                "lab.toolbar.zoom.out",
+                seat["zoom.out"],
                 "lab.reset.view",
-                "lab.toolbar.zoom.in",
-                "lab.toolbar.fit",
+                seat["zoom.in"],
+                seat["fit"],
             )
         ]
-        for tag in ("lab.toolbar.fit", "lab.reset.view", "lab.toolbar.gate"):
+        for tag in (seat["fit"], "lab.reset.view", seat["gate"]):
             assert tag in painted, f"{tag} is painted"
         for n in range(len(pill) - 1):
             assert pill[n][0] + pill[n][2] <= pill[n + 1][0], (
@@ -211,13 +218,13 @@ def body() -> None:
                 pill[n + 1][1] + pill[n + 1][3] // 2,
                 "and on one row",
             )
-        assert inside(painted["lab.toolbar.zoom"], painted["lab.reset.view"]), (
+        assert inside(painted[seat["zoom"]], painted["lab.reset.view"]), (
             "★★ the read-out is the view reset's own caption — the reference "
             "makes the percentage the button that puts the view back, and this "
-            f"screen had a number that could not be pressed: {painted['lab.toolbar.zoom']} "
+            f"screen had a number that could not be pressed: {painted[seat['zoom']]} "
             f"in {painted['lab.reset.view']}"
         )
-        assert not overlaps(painted["lab.toolbar.gate"], painted["lab.toolbar.zoom.out"]), (
+        assert not overlaps(painted[seat["gate"]], painted[seat["zoom.out"]]), (
             "the launch chip is in the other cluster"
         )
 
@@ -226,8 +233,8 @@ def body() -> None:
         # control, which is how a 1 px transform defect survived two rounds
         # (R1684). The corners are where it shows.
         for tag, want in (
-            ("lab.toolbar.fit", "fit"),
-            ("lab.toolbar.gate", "problem"),
+            (seat["fit"], "fit"),
+            (seat["gate"], "problem"),
             ("lab.reset.view", "reset:view"),
         ):
             box = painted[tag]
@@ -248,7 +255,7 @@ def body() -> None:
         canvas = painted["lab.canvas"]
         opened_at = camera(tf)
         assert_eq(opened_at[0], spec["zoom"], "the screen opens at the declared zoom")
-        press(tf, "lab.toolbar.fit")
+        press(tf, seat["fit"])
         framed = camera(tf)
         assert framed != opened_at, f"the view moved: {opened_at} -> {framed}"
         said = q(tf, "toast")
@@ -288,7 +295,7 @@ def body() -> None:
         )
 
         # ── (E) idempotent, and not a function of the view ──────────
-        press(tf, "lab.toolbar.fit")
+        press(tf, seat["fit"])
         assert_eq(
             camera(tf),
             framed,
@@ -302,7 +309,7 @@ def body() -> None:
             to_at=(canvas[0] + canvas[2] // 2 - 180, canvas[1] + canvas[3] // 2 + 90),
         )
         assert camera(tf) != framed, "the view really did move away"
-        press(tf, "lab.toolbar.fit")
+        press(tf, seat["fit"])
         assert_eq(
             camera(tf),
             framed,
@@ -319,13 +326,13 @@ def body() -> None:
             f"★ the first finding is not on the card the screen is on: "
             f"{first!r} against {q(tf, 'selected')}"
         )
-        press(tf, "lab.toolbar.gate")
+        press(tf, seat["gate"])
         assert_eq(q(tf, "selected"), who, "★★ the jump lands on that card")
         assert_eq(q(tf, "toast"), first, "and says which finding it took you to")
 
         # ── (G) it reveals, and only when it has to ─────────────────
         before = camera(tf)
-        press(tf, "lab.toolbar.gate")
+        press(tf, seat["gate"])
         assert_eq(
             camera(tf),
             before,
@@ -345,7 +352,7 @@ def body() -> None:
             f"★ and {who} really is off screen now, or the reveal below would "
             f"be proving nothing: {gone.get(who)} against {canvas}"
         )
-        press(tf, "lab.toolbar.gate")
+        press(tf, seat["gate"])
         moved = graph_boxes(tf)[who]
         assert inside(moved, canvas), (
             f"★★★ the card the person was sent to is on screen: {moved} in "
@@ -362,7 +369,7 @@ def body() -> None:
         # findings are derived from the forms and a demo that named them would
         # be asserting a graph rather than a behaviour. It also proves the jump's
         # own precondition moves — each repair takes the FIRST line away.
-        press(tf, "lab.toolbar.fit")
+        press(tf, seat["fit"])
         repaired = 0
         for port in range(7470, 7490):
             lines = json.loads(q(tf, "gate"))
@@ -397,7 +404,7 @@ def body() -> None:
         assert "nothing to go to" in said, said
         assert_eq(camera(tf), settled, "and nothing moved")
         assert_eq(
-            access(tf)["lab.toolbar.gate"]["name"],
+            access(tf)[seat["gate"]]["name"],
             "gate passed, nothing to go to",
             "★★ and the chip SAYS there is nothing — a reader told only 'go to "
             "the first problem' has not been told whether there is one",
@@ -419,7 +426,7 @@ def body() -> None:
             return ((mid[0] - pan[0]) / (zoom / 100), (mid[1] - pan[1]) / (zoom / 100))
 
         held = under_the_middle()
-        for tag in ("lab.toolbar.zoom.in", "lab.toolbar.zoom.in", "lab.toolbar.zoom.out"):
+        for tag in (seat["zoom.in"], seat["zoom.in"], seat["zoom.out"]):
             press(tf, tag)
             now = under_the_middle()
             assert abs(now[0] - held[0]) <= 3 and abs(now[1] - held[1]) <= 3, (
@@ -430,8 +437,8 @@ def body() -> None:
         # ── (J) named buttons ───────────────────────────────────────
         nodes = access(tf)
         for tag, name in (
-            ("lab.toolbar.fit", "fit the graph to the view"),
-            ("lab.toolbar.zoom.in", "zoom in"),
+            (seat["fit"], "fit the graph to the view"),
+            (seat["zoom.in"], "zoom in"),
         ):
             assert_eq(nodes[tag]["role"], "button", f"{tag} announces as a button")
             assert_eq(nodes[tag]["name"], name, f"{tag} says what it does")
@@ -444,12 +451,12 @@ def body() -> None:
         assert "reset" in nodes["lab.reset.view"]["name"], (
             "and still says what pressing it does"
         )
-        assert nodes["lab.toolbar.gate"]["name"].startswith("gate"), nodes[
-            "lab.toolbar.gate"
-        ]["name"]
+        assert nodes[seat["gate"]]["name"].startswith("gate"), nodes[seat["gate"]][
+            "name"
+        ]
 
         # ── (K) the wire and the seats are the same act ─────────────
-        press(tf, "lab.toolbar.fit")
+        press(tf, seat["fit"])
         by_seat = (camera(tf), q(tf, "toast"))
         tf.invoke(f"{EXT}/zoom_by", "300")
         by_wire_said = tf.invoke(f"{EXT}/fit", "")
@@ -464,7 +471,7 @@ def body() -> None:
         by_wire = tf.invoke(f"{EXT}/go_to_problem", "")
         landed = q(tf, "selected")
         tf.invoke(f"{EXT}/select", "R-01")
-        press(tf, "lab.toolbar.gate")
+        press(tf, seat["gate"])
         assert_eq(q(tf, "selected"), landed, "and the jump likewise")
         assert_eq(q(tf, "toast"), by_wire, "with the same sentence")
 

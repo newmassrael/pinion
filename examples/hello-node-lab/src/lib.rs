@@ -269,8 +269,9 @@ fn draws_own_rail() -> bool {
 /// measurement of the behaviour canon contradicts it.** The canon has ONE bar,
 /// the host's, on all three screens; a graph's name and run state are not in it
 /// and are drawn on the canvas toolbar instead. Which is where this screen
-/// already draws them: `lab.toolbar.title` is the same `GRAPH_NAME`, and
-/// `lab.toolbar.run.label` reads *running n/n*. So mounted, all three things
+/// already draws them: [`address::TOOLBAR_TITLE`] is the same `GRAPH_NAME`, and
+/// [`address::TOOLBAR_RUN_LABEL`] reads *running n/n*. So mounted, all three
+/// things
 /// this screen's bar carries are already on this screen somewhere else — the
 /// third being the words *node lab*, which restate an identity the host's bar
 /// and the rail's active seat both already give.
@@ -1921,7 +1922,8 @@ struct LabState {
     ///
     /// A moved group has to stay REACHABLE, or the round trades a visual defect
     /// for a functional one — which is worse, and is what the gates caught on
-    /// the first run: `lab.toolbar.config` stopped being pressable at all. The
+    /// the first run: [`address::TOOLBAR_CONFIG`] stopped being pressable at
+    /// all. The
     /// floor's extension button opens a menu for exactly this reason.
     toolbar_open: Signal<bool>,
     /// ★★★★★ R2065 — where the breadcrumb trail's keyboard cursor rests, as an
@@ -7694,17 +7696,21 @@ impl ToolGroup {
     /// appear in the overflow menu when the group has moved.
     const fn seats(self) -> &'static [&'static str] {
         match self {
-            Self::Focus => &["lab.toolbar.focus"],
+            Self::Focus => &[address::TOOLBAR_FOCUS],
             Self::Zoom => &[
-                "lab.toolbar.zoom.out",
+                address::TOOLBAR_ZOOM_OUT,
                 "lab.reset.view",
-                "lab.toolbar.zoom.in",
-                "lab.toolbar.fit",
+                address::TOOLBAR_ZOOM_IN,
+                address::TOOLBAR_FIT,
             ],
-            Self::Home => &["lab.toolbar.home"],
-            Self::Export => &["lab.toolbar.config", "lab.toolbar.script"],
-            Self::File => &["lab.toolbar.save", "lab.toolbar.open", "lab.toolbar.clear"],
-            Self::Run => &["lab.toolbar.run"],
+            Self::Home => &[address::TOOLBAR_HOME],
+            Self::Export => &[address::TOOLBAR_CONFIG, address::TOOLBAR_SCRIPT],
+            Self::File => &[
+                address::TOOLBAR_SAVE,
+                address::TOOLBAR_OPEN,
+                address::TOOLBAR_CLEAR,
+            ],
+            Self::Run => &[address::TOOLBAR_RUN],
         }
     }
 
@@ -7715,17 +7721,18 @@ impl ToolGroup {
     /// is exactly the distinction that was missing. `seats()` alone answers
     /// "where do the rows go"; this pair answers "what stopped being painted",
     /// and a reader who needs the second and is given the first calls a moved
-    /// caption LOST. Measured: `r1709` read `lab.toolbar.zoom` — the zoom
+    /// caption LOST. Measured: `r1709` read [`address::TOOLBAR_ZOOM`] — the
+    /// zoom
     /// read-out's label, painted inside the view-reset seat — as a declared
     /// region the reader could not bring into view, while the in-process gate
     /// [`in_toolbar_overflow`] knew better from a hand-written case of its own.
     /// Two spellings of one fact, and the wire had the incomplete one.
     const fn labels(self) -> &'static [&'static str] {
         match self {
-            Self::Zoom => &["lab.toolbar.zoom"],
+            Self::Zoom => &[address::TOOLBAR_ZOOM],
             // ★ R1988 — the chip's caption is `caption::captioned`'s own tag,
             // painted inside it, so a moved group takes its word along.
-            Self::Focus => &["lab.toolbar.focus.caption"],
+            Self::Focus => &[address::TOOLBAR_FOCUS_CAPTION],
             // ★ R1994 — `home`'s caption is drawn by `label`, which is the
             // seat's own text rather than a separately tagged region, so this
             // group is responsible for no tag beyond its seat.
@@ -7846,7 +7853,8 @@ fn right_cluster_wants() -> u32 {
 ///
 /// Keeping the tags is the decision. A moved control that changed its name
 /// would be a second control doing the same thing, and every gate that presses
-/// `lab.toolbar.config` would be pressing something else; keeping them means a
+/// [`address::TOOLBAR_CONFIG`] would be pressing something else; keeping them
+/// means a
 /// seat MOVES rather than being replaced, which is also what a person
 /// experiences.
 fn overflow_menu_seats() -> Vec<(&'static str, Rect)> {
@@ -8261,7 +8269,7 @@ fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
         // does: a reader told only "go to the first problem" has not been told
         // whether there is one.
         seat(
-            "lab.toolbar.gate",
+            address::TOOLBAR_GATE,
             gate_chip_rect(),
             Hit::Problem,
             match state.problems().len() {
@@ -8275,19 +8283,19 @@ fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
         // told only "focus the selection" has not been told which closure is
         // running.
         seat(
-            "lab.toolbar.focus",
+            address::TOOLBAR_FOCUS,
             focus_rect(),
             Hit::Focus,
             focus_name(state),
         ),
         seat(
-            "lab.toolbar.config",
+            address::TOOLBAR_CONFIG,
             config_rect(),
             Hit::Config,
             "export the configuration".to_owned(),
         ),
         seat(
-            "lab.toolbar.script",
+            address::TOOLBAR_SCRIPT,
             script_rect(),
             Hit::Script,
             "produce the launch script".to_owned(),
@@ -8296,13 +8304,13 @@ fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
         // to open, because that is the fact a person cannot see from the button
         // and the one that decides whether pressing it does anything.
         seat(
-            "lab.toolbar.save",
+            address::TOOLBAR_SAVE,
             file_rect(0),
             Hit::SaveGraph,
             "save the graph".to_owned(),
         ),
         seat(
-            "lab.toolbar.open",
+            address::TOOLBAR_OPEN,
             file_rect(1),
             Hit::OpenGraph,
             if persist::stored(state).is_empty() {
@@ -8312,13 +8320,13 @@ fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
             },
         ),
         seat(
-            "lab.toolbar.clear",
+            address::TOOLBAR_CLEAR,
             file_rect(2),
             Hit::ClearGraph,
             "clear back to the graph this screen opens with".to_owned(),
         ),
         seat(
-            "lab.toolbar.run",
+            address::TOOLBAR_RUN,
             run_rect(),
             Hit::Run,
             RunSeatWords::of(state).name,
@@ -8353,7 +8361,7 @@ fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
 /// useful* — and a person reads the pair before the words.
 fn home_seat(ink: Ink, at: Rect) -> Vec<Scene> {
     vec![
-        box_at("lab.toolbar.home", at, ink.raised, Some(ink.outline), 6),
+        box_at(address::TOOLBAR_HOME, at, ink.raised, Some(ink.outline), 6),
         label("home", seat_caption(at), FONT_SMALL, ink.text_2),
     ]
 }
@@ -8373,7 +8381,7 @@ fn view_seats(state: &LabState) -> Vec<ToolbarSeat> {
     };
     vec![
         seat(
-            "lab.toolbar.zoom.out",
+            address::TOOLBAR_ZOOM_OUT,
             zoom_rect(false),
             Hit::Zoom(false),
             "zoom out".to_owned(),
@@ -8389,13 +8397,13 @@ fn view_seats(state: &LabState) -> Vec<ToolbarSeat> {
             format!("zoom {}%, reset the view", state.zoom.get()),
         ),
         seat(
-            "lab.toolbar.zoom.in",
+            address::TOOLBAR_ZOOM_IN,
             zoom_rect(true),
             Hit::Zoom(true),
             "zoom in".to_owned(),
         ),
         seat(
-            "lab.toolbar.fit",
+            address::TOOLBAR_FIT,
             fit_rect(),
             Hit::Fit,
             "fit the graph to the view".to_owned(),
@@ -8406,7 +8414,7 @@ fn view_seats(state: &LabState) -> Vec<ToolbarSeat> {
         // nowhere to go it says that instead, rather than offering a press that
         // scrolls into empty canvas.
         seat(
-            "lab.toolbar.home",
+            address::TOOLBAR_HOME,
             home_rect(),
             Hit::Home,
             match state.doc.borrow().home(state.here()) {
@@ -8443,7 +8451,7 @@ fn overflow_control_seat(state: &LabState) -> Option<ToolbarSeat> {
     let rect = overflow_rect()?;
     let held: Vec<&str> = right_cluster().moved().map(|g| g.word()).collect();
     Some(ToolbarSeat {
-        tag: "lab.toolbar.more",
+        tag: address::TOOLBAR_MORE,
         rect,
         hit: Hit::More,
         name: format!(
@@ -8479,7 +8487,7 @@ fn overflow_control_seat(state: &LabState) -> Option<ToolbarSeat> {
 pub fn in_toolbar_overflow(tag: &str) -> bool {
     // ★ R1791.1 — through `tags()`, which is seats AND the captions painted
     // inside them. This used to carry its own hand-written case for
-    // `lab.toolbar.zoom` while the wire's `moved_seats` carried none, so the two
+    // the zoom read-out while the wire's `moved_seats` carried none, so the two
     // answers to "what moved" disagreed by exactly that caption.
     right_cluster()
         .moved()
@@ -8546,7 +8554,8 @@ pub(crate) fn in_folded_pane(tag: &str) -> bool {
 ///
 /// It keeps its own tag and its own name — a seat MOVES rather than being
 /// replaced, which is what a person experiences and what lets every gate that
-/// presses `lab.toolbar.config` go on pressing the configuration export. The
+/// presses [`address::TOOLBAR_CONFIG`] go on pressing the configuration export.
+/// The
 /// floor's answer to the same question is that a hidden action reports itself
 /// visible, so nothing can tell where it went.
 fn relocate_if_moved(state: &LabState, seat: ToolbarSeat) -> Option<ToolbarSeat> {
@@ -8569,14 +8578,17 @@ fn relocate_if_moved(state: &LabState, seat: ToolbarSeat) -> Option<ToolbarSeat>
 /// is not in the cluster at all (the launch chip, which sits with the title).
 fn seat_group(tag: &str) -> Option<ToolGroup> {
     match tag {
-        "lab.toolbar.zoom.out" | "lab.toolbar.zoom.in" | "lab.reset.view" | "lab.toolbar.fit" => {
-            Some(ToolGroup::Zoom)
+        address::TOOLBAR_ZOOM_OUT
+        | address::TOOLBAR_ZOOM_IN
+        | "lab.reset.view"
+        | address::TOOLBAR_FIT => Some(ToolGroup::Zoom),
+        address::TOOLBAR_HOME => Some(ToolGroup::Home),
+        address::TOOLBAR_FOCUS => Some(ToolGroup::Focus),
+        address::TOOLBAR_CONFIG | address::TOOLBAR_SCRIPT => Some(ToolGroup::Export),
+        address::TOOLBAR_SAVE | address::TOOLBAR_OPEN | address::TOOLBAR_CLEAR => {
+            Some(ToolGroup::File)
         }
-        "lab.toolbar.home" => Some(ToolGroup::Home),
-        "lab.toolbar.focus" => Some(ToolGroup::Focus),
-        "lab.toolbar.config" | "lab.toolbar.script" => Some(ToolGroup::Export),
-        "lab.toolbar.save" | "lab.toolbar.open" | "lab.toolbar.clear" => Some(ToolGroup::File),
-        "lab.toolbar.run" => Some(ToolGroup::Run),
+        address::TOOLBAR_RUN => Some(ToolGroup::Run),
         _ => None,
     }
 }
@@ -11232,7 +11244,7 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
     let mut children = vec![
         quiet_while_the_app_bar_says_it(
             tagged_label(
-                "lab.toolbar.title",
+                address::TOOLBAR_TITLE,
                 spec::GRAPH_NAME,
                 local(toolbar_title_rect()),
                 FONT_TITLE,
@@ -11255,7 +11267,7 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
             Silence::name_of("lab.appbar"),
         ),
         tagged_label(
-            "lab.toolbar.meta",
+            address::TOOLBAR_META,
             format!("{nodes} nodes · {links} links"),
             local(toolbar_meta_rect()),
             FONT_SMALL,
@@ -11276,7 +11288,7 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
             let seat = local(gate_chip_rect());
             let inner = panel_content(seat);
             panel(
-                "lab.toolbar.gate",
+                address::TOOLBAR_GATE,
                 seat,
                 ink.raised,
                 Some(gate_colour),
@@ -11297,7 +11309,13 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
     ];
 
     children.extend(toolbar_controls(state, ink));
-    panel("lab.toolbar", bar, ink.surface, Some(ink.outline), children)
+    panel(
+        address::TOOLBAR,
+        bar,
+        ink.surface,
+        Some(ink.outline),
+        children,
+    )
 }
 
 /// ★★★★★ R1988 — **the focus chip**, at the seat the toolbar's own layout gave
@@ -11317,7 +11335,7 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
 fn focus_chip(state: &LabState, ink: Ink, seat: Rect) -> Scene {
     let on = state.focus.get().is_some();
     let (chip, _) = captioned(
-        "lab.toolbar.focus",
+        address::TOOLBAR_FOCUS,
         seat,
         BoxStyle::filled(if on { ink.accent_soft } else { ink.raised })
             .with_corner_radius(6)
@@ -11330,7 +11348,7 @@ fn focus_chip(state: &LabState, ink: Ink, seat: Rect) -> Scene {
         // ★ The chip's own name already carries the word and the count, so a
         // stop on the run would read the mode out twice before saying anything
         // new.
-        .silent(Silence::name_of("lab.toolbar.focus")),
+        .silent(Silence::name_of(address::TOOLBAR_FOCUS)),
         // ⚠ TRANSPARENT, for the reason the breadcrumb's chips are: every
         // control on this canvas is resolved from COORDINATES by `Hit::at`, and
         // a tagged node that takes the pointer is resolved by the router as the
@@ -11364,9 +11382,9 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
         let seat = local(zoom_rect(plus));
         children.push(box_at(
             if plus {
-                "lab.toolbar.zoom.in"
+                address::TOOLBAR_ZOOM_IN
             } else {
-                "lab.toolbar.zoom.out"
+                address::TOOLBAR_ZOOM_OUT
             },
             seat,
             ink.raised,
@@ -11405,7 +11423,7 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
         // already carries it ("zoom 84%, reset the view") — one stop, both facts.
         children.push(quiet(
             tagged_label(
-                "lab.toolbar.zoom",
+                address::TOOLBAR_ZOOM,
                 format!("{}%", state.zoom.get()),
                 seat_caption(view_reset),
                 FONT_SMALL,
@@ -11416,7 +11434,7 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
         // ★★ R1688 — the pill's trailing seat: frame the whole graph.
         let fit = local(fit_rect());
         children.push(box_at(
-            "lab.toolbar.fit",
+            address::TOOLBAR_FIT,
             fit,
             ink.raised,
             Some(ink.outline),
@@ -11438,8 +11456,8 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
     // `config` would undo a decision somebody wrote down.
     if showing(ToolGroup::Export) {
         for (tag, text, seat) in [
-            ("lab.toolbar.config", "config", local(config_rect())),
-            ("lab.toolbar.script", "script", local(script_rect())),
+            (address::TOOLBAR_CONFIG, "config", local(config_rect())),
+            (address::TOOLBAR_SCRIPT, "script", local(script_rect())),
         ] {
             children.push(box_at(tag, seat, ink.raised, Some(ink.outline), 7));
             children.push(label(text, seat_caption(seat), FONT_SMALL, ink.text_2));
@@ -11456,7 +11474,7 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
         }
         let seat = local(file_rect(n));
         children.push(box_at(
-            &format!("lab.toolbar.{word}"),
+            &address::toolbar(word),
             seat,
             ink.raised,
             Some(ink.outline),
@@ -11493,7 +11511,7 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
 /// ★★★★★ R1791 — the overflow control, and the menu it opens onto.
 ///
 /// The menu's seats keep their own tags, so a press aimed at
-/// `lab.toolbar.config` still lands on the configuration export: it is
+/// [`address::TOOLBAR_CONFIG`] still lands on the configuration export: it is
 /// somewhere else, not something else.
 fn toolbar_overflow(_state: &LabState, bar: Rect, ink: Ink) -> Vec<Scene> {
     let local = |r: Rect| Rect::new(r.x - bar.x, r.y - bar.y, r.w, r.h);
@@ -11546,19 +11564,25 @@ fn overflow_menu(state: &LabState, ink: Ink) -> Vec<Scene> {
 
 fn toolbar_overflow_seat(seat: Rect, ink: Ink) -> Vec<Scene> {
     vec![
-        box_at("lab.toolbar.more", seat, ink.raised, Some(ink.outline), 6),
+        box_at(
+            address::TOOLBAR_MORE,
+            seat,
+            ink.raised,
+            Some(ink.outline),
+            6,
+        ),
         // ★ The glyph is the caption and the SEAT carries the list — see
         // `toolbar_seats`, where this control's name is built from what the
         // row actually moved. Announcing it here as well would say it twice.
         quiet(
             tagged_label(
-                "lab.toolbar.more.label",
+                address::TOOLBAR_MORE_LABEL,
                 "\u{2026}".to_owned(),
                 seat_caption(seat),
                 FONT_SMALL,
                 ink.text_2,
             ),
-            Silence::name_of("lab.toolbar.more"),
+            Silence::name_of(address::TOOLBAR_MORE),
         ),
     ]
 }
@@ -11576,7 +11600,7 @@ fn toolbar_run_seat(state: &LabState, run: Rect, ink: Ink) -> Vec<Scene> {
         ink.accent
     };
     vec![
-        box_at("lab.toolbar.run", run, ink.raised, Some(run_ink), 7),
+        box_at(address::TOOLBAR_RUN, run, ink.raised, Some(run_ink), 7),
         // ★ The caption IS the seat's name, and since R2002 that is true by
         // construction rather than by assertion: both come out of
         // `RunSeatWords`, which builds the name by appending to the caption.
@@ -11586,13 +11610,13 @@ fn toolbar_run_seat(state: &LabState, run: Rect, ink: Ink) -> Vec<Scene> {
         // `stop`.
         quiet(
             tagged_label(
-                "lab.toolbar.run.label",
+                address::TOOLBAR_RUN_LABEL,
                 RunSeatWords::of(state).caption,
                 seat_caption(run),
                 FONT_SMALL,
                 run_ink,
             ),
-            Silence::name_of("lab.toolbar.run"),
+            Silence::name_of(address::TOOLBAR_RUN),
         ),
     ]
 }
@@ -14644,7 +14668,7 @@ fn view(field: (TextFieldState, u32), _frame: Frame) -> Scene {
     // ★★★★★ R1822 — and the same for the application bar, which is the pane
     // that paragraph was written next to and did not cover. Mounted, every one
     // of the three things this bar carries is already on this screen: the
-    // graph's name is `lab.toolbar.title`, the run state is the run seat's own
+    // graph's name is the toolbar's own title, the run state is the run seat's
     // caption, and the words *node lab* restate what the host's bar and the
     // rail's active seat both say. Not a different sentence — the same one,
     // twice, in a strip the canon does not have.
@@ -18116,6 +18140,31 @@ fn fields_wire() -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// ★★★★★ R2104 — every seat of the canvas toolbar, beside the address it is
+/// painted under.
+///
+/// Published for the reason `nodes[].tag` and `roles[].tag` are: a walk is
+/// Python and cannot call [`address::toolbar`], so before this every walk that
+/// pressed a toolbar seat re-typed the address — measured at **73 sites across
+/// eight files**, the largest family `tools/painted_addresses.py --owed` had
+/// left. A wrong letter there is not a red; it is a walk reporting that the
+/// SCREEN did not paint the seat.
+///
+/// ⚠ The roster of what this screen ADDRESSES, which is not the roster of what
+/// is on the row right now — a group that moved keeps its address and is in the
+/// overflow menu, and `toolbar_overflow` is where a reader asks which. Two
+/// entries are captions rather than controls (`zoom`, `run.label`), and they
+/// are here because a walk reads them.
+fn toolbar_wire() -> serde_json::Value {
+    serde_json::json!({
+        "tag": address::TOOLBAR,
+        "seats": address::TOOLBAR_SEATS
+            .iter()
+            .map(|(word, tag)| serde_json::json!({ "word": word, "tag": tag }))
+            .collect::<Vec<_>>(),
+    })
+}
+
 /// ★★★★★ R2053 — the prefix each part of a form row is addressed under.
 ///
 /// Its own function for the reason the rosters beside it have one — the
@@ -18456,6 +18505,15 @@ fn spec_json() -> serde_json::Value {
         // which is the same shape the role and rail rosters hand over, and
         // spells neither the screen's tag nor the painter's separator.
         "form_parts": form_parts_wire(),
+        // ★★★★★ R2104 — **the canvas toolbar: its own tag, and every seat's.**
+        //
+        // ⚠ The bar is a `tag` beside the seats rather than the first row of
+        // them, and that is a decision the address recovery forces: a roster's
+        // prefix is recovered by taking a row's own key off the end of its
+        // address, so a row for the container — whose address is the prefix
+        // WITHOUT the separator — would hand every later reader a prefix that
+        // composes `lab.toolbarrun`.
+        "toolbar": toolbar_wire(),
         "addable": spec::ADDABLE,
         "gestures": spec::GESTURES.iter().map(|(g, w)| serde_json::json!([g, w])).collect::<Vec<_>>(),
         // ★ R1678 — the reset affordances, and which of them are CONDITIONAL.
@@ -24879,11 +24937,11 @@ fn appbar_access(state: &LabState) -> Vec<AccessNode> {
     // reader cannot be offered a landmark for a strip that is not on screen.
     //
     // 🟥🟥🟥 ★★★★★ R1825 — **and empty is not enough.** The graph's name is
-    // painted at `lab.toolbar.title`, which defers to this bar with a
+    // painted at the toolbar's title, which defers to this bar with a
     // `Silence::name_of("lab.appbar")`. R1822 dropped that deferral where the
     // bar is absent and stopped there, which moves the node from *wrongly
     // quiet* to **undecided** — a different fault, not a repair. Measured on
-    // the running application: `lab.toolbar.title`, `voice: "unvoiced"`, the
+    // the running application: that title, `voice: "unvoiced"`, the
     // one region at the lab destination the census could not decide.
     //
     // ⚠ Its test could not see that, and the reason is worth keeping: it
@@ -24895,7 +24953,7 @@ fn appbar_access(state: &LabState) -> Vec<AccessNode> {
     // stop that says it, and says so here.
     if !draws_own_app_bar() {
         return vec![
-            AccessNode::new("lab.toolbar.title", AriaRole::Group)
+            AccessNode::new(address::TOOLBAR_TITLE, AriaRole::Group)
                 .with_name(format!("node lab: {}", spec::GRAPH_NAME)),
         ];
     }
@@ -28834,8 +28892,8 @@ fn gate_access(state: &LabState) -> Vec<AccessNode> {
 /// added later fails the demo's roster check rather than going quiet.
 fn toolbar_access(state: &LabState) -> Vec<AccessNode> {
     let mut nodes = vec![
-        AccessNode::new("lab.toolbar", AriaRole::Toolbar).with_name("canvas"),
-        AccessNode::new("lab.toolbar.meta", AriaRole::Status)
+        AccessNode::new(address::TOOLBAR, AriaRole::Toolbar).with_name("canvas"),
+        AccessNode::new(address::TOOLBAR_META, AriaRole::Status)
             .with_name(format!(
                 "{} nodes, {} links",
                 state.cards().len(),

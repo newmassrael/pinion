@@ -84,6 +84,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     run_demo,
+    toolbar_root,
 )
 
 SHELL = "hello-analyzer-shell"
@@ -175,14 +176,19 @@ def section_a(app: RpcSubprocess, declared: dict) -> None:
             )
 
 
-def section_b(app: RpcSubprocess, declared: dict) -> None:
+def section_b(app: RpcSubprocess, surface: str, declared: dict) -> None:
     banner("B — ★ a real drag arc widens the panel, and four derivations follow")
     pane = declared[PANE]
     bounds = pane["resize"]
     body_tag = pane["body"]
+    # ★★★★★ R2104 — the bar's own tag from the screen that paints it, through
+    # the surface this walk already asked for. Spelled twice here until this
+    # round, on a screen reached by an address the walk deliberately does not
+    # compose — so the address was the one thing left written down.
+    bar = toolbar_root(app, ext=surface)
 
     before = rects(app)
-    pane0, canvas0, toolbar0 = before[PANE], before["lab.canvas"], before["lab.toolbar"]
+    pane0, canvas0, toolbar0 = before[PANE], before["lab.canvas"], before[bar]
     body0 = before[body_tag]
     gx, gy, gw, gh = before[f"{PANE}.grip"]
     start = (gx + gw // 2, gy + gh // 2)
@@ -198,7 +204,7 @@ def section_b(app: RpcSubprocess, declared: dict) -> None:
     app.tick_ms(16)
 
     after = rects(app)
-    pane1, canvas1, toolbar1 = after[PANE], after["lab.canvas"], after["lab.toolbar"]
+    pane1, canvas1, toolbar1 = after[PANE], after["lab.canvas"], after[bar]
     body1 = after[body_tag]
 
     ok(
@@ -361,7 +367,7 @@ def body() -> None:
         surface = surface_of(app, SEAT)
         declared = declaration(app, surface)
         section_a(app, declared)
-        section_b(app, declared)
+        section_b(app, surface, declared)
         section_c(app, declared)
         section_d(app, surface, declared)
         section_e(app, declared)

@@ -62,6 +62,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     press_painted_tag,
     run_demo,
+    toolbar_seats,
     widen_until_row_whole,
 )
 
@@ -78,9 +79,14 @@ EXT = "/external"
 VIEWPORT = (1440, 900)
 
 # The two seats, and the operations they answer.
+#
+# ★★★★★ R2104 — keyed by the WORD the screen declares each seat under, not by
+# the address. The address is the screen's to compose and this walk is handed it
+# (`toolbar_seats`); spelled here it was a second copy of that composition, and
+# a wrong letter would have read as the screen not painting the seat.
 SEATS = {
-    "lab.toolbar.config": "export the configuration",
-    "lab.toolbar.script": "produce the launch script",
+    "config": "export the configuration",
+    "script": "produce the launch script",
 }
 
 # The row whose ceiling the specification's own `validate` argument names. One
@@ -155,8 +161,12 @@ def body() -> None:
         print(f"[demo] the toolbar's row is whole at {VIEWPORT[0]}px wide")
         # ── (A) the declaration, and the two seats ──────────────────
         spec = json.loads(q(tf, "spec"))
+        # ★★★★★ R2104 — every toolbar seat's address, by the word the screen
+        # declares it under, handed over rather than spelled here.
+        seat_tag = toolbar_seats(spec)
+        bar = spec["toolbar"]["tag"]
         rows = {row["name"]: row for row in spec["operations"]}
-        for tag, name in SEATS.items():
+        for name in SEATS.values():
             op = rows[name]
             assert_eq(op["gesture"], True, f"★ '{name}' has a way in for a person")
             assert op["verb"], f"★ and a verb an agent can call: {op}"
@@ -168,11 +178,10 @@ def body() -> None:
             )
 
         painted = rects(tf)
-        for tag in SEATS:
+        for word in SEATS:
+            tag = seat_tag[word]
             assert tag in painted, f"{tag} is painted: {sorted(painted)[:12]}…"
-        config_box, script_box = painted["lab.toolbar.config"], painted[
-            "lab.toolbar.script"
-        ]
+        config_box, script_box = painted[seat_tag["config"]], painted[seat_tag["script"]]
         assert config_box[1] == script_box[1], (
             "★ side by side, which is where the reference puts them — they are "
             f"one derivation rendered twice: {config_box} against {script_box}"
@@ -185,9 +194,12 @@ def body() -> None:
         # A check aimed at a centre cannot see an error smaller than half a
         # control, which is how a 1px transform defect survived two rounds
         # (R1684). The corners are where it shows.
-        for tag in SEATS:
+        for word in SEATS:
+            tag = seat_tag[word]
             box = painted[tag]
-            want = "config" if tag.endswith("config") else "script"
+            # ★ R2104 — the word IS the answer the router gives, so the two are
+            # one name rather than a suffix test over an address spelled here.
+            want = word
             for dx, dy in ((0, 0), (box[2] - 1, 0), (0, box[3] - 1), (box[2] - 1, box[3] - 1)):
                 at = (box[0] + dx, box[1] + dy)
                 assert_eq(
@@ -210,7 +222,7 @@ def body() -> None:
         assert empty["script"] is None, f"and no script yet: {empty}"
 
         # ── (D) press config — the plan, in the LINKS' order ────────
-        press(tf, "lab.toolbar.config")
+        press(tf, seat_tag["config"])
         plan = produced(tf)["config"]
         assert plan is not None, "the export landed"
         assert produced(tf)["script"] is None, (
@@ -257,7 +269,7 @@ def body() -> None:
             )
 
         # ── (E) press script — one file and one start per node ──────
-        press(tf, "lab.toolbar.script")
+        press(tf, seat_tag["script"])
         script = produced(tf)["script"]
         assert script is not None, "the script landed"
         for name in ordered:
@@ -292,8 +304,8 @@ def body() -> None:
         # ── (G) a card switched off leaves both at once ─────────────
         victim = ordered[-1]
         tf.invoke(f"{EXT}/disable", victim)
-        press(tf, "lab.toolbar.config")
-        press(tf, "lab.toolbar.script")
+        press(tf, seat_tag["config"])
+        press(tf, seat_tag["script"])
         after = produced(tf)
         assert victim not in order_of(after["config"]), (
             f"★★ a card that produces nothing is not started: "
@@ -357,17 +369,17 @@ def body() -> None:
         # last defect (R1684.2).
         nodes = {n["tag"]: n for n in access(tf) if n.get("tag")}
         painted = rects(tf)
-        toolbar = painted["lab.toolbar"]
+        toolbar = painted[bar]
         in_toolbar = {
             tag: box
             for tag, box in painted.items()
-            if tag != "lab.toolbar"
+            if tag != bar
             and inside(box, toolbar)
             and resolves(tf, (box[0] + box[2] // 2, box[1] + box[3] // 2))
             not in ("nothing", "canvas")
         }
         # ★ A tag INSIDE another one is part of that control, not a seat of its
-        # own — `lab.toolbar.run.label` is the run button's own text and resolves
+        # own — the run seat's caption is the run button's own text and resolves
         # to the button because it is painted in it. `parts` means "inside the
         # control" here for the same reason R1686 found it does in the form.
         pressable = sorted(
@@ -390,10 +402,10 @@ def body() -> None:
                 f"★ and is NAMED by what it does: {seat} — a bare glyph "
                 "announces as its own character"
             )
-        for tag, name in (
-            ("lab.toolbar.config", "export the configuration"),
-            ("lab.toolbar.script", "produce the launch script"),
-        ):
+        # ★ R2104 — the same pair the module's `SEATS` names, read through the
+        # screen's own roster rather than typed a second time here.
+        for word, name in SEATS.items():
+            tag = seat_tag[word]
             assert_eq(nodes[tag]["name"], name, f"{tag} says what it does")
 
         # ── (I.2) no CONTROL's own name is cut ──────────────────────
@@ -439,7 +451,7 @@ def body() -> None:
         tf.invoke(f"{EXT}/reset", "fields")
         by_wire = tf.invoke(f"{EXT}/export", "")
         wired = produced(tf)["config"]
-        press(tf, "lab.toolbar.config")
+        press(tf, seat_tag["config"])
         assert_eq(
             order_of(produced(tf)["config"]),
             order_of(wired),

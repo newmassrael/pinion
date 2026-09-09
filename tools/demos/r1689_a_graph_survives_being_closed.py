@@ -60,6 +60,7 @@ from rpc_verify import (  # noqa: E402
     press_painted_tag,
     resize_and_settle,
     run_demo,
+    toolbar_seats,
     widen_until_row_whole,
 )
 
@@ -69,7 +70,13 @@ EXT = "/external"
 STORAGE_KEY = "node_lab.graph"
 
 # The three seats the reference groups into a pill of its own, in its order.
-SEATS = ["lab.toolbar.save", "lab.toolbar.open", "lab.toolbar.clear"]
+#
+# ★★★★★ R2104 — the WORDS the screen declares them under. The addresses are the
+# screen's to compose and this walk is handed them (`toolbar_seats`); spelled
+# here they were a second copy of that composition, and the resolver's answer —
+# which this walk checks each corner against — is the word, so the two are now
+# one name rather than a suffix taken off an address written twice.
+SEATS = ["save", "open", "clear"]
 
 # ★ Read from the screen rather than written here: the toolbar sets this
 # screen's minimum width and this round moved it again.
@@ -142,6 +149,8 @@ def body() -> None:
         # ────────────────────────────────────────────────── launch 1
         with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
             spec = json.loads(q(tf, "spec"))
+            # ★★★★★ R2104 — every toolbar seat's address, by its declared word.
+            seat_tag = toolbar_seats(spec)
 
             # ── (A) the partition ───────────────────────────────────
             kept = {row["witness"]: row for row in spec["kept"]}
@@ -165,9 +174,10 @@ def body() -> None:
 
             # ── (B) the three seats ─────────────────────────────────
             painted = rects(tf)
-            for tag in SEATS:
+            for word in SEATS:
+                tag = seat_tag[word]
                 assert tag in painted, f"{tag} is painted: {sorted(painted)[:14]}…"
-            boxes = [painted[tag] for tag in SEATS]
+            boxes = [painted[seat_tag[word]] for word in SEATS]
             assert_eq(
                 len({b[1] for b in boxes}),
                 1,
@@ -175,7 +185,7 @@ def body() -> None:
             )
             for left, right in zip(boxes, boxes[1:]):
                 assert left[0] + left[2] <= right[0], f"and in order: {boxes}"
-            script_box, run_box = painted["lab.toolbar.script"], painted["lab.toolbar.run"]
+            script_box, run_box = painted[seat_tag["script"]], painted[seat_tag["run"]]
             assert script_box[0] + script_box[2] <= boxes[0][0], (
                 f"★ the pill sits after the launch-script button: {script_box} "
                 f"then {boxes[0]}"
@@ -186,8 +196,11 @@ def body() -> None:
             )
             # Pressed at the CORNERS: a check aimed at a centre cannot see an
             # error smaller than half a control (R1684).
-            for tag, box in zip(SEATS, boxes):
-                want = tag.rsplit(".", 1)[1]
+            for word, box in zip(SEATS, boxes):
+                tag = seat_tag[word]
+                # ★ R2104 — the resolver answers the seat's own word, so this is
+                # the declared name rather than a suffix cut off an address.
+                want = word
                 for dx, dy in ((0, 0), (box[2] - 1, 0), (0, box[3] - 1), (box[2] - 1, box[3] - 1)):
                     at = (box[0] + dx, box[1] + dy)
                     assert_eq(
@@ -196,14 +209,15 @@ def body() -> None:
                         f"★★ the corner {at} of {tag} (painted {box}) is that seat",
                     )
             nodes = access(tf)
-            for tag in SEATS:
+            for word in SEATS:
+                tag = seat_tag[word]
                 seat = nodes.get(tag)
                 assert seat is not None, f"★★ {tag} announces itself: {sorted(nodes)[:12]}…"
                 assert_eq(seat["role"], "button", f"{tag} announces as a button")
                 assert seat.get("name"), f"★ and is named by what it does: {seat}"
-            assert "nothing saved yet" in nodes["lab.toolbar.open"]["name"], (
+            assert "nothing saved yet" in nodes[seat_tag["open"]]["name"], (
                 "★★ the open seat says whether there is anything to open — the "
-                f"fact a person cannot see from the button: {nodes['lab.toolbar.open']}"
+                f"fact a person cannot see from the button: {nodes[seat_tag['open']]}"
             )
 
             # ── (C) nothing stored; the screen can still say what it would ──
@@ -331,7 +345,7 @@ def body() -> None:
             assert q(tf, "verdict"), "the launch gate has an opinion about it"
 
             # ── (I) clear — back to the opening graph, file gone ────
-            press(tf, "lab.toolbar.clear")
+            press(tf, seat_tag["clear"])
             assert_eq(
                 q(tf, "nodes"),
                 opening_nodes,
@@ -348,7 +362,7 @@ def body() -> None:
             # ── (J) the seats and the verbs are the same act ────────
             tf.invoke(f"{EXT}/select", spec["selected_node"])
             tf.invoke(f"{EXT}/rename", f"{spec['selected_node']},by-hand-01")
-            press(tf, "lab.toolbar.save")
+            press(tf, seat_tag["save"])
             by_seat = q(tf, "stored")
             assert "by-hand-01" in by_seat, f"the seat saved: {by_seat[:120]}"
             tf.invoke(f"{EXT}/save_graph", "")
@@ -359,7 +373,7 @@ def body() -> None:
                 "function",
             )
             tf.invoke(f"{EXT}/reset", "nodes")
-            press(tf, "lab.toolbar.open")
+            press(tf, seat_tag["open"])
             assert_eq(
                 q(tf, "nodes").count("by-hand-01"),
                 1,

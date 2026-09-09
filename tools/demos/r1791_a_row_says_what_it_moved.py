@@ -85,11 +85,18 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     run_demo,
+    screen_spec,
+    toolbar_seats,
+    toolbar_tag,
 )
 
 SHELL = "hello-analyzer-shell"
 LAB = "hello-node-lab"
 EXT = "/external"
+# The mounted screen's own external, under its destination (R1989). The shell's
+# `/external` refuses these paths, which is what makes this the LAB's answer
+# given while it is a section of an application rather than a program.
+LAB_EXT = "/node_lab/external"
 SHIPPED = (1440, 900)
 
 CHECKS: list[str] = []
@@ -131,7 +138,9 @@ def body() -> None:
         assert_eq(inspector[2], 312, "at its full declared width")
         ok(
             "and the overflow control is on the row, because something moved",
-            "lab.toolbar.more" in painted,
+            # ★★★★★ R2104 — the address from the MOUNTED screen, which is the
+            # one that painted it. Spelled here until this round.
+            toolbar_tag(app, "more", ext=LAB_EXT) in painted,
         )
 
         # ★★★★★ R1990 — the toolbar's account read from the ASSEMBLED TOOL, at
@@ -143,7 +152,7 @@ def body() -> None:
         # The page the shell grants is narrower than the window, so the row here
         # is decided for a different width than (B)'s: the ORDER holding across
         # both is what says it is a property of the row and not of a width.
-        mounted: Any = app.query("/node_lab/external/toolbar_overflow")
+        mounted: Any = app.query(f"{LAB_EXT}/toolbar_overflow")
         assert_eq(
             sorted(mounted["on_the_row"] + mounted["moved"]),
             sorted(mounted["groups"]),
@@ -159,10 +168,30 @@ def body() -> None:
         assert_eq(
             mounted["short_by"], 0, "★★ and it fits in the page the shell grants"
         )
+        # ★★★★★ R2104 — **the assembled tool accounts for every seat the mounted
+        # screen publishes.** The roster is what a walk is now handed instead of
+        # spelling an address, so it has to be worth being handed: a word on it
+        # that the assembled paint does not draw and the overflow account does
+        # not claim is a roster entry pointing at nothing, which is this
+        # address debt's own failure in a new place. Checked HERE rather than on
+        # the standalone binary because the page the shell grants is narrower,
+        # so this is the arrangement where seats actually move.
+        published = toolbar_seats(screen_spec(app, LAB_EXT))
+        accounted = set(painted) | set(mounted["moved_seats"])
+        adrift = sorted(tag for tag in published.values() if tag not in accounted)
+        ok(
+            f"★★★★★ all {len(published)} published seat(s) are painted here or "
+            f"named as moved — adrift: {adrift or 'none'}",
+            not adrift,
+        )
 
     # ── (B)-(E) the toolbar's own account, on the lab itself ────────
     with RpcSubprocess(LAB, boot_grace=1.5) as lab:
         banner("B — the toolbar says what it holds and what it moved")
+        # ★★★★★ R2104 — the two addresses this section works in, from the screen
+        # that paints them. Asked once: the overflow control, and the seat the
+        # screen itself says it moved.
+        more_tag = toolbar_tag(lab, "more", ext=EXT)
         state: Any = lab.query(f"{EXT}/toolbar_overflow")
         assert_eq(
             sorted(state),
@@ -248,10 +277,10 @@ def body() -> None:
 
         banner("C — the control names what it is holding")
         painted = abs_rects_of(lab.snapshot(source="paint", viewport=SHIPPED))
-        ok("the control is painted", "lab.toolbar.more" in painted)
+        ok("the control is painted", more_tag in painted)
         nodes = lab.request("scene/access").result["nodes"]
         by_tag = {n.get("tag"): n for n in nodes if n.get("tag")}
-        name = by_tag.get("lab.toolbar.more", {}).get("name", "")
+        name = by_tag.get(more_tag, {}).get("name", "")
         ok(f"and its name lists them: {name!r}", all(g in name for g in state["moved"]))
 
         banner("D — a moved control is reachable, and does what it always did")
@@ -259,7 +288,7 @@ def body() -> None:
         # whole of D was skipped when it was not. A conditional that stops
         # running reports nothing, and the seat this presses is the one the
         # screen says it moved: `moved_seats` is on the wire for exactly that.
-        moved_seat = "lab.toolbar.config"
+        moved_seat = toolbar_tag(lab, "config", ext=EXT)
         ok(
             f"the screen says it moved {moved_seat}, so D has something to press",
             moved_seat in state["moved_seats"],
@@ -268,7 +297,7 @@ def body() -> None:
             ok("the moved seat is not on the row", moved_seat not in painted)
             before = json.loads(lab.query(f"{EXT}/produced"))
             assert_eq(before["config"], None, "nothing exported yet")
-            more = painted["lab.toolbar.more"]
+            more = painted[more_tag]
             lab.click(at=(more[0] + more[2] // 2, more[1] + more[3] // 2))
             lab.tick_ms(16)
             opened = abs_rects_of(lab.snapshot(source="paint", viewport=SHIPPED))
@@ -288,7 +317,7 @@ def body() -> None:
 
             banner("E — closing puts it back")
             painted = abs_rects_of(lab.snapshot(source="paint", viewport=SHIPPED))
-            more = painted["lab.toolbar.more"]
+            more = painted[more_tag]
             lab.click(at=(more[0] + more[2] // 2, more[1] + more[3] // 2))
             lab.tick_ms(16)
             closed = abs_rects_of(lab.snapshot(source="paint", viewport=SHIPPED))

@@ -989,14 +989,14 @@ fn declared_tags(state: &LabState) -> Vec<String> {
     let mut want: Vec<String> = vec![
         super::VIEW_TAG.to_owned(),
         "lab.appbar".into(),
-        "lab.toolbar".into(),
-        "lab.toolbar.title".into(),
-        "lab.toolbar.meta".into(),
-        "lab.toolbar.gate".into(),
-        "lab.toolbar.zoom".into(),
+        super::address::TOOLBAR.into(),
+        super::address::TOOLBAR_TITLE.into(),
+        super::address::TOOLBAR_META.into(),
+        super::address::TOOLBAR_GATE.into(),
+        super::address::TOOLBAR_ZOOM.into(),
         // ★ R1688 — the fit seat, demanded like every other toolbar control.
-        "lab.toolbar.fit".into(),
-        "lab.toolbar.run".into(),
+        super::address::TOOLBAR_FIT.into(),
+        super::address::TOOLBAR_RUN.into(),
         "lab.gate".into(),
         "lab.gate.verdict".into(),
         "lab.hint".into(),
@@ -1337,19 +1337,19 @@ fn must_answer(tag: &str) -> Option<String> {
         // person could: eighteen card corners answered `link:turn` while the
         // gate could not see that the seat is painted exactly there.
         "lab.link.turn" => Some("link:turn".into()),
-        "lab.toolbar.zoom.in" => Some("zoom:in".into()),
-        "lab.toolbar.zoom.out" => Some("zoom:out".into()),
+        super::address::TOOLBAR_ZOOM_IN => Some("zoom:in".into()),
+        super::address::TOOLBAR_ZOOM_OUT => Some("zoom:out".into()),
         // ★★ R1688 — the read-out is the view reset now, so it is a control and
         // is demanded back like one. It had no entry here while it was a seat
         // captioned `home`, which is the hole R1681.3 wrote down: an affordance
         // that is painted and not demanded is one this whole module passes over
         // while nobody can press it.
         "lab.reset.view" => Some("reset:view".into()),
-        "lab.toolbar.fit" => Some("fit".into()),
-        "lab.toolbar.gate" => Some("problem".into()),
-        "lab.toolbar.config" => Some("config".into()),
-        "lab.toolbar.script" => Some("script".into()),
-        "lab.toolbar.run" => Some("run".into()),
+        super::address::TOOLBAR_FIT => Some("fit".into()),
+        super::address::TOOLBAR_GATE => Some("problem".into()),
+        super::address::TOOLBAR_CONFIG => Some("config".into()),
+        super::address::TOOLBAR_SCRIPT => Some("script".into()),
+        super::address::TOOLBAR_RUN => Some("run".into()),
         "lab.palette.discovery" => Some("discovery".into()),
         _ => None,
     }
@@ -1403,7 +1403,7 @@ fn owning_pane(tag: &str) -> Option<Rect> {
     if tag.starts_with("lab.palette") {
         return Some(palette_rect());
     }
-    if tag.starts_with("lab.toolbar") {
+    if tag.starts_with(super::address::TOOLBAR) {
         return Some(toolbar_rect());
     }
     if tag.starts_with("lab.inspector")
@@ -2752,7 +2752,7 @@ fn r1653_the_painted_screen_invented_nothing() {
             ("lab.frame.", None),
             (form_stem.as_str(), None),
             ("lab.inspector.", None),
-            ("lab.toolbar.", None),
+            (super::address::TOOLBAR_SEAT, None),
             ("lab.appbar.", None),
             ("lab.hint.", None),
             ("lab.crumb", None),
@@ -3352,7 +3352,12 @@ fn r1653_a_pan_past_the_edge_stops_painting_the_graph() {
         );
 
         // And the chrome that floats over the canvas does not pan with it.
-        for tag in ["lab.gate", "lab.hint", "lab.crumb", "lab.toolbar.title"] {
+        for tag in [
+            "lab.gate",
+            "lab.hint",
+            "lab.crumb",
+            super::address::TOOLBAR_TITLE,
+        ] {
             assert!(shot.tags.contains_key(tag), "{tag} is chrome, not content");
         }
 
@@ -4471,7 +4476,7 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         drag_from(state, from, (-30, 20));
     }),
     ("zoom", |state, shot| {
-        press_tag(state, shot, "lab.toolbar.zoom.in");
+        press_tag(state, shot, super::address::TOOLBAR_ZOOM_IN);
     }),
     ("toggle discovery", |state, shot| {
         press_tag(state, shot, "lab.palette.discovery");
@@ -4501,10 +4506,10 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     // empty one, and an affordance that came and went would make "can I export
     // this" a thing a person has to discover by looking.
     ("export the configuration", |state, shot| {
-        press_tag(state, shot, "lab.toolbar.config");
+        press_tag(state, shot, super::address::TOOLBAR_CONFIG);
     }),
     ("produce the launch script", |state, shot| {
-        press_tag(state, shot, "lab.toolbar.script");
+        press_tag(state, shot, super::address::TOOLBAR_SCRIPT);
     }),
     // ★★ R1688 — the view's last two. The fit is the pill's trailing seat; the
     // jump is the LAUNCH CHIP, which was on screen saying the verdict and doing
@@ -4513,10 +4518,10 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     // the screen opens with — both of which are properties of this screen's own
     // specification, asserted in `tests.rs` rather than assumed here.
     ("fit the graph to the view", |state, shot| {
-        press_tag(state, shot, "lab.toolbar.fit");
+        press_tag(state, shot, super::address::TOOLBAR_FIT);
     }),
     ("go to the first problem", |state, shot| {
-        press_tag(state, shot, "lab.toolbar.gate");
+        press_tag(state, shot, super::address::TOOLBAR_GATE);
     }),
 ];
 
@@ -4549,7 +4554,7 @@ fn press_wire(state: &std::rc::Rc<LabState>, shot: &Painted, from: &str, to: &st
 ///
 /// ★★★★★ R1791 — **a control the toolbar moved is reached by opening the thing
 /// that holds it**, which is what a person does and what the floor's extension
-/// button is for. Before this, a gate that aimed at `lab.toolbar.config`
+/// button is for. Before this, a gate that aimed at the configuration export
 /// panicked the moment the toolbar was too narrow to keep it on the row — which
 /// caught the round's real incompleteness: the first draft published WHAT had
 /// moved and gave no way to reach it, trading a visual defect for a functional
@@ -4585,7 +4590,7 @@ fn press_tag(state: &std::rc::Rc<LabState>, shot: &Painted, tag: &str) {
     if super::in_toolbar_overflow(tag) {
         let control = *shot
             .tags
-            .get("lab.toolbar.more")
+            .get(super::address::TOOLBAR_MORE)
             .expect("a moved control means the overflow is painted");
         let at = centre(control);
         super::move_cursor(state, at.0, at.1);
@@ -9335,11 +9340,11 @@ fn r1957_a_surface_that_opens_is_not_painted_over() {
         // than skipped: a walk that quietly tests nothing is the escape hatch
         // this project's rules forbid.
         assert!(
-            shot.tags.contains_key("lab.toolbar.more"),
+            shot.tags.contains_key(super::address::TOOLBAR_MORE),
             "at {WIN_W}x{WIN_H} this toolbar overflows, so the `…` control is \
              painted and a person can press it",
         );
-        let at = centre(shot.tags["lab.toolbar.more"]);
+        let at = centre(shot.tags[super::address::TOOLBAR_MORE]);
         super::move_cursor(&state, at.0, at.1);
         super::press(&state);
         super::release(&state);
@@ -9361,7 +9366,7 @@ fn r1957_a_surface_that_opens_is_not_painted_over() {
             opened
                 .tags
                 .keys()
-                .filter(|t| t.starts_with("lab.toolbar"))
+                .filter(|t| t.starts_with(super::address::TOOLBAR))
                 .collect::<Vec<_>>(),
         );
 
