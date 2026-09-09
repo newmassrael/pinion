@@ -454,6 +454,23 @@ if ! python3 "$repo_root/tools/painted_addresses.py" --check >&2; then
     exit 1
 fi
 
+# R2107 — no published object names a key twice, over the WHOLE tree.
+#
+# `serde_json::json!` keeps the last of two identical keys without a word, so
+# the earlier value never reaches a reader — and the defect is invisible in the
+# value, because the two keys have already collapsed by the time there is a
+# `Value`. R2105 paid a whole sweep for one instance and built a scan of ONE
+# function's outer object in ONE crate; measured at R2107 that is 1 of 664
+# object literals. This reads the rest.
+step "published names"
+if ! python3 "$repo_root/tools/published_names.py" --selftest >&2; then
+    echo "pre-push: the published-names census failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/published_names.py" >&2; then
+    exit 1
+fi
+
 # R2000 — a `Type::member` this tree's prose CITES must be a name this tree HAS.
 #
 # Found by that round auditing its own new prose: three citations named a verb's
