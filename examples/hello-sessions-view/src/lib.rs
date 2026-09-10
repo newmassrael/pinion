@@ -43,6 +43,13 @@
 //!   (`Standing::is_active`), so *active* is a property of a state rather than
 //!   a number somebody typed beside a list it does not come from.
 
+/// ★★★★★ R2121 — where this screen's painted addresses come from.
+///
+/// Public because the ASSEMBLED shell needs it: the analyzer shell mounts this
+/// section and its integration gate has to recover a mark's key from the
+/// paint, and the only alternative is for the shell to carry a second copy of
+/// this screen's composition — the class this module exists to remove.
+pub mod address;
 mod judge;
 mod spec;
 
@@ -81,19 +88,23 @@ vello_renderer_impl!(HelloSessionsViewRenderer, HelloSessionsViewRendererError);
 const VIEW_TAG: &str = "sessions_view";
 
 /// The root group every mark of this screen hangs under.
-const ROOT_TAG: &str = "sv.root";
+const ROOT_TAG: &str = address::ROOT;
 
 /// The theme this screen reads its palette from.
+///
+/// ⚠ NOT in this screen's namespace and deliberately: a theme is the shell's
+/// vocabulary, shared by every section, so it is not an address `address.rs`
+/// composes.
 const THEME_TAG: &str = "app";
 
 /// The list pane's own group.
-const LIST_TAG: &str = "sv.list";
+const LIST_TAG: &str = address::LIST;
 /// The detail pane's own group.
-const DETAIL_TAG: &str = "sv.detail";
+const DETAIL_TAG: &str = address::DETAIL;
 /// The grid of rows, which is the list's own scrollable body.
-const ROWS_TAG: &str = "sv.list.rows";
+const ROWS_TAG: &str = address::ROWS;
 /// Where a resting description is painted and announced.
-const TOOLTIP_TAG: &str = "sv.tip";
+const TOOLTIP_TAG: &str = address::TIP;
 
 /// The word the detail's peer line opens with.
 ///
@@ -593,22 +604,27 @@ impl Hit {
 
     /// What is under a paint tag — the same answer by another address.
     fn of_tag(tag: &str) -> Self {
-        // ★ A cell's tag is `sv.row.<id>.<column>`, so the id is the first
-        // segment — pressing a cell is pressing its row, which is what a reader
-        // means by it and what the pointer already does by coordinate.
-        if let Some(rest) = tag.strip_prefix("sv.row.")
-            && let Some(session) = spec::session(rest.split('.').next().unwrap_or(rest))
+        // ★★★★★ R2121 — a row and a cell are ASKED FOR SEPARATELY, and this
+        // caller wanting both is stated here rather than smuggled into the
+        // address. `sv.row.` carries two vocabularies (`<session>` and
+        // `<session>.<column>`), so an inverse that stripped the prefix and
+        // took what it found would answer a cell as a row on every screen that
+        // ever reuses it. Pressing a cell IS pressing its row — what a reader
+        // means by it, and what the pointer already does by coordinate — so
+        // that is one router's rule, not the family's.
+        if let Some(id) = address::row_id(tag).or_else(|| address::cell_of(tag).map(|(id, _)| id))
+            && let Some(session) = spec::session(id)
         {
             return Self::Row(session.id);
         }
-        if let Some(key) = tag.strip_prefix("sv.chip.")
+        if let Some(key) = address::chip_key(tag)
             && let Some(n) = spec::CHIPS.iter().position(|c| c.key == key)
         {
             return Self::Chip(n);
         }
-        match tag {
-            "sv.detail.topology" => Self::Cross,
-            "sv.detail.close" => Self::Close,
+        match address::detail_part(tag) {
+            Some("topology") => Self::Cross,
+            Some("close") => Self::Close,
             _ => Self::Nothing,
         }
     }
@@ -959,7 +975,7 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
         // detail pane below for what shipped without either.
         panel(LIST_TAG, list, ink.ground, None, Vec::new()).with_focusable(true),
         part_box(
-            "sv.list.title",
+            &address::list("title"),
             band(head.x + 18, 110),
             vec![label(
                 "Sessions",
@@ -969,7 +985,7 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
             )],
         ),
         part_box(
-            "sv.list.count",
+            &address::list("count"),
             band(head.x + 140, 170),
             vec![label(
                 format!("{active} active \u{00B7} {closed} closed"),
@@ -980,17 +996,18 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
         ),
     ];
     let filter = filter_rect();
+    let filter_seat = address::list("filter");
     out.push(part_box(
-        "sv.list.filter",
+        &filter_seat,
         band(filter.x, filter.w),
         vec![captioned_box(
-            "sv.list.filter.box",
+            &address::child(&filter_seat, "box"),
             Rect::new(0, (HEADER_H - filter.h) / 2, filter.w, filter.h),
             ink.raised,
             Some(ink.border),
             8,
             (spec::FILTER_HINT, FONT_SMALL, ink.faint),
-            Some(Silence::part_of("sv.list.filter")),
+            Some(Silence::part_of(filter_seat.clone())),
         )],
     ));
     out.push(chips_part(state, ink));
@@ -1011,7 +1028,7 @@ fn chips_part(state: &Rc<ViewState>, ink: Ink) -> Scene {
         let local = Rect::new(rect.x - whole.x, rect.y - whole.y, rect.w, rect.h);
         let on = state.chip.get() == n;
         children.push(captioned_box(
-            &format!("sv.chip.{}", chip.key),
+            &address::chip(chip.key),
             local,
             if on { ink.accent_soft } else { ink.ground },
             if on { Some(ink.accent) } else { None },
@@ -1026,7 +1043,7 @@ fn chips_part(state: &Rc<ViewState>, ink: Ink) -> Scene {
             None,
         ));
     }
-    part_box("sv.list.chips", whole, children)
+    part_box(&address::list("chips"), whole, children)
 }
 
 /// The eight column headings, in the reference's own grid.
@@ -1047,7 +1064,7 @@ fn column_headings(ink: Ink) -> Scene {
             ink.faint,
         ));
     }
-    part_box("sv.list.columns", strip, children)
+    part_box(&address::list("columns"), strip, children)
 }
 
 /// The rows the chip in force keeps.
@@ -1060,7 +1077,7 @@ fn rows_part(state: &Rc<ViewState>, ink: Ink) -> Scene {
         let local = Rect::new(0, row.y - body.y, body.w, ROW_H);
         let on = session.id == picked.id;
         children.push(box_at(
-            &format!("sv.row.{}", session.id),
+            &address::row(session.id),
             local,
             if on { ink.accent_soft } else { ink.ground },
             Some(ink.border),
@@ -1089,7 +1106,7 @@ fn rows_part(state: &Rc<ViewState>, ink: Ink) -> Scene {
             // one size and leave it wrong at another, since which column is
             // widest moves with the window. So all eight are bound.
             children.push(bound_line(
-                &format!("sv.row.{}.{}", session.id, column.key),
+                &address::cell(session.id, column.key),
                 pinion_core::containment::line_rect_in(
                     Rect::new(cell.x - body.x, row.y - body.y, cell.w, ROW_H),
                     cell.x - body.x,
@@ -1097,7 +1114,7 @@ fn rows_part(state: &Rc<ViewState>, ink: Ink) -> Scene {
                     FONT_BODY,
                 ),
                 (session.cell(column.key), FONT_BODY, ink_for),
-                Some(Silence::part_of(format!("sv.row.{}", session.id))),
+                Some(Silence::part_of(address::row(session.id))),
             ));
         }
     }
@@ -1109,9 +1126,11 @@ fn rows_part(state: &Rc<ViewState>, ink: Ink) -> Scene {
 fn detail_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     let pane = detail_rect();
     let session = state.picked();
+    let badge = address::detail("badge");
+    let status = address::detail("status");
     let mut children = vec![
         part_box(
-            "sv.detail.title",
+            &address::detail("title"),
             seat(PAD, 18, 150, FONT_TITLE),
             vec![label(
                 "Session detail",
@@ -1121,20 +1140,20 @@ fn detail_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
             )],
         ),
         part_box(
-            "sv.detail.badge",
+            &badge,
             Rect::new(pane.w.saturating_sub(PAD + 76), 17, 76, 24),
             vec![captioned_box(
-                "sv.detail.badge.box",
+                &address::child(&badge, "box"),
                 Rect::new(0, 0, 76, 24),
                 ink.raised,
                 Some(ink.border),
                 6,
                 (session.id, FONT_SMALL, ink.dim),
-                Some(Silence::part_of("sv.detail.badge")),
+                Some(Silence::part_of(badge.clone())),
             )],
         ),
         part_box(
-            "sv.detail.id",
+            &address::detail("id"),
             seat(PAD, 64, pane.w.saturating_sub(PAD * 2), FONT_HEADLINE),
             vec![label(
                 session.id,
@@ -1144,10 +1163,10 @@ fn detail_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
             )],
         ),
         part_box(
-            "sv.detail.status",
+            &status,
             Rect::new(PAD, 100, 132, 24),
             vec![captioned_box(
-                "sv.detail.status.pill",
+                &address::child(&status, "pill"),
                 Rect::new(0, 0, 132, 24),
                 ink.raised,
                 Some(standing_ink(session.standing, ink)),
@@ -1157,11 +1176,11 @@ fn detail_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
                     FONT_SMALL,
                     standing_ink(session.standing, ink),
                 ),
-                Some(Silence::part_of("sv.detail.status")),
+                Some(Silence::part_of(status.clone())),
             )],
         ),
         part_box(
-            "sv.detail.peer",
+            &address::detail("peer"),
             seat(PAD, 136, pane.w.saturating_sub(PAD * 2), FONT_SMALL),
             vec![label(
                 format!("{PEER_LEAD} {} \u{00B7} {}", session.peer, session.zid),
@@ -1200,23 +1219,24 @@ fn negotiated_tiles(session: &spec::SessionSpec, ink: Ink) -> Vec<Scene> {
     let mut out = Vec::new();
     for (n, (key, heading, value)) in tiles.into_iter().enumerate() {
         let rect = tile_rect(u32::try_from(n).unwrap_or(0));
+        let tile = address::detail(key);
         out.push(part_box(
-            &format!("sv.detail.{key}"),
+            &tile,
             rect,
             vec![
                 // The VALUE is bound to the tile; the heading above it is a
                 // second run, because a box carries one caption.
                 captioned_box(
-                    &format!("sv.detail.{key}.box"),
+                    &address::child(&tile, "box"),
                     Rect::new(0, 0, rect.w, rect.h),
                     ink.raised,
                     Some(ink.border),
                     9,
                     (value, FONT_BODY, ink.text),
-                    Some(Silence::part_of(format!("sv.detail.{key}"))),
+                    Some(Silence::part_of(tile.clone())),
                 ),
                 band_heading(
-                    &format!("sv.detail.{key}.head"),
+                    &address::child(&tile, "head"),
                     Rect::new(11, 9, rect.w.saturating_sub(22), 0),
                     heading,
                     ink,
@@ -1234,8 +1254,9 @@ fn timeline_part(session: &spec::SessionSpec, ink: Ink) -> Scene {
         timeline_top(),
         BAND_HEAD_H + u32::try_from(steps.len()).unwrap_or(0) * TIMELINE_PITCH,
     );
+    let timeline = address::detail("timeline");
     let mut children = vec![band_heading(
-        "sv.detail.timeline.head",
+        &address::child(&timeline, "head"),
         Rect::new(0, 0, band.w, 0),
         "HANDSHAKE TIMELINE",
         ink,
@@ -1243,7 +1264,7 @@ fn timeline_part(session: &spec::SessionSpec, ink: Ink) -> Scene {
     for (n, step) in steps.iter().enumerate() {
         let row = timeline_row(band.w, n);
         children.push(box_at(
-            &format!("sv.detail.timeline.{n}.dot"),
+            &address::child(&address::entry("timeline", n), "dot"),
             pinion_core::containment::band_in(row, 0, 9, 9),
             severity_ink(step.severity, ink),
             None,
@@ -1253,10 +1274,10 @@ fn timeline_part(session: &spec::SessionSpec, ink: Ink) -> Scene {
             )),
         ));
         children.push(bound_line(
-            &format!("sv.detail.timeline.{n}"),
+            &address::entry("timeline", n),
             in_row(row, 19, band.w.saturating_sub(19 + 64), FONT_BODY),
             (step.label, FONT_BODY, ink.text),
-            Some(Silence::part_of("sv.detail.timeline")),
+            Some(Silence::part_of(timeline.clone())),
         ));
         children.push(label(
             step.at,
@@ -1265,14 +1286,15 @@ fn timeline_part(session: &spec::SessionSpec, ink: Ink) -> Scene {
             ink.faint,
         ));
     }
-    part_box("sv.detail.timeline", band, children)
+    part_box(&timeline, band, children)
 }
 
 /// The channels and what each last carried.
 fn channels_part(session: &spec::SessionSpec, ink: Ink) -> Scene {
     let band = detail_band(channels_top(), BAND_HEAD_H + channel_rows() * CHANNEL_PITCH);
+    let channels = address::detail("channels");
     let mut children = vec![band_heading(
-        "sv.detail.channels.head",
+        &address::child(&channels, "head"),
         Rect::new(0, 0, band.w, 0),
         "CHANNELS \u{00B7} LAST SEQUENCE",
         ink,
@@ -1280,10 +1302,10 @@ fn channels_part(session: &spec::SessionSpec, ink: Ink) -> Scene {
     for (n, channel) in spec::CHANNELS.iter().enumerate() {
         let row = channel_row(band.w, n);
         children.push(bound_line(
-            &format!("sv.detail.channels.{n}"),
+            &address::entry("channels", n),
             in_row(row, 0, band.w.saturating_sub(150), FONT_BODY),
             (channel.name, FONT_BODY, ink.text),
-            Some(Silence::part_of("sv.detail.channels")),
+            Some(Silence::part_of(channels.clone())),
         ));
         children.push(label(
             channel.reliability,
@@ -1298,7 +1320,7 @@ fn channels_part(session: &spec::SessionSpec, ink: Ink) -> Scene {
             ink.faint,
         ));
     }
-    part_box("sv.detail.channels", band, children)
+    part_box(&channels, band, children)
 }
 
 /// The crossing action and the refusing one.
@@ -1310,31 +1332,33 @@ fn action_row(ink: Ink) -> Vec<Scene> {
     // every size.
     let cross = action_rect(0);
     let close = action_rect(1);
+    let topology_seat = address::detail("topology");
+    let close_seat = address::detail("close");
     vec![
         part_box(
-            "sv.detail.topology",
+            &topology_seat,
             cross,
             vec![captioned_box(
-                "sv.detail.topology.box",
+                &address::child(&topology_seat, "box"),
                 Rect::new(0, 0, cross.w, cross.h),
                 ink.accent,
                 None,
                 8,
                 ("Show in topology", FONT_BODY, ink.surface),
-                Some(Silence::part_of("sv.detail.topology")),
+                Some(Silence::part_of(topology_seat.clone())),
             )],
         ),
         part_box(
-            "sv.detail.close",
+            &close_seat,
             close,
             vec![captioned_box(
-                "sv.detail.close.box",
+                &address::child(&close_seat, "box"),
                 Rect::new(0, 0, close.w, close.h),
                 ink.raised,
                 Some(ink.err),
                 8,
                 ("Close", FONT_SMALL, ink.err),
-                Some(Silence::part_of("sv.detail.close")),
+                Some(Silence::part_of(close_seat.clone())),
             )],
         ),
     ]
@@ -1371,7 +1395,7 @@ fn descriptions() -> Descriptions {
     let mut described = Descriptions::new();
     for chip in spec::CHIPS {
         described.describe(
-            format!("sv.chip.{}", chip.key),
+            address::chip(chip.key),
             chip.keeps.map_or_else(
                 || "Show every session the capture observed".to_owned(),
                 |standing| format!("Show only sessions that are {}", standing.label()),
@@ -1380,7 +1404,7 @@ fn descriptions() -> Descriptions {
     }
     for session in spec::SESSIONS {
         described.describe(
-            format!("sv.row.{}", session.id),
+            address::row(session.id),
             format!(
                 "{} to {} over {} - {}",
                 session.id,
@@ -1391,11 +1415,11 @@ fn descriptions() -> Descriptions {
         );
     }
     described.describe(
-        "sv.detail.topology",
+        address::detail("topology"),
         "Show this session's peer in the topology section",
     );
     described.describe(
-        "sv.detail.close",
+        address::detail("close"),
         format!(
             "Close session is not in this release - booked under {}",
             spec::CLOSE_RESERVED_FOR
@@ -1434,7 +1458,7 @@ fn view(_state: (), _frame: Frame) -> Scene {
             TOOLTIP_TAG,
             tip,
             vec![captioned_box(
-                "sv.tip.box",
+                &address::child(address::TIP, "box"),
                 Rect::new(0, 0, tip.w, tip.h),
                 ink.raised,
                 Some(ink.edge),
@@ -1484,18 +1508,20 @@ fn access_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode>
     // nor the refusal. The sibling section had the same defect on five tags.
     // The skip list is DERIVED from the pushes that would collide rather than
     // written out, so a control added later cannot re-open it.
+    //
+    // ★★★★★ R2121 — the roster is `address::parts()`, which is that same pair
+    // of specification tables with each key's ADDRESS beside it. The two lists
+    // were never in danger of disagreeing about which parts exist — they are
+    // one table — and what they could disagree about, silently, is where a part
+    // is painted, because this loop composed the address and every painter
+    // composed it again.
     let mut parts: Vec<AccessNode> = Vec::new();
-    for (stem, table) in [("sv.list", spec::LIST), ("sv.detail", spec::DETAIL)] {
-        for part in table {
-            parts.push(
-                AccessNode::new(format!("{stem}.{}", part.key), AriaRole::Group)
-                    .with_name(part.title),
-            );
-        }
+    for (part, tag) in address::parts() {
+        parts.push(AccessNode::new(tag, AriaRole::Group).with_name(part.title));
     }
     for (n, chip) in spec::CHIPS.iter().enumerate() {
         nodes.push(
-            AccessNode::new(format!("sv.chip.{}", chip.key), AriaRole::RadioButton)
+            AccessNode::new(address::chip(chip.key), AriaRole::RadioButton)
                 .with_name(chip.title)
                 .with_selected(state.chip.get() == n)
                 .with_set_position(n, spec::CHIPS.len()),
@@ -1503,7 +1529,7 @@ fn access_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode>
     }
     for (visual, session) in kept.iter().enumerate() {
         nodes.push(
-            AccessNode::new(format!("sv.row.{}", session.id), AriaRole::Button)
+            AccessNode::new(address::row(session.id), AriaRole::Button)
                 .with_name(format!(
                     "{} to {}, {}",
                     session.id,
@@ -1515,7 +1541,7 @@ fn access_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode>
         );
     }
     nodes.push(
-        AccessNode::new("sv.detail.close", AriaRole::Button)
+        AccessNode::new(address::detail("close"), AriaRole::Button)
             .with_name("Close session")
             .with_state(AccessState {
                 disabled: true,
@@ -1621,10 +1647,10 @@ impl External for ViewOracle {
 /// Which described mark a point is resting on.
 fn resting_tag(state: &Rc<ViewState>, px: u32, py: u32) -> Option<String> {
     match Hit::at(state, px, py) {
-        Hit::Row(id) => Some(format!("sv.row.{id}")),
-        Hit::Chip(n) => Some(format!("sv.chip.{}", spec::CHIPS[n].key)),
-        Hit::Cross => Some("sv.detail.topology".to_owned()),
-        Hit::Close => Some("sv.detail.close".to_owned()),
+        Hit::Row(id) => Some(address::row(id)),
+        Hit::Chip(n) => Some(address::chip(spec::CHIPS[n].key)),
+        Hit::Cross => Some(address::detail("topology")),
+        Hit::Close => Some(address::detail("close")),
         Hit::Nothing => None,
     }
 }
@@ -1898,7 +1924,7 @@ impl WidgetCore for SessionsView {
         chord: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        let mine = focused.is_none_or(|tag| tag == VIEW_TAG || tag.starts_with("sv."));
+        let mine = focused.is_none_or(|tag| tag == VIEW_TAG || address::ours(tag));
         mine && key_at(&use_view_state(), chord)
     }
 }
@@ -1911,7 +1937,7 @@ impl WidgetA11y for SessionsView {
     fn access_focus_target(_state: &(), focused: Option<&str>) -> Option<AccessFocus> {
         let state = use_view_state();
         (focused == Some(ROWS_TAG))
-            .then(|| AccessFocus::composite(ROWS_TAG, format!("sv.row.{}", state.picked().id)))
+            .then(|| AccessFocus::composite(ROWS_TAG, address::row(state.picked().id)))
     }
 }
 

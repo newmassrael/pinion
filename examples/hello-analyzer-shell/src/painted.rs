@@ -16443,6 +16443,277 @@ fn r2118_a_press_through_the_host_moves_the_picked_wires_chrome() {
     });
 }
 
+/// Which declared reader of the sessions section recovers `tag`, or `None`.
+///
+/// ★★ CLASSIFIED, NOT PREFIXED. Two of that screen's stems carry two
+/// vocabularies each — `sv.row.` names a row AND a cell, `sv.detail.` names a
+/// part AND that part's children and entries — so a reader that stopped at the
+/// prefix would file a cell under rows and a child under parts, in both
+/// directions and silently. Each mark is put to the screen's own declared
+/// inverses, which refuse what is not theirs.
+///
+/// ⚠ A caption is recovered as ITS BOX by the framework's name for the suffix.
+/// `pinion_widget_paint::caption` writes `.caption` onto the tag its caller
+/// hands over — the screen never composes it — and publishes `CAPTION_SUFFIX`
+/// so a census can exclude it by that name rather than by a literal each reader
+/// spells again.
+fn sessions_reader_of(tag: &str) -> Option<&'static str> {
+    use hello_sessions_view::address as sv;
+    use pinion_widget_paint::caption::CAPTION_SUFFIX;
+
+    if let Some(box_tag) = tag.strip_suffix(CAPTION_SUFFIX) {
+        return sessions_reader_of(box_tag);
+    }
+    // ⚠ The lone marks first: a pane's own tag is deliberately NOT one of its
+    // parts, so no inverse claims it and it would read as an orphan without
+    // this arm.
+    if tag == sv::ROOT || tag == sv::LIST || tag == sv::DETAIL {
+        return Some("pane");
+    }
+    if tag == sv::TIP {
+        return Some("tip");
+    }
+    if sv::list_part(tag).is_some() {
+        return Some("list part");
+    }
+    if sv::detail_part(tag).is_some() {
+        return Some("detail part");
+    }
+    if sv::cell_of(tag).is_some() {
+        return Some("cell");
+    }
+    if sv::row_id(tag).is_some() {
+        return Some("row");
+    }
+    if sv::chip_key(tag).is_some() {
+        return Some("chip");
+    }
+    // A part's children and a band's entries hang off a part's own address, so
+    // they are recovered by walking back to the part that owns them rather than
+    // by a family of their own. The tip's box is the same shape with the tip as
+    // its owner.
+    sv::parts()
+        .into_iter()
+        .map(|(_, seat)| seat)
+        .chain(std::iter::once(sv::TIP.to_owned()))
+        .any(|seat| tag.starts_with(&format!("{seat}.")))
+        .then_some("inside a part")
+}
+
+/// The mounted sessions section, opened, plus the frame a pointer resting on one
+/// of its rows produces.
+///
+/// 🟥🟥🟥 ★★★★★ THE SECOND FRAME IS NOT A CONVENIENCE. The resting description
+/// is a family only a GESTURE reveals — the tip is painted while a pointer
+/// rests on a described mark and at no other time — so a census over the
+/// opening frame alone finds that reader empty and, with a floor on it, red.
+/// R2116 met this on the node lab's reset seats and answered it with a
+/// whole-state sweep; the answer here is to perform the one gesture that
+/// reveals it, through the HOST's own router, which also proves the shell
+/// delivers a hover to the mounted section.
+fn sessions_frames() -> (Painted, Painted) {
+    use hello_sessions_view::address as sv;
+
+    let state = use_shell_state_off_disk();
+    state
+        .go("sessions")
+        .unwrap_or_else(|why| panic!("the sessions section is open and refused: {why:?}"));
+    let (shot, _) = painted_at((WIN_W, WIN_H));
+    // ★ The row is found IN THE PAINT and identified by the screen's own
+    // inverse, rather than composed from a session id this file would then be
+    // spelling. A gate that composed the address it went looking for would be
+    // checking that the page paints what the gate asked for.
+    let row_tag = shot
+        .family(sv::ROW_SEAT)
+        .into_iter()
+        .find(|t| sv::row_id(t).is_some())
+        .expect("the mounted section paints at least one session row")
+        .to_owned();
+    let row = shot.rect(&row_tag).expect("it was just found by its tag");
+    let mut hand = hand_on(painted_at(shot.size).1);
+    hand.cursor((row.x + row.w / 2, row.y + row.h / 2));
+    assert!(
+        hand.hovering().is_some(),
+        "a rest on the mounted row resolves to no surface, so the host would \
+         deliver it nowhere"
+    );
+    let resting = painted_at(shot.size).0;
+    (shot, resting)
+}
+
+/// ★★★★★ R2121 — **every mark the ASSEMBLED sessions section paints is at an
+/// address one of its declared readers recovers.**
+///
+/// # Why this is not the crate's own gate
+///
+/// `hello-sessions-view` holds itself to *nobody but the declaration spells
+/// the namespace*, which is a claim about its SOURCE. This is the claim about
+/// the PAGE: the shell mounts the section inside a board, behind its own rail
+/// and app bar, and *the composition is declared* and *what this assembly
+/// paints is what the declaration composes* are two facts. Only the second is
+/// about the tool a person opens.
+///
+/// # ★★ Classified, not prefixed
+///
+/// Two of this screen's stems carry two vocabularies each — `sv.row.` names a
+/// row AND a cell, `sv.detail.` names a part AND that part's children and
+/// entries — so a reader that stopped at the prefix would file a cell under
+/// rows and a child under parts, in both directions and silently. Every mark
+/// is put to the declared inverses instead, and a mark that answers to NONE of
+/// them is an orphan: either the section grew a family nothing declares, or a
+/// declaration drifted from what the painter composes.
+///
+/// # 🟥🟥🟥 ★★★★★ What it found on its first run, and who owns that address
+///
+/// Fifty-one orphans, every one of them ending `.caption` — a suffix the
+/// SCREEN never composes. `pinion_widget_paint::caption` writes it onto the tag
+/// its caller hands over, because that suffix is what the containment survey
+/// reads as *this run is that box's caption*, and a caller who could choose it
+/// could break the bond silently.
+///
+/// ⇒ it is not a fifth word for this screen's `CHILD_WORDS`, and adding one
+/// there would have been a second spelling of a framework fact — the exact
+/// defect this campaign repays, one level up. The framework publishes its own
+/// name for it (`CAPTION_SUFFIX`) *so that a census can exclude it by that
+/// name*, and its doc says as much. A caption is part of its box, so it is
+/// recovered as whatever its box is.
+///
+/// # ⚠ Floors per reader, not one over the union
+///
+/// Seven readers, seven floors. ORed together, six readers describing nothing
+/// would leave the orphan count at zero and the gate would read as green while
+/// asserting almost nothing — R2108's denominator lesson, and R2113's split.
+#[test]
+fn r2121_every_mark_the_mounted_sessions_section_paints_has_a_declared_reader() {
+    use hello_sessions_view::address as sv;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let (shot, resting) = sessions_frames();
+        let mut by_reader: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
+        let mut orphans: Vec<&str> = Vec::new();
+        for frame in [&shot, &resting] {
+            for tag in frame.family(sv::NAMESPACE) {
+                if let Some(reader) = sessions_reader_of(tag) {
+                    *by_reader.entry(reader).or_default() += 1;
+                } else {
+                    orphans.push(tag);
+                }
+            }
+        }
+
+        assert!(
+            orphans.is_empty(),
+            "★★★★★ the mounted sessions section paints {} mark(s) in its own \
+             namespace that no declared reader recovers: {orphans:?}. Either \
+             the screen grew a region nothing declares — the hole every \
+             per-family gate in this campaign was blind to — or a declaration \
+             drifted from what the painter composes.",
+            orphans.len()
+        );
+        for reader in [
+            "cell",
+            "chip",
+            "detail part",
+            "inside a part",
+            "list part",
+            "pane",
+            "row",
+            "tip",
+        ] {
+            assert!(
+                by_reader.get(reader).copied().unwrap_or(0) > 0,
+                "★★ no painted mark was claimed by the `{reader}` reader — \
+                 with the claims ORed, a reader describing nothing makes the \
+                 zero orphans above mean less than it reads. Counted: \
+                 {by_reader:?}"
+            );
+        }
+        // ★★★ And the two ambiguous stems are told apart ON THIS PAGE, not
+        // only in the crate's own fixtures: the assembly paints both rows and
+        // cells, and each is claimed by its own reader rather than by whichever
+        // was tried first.
+        let cells = by_reader.get("cell").copied().unwrap_or(0);
+        let rows = by_reader.get("row").copied().unwrap_or(0);
+        assert!(
+            cells > rows,
+            "★★★ the page paints {rows} row(s) and {cells} cell(s); every row \
+             of this grid has eight cells, so a cell count at or below the row \
+             count means the row inverse is swallowing cells"
+        );
+        println!(
+            "[r2121] the mounted sessions section paints {} mark(s) under `{}`, \
+             all recovered: {by_reader:?}",
+            by_reader.values().sum::<usize>(),
+            sv::NAMESPACE
+        );
+    });
+}
+
+/// 🟥🟥🟥 ★★★★★ R2121 — **a caption the ASSEMBLED page paints is counted as its
+/// own box, and its box is painted.**
+///
+/// The other half of the gate above, split off at the line budget's insistence
+/// and a better seam than it looks: *every mark is recovered* and *a caption is
+/// its box's* fail for different reasons and should say which.
+///
+/// # Why it is not a clause of the census
+///
+/// Measured — CF-8 of this round filed every caption under a reader that is not
+/// its box's and **the whole shell suite stayed green**. The orphan count stays
+/// zero because a misfiled caption is still recovered; every floor stays
+/// non-empty because each reader has non-caption marks of its own; and the
+/// row/cell ratio survives because it only ever needed one more cell than
+/// rows. What it costs is a census that reports one family short and another
+/// long — in both directions, silently.
+///
+/// ⚠ It compares two OUTCOMES of the classifier rather than trusting one, so
+/// this is not the classifier asserting about itself: the caption and the box
+/// are put to it separately and the answers must agree.
+#[test]
+fn r2121_a_caption_the_mounted_sessions_section_paints_is_counted_as_its_box() {
+    use hello_sessions_view::address as sv;
+    use pinion_widget_paint::caption::CAPTION_SUFFIX;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let (shot, resting) = sessions_frames();
+        let mut captions = 0;
+        for frame in [&shot, &resting] {
+            for tag in frame.family(sv::NAMESPACE) {
+                let Some(box_tag) = tag.strip_suffix(CAPTION_SUFFIX) else {
+                    continue;
+                };
+                assert!(
+                    frame.rect(box_tag).is_some(),
+                    "★★★★★ `{tag}` is a caption and the box it belongs to \
+                     (`{box_tag}`) is not painted — a caption without its box \
+                     is a run bound to nothing"
+                );
+                assert_eq!(
+                    sessions_reader_of(tag),
+                    sessions_reader_of(box_tag),
+                    "★★★★★ `{tag}` is counted under a different reader from \
+                     the box it is part of. A caption is part of its box, not \
+                     a member of the box's family, and a census that files it \
+                     elsewhere reports the box's family one short and some \
+                     other family one long — in both directions, silently"
+                );
+                captions += 1;
+            }
+        }
+        assert!(
+            captions >= 50,
+            "{captions} caption(s) were checked, and this page draws one on \
+             every cell and every chip — a number this low means the framework \
+             stopped composing the suffix and the assertions above proved \
+             nothing"
+        );
+        println!("[r2121] {captions} caption(s) counted as their own boxes");
+    });
+}
+
 /// ★★★★★ R2120 — **every settings row the ASSEMBLED lab paints is keyed at a
 /// path the target's own option surface declares, and exactly one of them has
 /// a ceiling.**

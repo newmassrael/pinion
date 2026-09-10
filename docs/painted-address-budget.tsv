@@ -144,11 +144,11 @@ shell.toast	0	3
 sizes.legend	0	1
 struct_modified.struct	4	3
 struct_summary.struct	1	1
-sv.chip	0	5
-sv.detail	0	37
-sv.list	0	10
-sv.row	0	12
-sv.tip	0	1
+sv.chip	0	0
+sv.detail	0	0
+sv.list	0	0
+sv.row	0	0
+sv.tip	0	0
 the_tide.vn	0	2
 throughput.legend	0	4
 throughput.series	3	7

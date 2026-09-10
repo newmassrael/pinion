@@ -14,12 +14,18 @@
 use pinion_core::conformance::{Built, DocumentReport, parts_titled, titles_from};
 use pinion_core::painted::PaintedRegions;
 
-use crate::{VIEW_TAG, spec};
+use crate::{VIEW_TAG, address, spec};
 
 /// Where the list pane's parts are addressed.
-const LIST: &str = "sv.list.";
+///
+/// ★ R2121 — the declaration's, not a second copy. This module scans the
+/// painted regions with these prefixes, so a letter different from what the
+/// painter composes would report every part of a pane ABSENT while the frame
+/// plainly drew them — a conformance verdict failing for a reason that has
+/// nothing to do with conformance.
+const LIST: &str = address::LIST_SEAT;
 /// Where the detail pane's parts are addressed.
-const DETAIL: &str = "sv.detail.";
+const DETAIL: &str = address::DETAIL_SEAT;
 
 /// How much of `docs/analyzer-sessions-spec.json` this build is showing.
 #[must_use]

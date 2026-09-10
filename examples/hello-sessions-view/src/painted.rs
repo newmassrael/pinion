@@ -20,7 +20,8 @@ use pinion_core::test_fixtures::screen_ink::{assert_boxes_hold_their_text, asser
 use pinion_core::{Frame, Scene};
 
 use super::{
-    DETAIL_TAG, LIST_TAG, ROWS_TAG, VIEW_TAG, ViewState, WIN_H, WIN_W, spec, use_view_state,
+    DETAIL_TAG, LIST_TAG, ROWS_TAG, VIEW_TAG, ViewState, WIN_H, WIN_W, address, spec,
+    use_view_state,
 };
 
 /// How many runs on this screen sit in a box too short for their own face.
@@ -208,7 +209,7 @@ fn r1948_every_kept_session_is_painted_inside_the_body_and_dropped_ones_are_not(
             .unwrap_or_else(|| panic!("{case}: the rows body is not painted"));
         let kept: Vec<&str> = state.kept().iter().map(|s| s.id).collect();
         for session in spec::SESSIONS {
-            let at = rect_of(scene, &format!("sv.row.{}", session.id));
+            let at = rect_of(scene, &address::row(session.id));
             if kept.contains(&session.id) {
                 let at =
                     at.unwrap_or_else(|| panic!("{case}: {} is kept and not painted", session.id));
@@ -240,7 +241,7 @@ fn r1948_no_two_rows_are_painted_over_each_other() {
     sweep(|_, scene, _, case| {
         let mut drawn: Vec<(&str, Rect)> = Vec::new();
         for session in spec::SESSIONS {
-            if let Some(at) = rect_of(scene, &format!("sv.row.{}", session.id)) {
+            if let Some(at) = rect_of(scene, &address::row(session.id)) {
                 drawn.push((session.id, at));
             }
         }
@@ -266,7 +267,7 @@ fn r1948_no_two_rows_are_painted_over_each_other() {
 #[test]
 fn r1948_every_column_heading_sits_over_its_own_cells() {
     sweep(|_, scene, _, case| {
-        let strip = rect_of(scene, "sv.list.columns")
+        let strip = rect_of(scene, &address::list("columns"))
             .unwrap_or_else(|| panic!("{case}: the column headings are not painted"));
         let body = rect_of(scene, ROWS_TAG)
             .unwrap_or_else(|| panic!("{case}: the rows body is not painted"));
@@ -307,12 +308,12 @@ fn r1948_the_marked_row_and_the_detail_agree_on_one_session() {
     sweep(|state, scene, _, case| {
         let picked = state.picked();
         assert!(
-            rect_of(scene, &format!("sv.row.{}", picked.id)).is_some(),
+            rect_of(scene, &address::row(picked.id)).is_some(),
             "{case}: the detail describes {}, which the list does not draw",
             picked.id,
         );
         assert!(
-            rect_of(scene, "sv.detail.id").is_some(),
+            rect_of(scene, &address::detail("id")).is_some(),
             "{case}: the detail draws no identifier",
         );
         // The peer line names the peer of THAT session, read off the frame.
@@ -385,5 +386,56 @@ fn r1948_every_run_is_contained_and_no_box_is_too_short_for_its_face() {
     sweep(|_, scene, size, case| {
         assert_contained_ink(case, scene, size);
         assert_boxes_hold_their_text(case, scene, SHORT_BOX_BUDGET);
+    });
+}
+
+// ── 8. Every announced address is one the paint carries ─────────────────────
+
+/// 🟥🟥🟥 ★★★★★ R2121 — **every accessibility node this section publishes in
+/// its own namespace names a mark the PAINT actually carries.**
+///
+/// # A counterfactual asked for this, and nothing else answered
+///
+/// CF-5 of this round moved every DETAIL part's accessibility node onto the
+/// LIST pane's prefix — `sv.list.badge` for a part the detail pane draws — and
+/// **the whole crate stayed green**. It is a plausible break rather than a
+/// loud one for a measured reason: both panes name a part `title`, so the
+/// spelling that comes out still looks like an address of this screen, and the
+/// composition is still done in one place.
+///
+/// What it costs is not a colour: an accessibility node is what a screen reader
+/// is handed, and one naming an address nothing paints points a reader at
+/// nothing. The paint gates never looked at the roster and the roster never
+/// looked at the paint, so between them sat a whole class with no gate in it.
+///
+/// ⚠ The nodes are filtered to THIS SCREEN's namespace before the comparison,
+/// because a section publishes nodes for marks the framework paints as well
+/// (`app`, and the view's own root), and those are not this screen's to
+/// compose or to answer for.
+#[test]
+fn r2121_every_announced_address_is_painted() {
+    let mut checked = 0_u32;
+    sweep(|state, scene, _, case| {
+        let announced: Vec<String> = super::access_nodes(state, None)
+            .into_iter()
+            .map(|node| node.tag)
+            .filter(|tag| address::ours(tag))
+            .collect();
+        assert!(
+            announced.len() >= 15,
+            "{case}: the section announced {} node(s) in its own namespace, and \
+             a roster that had emptied would satisfy every assertion below by \
+             describing nothing",
+            announced.len()
+        );
+        for tag in &announced {
+            assert!(
+                rect_of(scene, tag).is_some(),
+                "{case}: the accessibility tree announces `{tag}` and the frame \
+                 paints no such mark — a reader following that node arrives \
+                 nowhere, and no gate on either side of it was looking"
+            );
+            checked += 1;
+        }
     });
 }
