@@ -69,11 +69,11 @@ item.dark	2	2
 item.ship	1	1
 item.toggle_window	2	2
 kind.elem	1	1
-kp.column	2	8
-kp.detail	1	12
-kp.filter	0	1
-kp.header	0	3
-kp.list	1	15
+kp.column	0	0
+kp.detail	0	0
+kp.filter	0	0
+kp.header	0	0
+kp.list	0	0
 lab.advanced	0	9
 lab.appbar	0	6
 lab.crumb	6	6

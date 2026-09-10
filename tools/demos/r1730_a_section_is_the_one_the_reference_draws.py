@@ -104,6 +104,32 @@ def q(app: RpcSubprocess, path: str):
     return app.query(f"{EXT}/{path}")
 
 
+def published_tags(published: dict, roster: str) -> dict:
+    """key -> painted address, as the SCREEN published them.
+
+    ★★★★★ R2123 — the one place this walk turns a key into an address, and it
+    does not compose one. Before this round four sites here spelled
+    `<stem>.<family>.<key>` themselves: a second copy of a composition the
+    screen owns, in a language where no compiler and no Rust gate can see it
+    drift. The screen now carries each roster row's `tag` beside its key.
+
+    ⚠ It REFUSES a row with no `tag` rather than falling back to composing one.
+    A fallback would make this helper silently become the thing it replaced the
+    moment the wire regressed, and the regression is exactly what it exists to
+    catch.
+    """
+    rows = published[roster]
+    missing = [row.get("key") for row in rows if not row.get("tag")]
+    if missing:
+        raise AssertionError(
+            f"the screen published {roster} rows with no address: {missing}. "
+            "A walk cannot name a Rust const, so an address it is not handed is "
+            "one it would have to spell -- which is the defect this reader "
+            "exists to remove, not a case to fall back on."
+        )
+    return {row["key"]: row["tag"] for row in rows}
+
+
 #: The reviewed artifacts, read from the repository rather than from the
 #: application: both sides of every comparison below must come from different
 #: places, or the comparison is the application agreeing with itself. The
@@ -187,13 +213,24 @@ def section_a(app: RpcSubprocess, spec: dict) -> None:
     )
 
 
-def section_b(app: RpcSubprocess, spec: dict) -> None:
+def section_b(app: RpcSubprocess, spec: dict) -> dict:
+    """Returns the key -> address map this section READ off the screen's wire,
+    so section E asserts against the addresses the screen published rather than
+    composing them a second time."""
     banner("B — the list on the screen, pressed by the machine's own pointer")
     rects = abs_rects_of(app.snapshot(source="paint"))
     columns = spec["columns"]["canon"]
+    # ★★★★★ R2123 — the address is RECEIVED, not composed here.
+    #
+    # This walk spelled `kp.column.<key>` itself, which is a second copy of a
+    # composition the screen owns — in another language, so no compiler and no
+    # Rust gate could ever see it drift. The screen now publishes each roster
+    # row's `tag` beside its key; `published_tags` is the join, done once.
+    published = q(app, "spec")
+    tag_of = published_tags(published, "columns")
     lefts = []
     for column in columns:
-        tag = f"kp.column.{column['key']}"
+        tag = tag_of[column["key"]]
         ok(f"B: the {column['key']} column is painted", tag in rects)
         lefts.append(rects[tag][0])
     ok(
@@ -207,11 +244,12 @@ def section_b(app: RpcSubprocess, spec: dict) -> None:
 
     driver = pointer(app)
     if driver is None:
-        return
+        return tag_of
     with driver as hand:
+        row_seat = published["addresses"]["seats"]["row"]
         pressed = 0
         for n in range(rows):
-            tag = f"kp.list.row.{n}"
+            tag = f"{row_seat}{n}"
             if tag not in rects:
                 continue
             rect = rects[tag]
@@ -231,6 +269,7 @@ def section_b(app: RpcSubprocess, spec: dict) -> None:
             )
             pressed += 1
         ok(f"B: all {pressed} painted declarations took a real press", pressed >= 8)
+    return tag_of
 
 
 def section_c(app: RpcSubprocess) -> None:
@@ -300,11 +339,11 @@ def section_d(app: RpcSubprocess) -> None:
     rows = {row["tag"]: row for row in voice.get("regions", voice.get("nodes", []))}
     ok(
         "D: and the action is announced at all",
-        any(tag.startswith("kp.detail.declarer") for tag in rows),
+        any(tag.startswith(q(app, "spec")["addresses"]["declarer"]) for tag in rows),
     )
 
 
-def section_e(spec: dict) -> None:
+def section_e(spec: dict, tag_of: dict) -> None:
     banner("E — mounted, it is a page of the one application")
     rail = rail_spec()
     owed = rail["owed"]
@@ -381,9 +420,18 @@ def section_e(spec: dict) -> None:
             f"{address_prefix(q(shell, 'spec')['rail'])}keys",
         ):
             ok(f"E: and the host's {chrome} survives -- a page, not a takeover", chrome in rects)
+        # ★ R2123 — the addresses are the ones the SECTION published, carried in
+        # from section B rather than composed again here.
+        #
+        # ⚠ They cannot be re-read from the host: `{EXT}/spec` on the shell is
+        # the SHELL's specification (it answers `rail`), not the mounted
+        # section's. So this asserts that the addresses the section publishes are
+        # painted when it is mounted — which is the claim this walk can make —
+        # and NOT that the assembly and the standalone binary compose the same
+        # address, which would need a wire the host does not offer.
         ok(
             "E: ★ every column of the specified list is painted in the host too",
-            all(f"kp.column.{c['key']}" in rects for c in spec["columns"]["canon"]),
+            all(tag_of[c["key"]] in rects for c in spec["columns"]["canon"]),
         )
         shell.intervene(f"{EXT}/nav", "dashboard")
         shell.tick(16)
@@ -409,11 +457,11 @@ def body() -> None:
 
     with RpcSubprocess(SECTION, boot_grace=1.5, visible_window=True) as app:
         section_a(app, spec)
-        section_b(app, spec)
+        tag_of = section_b(app, spec)
         section_c(app)
         section_d(app)
 
-    section_e(spec)
+    section_e(spec, tag_of)
 
     banner("what was checked")
     for line in CHECKS:

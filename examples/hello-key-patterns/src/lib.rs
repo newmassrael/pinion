@@ -44,6 +44,8 @@
 //!
 //! See `tools/demos/r1730_a_section_is_the_one_the_reference_draws.py`.
 
+pub mod address;
+
 mod judge;
 mod spec;
 
@@ -97,7 +99,7 @@ vello_renderer_impl!(HelloKeyPatternsRenderer, HelloKeyPatternsRendererError);
 /// The tag the widget is registered under — the receiver a press resolves to.
 const VIEW_TAG: &str = "key_patterns";
 /// The root address, for `scene/snapshot` and the sweep.
-const ROOT_TAG: &str = "kp.root";
+const ROOT_TAG: &str = address::ROOT;
 /// The theme scope.
 const THEME_TAG: &str = "app";
 /// The filter box: the tag its own external is addressed by, its buffer is
@@ -108,20 +110,20 @@ const THEME_TAG: &str = "app";
 /// names with no further dot in them, so a child tagged inside a part would
 /// have to be excluded by name — and R1728 measured what naming an exclusion
 /// costs: the gate is then only as good as whoever last updated the list.
-const QUERY_TAG: &str = "kp.filter.query";
+const QUERY_TAG: &str = address::QUERY;
 /// The list's header row — announced by the grid, and, since R2063, painted.
 ///
 /// ⚠ This doc used to say *"nothing paints it"*, and that was the defect: the
 /// row WAS painted, as a panel called `kp.colhead`, so one row had two
 /// spellings and a keyboard could stand on neither. One tag now, carried by the
 /// panel the reader sees and by the row the grid announces.
-const LIST_HEADER: &str = "kp.list.header";
+const LIST_HEADER: &str = address::LIST_HEADER;
 /// The list's grid.
-const LIST_TAG: &str = "kp.list";
+const LIST_TAG: &str = address::LIST;
 /// The record pane.
-const DETAIL_TAG: &str = "kp.detail";
+const DETAIL_TAG: &str = address::DETAIL;
 /// The section header.
-const HEADER_TAG: &str = "kp.header";
+const HEADER_TAG: &str = address::HEADER;
 
 const FONT_SMALL: u32 = 11;
 const FONT_BODY: u32 = 12;
@@ -530,7 +532,7 @@ fn use_view_state() -> Rc<ViewState> {
     // ★ [[owner-cache-no-nested-factory]] — every cached slot this one holds is
     // resolved BEFORE the factory runs, because `Owner::cache` cannot re-enter
     // itself and a factory that calls another `use_*` hook does exactly that.
-    let list_scroll = pinion_core::widgets::scroll::use_scroll_state("kp.list.body");
+    let list_scroll = pinion_core::widgets::scroll::use_scroll_state(address::LIST_BODY);
     let query = use_text_edit_state(QUERY_TAG);
     let owner = pinion_core::reactive::Owner::current()
         .expect("use_view_state requires an active Owner scope");
@@ -614,9 +616,7 @@ impl Hit {
     /// press at the middle of the tag's rectangle would be wrong for a row
     /// scrolled out of the list.
     fn of_tag(tag: &str) -> Self {
-        if let Some(n) = tag
-            .strip_prefix("kp.list.row.")
-            .and_then(|n| n.parse::<usize>().ok())
+        if let Some(n) = address::row_index(tag)
             && n < spec::ROWS.len()
         {
             return Self::Declaration(n);
@@ -624,15 +624,17 @@ impl Hit {
         // A cell's press is its row's press — the cell labels are text runs,
         // transparent to the pointer, so a press anywhere on a cell already
         // reaches the row.
-        if let Some((row, _column)) = tag
-            .strip_prefix("kp.list.cell.")
-            .and_then(|rest| rest.split_once('_'))
-            && let Ok(row) = row.parse::<usize>()
+        //
+        // ★★★★★ R2123 — the JOIN is the declaration's, not this reader's. It
+        // was `split_once('_')` here, spelled a third time beside the painter's
+        // and the roster's; an underscore where the rest of this tree joins on
+        // the separator is exactly the spelling a reader gets wrong by reflex.
+        if let Some((row, _column)) = address::cell_of(tag)
             && row < spec::ROWS.len()
         {
             return Self::Declaration(row);
         }
-        if tag == "kp.detail.declarer" {
+        if tag == address::DECLARER {
             return Self::Declarer;
         }
         Self::None
@@ -805,7 +807,7 @@ fn head_cursor(state: &Rc<ViewState>) -> Roving {
     roving.seat(
         spec::COLUMNS
             .iter()
-            .map(|column| Member::new(format!("kp.column.{}", column.key)))
+            .map(|column| Member::new(address::column(column.key)))
             .collect(),
     );
     roving.point_at(&column_tag(state.head_cursor.get()));
@@ -821,7 +823,7 @@ fn column_tag(n: usize) -> String {
     let key = spec::COLUMNS
         .get(n)
         .map_or(spec::COLUMNS[0].key, |column| column.key);
-    format!("kp.column.{key}")
+    address::column(key)
 }
 
 /// ★★★★★ R2063 — **where a keyboard reader's attention actually is**, given the
@@ -836,7 +838,7 @@ fn column_tag(n: usize) -> String {
 fn attention_at(state: &Rc<ViewState>, stop: &str) -> Option<String> {
     match stop {
         LIST_HEADER => head_cursor(state).active_descendant().map(str::to_owned),
-        LIST_TAG => Some(format!("kp.list.row.{}", state.cursor_row())),
+        LIST_TAG => Some(address::row(state.cursor_row())),
         // ★ The record pane holds the parts [`spec::DETAIL`] declares and
         // exactly ONE of them can be acted on — which is a fact the compiler
         // keeps rather than a count in prose: [`Hit`] has three arms and
@@ -1143,7 +1145,7 @@ fn column_header(ink: Ink) -> Scene {
         // reader — and the two could have drifted apart without anything
         // noticing, which is the shape this project keeps paying for.
         children.push(tagged_label(
-            &format!("kp.column.{}", column.key),
+            &address::column(column.key),
             column.title,
             Rect::new(at.x, 10, at.w, 12),
             10,
@@ -1203,13 +1205,13 @@ fn list_row_paint(n: usize, visual: usize, open: usize, ink: Ink) -> Vec<Scene> 
     let mut children = Vec::with_capacity(spec::COLUMNS.len() + 3);
     if n == open {
         children.push(
-            box_at("kp.list.open", at, ink.accent_soft, Some(ink.accent), 0).silenced(
+            box_at(address::LIST_OPEN, at, ink.accent_soft, Some(ink.accent), 0).silenced(
                 Silence::decorative("the band behind the open declaration; the row says so"),
             ),
         );
     }
     children.push(box_at(
-        &format!("kp.list.row.{n}"),
+        &address::row(n),
         at,
         Color::rgba(0, 0, 0, 0),
         None,
@@ -1227,7 +1229,7 @@ fn list_row_paint(n: usize, visual: usize, open: usize, ink: Ink) -> Vec<Scene> 
         if column.key == "status" {
             children.push(
                 box_at(
-                    &format!("kp.list.dot.{n}"),
+                    &address::dot(n),
                     Rect::new(cell.x, cell.y + 4, 7, 7),
                     fg,
                     None,
@@ -1242,7 +1244,7 @@ fn list_row_paint(n: usize, visual: usize, open: usize, ink: Ink) -> Vec<Scene> 
             cell.x
         };
         children.push(tagged_label(
-            &format!("kp.list.cell.{n}_{}", column.key),
+            &address::cell(n, column.key),
             row.cell(column.key),
             Rect::new(text_x, cell.y, cell.w.saturating_sub(text_x - cell.x), 14),
             FONT_BODY,
@@ -1338,7 +1340,7 @@ fn standing_pills(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Sce
     let health = Rect::new(104, 0, 116, at.h);
     vec![
         box_at(
-            "kp.detail.standing.kind",
+            &address::child(&address::detail("standing"), "kind"),
             kind,
             Color::rgba(0xC7, 0x78, 0x00, 0x29),
             None,
@@ -1356,7 +1358,7 @@ fn standing_pills(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Sce
             ink.declaration,
         ),
         box_at(
-            "kp.detail.standing.health",
+            &address::child(&address::detail("standing"), "health"),
             health,
             Color::rgba(0x35, 0xC0, 0x8B, 0x29),
             None,
@@ -1406,7 +1408,7 @@ fn endpoint_chips(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Sce
         let chip = Rect::new(x, 18, 62, 26);
         out.push(
             box_at(
-                &format!("kp.detail.endpoint.{n}"),
+                &address::endpoint(n),
                 chip,
                 ink.surface_2,
                 Some(ink.outline),
@@ -1445,17 +1447,40 @@ fn conformance_json() -> serde_json::Value {
 fn spec_json() -> serde_json::Value {
     serde_json::json!({
         "window": { "w": WIN_W, "h": WIN_H },
+        // ★★★★★ R2123 — every roster row carries the ADDRESS its key names.
+        //
+        // The keys have been on this wire since R1728 and the addresses never
+        // were, so the walk reading a column composed `kp.column.<key>` itself —
+        // a second copy of a composition in ANOTHER LANGUAGE, which is the
+        // sharpest form of R2116's finding: a table that publishes a key and not
+        // the address that key names makes every reader assemble it. A walk
+        // cannot name a Rust const, so handing it the address is the only way it
+        // stops spelling one.
+        "addresses": address::published(),
         "columns": spec::COLUMNS
             .iter()
-            .map(|c| serde_json::json!({ "key": c.key, "title": c.title, "width": c.width }))
+            .map(|c| serde_json::json!({
+                "key": c.key,
+                "title": c.title,
+                "width": c.width,
+                "tag": address::column(c.key),
+            }))
             .collect::<Vec<_>>(),
         "detail": spec::DETAIL
             .iter()
-            .map(|p| serde_json::json!({ "key": p.key, "title": p.title }))
+            .map(|p| serde_json::json!({
+                "key": p.key,
+                "title": p.title,
+                "tag": address::detail(p.key),
+            }))
             .collect::<Vec<_>>(),
         "header": spec::HEADER
             .iter()
-            .map(|p| serde_json::json!({ "key": p.key, "title": p.title }))
+            .map(|p| serde_json::json!({
+                "key": p.key,
+                "title": p.title,
+                "tag": address::header(p.key),
+            }))
             .collect::<Vec<_>>(),
         "gestures": spec::GESTURES
             .iter()
@@ -1816,7 +1841,7 @@ impl WidgetCore for KeyPatternView {
     /// its root tag; the root is one marker node. See
     /// [`pinion_core::WidgetCore::paint_stems`].
     fn paint_stems() -> Vec<&'static str> {
-        vec![VIEW_TAG, "kp"]
+        vec![VIEW_TAG, address::STEM]
     }
 
     fn read_state(scene: &Scene) -> (TextFieldState, u32) {
@@ -1909,7 +1934,7 @@ impl WidgetA11y for KeyPatternView {
 }
 
 /// The tag the description region is painted and announced under.
-const TOOLTIP_TAG: &str = "kp.tip";
+const TOOLTIP_TAG: &str = address::TIP;
 
 /// ★★★★★ R1918 — the sentences this screen's marks carry, by paint tag.
 ///
@@ -1927,11 +1952,11 @@ const TOOLTIP_TAG: &str = "kp.tip";
 fn descriptions() -> Descriptions {
     let mut described = Descriptions::new();
     for column in spec::COLUMNS {
-        described.describe(format!("kp.column.{}", column.key), column.description);
+        described.describe(address::column(column.key), column.description);
     }
     let why = declarer_standing();
     described.describe(
-        "kp.detail.declarer",
+        address::DECLARER,
         format!(
             "{} is {} ({})",
             spec::DECLARER_SECTION,
@@ -2018,9 +2043,9 @@ fn header_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     vec![
         AccessNode::new(HEADER_TAG, AriaRole::Group)
             .with_name(spec::HEADER[0].title)
-            .with_child("kp.header.summary")
+            .with_child(address::HEADER_SUMMARY)
             .with_child(QUERY_TAG),
-        AccessNode::new("kp.header.summary", AriaRole::Status)
+        AccessNode::new(address::HEADER_SUMMARY, AriaRole::Status)
             .with_name("Summary")
             .with_value(AccessValue::Text(state.summary()))
             .with_live(AccessLive::Polite),
@@ -2035,7 +2060,7 @@ fn list_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode> {
     let columns: Vec<GridColumn> = spec::COLUMNS
         .iter()
         .map(|column| GridColumn {
-            tag: format!("kp.column.{}", column.key),
+            tag: address::column(column.key),
             sort: None,
         })
         .collect();
@@ -2043,13 +2068,13 @@ fn list_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode> {
         .kept()
         .into_iter()
         .map(|n| GridRow {
-            tag: format!("kp.list.row.{n}"),
+            tag: address::row(n),
             selected: n == open,
             state: RadioState::Idle,
             cells: spec::COLUMNS
                 .iter()
                 .map(|column| GridCell {
-                    tag: format!("kp.list.cell.{n}_{}", column.key),
+                    tag: address::cell(n, column.key),
                     name: format!("{}: {}", column.title, spec::ROWS[n].cell(column.key)),
                     focused: focused == Some(LIST_TAG) && n == open,
                     selected: None,
@@ -2076,11 +2101,11 @@ fn detail_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     // number included, is a fact a reader wants.
     let mut pane = AccessNode::new(DETAIL_TAG, AriaRole::Group).with_name(spec::DETAIL[0].title);
     for part in &spec::DETAIL[1..] {
-        pane = pane.with_child(format!("kp.detail.{}", part.key));
+        pane = pane.with_child(address::detail(part.key));
     }
     let mut nodes = vec![pane];
     for part in &spec::DETAIL[1..] {
-        let tag = format!("kp.detail.{}", part.key);
+        let tag = address::detail(part.key);
         let node = match part.key {
             "declarer" => {
                 // The reason travels as a value rather than as a disabled bit.

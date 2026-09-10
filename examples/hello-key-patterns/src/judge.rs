@@ -63,14 +63,14 @@
 use pinion_core::conformance::{Built, DocumentReport, parts_as_read, parts_titled, titles_from};
 use pinion_core::painted::PaintedRegions;
 
-use crate::{VIEW_TAG, spec};
+use crate::{VIEW_TAG, address, spec};
 
 /// Where the section header's parts are addressed.
-const HEADER: &str = "kp.header.";
+const HEADER: &str = address::HEADER_SEAT;
 /// Where the list's column headers are addressed.
-const COLUMNS: &str = "kp.column.";
+const COLUMNS: &str = address::COLUMN_SEAT;
 /// Where the record pane's parts are addressed.
-const DETAIL: &str = "kp.detail.";
+const DETAIL: &str = address::DETAIL_SEAT;
 
 /// How much of `docs/analyzer-keys-spec.json` this build is showing.
 ///

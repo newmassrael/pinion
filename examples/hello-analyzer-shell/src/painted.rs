@@ -16714,6 +16714,147 @@ fn r2121_a_caption_the_mounted_sessions_section_paints_is_counted_as_its_box() {
     });
 }
 
+/// Which declared reader of the key-patterns section recovers `tag`, or `None`.
+///
+/// ★★ CLASSIFIED, NOT PREFIXED — but the classification here is a DEEPER SEAT
+/// rather than R2118's classifier. `kp.list.` carries four vocabularies (a part,
+/// plus rows, cells and standing dots), and each of the three indexed families
+/// is named by the segment after the stem, so the seats separate them without
+/// anything having to guess. The one thing a prefix genuinely cannot do is the
+/// cell: its key joins a row to a column on an UNDERSCORE, where the rest of
+/// this tree joins on the separator.
+fn key_patterns_reader_of(tag: &str) -> Option<&'static str> {
+    use hello_key_patterns::address as kp;
+    use pinion_widget_paint::caption::CAPTION_SUFFIX;
+
+    if let Some(box_tag) = tag.strip_suffix(CAPTION_SUFFIX) {
+        return key_patterns_reader_of(box_tag);
+    }
+    // ⚠ The lone marks first: a pane's own tag is deliberately not one of its
+    // parts, so no inverse claims it and it would read as an orphan.
+    if tag == kp::ROOT || tag == kp::HEADER || tag == kp::LIST || tag == kp::DETAIL {
+        return Some("pane");
+    }
+    if tag == kp::TIP {
+        return Some("tip");
+    }
+    if tag == kp::QUERY {
+        return Some("filter field");
+    }
+    // ★ The DEEPER seats before the list's parts: a row, a cell and a dot all
+    // begin with the list's own seat, so asking the part inverse first would
+    // let it refuse them and drop them here as orphans.
+    if kp::row_index(tag).is_some() {
+        return Some("row");
+    }
+    if kp::cell_of(tag).is_some() {
+        return Some("cell");
+    }
+    if kp::dot_index(tag).is_some() {
+        return Some("standing dot");
+    }
+    if kp::column_key(tag).is_some() {
+        return Some("column");
+    }
+    if kp::endpoint_index(tag).is_some() {
+        return Some("endpoint");
+    }
+    if kp::header_part(tag).is_some() {
+        return Some("header part");
+    }
+    if kp::list_part(tag).is_some() {
+        return Some("list part");
+    }
+    if kp::detail_part(tag).is_some() {
+        return Some("detail part");
+    }
+    // A part's own child hangs off that part's address, so it is recovered by
+    // walking back to the part that owns it — and the owner must be recovered
+    // too, or a mark under a family nothing declares would pass.
+    let (owner, word) = tag.rsplit_once('.')?;
+    (kp::CHILD_WORDS.contains(&word) && key_patterns_reader_of(owner).is_some())
+        .then_some("inside a part")
+}
+
+/// The mounted key-patterns section, opened.
+fn key_patterns_frame() -> Painted {
+    let state = use_shell_state_off_disk();
+    state
+        .go("keys")
+        .unwrap_or_else(|why| panic!("the keys section is open and refused: {why:?}"));
+    painted_at((WIN_W, WIN_H)).0
+}
+
+/// ★★★★★ R2123 — **every mark the ASSEMBLED key-patterns section paints is at
+/// an address one of its declared readers recovers.**
+///
+/// # Why this is not the crate's own gate
+///
+/// `hello-key-patterns` holds itself to *nobody but the declaration spells the
+/// stem*, which is a claim about its SOURCE. This is the claim about the PAGE:
+/// *the composition is declared* and *what this assembly paints is what the
+/// declaration composes* are two facts, and only the second is about the tool a
+/// person opens.
+///
+/// # ⚠ Floors per reader, not one over the union
+///
+/// ORed together, every reader but one describing nothing would leave the
+/// orphan count at zero and this would read as green while asserting almost
+/// nothing — R2108's denominator lesson.
+#[test]
+fn r2123_every_mark_the_mounted_key_patterns_section_paints_has_a_declared_reader() {
+    use hello_key_patterns::address as kp;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let shot = key_patterns_frame();
+        let mut by_reader: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
+        let mut orphans: Vec<&str> = Vec::new();
+        for tag in shot.family(kp::NAMESPACE) {
+            if let Some(reader) = key_patterns_reader_of(tag) {
+                *by_reader.entry(reader).or_default() += 1;
+            } else {
+                orphans.push(tag);
+            }
+        }
+        assert!(
+            orphans.is_empty(),
+            "★★★★★ the mounted key-patterns section paints {} mark(s) in its \
+             own namespace that no declared reader recovers: {orphans:?}. \
+             Either the screen grew a region nothing declares, or a \
+             declaration drifted from what the painter composes.",
+            orphans.len()
+        );
+        for reader in ["cell", "column", "detail part", "pane", "row"] {
+            assert!(
+                by_reader.get(reader).copied().unwrap_or(0) > 0,
+                "★★ no painted mark was claimed by the `{reader}` reader — \
+                 with the claims ORed, a reader describing nothing makes the \
+                 zero orphans above mean less than it reads. Counted: \
+                 {by_reader:?}"
+            );
+        }
+        // ★★★ And the four-headed stem is told apart ON THIS PAGE: every row of
+        // this grid has seven cells, so a cell count at or below the row count
+        // means the row inverse is swallowing cells.
+        let cells = by_reader.get("cell").copied().unwrap_or(0);
+        let rows = by_reader.get("row").copied().unwrap_or(0);
+        assert!(
+            cells > rows,
+            "★★★ the page paints {rows} row(s) and {cells} cell(s); a cell \
+             count at or below the row count means the deeper seat is not \
+             separating the heads on the assembled page"
+        );
+        println!(
+            "[r2123] the mounted key-patterns section paints {} mark(s) under \
+             `{}`, all recovered: {by_reader:?}",
+            by_reader.values().sum::<usize>(),
+            kp::NAMESPACE
+        );
+    });
+}
+
 /// Which declared reader of the topology section recovers `tag`, or `None`.
 ///
 /// ★★ CLASSIFIED, NOT PREFIXED. Four of that screen's stems carry two

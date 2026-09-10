@@ -54,8 +54,8 @@ use pinion_core::{Frame, Scene};
 
 use super::{
     DETAIL_TAG, HEADER_TAG, Hit, LIST_HEADER, LIST_TAG, ROOT_TAG, VIEW_TAG, ViewState, WIN_H,
-    WIN_W, centre, detail_rect, list_rect, select_declaration, set_query, show_declarer, spec,
-    use_view_state,
+    WIN_W, address, centre, detail_rect, list_rect, select_declaration, set_query, show_declarer,
+    spec, use_view_state,
 };
 
 /// The filter box at rest, which is the posture every check here runs the
@@ -381,7 +381,7 @@ fn r1730_a_column_header_reads_what_the_specification_calls_it() {
     let columns = doc.canon("columns").expect("the pin fixes the columns");
     sweep(|_, shot, _, _, case| {
         for part in columns.parts() {
-            let tag = format!("kp.column.{}", part.key);
+            let tag = address::column(part.key.as_ref());
             let painted: Vec<&str> = shot
                 .runs
                 .iter()
@@ -410,7 +410,7 @@ fn r1730_a_column_header_reads_what_the_specification_calls_it() {
 fn r1730_every_painted_control_answers_for_itself() {
     sweep(|state, shot, _, _, case| {
         let mut pressed = 0;
-        for tag in shot.family("kp.list.row.") {
+        for tag in shot.family(address::ROW_SEAT) {
             let Some(&rect) = shot.tags.get(tag) else {
                 continue;
             };
@@ -435,7 +435,7 @@ fn r1730_every_painted_control_answers_for_itself() {
         );
         let action = shot
             .tags
-            .get("kp.detail.declarer")
+            .get(address::DECLARER)
             .copied()
             .unwrap_or_else(|| panic!("{case}: the record pane's action is not painted"));
         let (x, y) = centre(action);
@@ -588,8 +588,8 @@ fn r1730_with_nothing_typed_no_mark_escapes_at_all() {
 fn r1730_each_surfaces_parts_are_inside_the_region_that_owns_them() {
     sweep(|_, shot, _, _, case| {
         for (stem, owner) in [
-            ("kp.detail.", detail_rect()),
-            ("kp.column.", super::colhead_rect()),
+            (address::DETAIL_SEAT, detail_rect()),
+            (address::COLUMN_SEAT, super::colhead_rect()),
         ] {
             for tag in shot.family(stem) {
                 let Some(&rect) = shot.tags.get(tag) else {
@@ -610,7 +610,7 @@ fn r1730_each_surfaces_parts_are_inside_the_region_that_owns_them() {
 fn r1730_no_two_declarations_share_a_band() {
     sweep(|_, shot, _, _, case| {
         let mut bands: Vec<(u32, u32, &str)> = shot
-            .family("kp.list.row.")
+            .family(address::ROW_SEAT)
             .into_iter()
             .filter_map(|tag| shot.tags.get(tag).map(|r| (r.y, r.h, tag)))
             .collect();
