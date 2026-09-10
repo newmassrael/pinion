@@ -3,15 +3,24 @@
 //!
 //! R2109 opened this module for the filter bar; R2111 gave it the message
 //! grid, which is the largest family of the capture viewer and the largest this
-//! address campaign has converted; R2112 gave it the decode tree and R2113 the
-//! byte grid. Each has its own entry further down.
+//! address campaign has converted; R2112 gave it the decode tree, R2113 the byte
+//! grid, and R2114 the two strips that close the screen. Each has its own entry
+//! further down.
 //!
-//! ★★★★★ The two KEY SHAPES this campaign has met now sit side by side here, and
-//! the contrast is worth reading before adding a fourth: the decode tree keys on
-//! an OPEN VOCABULARY (a field path, a layer identifier) and had to write every
-//! refusal by hand, while the byte grid keys on NUMBERS and gets those refusals
-//! from `parse()`. Which shape a family has is decided by its key, not by its
-//! size.
+//! ★★★★★ THREE ARRANGEMENTS sit side by side here, and the contrast is worth
+//! reading before adding a fourth, because which one a family has is decided by
+//! its key and its shape rather than by its size:
+//!
+//! * keys that are NUMBERS — the message grid, the byte grid, the reassembly
+//!   lanes. `parse()` writes every refusal: a tail that is not a number, the
+//!   family's own stem, and a sibling's prefix all fall out as `None`.
+//! * keys drawn from an OPEN VOCABULARY — the decode tree's field paths and
+//!   layer identifiers. Nothing is inherited, so each inverse says for itself
+//!   that the stem is not a member and that a sibling's prefix is not its own.
+//! * keys under the SEAT PREFIX ITSELF — the session-context strip, where a
+//!   negotiated value and the strip's fixed seat are both `pv.context.<word>`.
+//!   There is no word between the stem and the key, so the seat ROSTER is the
+//!   discriminator and the two rosters have to be proven disjoint.
 //!
 //! # What was missing
 //!
@@ -825,12 +834,223 @@ pub fn bytes_row_index(tag: &str) -> Option<usize> {
     tag.strip_prefix(BYTES_ROW_SEAT)?.parse().ok()
 }
 
+// ─── the session-context strip ──────────────────────────────────────────────
+//
+// ★★★★★ R2114 — the band above the three panes, and the family that makes the
+// campaign meet a THIRD arrangement: **the parametric members hang off the same
+// prefix as the fixed seats.**
+//
+// Measured at entry: **17 sites in this crate's five modules**, 4 across two
+// walks and none in the shell — 21 in all, with nothing declaring any of them.
+//
+// ⚠ Every family before this one put a WORD between the stem and the key —
+// `saved.<n>`, `row.<n>`, `field.<path>`, `lane.<n>` — so an inverse could strip
+// its own prefix and be sure of what it had. Here a negotiated value is painted
+// at `pv.context.<slug>` and the strip's one fixed seat at `pv.context.session`,
+// which is the SAME shape. There is no word to tell them apart, so the roster
+// itself is the discriminator:
+//
+// * [`context_word`] matches a seat by EQUALITY against the roster;
+// * [`context_value_slug`] strips [`CONTEXT_SEAT`] and then refuses a tail the
+//   roster claims, and refuses an empty tail for [`non_empty`]'s reason.
+//
+// ⇒ the two rosters must stay DISJOINT or one address means two things, and
+// that is not a property either function can hold on its own — it is a property
+// of the two tables, so `r2114_every_context_address_is_derived` holds it.
+//
+// ⚠⚠ THE SLUG RULE WAS SPELLED IN FIVE PLACES, and this is the narrowest
+// instance of this debt the campaign has measured — narrower than R2111's join
+// character, because it is a rule rather than a character and it was copied
+// four times. Before this round `key.replace(' ', "_")` stood in the
+// specification's population expander, in the painter, in the accessibility
+// tree, and twice in the paint sweep, with **no assertion anywhere between
+// them**. The direction of a drift is the quiet one: the expander and the
+// painter disagreeing makes the census enumerate an address nobody paints while
+// the screen paints the right mark, so the screen looks broken and is not.
+// [`context_slug`] is that rule's one home now.
+
+/// ★★★★★ R2114 — the tag the **session-context strip itself** is painted under.
+///
+/// The strip, not one of its seats, and carried WITHOUT the separator for
+/// [`FILTER`]'s reason: [`CONTEXT_SEAT`] is the form a reader composes onto.
+pub const CONTEXT: &str = "pv.context";
+
+/// [`CONTEXT`] with the separator every member of this family hangs off.
+///
+/// ⚠ BOTH kinds of member: the fixed seat below and every negotiated value.
+/// This is the one family of this screen where the parametric prefix and the
+/// seat prefix are the same string, which is why there is no
+/// `CONTEXT_VALUE_SEAT` beside it — a second const holding the same value would
+/// be two homes for the fact rather than one.
+pub const CONTEXT_SEAT: &str = "pv.context.";
+
+/// The run that says which session these values were negotiated for, and how
+/// much of the capture that premise covers.
+pub const CONTEXT_SESSION: &str = "pv.context.session";
+
+/// ★★★★★ R2114 — every FIXED word this strip addresses, beside its address.
+///
+/// The roster a reader classifies by and the wire publishes — and here it is
+/// also what [`context_value_slug`] refuses, because a negotiated value is
+/// addressed under the same prefix.
+pub const CONTEXT_SEATS: &[(&str, &str)] = &[("session", CONTEXT_SESSION)];
+
+/// The address of the fixed seat `word`.
+#[must_use]
+pub fn context(word: &str) -> String {
+    format!("{CONTEXT_SEAT}{word}")
+}
+
+/// The fixed word an address names, or `None` when the tag is not one of them.
+///
+/// ★ [`context`]'s inverse. Exact equality against the roster, for
+/// [`tree_word`]'s reason — and here equality is load-bearing twice over, since
+/// a prefix match would claim every negotiated value as well.
+#[must_use]
+pub fn context_word(tag: &str) -> Option<&'static str> {
+    CONTEXT_SEATS
+        .iter()
+        .find(|(_, seat)| *seat == tag)
+        .map(|(word, _)| *word)
+}
+
+/// [`CONTEXT_SEAT`] with the population's placeholder.
+///
+/// ⚠ The template of the VALUES, spelled from the seat prefix rather than
+/// written out, because they are the same prefix. The specification names this
+/// family by this template and expands it by [`context_slug`].
+pub const CONTEXT_VALUE_TEMPLATE: &str = "pv.context.{}";
+
+/// ★★★★★ R2114 — **the slug rule, and its only home.**
+///
+/// A negotiated value's key is what a reader sees — `id width`, `low latency` —
+/// and its address cannot carry the space, so the address uses an underscore.
+/// That substitution is the whole rule, and until this round it was written out
+/// in five places with nothing comparing them.
+///
+/// ⚠ Not `const fn`: [`str::replace`] allocates. The gate drives the painter,
+/// the accessibility tree, the paint sweep and the specification's expander
+/// through this one function, so a sixth spelling is a thing that cannot be
+/// written rather than a thing nobody noticed.
+#[must_use]
+pub fn context_slug(key: &str) -> String {
+    key.replace(' ', "_")
+}
+
+/// The address of the negotiated value whose key is `key`.
+///
+/// ★ Takes the KEY a reader sees, not the slug, so a caller never holds the
+/// intermediate form — the one place [`context_slug`] is applied on the way to
+/// an address is here.
+#[must_use]
+pub fn context_value(key: &str) -> String {
+    format!("{CONTEXT_SEAT}{}", context_slug(key))
+}
+
+/// The SLUG a negotiated value's address names, or `None` when the tag is not
+/// one.
+///
+/// ★★★★★ [`context_value`]'s inverse, and the one that carries this family's
+/// hand-written refusals. `parse()` refuses nothing here — the keys are an open
+/// vocabulary, like the decode tree's one pane down — and unlike that pane there
+/// is no word between the stem and the key, so the seat roster is what the
+/// refusal is made of.
+///
+/// ⚠ Answers the SLUG and not the key: the substitution is not invertible (a key
+/// holding an underscore would slug to itself), so a reader wanting the key
+/// compares slugs. The gate holds the specification's keys to slugging
+/// distinctly, which is what makes that comparison total.
+#[must_use]
+pub fn context_value_slug(tag: &str) -> Option<&str> {
+    let tail = non_empty(tag.strip_prefix(CONTEXT_SEAT)?)?;
+    if CONTEXT_SEATS.iter().any(|(word, _)| *word == tail) {
+        return None;
+    }
+    Some(tail)
+}
+
+// ─── the reassembly strip ───────────────────────────────────────────────────
+//
+// ★★★★★ R2114 — the band along the bottom, taken in the same round as the strip
+// above because the two are the last families of this screen and each is small.
+//
+// Measured at entry: **23 sites in this crate's five modules**, 2 across two
+// walks and 1 in the shell that mounts this screen as a page — 26 in all.
+//
+// ⚠ Its one parametric family keys on a NUMBER, so it is R2113's shape and
+// `parse()` writes its refusals — while the strip above is a third shape again.
+// **Two arrangements arrive in one round, and which one a family has is decided
+// by its key's vocabulary and by whether a word stands between the stem and the
+// key.** That contrast is the reason these two are declared side by side rather
+// than in the order the campaign's budget would have taken them.
+
+/// ★★★★★ R2114 — the tag the **reassembly strip itself** is painted under.
+pub const REASSEMBLY: &str = "pv.reassembly";
+
+/// [`REASSEMBLY`] with the separator every member of this family hangs off.
+pub const REASSEMBLY_SEAT: &str = "pv.reassembly.";
+
+/// The run in the strip that names it.
+///
+/// ⚠ Painted, and deliberately SILENT: it names the strip, so the strip
+/// announces it and a second stop reading the same words would be the band
+/// announced twice. A mark all the same, which is why it is a seat here.
+pub const REASSEMBLY_TITLE: &str = "pv.reassembly.title";
+
+/// The strip's readout: how many channels carry traffic and how the
+/// reassemblies are doing.
+pub const REASSEMBLY_COUNTS: &str = "pv.reassembly.counts";
+
+/// ★★★★★ R2114 — every FIXED word this strip addresses, beside its address.
+pub const REASSEMBLY_SEATS: &[(&str, &str)] =
+    &[("title", REASSEMBLY_TITLE), ("counts", REASSEMBLY_COUNTS)];
+
+/// The address of the fixed seat `word`.
+#[must_use]
+pub fn reassembly(word: &str) -> String {
+    format!("{REASSEMBLY_SEAT}{word}")
+}
+
+/// The fixed word an address names, or `None` when the tag is not one of them.
+///
+/// ★ [`reassembly`]'s inverse. Exact equality against the roster, for
+/// [`bytes_word`]'s reason.
+#[must_use]
+pub fn reassembly_word(tag: &str) -> Option<&'static str> {
+    REASSEMBLY_SEATS
+        .iter()
+        .find(|(_, seat)| *seat == tag)
+        .map(|(word, _)| *word)
+}
+
+/// The prefix every LANE box is painted under.
+pub const REASSEMBLY_LANE_SEAT: &str = "pv.reassembly.lane.";
+
+/// [`REASSEMBLY_LANE_SEAT`] with the population's placeholder.
+pub const REASSEMBLY_LANE_TEMPLATE: &str = "pv.reassembly.lane.{}";
+
+/// The address of the lane at `index`.
+#[must_use]
+pub fn reassembly_lane(index: usize) -> String {
+    format!("{REASSEMBLY_LANE_SEAT}{index}")
+}
+
+/// The lane a box's address names, or `None` when the tag is not a lane.
+///
+/// ★ [`reassembly_lane`]'s inverse. `parse()` refuses the stem, a non-numeric
+/// tail and the strip's two seats, which is the whole difference between this
+/// family and the context strip's — one word between the stem and the key.
+#[must_use]
+pub fn reassembly_lane_index(tag: &str) -> Option<usize> {
+    tag.strip_prefix(REASSEMBLY_LANE_SEAT)?.parse().ok()
+}
+
 /// `tail` unless it is empty.
 ///
-/// ★ Shared by the three inverses above rather than written into each, because
-/// *the stem is not a member of its own family* is one rule and three copies of
+/// ★ Shared by the four inverses above rather than written into each, because
+/// *the stem is not a member of its own family* is one rule and four copies of
 /// it is this module's own defect one level down. A `const fn` cannot do this,
-/// so it is a plain one; the gate drives all three doors through it.
+/// so it is a plain one; the gate drives all four doors through it.
 fn non_empty(tail: &str) -> Option<&str> {
     (!tail.is_empty()).then_some(tail)
 }

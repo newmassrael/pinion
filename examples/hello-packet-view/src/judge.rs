@@ -73,7 +73,12 @@ use crate::spec;
 /// changed is that a wrong letter here is now impossible rather than silent.
 const FILTER: &str = crate::address::FILTER_SEAT;
 /// Where the session-context strip's parts are addressed.
-const CONTEXT: &str = "pv.context.";
+///
+/// ★ R2114 — taken from the declaration, like [`FILTER`] above. One prefix for
+/// both kinds of part, which is this family's own shape rather than a shortcut
+/// here: the strip's fixed seat and its negotiated values hang off the same
+/// stem, and the table below wants exactly that stem.
+const CONTEXT: &str = crate::address::CONTEXT_SEAT;
 /// Where the message list's column headers are addressed.
 ///
 /// ★ R2111 — taken from the declaration, like [`FILTER`] above and for its
@@ -85,7 +90,9 @@ const HEADERS: &str = crate::address::LIST_HEAD_SEAT;
 /// findable by the shape of a name rather than by a list.
 const FIELDS: &str = crate::address::TREE_FIELD_SEAT;
 /// Where the reassembly strip's parts are addressed.
-const STRIP: &str = "pv.reassembly.";
+///
+/// ★ R2114 — taken from the declaration, for [`CONTEXT`]'s reason.
+const STRIP: &str = crate::address::REASSEMBLY_SEAT;
 /// The band the tree draws behind the row a reader has open.
 const OPEN_ROW: &str = crate::address::TREE_SELECTED;
 /// The byte pane's readout: which row is open and which bytes it was read from.

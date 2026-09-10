@@ -5908,6 +5908,77 @@ def bytes_offset_address(prefix: str, row) -> str:
     return f"{prefix}{row}"
 
 
+# ★★★★★ R2114 — **the capture viewer's two strips, and the one family of this
+# screen whose fixed seats and parametric members share ONE prefix.**
+#
+# Every family before this put a word between the stem and the key —
+# `saved.<n>`, `head.<n>`, `field.<path>`, `cell.<byte>`, `lane.<n>` — so a walk
+# classifying a snapshot could compare against a prefix and be sure of what it
+# had. The session-context strip does not: its `session` seat and its negotiated
+# values are both `pv.context.<word>`.
+#
+# ⇒ what makes composition unambiguous here is a property of the SCREEN, held by
+# `r2114_every_context_address_is_derived`: no negotiated value's slug is one of
+# the seat words. A walk therefore composes both kinds of member onto the one
+# published prefix, which is exactly what the pin's canon table for this surface
+# needs — it lists the seat and the six values as one list of keys.
+#
+# ⚠ What is NOT here, so the absence reads as a decision (R2104, R2113): no door
+# turning a key a reader sees into its slug. The substitution belongs to the
+# screen, no walk needs it — the two that reach this strip ask for the `session`
+# seat and join against a pin already keyed by slug — and re-deriving it in
+# Python would be a sixth home for the rule this round gave one home.
+
+
+def context_seats(spec: Any) -> dict:
+    """Every FIXED seat of the session-context strip, keyed by the word the
+    screen declares it under — from a specification a caller has ALREADY read.
+
+    ⚠ FIXED only: the run naming the negotiated session and how far it reaches.
+    The negotiated values expand over the capture and hang off the SAME prefix,
+    which [`context_value_prefix`] answers.
+    """
+    return {row["word"]: row["tag"] for row in spec["context_addresses"]["seats"]}
+
+
+def context_tag(tf, word: str, *, ext: str = "/external") -> str:
+    """The address the context strip's seat called `word` is painted under.
+
+    A word the strip does not address is a `KeyError` naming it.
+    """
+    return context_seats(screen_spec(tf, ext))[word]
+
+
+def context_value_prefix(tf, *, ext: str = "/external") -> str:
+    """The prefix every NEGOTIATED VALUE of the strip is painted under.
+
+    ⚠ The same string the seats hang off, and that is the family's own shape
+    rather than a shortcut: there is no word between the stem and the key here.
+    A walk composing a seat's address onto this arrives at the seat, which is
+    what makes one prefix answer for a canon table that lists both.
+    """
+    return screen_spec(tf, ext)["context_addresses"]["value"]
+
+
+def reassembly_seats(spec: Any) -> dict:
+    """Every FIXED seat of the reassembly strip, keyed by the word the screen
+    declares it under — from a specification a caller has ALREADY read.
+
+    ⚠ `title` is a seat here and SILENT in the accessibility tree: it names the
+    strip, so the strip announces it. This surface answers *where is it
+    addressed*; `voices` answers *does a reader stop there*.
+    """
+    return {row["word"]: row["tag"] for row in spec["reassembly_addresses"]["seats"]}
+
+
+def reassembly_tag(tf, word: str, *, ext: str = "/external") -> str:
+    """The address the reassembly strip's seat called `word` is painted under.
+
+    A word the strip does not address is a `KeyError` naming it.
+    """
+    return reassembly_seats(screen_spec(tf, ext))[word]
+
+
 def pin_prefix(tf, *, ext: str = "/external") -> str:
     """The prefix every pin of every card on the node graph is painted under.
 

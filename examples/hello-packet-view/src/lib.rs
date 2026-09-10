@@ -2557,7 +2557,7 @@ fn context_strip(state: &Rc<ViewState>, ink: Ink) -> Scene {
     );
     let session_box = run_box(&session, PAD, 12);
     let mut children = vec![tagged_label(
-        "pv.context.session",
+        address::CONTEXT_SESSION,
         session.clone(),
         session_box,
         FONT_SMALL,
@@ -2568,13 +2568,12 @@ fn context_strip(state: &Rc<ViewState>, ink: Ink) -> Scene {
     )];
     let mut x = session_box.x + session_box.w + 24;
     for value in spec::CONTEXT {
-        let slug = value.key.replace(' ', "_");
         let key_box = run_box(value.key, x, 12);
         children.push(label(value.key, key_box, FONT_SMALL, ink.text_3));
         x = key_box.x + key_box.w;
         let value_box = run_box(value.value, x, 12);
         children.push(tagged_label(
-            &format!("pv.context.{slug}"),
+            &address::context_value(value.key),
             value.value,
             value_box,
             FONT_SMALL,
@@ -2588,7 +2587,7 @@ fn context_strip(state: &Rc<ViewState>, ink: Ink) -> Scene {
         }
         x += 18;
     }
-    panel("pv.context", rect, ink.bg, Some(ink.outline), children)
+    panel(address::CONTEXT, rect, ink.bg, Some(ink.outline), children)
 }
 
 /// The tag the description region is painted and announced under.
@@ -3369,15 +3368,15 @@ fn reassembly_strip(ink: Ink) -> Scene {
     let rect = reassembly_rect();
     let mut children = vec![
         tagged_label(
-            "pv.reassembly.title",
+            address::REASSEMBLY_TITLE,
             "reassembly · sequence continuity per channel",
             Rect::new(PAD, 10, 300, 12),
             FONT_SMALL,
             ink.text_3,
         )
-        .silenced(Silence::name_of("pv.reassembly")),
+        .silenced(Silence::name_of(address::REASSEMBLY)),
         tagged_label(
-            "pv.reassembly.counts",
+            address::REASSEMBLY_COUNTS,
             reassembly_counts(),
             Rect::new(rect.w.saturating_sub(516), 10, 500, 12),
             FONT_SMALL,
@@ -3388,7 +3387,7 @@ fn reassembly_strip(ink: Ink) -> Scene {
         let seat = lane_rect(n);
         let local = Rect::new(seat.x, seat.y - rect.y, seat.w, seat.h);
         children.push(box_at(
-            &format!("pv.reassembly.lane.{n}"),
+            &address::reassembly_lane(n),
             local,
             ink.surface,
             // ★ R1845 — the box is lit by what the lane has to REPORT, not by
@@ -3418,7 +3417,13 @@ fn reassembly_strip(ink: Ink) -> Scene {
             },
         ));
     }
-    panel("pv.reassembly", rect, ink.bg, Some(ink.outline), children)
+    panel(
+        address::REASSEMBLY,
+        rect,
+        ink.bg,
+        Some(ink.outline),
+        children,
+    )
 }
 
 // ── The External ────────────────────────────────────────────────────────────
@@ -4281,6 +4286,57 @@ fn bytes_addresses_json() -> serde_json::Value {
     })
 }
 
+/// ★★★★★ R2114 — **the session-context strip: its own tag, its one fixed seat,
+/// and the prefix its negotiated values hang off — which is the SAME prefix.**
+///
+/// Measured at entry, 17 sites in this crate's five modules and 4 across two
+/// walks; none in the shell.
+///
+/// ⚠ `value` and the seat prefix are one string, and that is the fact this
+/// surface exists to carry rather than a redundancy. Every other family of this
+/// screen puts a word between the stem and the key, so a walk can classify a
+/// snapshot by prefix; here it cannot, and what makes composition unambiguous is
+/// that no negotiated value's slug is one of the seat words —
+/// `r2114_every_context_address_is_derived` is where that is held.
+///
+/// ⚠⚠ The SLUG is deliberately NOT published beside the `context` table's keys,
+/// and the absence is a decision rather than a gap. A walk composing a value's
+/// address from the key a reader sees would need the substitution, and no walk
+/// does: the two that reach this strip ask for the `session` seat and join
+/// against the pin, whose canon table is already keyed by slug. R2104's rule and
+/// R2113's re-measurement of it — a published surface with no reader is the
+/// rotting thing this debt produces — so this is built the round a walk needs
+/// it, and the address rule stays in one place until then.
+fn context_addresses_json() -> serde_json::Value {
+    serde_json::json!({
+        "tag": address::CONTEXT,
+        "seats": address::CONTEXT_SEATS.iter().map(|(word, tag)| serde_json::json!({
+            "word": word, "tag": tag,
+        })).collect::<Vec<_>>(),
+        "value": address::CONTEXT_SEAT,
+    })
+}
+
+/// ★★★★★ R2114 — **the reassembly strip: its own tag, its two fixed seats, and
+/// the prefix its lanes hang off.**
+///
+/// Measured at entry, 23 sites in this crate's five modules, 2 across two walks
+/// and 1 in the shell that mounts this screen as a page.
+///
+/// ⚠ `title` is published as a seat even though it is announced as the strip's
+/// NAME rather than as a stop of its own: it is a painted mark, and this surface
+/// answers *where is it addressed*, not *does a reader stop there*. `voices`
+/// above is the surface that answers the second question.
+fn reassembly_addresses_json() -> serde_json::Value {
+    serde_json::json!({
+        "tag": address::REASSEMBLY,
+        "seats": address::REASSEMBLY_SEATS.iter().map(|(word, tag)| serde_json::json!({
+            "word": word, "tag": tag,
+        })).collect::<Vec<_>>(),
+        "lane": address::REASSEMBLY_LANE_SEAT,
+    })
+}
+
 /// The whole specification, as the wire sees it — so the demo reads the table
 /// from the running application rather than keeping a second copy of it.
 fn spec_json() -> serde_json::Value {
@@ -4330,16 +4386,23 @@ fn spec_json() -> serde_json::Value {
         "saved_filters": spec::SAVED_FILTERS.iter().map(|f| serde_json::json!({
             "name": f.name, "query": f.query,
         })).collect::<Vec<_>>(),
-        // ★★★★★ R2109/R2111/R2112 — the three families whose addresses this
-        // screen DECLARES, each published so a walk is handed the address the
-        // paint used rather than spelling a second copy of it. One function per
-        // family: each carries its own family's reasoning, and lifting them out
-        // of this document is what kept `spec_json` inside the workspace's
+        // ★★★★★ R2109/R2111/R2112/R2113/R2114 — every family whose addresses
+        // this screen DECLARES, each published so a walk is handed the address
+        // the paint used rather than spelling a second copy of it. One function
+        // per family: each carries its own family's reasoning, and lifting them
+        // out of this document is what kept `spec_json` inside the workspace's
         // hundred-line bound when the third arrived.
+        //
+        // ★★ R2114 takes the count to six, and the screen is NOT finished:
+        // re-measured this round, `pv.appbar` (20 sites), `pv.root` (4),
+        // `pv.tip` and `pv.map` (1 each) still spell themselves. Said here
+        // because the shape of this list invites the opposite reading.
         "filter_addresses": filter_addresses_json(),
         "list_addresses": list_addresses_json(),
         "tree_addresses": tree_addresses_json(),
         "bytes_addresses": bytes_addresses_json(),
+        "context_addresses": context_addresses_json(),
+        "reassembly_addresses": reassembly_addresses_json(),
         // ★★★ R1707 — what this screen tells a person the mouse and keyboard
         // do. Published rather than painted: the sibling screen prints a hint
         // strip because the reference's node canvas does, and the reference's
@@ -4756,9 +4819,9 @@ fn filter_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
 /// The negotiated session context: six values the decode is only interpretable
 /// against, each announced as what it is and what it was negotiated to.
 fn context_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
-    let mut group = AccessNode::new("pv.context", AriaRole::Group)
+    let mut group = AccessNode::new(address::CONTEXT, AriaRole::Group)
         .with_name("Session context")
-        .with_child("pv.context.session");
+        .with_child(address::CONTEXT_SESSION);
     // ★★★★★ R1852 — the session run says its own REACH, and when the selected
     // row is outside it, WHICH hop that row is.
     //
@@ -4770,7 +4833,7 @@ fn context_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     let covered = spec::row_in_session(state.row.get());
     let hop = spec::ROWS.get(state.row.get()).map_or("", |row| row.hop);
     let mut nodes = vec![
-        AccessNode::new("pv.context.session", AriaRole::Status)
+        AccessNode::new(address::CONTEXT_SESSION, AriaRole::Status)
             .with_name("Negotiated session")
             .with_value(AccessValue::Text(if covered {
                 format!(
@@ -4790,7 +4853,7 @@ fn context_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
             })),
     ];
     for value in spec::CONTEXT {
-        let tag = format!("pv.context.{}", value.key.replace(' ', "_"));
+        let tag = address::context_value(value.key);
         group = group.with_child(tag.clone());
         // The KEY names the region and the negotiated setting is its value. The
         // painted run carrying the tag holds only the value, so a name derived
@@ -5109,18 +5172,18 @@ fn bytes_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
 
 /// The reassembly strip: one lane per channel carrying traffic, and the totals.
 fn reassembly_nodes() -> Vec<AccessNode> {
-    let mut group = AccessNode::new("pv.reassembly", AriaRole::Group)
-        .with_name_from_tag("pv.reassembly.title")
-        .with_child("pv.reassembly.counts");
+    let mut group = AccessNode::new(address::REASSEMBLY, AriaRole::Group)
+        .with_name_from_tag(address::REASSEMBLY_TITLE)
+        .with_child(address::REASSEMBLY_COUNTS);
     // ★ R1845 — the totals reach a reader who cannot see the label. This node
     // was a bare `Status` with no value at all, so the one sentence that says
     // how much of the session is carrying traffic was paint-only.
     let mut nodes = vec![
-        AccessNode::new("pv.reassembly.counts", AriaRole::Status)
+        AccessNode::new(address::REASSEMBLY_COUNTS, AriaRole::Status)
             .with_value(AccessValue::Text(reassembly_counts())),
     ];
     for (n, lane) in spec::LANES.iter().enumerate() {
-        let tag = format!("pv.reassembly.lane.{n}");
+        let tag = address::reassembly_lane(n);
         group = group.with_child(tag.clone());
         // The lane paints its name and its continuity as siblings of its box, so
         // both come from the table the painter reads.

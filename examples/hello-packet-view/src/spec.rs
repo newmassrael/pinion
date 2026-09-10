@@ -1950,9 +1950,20 @@ impl Population {
             Population::Layers => LAYERS.iter().map(|(id, _)| (*id).to_owned()).collect(),
             Population::Bytes => indexes(SOURCES[0].1),
             Population::ByteRows => indexes(SOURCES[0].1.div_ceil(BYTES_PER_ROW)),
+            // ★★★★★ R2114 — the SLUG RULE comes from the declaration. This
+            // expander, the painter, the accessibility tree and two arms of the
+            // paint sweep each wrote the substitution out, with nothing
+            // comparing the five spellings: an expander that drifted from the
+            // painter would make this census enumerate an address nobody paints
+            // while the screen went on painting the right one.
+            //
+            // ⚠ Described rather than quoted, and that is this round's own rule
+            // applied to itself: a comment spelling the substitution is a sixth
+            // place it is written, and the one place it may be read is
+            // [`crate::address::context_slug`].
             Population::Context => CONTEXT
                 .iter()
-                .map(|value| value.key.replace(' ', "_"))
+                .map(|value| crate::address::context_slug(value.key))
                 .collect(),
             Population::Lanes => indexes(LANES.len()),
             Population::SavedFilters => indexes(SAVED_FILTERS.len()),
@@ -2052,17 +2063,21 @@ pub const VOICES: &[VoiceSpec] = &[
     // interpretable without it — which makes an inaudible context strip a
     // reader looking at a decode whose premises they cannot reach.
     VoiceSpec {
-        tag: "pv.context",
+        tag: crate::address::CONTEXT,
         role: "group",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "pv.context.session",
+        tag: crate::address::CONTEXT_SESSION,
         role: "status",
         population: Population::One,
     },
+    // ★★ R2114 — the template is [`crate::address::CONTEXT_SEAT`] with the
+    // placeholder, which is the SAME prefix the seat above hangs off. The two
+    // rows can only be told apart by their keys, and `context_value_slug`
+    // refusing the seat roster is what keeps them apart everywhere else.
     VoiceSpec {
-        tag: "pv.context.{}",
+        tag: crate::address::CONTEXT_VALUE_TEMPLATE,
         role: "status",
         population: Population::Context,
     },
@@ -2136,17 +2151,17 @@ pub const VOICES: &[VoiceSpec] = &[
     },
     // The reassembly strip.
     VoiceSpec {
-        tag: "pv.reassembly",
+        tag: crate::address::REASSEMBLY,
         role: "group",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "pv.reassembly.counts",
+        tag: crate::address::REASSEMBLY_COUNTS,
         role: "status",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "pv.reassembly.lane.{}",
+        tag: crate::address::REASSEMBLY_LANE_TEMPLATE,
         role: "status",
         population: Population::Lanes,
     },
@@ -2182,7 +2197,7 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     // Titles painted inside the pane they name.
     (crate::address::TREE_TITLE, Population::One, "name_of"),
     (crate::address::BYTES_TITLE, Population::One, "name_of"),
-    ("pv.reassembly.title", Population::One, "name_of"),
+    (crate::address::REASSEMBLY_TITLE, Population::One, "name_of"),
     // Selection bands. The row and the item announce that they are selected;
     // the ink behind them is how a sighted reader is told the same thing.
     (crate::address::LIST_SELECTED, Population::One, "decorative"),

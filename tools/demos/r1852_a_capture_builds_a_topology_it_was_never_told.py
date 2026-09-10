@@ -87,6 +87,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    context_tag,
     run_demo,
 )
 
@@ -223,9 +224,14 @@ def body() -> None:
             0 < topo["rows_in_session"] < rows,
         )
         # And the strip says it, on screen and to a reader who cannot see it.
+        # ★★★★★ R2114 — the run's address comes off the screen's own declaration
+        # rather than being typed here. This walk asked about the SAME mark three
+        # times and spelled it three times; a wrong letter in any of them would
+        # have read as *the screen did not paint the premise*.
+        session = context_tag(d, "session", ext=EXT)
         painted = walk_tags(d.snapshot(source="paint"))
-        ok("the strip is on screen", "pv.context.session" in painted)
-        said = reading(announced(d, "pv.context.session"))
+        ok("the strip is on screen", session in painted)
+        said = reading(announced(d, session))
         print(f"    the strip announces: {said!r}")
         ok("the announcement states the reach", f"{topo['rows_in_session']} of {rows}" in said)
         ok(
@@ -243,7 +249,7 @@ def body() -> None:
             )
         )
         d.invoke(f"{EXT}/select_message", outside)
-        moved = reading(announced(d, "pv.context.session"))
+        moved = reading(announced(d, session))
         print(f"    on row {outside} it announces: {moved!r}")
         ok("the announcement changed", moved != said)
         ok(

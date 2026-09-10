@@ -102,8 +102,10 @@ from rpc_verify import (  # noqa: E402
     bytes_lit_at,
     bytes_lit_prefix,
     bytes_tag,
+    context_value_prefix,
     filter_seats,
     list_head_prefix,
+    reassembly_seats,
     resize_and_settle,
     run_demo,
     screen_spec,
@@ -130,12 +132,14 @@ SEAT = "packets"
 #: the mounted capture viewer in section E rather than written down, because
 #: this table is module-level and cannot query anything.
 #: ★★★★★ R2111 — and `list_columns` joined it, for the same reason and by the
-#: same route; R2112 took `decode_layers` the same way. The two that remain are
-#: families this campaign has not reached and still say their own stem.
-STEMS = {
-    "context": "pv.context.",
-    "reassembly": "pv.reassembly.",
-}
+#: same route; R2112 took `decode_layers` the same way.
+#:
+#: ★★★★★ R2114 — and the last two followed, so this table is EMPTY and kept for
+#: `RELATION`'s reason: the decision that no surface of this screen spells its
+#: own stem here is worth more written down than a deleted name the next reader
+#: has to re-derive. Every stem section E joins on now comes off the capture
+#: viewer MOUNTED in the shell.
+STEMS: dict[str, str] = {}
 
 #: The three regions the `selection` relation is painted across.
 #:
@@ -607,6 +611,21 @@ def section_e(app: RpcSubprocess) -> None:
         list_columns=list_head_prefix(app, ext=mounted),
         # ★★★★★ R2112 — and the decode tree's row prefix, the same way.
         decode_layers=tree_field_prefix(app, ext=mounted),
+        # ★★★★★ R2114 — the session-context strip, and the one surface here whose
+        # canon list mixes a SEAT with parametric members. One prefix answers for
+        # both because this family has no word between its stem and its key, and
+        # the screen's own gate is what makes that unambiguous: no negotiated
+        # value's slug is one of the seat words.
+        context=context_value_prefix(app, ext=mounted),
+        # ★★★★★ R2114 — and the reassembly strip, whose canon parts are both
+        # fixed seats, so the prefix is RECOVERED from the roster the way the
+        # filter bar's is rather than published on its own.
+        reassembly=address_prefix(
+            [
+                {"key": word, "tag": tag}
+                for word, tag in reassembly_seats(screen_spec(app, mounted)).items()
+            ]
+        ),
     )
     # The band behind the open row, off the same declaration — see `RELATION`.
     open_band = tree_tag(app, "selected", ext=mounted)

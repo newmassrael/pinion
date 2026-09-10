@@ -64,6 +64,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    reassembly_tag,
     run_demo,
 )
 
@@ -170,9 +171,15 @@ def derive(rows: list[dict[str, Any]], negotiated: list[str]) -> list[tuple[str,
 
 
 def counts_sentence(app: RpcSubprocess) -> str:
-    """What the strip's totals node announces, from the accessibility tree."""
+    """What the strip's totals node announces, from the accessibility tree.
+
+    ★★★★★ R2114 — the address is the screen's own, read off its declaration. A
+    wrong letter here raised *the strip announces no totals*, which is a sentence
+    about the screen and not about this walk.
+    """
+    counts = reassembly_tag(app, "counts", ext=EXT)
     for node in app.request("scene/access").result["nodes"]:
-        if node.get("tag") == "pv.reassembly.counts":
+        if node.get("tag") == counts:
             return json.dumps(node, ensure_ascii=False)
     raise AssertionError("the reassembly strip announces no totals")
 

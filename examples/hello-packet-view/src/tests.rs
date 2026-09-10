@@ -2528,7 +2528,7 @@ fn r1845_a_lane_names_the_fault_it_actually_has() {
 
 /// ★★★★★ R1845 — **the strip's totals reach a reader who cannot see them.**
 ///
-/// `pv.reassembly.counts` was a bare `Status` node with no value: the one
+/// The strip's totals run was a bare `Status` node with no value: the one
 /// sentence saying how much of the session carries traffic existed only as
 /// paint. So the header's count had no reader at all, and the number it is
 /// derived from could have been swapped back with nothing failing.
@@ -2538,7 +2538,7 @@ fn r1845_the_strips_totals_are_in_the_accessibility_tree() {
         let nodes = PacketView::access_node(&IDLE_FIELD, None);
         let counts = nodes
             .iter()
-            .find(|node| node.tag == "pv.reassembly.counts")
+            .find(|node| node.tag == address::REASSEMBLY_COUNTS)
             .expect("the strip announces its totals");
         let said = format!("{:?}", counts.value);
         assert!(
@@ -3479,4 +3479,348 @@ fn r2113_the_wire_publishes_the_byte_grids_declaration() {
         Some(address::BYTES_BODY),
         "★★ the pane table's scrolling body is not the declared seat"
     );
+}
+
+/// ★★★★★ R2114 — **every session-context address is what its declaration
+/// derives, and the strip's two rosters are DISJOINT.**
+///
+/// The fifth family of this screen, and the first anywhere in this campaign
+/// whose parametric members hang off the SAME prefix as its fixed seats. Every
+/// family before it put a word between the stem and the key — `saved.`, `row.`,
+/// `field.`, `lane.` — so an inverse could strip its own prefix and be sure of
+/// what it had. Here the strip's `session` seat and a negotiated value's slug
+/// sit under one prefix, and nothing in the address says which is which.
+///
+/// ⚠ Spelled in words rather than shown, because the gate above counts a prose
+/// copy as a speller — which is correct: a comment naming an address is a place
+/// the string is typed, and R2112's counterfactual for exactly this caught a
+/// sentence in this file.
+///
+/// ⇒ the discriminator is the seat ROSTER, and *the rosters are disjoint* is a
+/// property of the two tables that neither function can hold on its own. It is
+/// asserted here, in the direction that fails: a `CONTEXT` row keyed `session`
+/// would make one address mean two things.
+#[test]
+fn r2114_every_context_address_is_derived() {
+    assert_eq!(
+        address::CONTEXT_SEAT,
+        format!("{}{}", address::CONTEXT, address::SEPARATOR)
+    );
+    for (word, tag) in address::CONTEXT_SEATS {
+        assert_eq!(
+            &address::context(word),
+            tag,
+            "★ the declared address for `{word}` is not what `context()` derives"
+        );
+        assert_eq!(
+            address::context_word(tag),
+            Some(*word),
+            "★ `{tag}` does not round-trip back to its word"
+        );
+    }
+    assert_eq!(
+        address::context_word(address::CONTEXT),
+        None,
+        "★★ the strip's own tag is not one of its seats"
+    );
+    // ★★ The value template is the SEAT prefix with the placeholder, which is
+    // the fact this family is unusual for. Asserted structurally so a second
+    // spelling of the prefix cannot be introduced beside it.
+    assert_eq!(
+        address::CONTEXT_VALUE_TEMPLATE,
+        format!("{}{{}}", address::CONTEXT_SEAT),
+        "★ the value template is not the seat prefix with the population's \
+         placeholder — the two have been allowed to become two strings"
+    );
+    context_slug_rule_is_total();
+    context_family_round_trips();
+    context_readers_refuse_each_other();
+}
+
+/// ★★★★★ The slug rule is a FUNCTION between two rosters, and this is what makes
+/// it total: every key slugs to something distinct, and nothing slugs onto a
+/// seat word.
+///
+/// ⚠ Why both halves are needed: the substitution is not invertible, so a reader
+/// recovering a value compares slugs rather than keys. Two keys slugging alike
+/// would make one address name two negotiated values with no way to tell which —
+/// and a key slugging onto `session` would make the strip's own readout and a
+/// negotiated value one mark.
+fn context_slug_rule_is_total() {
+    let mut seen: Vec<(String, &str)> = Vec::new();
+    for value in spec::CONTEXT {
+        let slug = address::context_slug(value.key);
+        assert!(
+            !slug.is_empty(),
+            "★ the key {:?} slugs to nothing, which would address the strip's \
+             own stem",
+            value.key
+        );
+        assert!(
+            !seen.iter().any(|(s, _)| *s == slug),
+            "★★★★★ two keys slug to `{slug}` — one address, two negotiated \
+             values, and a reader recovering it has no way to say which \
+             (already seen: {seen:?})"
+        );
+        assert_eq!(
+            address::context_word(&address::context_value(value.key)),
+            None,
+            "★★★★★ the key {:?} slugs onto a FIXED SEAT of this strip. The two \
+             rosters share one prefix, so this collision would make the strip's \
+             own readout and a negotiated value the same mark",
+            value.key
+        );
+        seen.push((slug, value.key));
+    }
+    assert!(
+        !seen.is_empty(),
+        "★ the capture negotiates nothing, so every claim above describes nothing"
+    );
+}
+
+/// The value family's round trip, against the population the specification
+/// enumerates it over.
+///
+/// ★ The pairing is the assertion, as it is one pane over: the specification
+/// names this family by a template and expands it by SLUG, while the painter
+/// composes an address from a KEY. Nothing compared the two spellings of the
+/// substitution before this round — there were five of them.
+fn context_family_round_trips() {
+    let members = spec::Population::Context.members();
+    assert_eq!(
+        members.len(),
+        spec::CONTEXT.len(),
+        "★ the specification expands this family to a different size than the \
+         table it is drawn from"
+    );
+    for (key, slug) in spec::CONTEXT.iter().map(|v| v.key).zip(&members) {
+        assert_eq!(
+            &address::context_slug(key),
+            slug,
+            "★ the specification's expansion of `{key}` is not what \
+             `context_slug()` derives"
+        );
+        assert_eq!(
+            address::CONTEXT_VALUE_TEMPLATE.replace("{}", slug),
+            address::context_value(key),
+            "★★★★★ the specification's value template and the painter's composer \
+             disagree at `{key}` — the census would enumerate an address nothing \
+             paints while the screen painted the right one"
+        );
+        assert_eq!(
+            address::context_value_slug(&address::context_value(key)),
+            Some(slug.as_str()),
+            "★ `{key}` does not round-trip back to its slug"
+        );
+    }
+}
+
+/// ★★★★★ What this family's two readers REFUSE — and here, unlike the byte grid,
+/// `parse()` refuses nothing at all: the keys are an open vocabulary AND there is
+/// no word between the stem and the key, so every refusal is written by hand.
+fn context_readers_refuse_each_other() {
+    assert_eq!(
+        address::context_value_slug(address::CONTEXT_SESSION),
+        None,
+        "★★★★★ the strip's fixed seat reads back as a negotiated value. Nothing \
+         in the address says which it is — the seat roster is the only \
+         discriminator, and this is the assertion that holds it"
+    );
+    assert_eq!(
+        address::context_value_slug(address::CONTEXT_SEAT),
+        None,
+        "★★ the family's stem is not a member of it. `parse()` says this for \
+         every numeric family of this screen; here `non_empty` has to"
+    );
+    assert_eq!(
+        address::context_value_slug(address::CONTEXT),
+        None,
+        "★★ the strip's own tag is not a negotiated value"
+    );
+    for tag in [
+        address::REASSEMBLY_COUNTS,
+        address::LIST_HEADER,
+        address::BYTES_TITLE,
+    ] {
+        assert_eq!(
+            address::context_value_slug(tag),
+            None,
+            "★★ `{tag}` belongs to another family and this reader claimed it"
+        );
+        assert_eq!(address::context_word(tag), None);
+    }
+    // A value the strip does not negotiate still READS as a value: the
+    // vocabulary is open, so this reader answers about the address's SHAPE and
+    // the population is the specification's to hold. Same call the decode tree's
+    // path reader makes one pane over.
+    assert_eq!(
+        address::context_value_slug(&address::context("no_such_value")),
+        Some("no_such_value"),
+        "★ an unknown slug is a well-formed value address — refusing it here \
+         would put the population in the address reader, and a capture that \
+         negotiated something new would be unaddressable"
+    );
+}
+
+/// ★★★★★ R2114 — **every reassembly address is what its declaration derives.**
+///
+/// The sixth family this screen declares, and R2113's shape rather than the
+/// strip above's: its one parametric family puts the word `lane` between the
+/// stem and the key and keys on a NUMBER, so `parse()` writes every refusal. The
+/// two arrive in one round precisely so the contrast is visible in one place.
+#[test]
+fn r2114_every_reassembly_address_is_derived() {
+    assert_eq!(
+        address::REASSEMBLY_SEAT,
+        format!("{}{}", address::REASSEMBLY, address::SEPARATOR)
+    );
+    for (word, tag) in address::REASSEMBLY_SEATS {
+        assert_eq!(
+            &address::reassembly(word),
+            tag,
+            "★ the declared address for `{word}` is not what `reassembly()` \
+             derives"
+        );
+        assert_eq!(
+            address::reassembly_word(tag),
+            Some(*word),
+            "★ `{tag}` does not round-trip back to its word"
+        );
+    }
+    assert_eq!(
+        address::reassembly_word(address::REASSEMBLY),
+        None,
+        "★★ the strip's own tag is not one of its seats"
+    );
+    assert!(
+        address::REASSEMBLY_LANE_SEAT.starts_with(address::REASSEMBLY_SEAT)
+            && address::REASSEMBLY_LANE_SEAT.ends_with(address::SEPARATOR),
+        "★ `{}` is not a family of this strip's stem",
+        address::REASSEMBLY_LANE_SEAT
+    );
+    assert_eq!(
+        address::REASSEMBLY_LANE_TEMPLATE,
+        format!("{}{{}}", address::REASSEMBLY_LANE_SEAT),
+        "★ the lane template is not its prefix with the population's placeholder"
+    );
+    let lanes = spec::Population::Lanes.members();
+    assert!(
+        !lanes.is_empty(),
+        "★ the capture carries no lane, so every claim below describes nothing"
+    );
+    for key in &lanes {
+        let n: usize = key.parse().expect("a lane key is its index");
+        assert_eq!(
+            address::reassembly_lane_index(&address::reassembly_lane(n)),
+            Some(n)
+        );
+        assert_eq!(
+            address::REASSEMBLY_LANE_TEMPLATE.replace("{}", key),
+            address::reassembly_lane(n),
+            "★ the specification's lane template and the painter's composer \
+             disagree at lane {n}"
+        );
+    }
+    // The refusals `parse()` writes, asserted anyway: passing is evidence that
+    // nothing had to be written, not the reason it was not.
+    for tag in [
+        address::REASSEMBLY_SEAT,
+        address::REASSEMBLY_LANE_SEAT,
+        address::REASSEMBLY,
+        address::REASSEMBLY_TITLE,
+        address::REASSEMBLY_COUNTS,
+        address::CONTEXT_SESSION,
+    ] {
+        assert_eq!(
+            address::reassembly_lane_index(tag),
+            None,
+            "★★ `{tag}` is not a lane and this reader claimed it"
+        );
+    }
+    assert_eq!(
+        address::reassembly_lane_index(&format!("{}first", address::REASSEMBLY_LANE_SEAT)),
+        None,
+        "★★ a non-numeric tail is not a lane index"
+    );
+    for tag in [address::CONTEXT_SESSION, address::BYTES_TITLE] {
+        assert_eq!(
+            address::reassembly_word(tag),
+            None,
+            "★★ `{tag}` belongs to another family and the seat roster claimed it"
+        );
+    }
+}
+
+/// ★★★★★ R2114 — **the wire carries both strips' declarations, and the surface a
+/// walk composes from is the same string the paint used.**
+#[test]
+fn r2114_the_wire_publishes_both_strips_declarations() {
+    let wire = super::spec_json();
+
+    let context = &wire["context_addresses"];
+    assert_eq!(context["tag"].as_str(), Some(address::CONTEXT));
+    assert_eq!(
+        context["value"].as_str(),
+        Some(address::CONTEXT_SEAT),
+        "★★★★★ the prefix a walk composes a negotiated value onto is not the \
+         seat prefix. For this family those are one string, and a walk handed a \
+         second one would ask for a mark this screen never paints"
+    );
+    assert_eq!(
+        wire_seats(context),
+        declared_seats(address::CONTEXT_SEATS),
+        "★★★★★ the seats the wire publishes and the ones \
+         `address::CONTEXT_SEATS` declares are not the same list, in the same \
+         order"
+    );
+    // ★★ And what a walk actually does with that prefix: compose a canon key
+    // onto it. The pin's context table is keyed by SLUG, and this is the join
+    // that makes the coupling checkable rather than assumed.
+    for value in spec::CONTEXT {
+        assert_eq!(
+            format!(
+                "{}{}",
+                context["value"].as_str().unwrap_or_default(),
+                address::context_slug(value.key)
+            ),
+            address::context_value(value.key),
+            "★★ a walk composing from the published prefix does not arrive at \
+             the address the painter used for {:?}",
+            value.key
+        );
+    }
+
+    let strip = &wire["reassembly_addresses"];
+    assert_eq!(strip["tag"].as_str(), Some(address::REASSEMBLY));
+    assert_eq!(strip["lane"].as_str(), Some(address::REASSEMBLY_LANE_SEAT));
+    assert_eq!(
+        wire_seats(strip),
+        declared_seats(address::REASSEMBLY_SEATS),
+        "★★★★★ the seats the wire publishes and the ones \
+         `address::REASSEMBLY_SEATS` declares are not the same list, in the same \
+         order"
+    );
+}
+
+/// The `(word, tag)` rows a family's address surface publishes.
+fn wire_seats(published: &serde_json::Value) -> Vec<(String, String)> {
+    published["seats"]
+        .as_array()
+        .expect("the wire publishes a family's seats as a list")
+        .iter()
+        .map(|row| {
+            (
+                row["word"].as_str().unwrap_or_default().to_owned(),
+                row["tag"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect()
+}
+
+/// The same rows, as the declaration holds them.
+fn declared_seats(seats: &[(&str, &str)]) -> Vec<(String, String)> {
+    seats
+        .iter()
+        .map(|(word, tag)| ((*word).to_owned(), (*tag).to_owned()))
+        .collect()
 }

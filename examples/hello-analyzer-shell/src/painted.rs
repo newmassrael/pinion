@@ -7812,7 +7812,7 @@ fn r1860_the_walk_reaches_a_capture_viewer_inside_the_shipping_window() {
         // inside it, so the ancestor is the whole strip and asking about that
         // would be asking about a mark that reaches the window edge legitimately.
         let (tag, seat) = painted
-            .family("pv.reassembly.lane.")
+            .family(hello_packet_view::address::REASSEMBLY_LANE_SEAT)
             .into_iter()
             .filter_map(|tag| painted.rect(tag).map(|r| (tag, r)))
             .find(|(_, r)| run.x >= r.x && run.x < r.x + r.w)
@@ -10127,6 +10127,174 @@ fn r2113_every_mark_the_mounted_byte_grid_paints_has_an_address_a_reader_recover
             grid::BYTES_SEAT
         );
     });
+}
+
+/// ★★★★★ R2114 — **every mark the mounted session-context strip and reassembly
+/// strip paint is at an address the screen's declaration can RECOVER**, and the
+/// two strips are asserted together because they are two different
+/// arrangements.
+///
+/// [`r2113_every_mark_the_mounted_byte_grid_paints_has_an_address_a_reader_recovers`]'s
+/// claim over the two bands that close the capture section, and the round that
+/// makes the campaign's third arrangement visible:
+///
+/// * the context strip's negotiated values hang off the SAME prefix as its one
+///   fixed seat, so the classifier has to consult the seat roster before it can
+///   call a tag a value. The order of the two arms below is therefore load
+///   bearing, and a reader that had them the other way round would claim
+///   `…context.session` as a value whose slug happened to be `session`.
+/// * the reassembly strip puts the word `lane` between its stem and its key and
+///   keys on a number, which is the byte grid's arrangement.
+///
+/// ⚠ Both families are asked in ONE population each — unlike the byte grid,
+/// every declared member of both is a painted mark. That was READ off the
+/// specification when the round was planned, and this gate is what PROVES it:
+/// a member that stopped being painted shows up as a floor of zero, and one that
+/// was never painted would have made this gate red on its first run.
+#[test]
+fn r2114_every_mark_the_mounted_strips_paint_has_an_address_a_reader_recovers() {
+    use hello_packet_view::address as pv;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        state
+            .go("packets")
+            .unwrap_or_else(|why| panic!("the capture section is open and refused: {why:?}"));
+        let (shot, _) = painted_at((WIN_W, WIN_H));
+
+        for band in [pv::CONTEXT, pv::REASSEMBLY] {
+            assert!(
+                shot.rect(band).is_some(),
+                "the mounted capture section paints no `{band}` — the band itself \
+                 is missing, and every count below would be about something else"
+            );
+        }
+
+        // ── the session-context strip: seats first, then values ─────────────
+        let mut seats = 0usize;
+        let mut values = 0usize;
+        let mut orphans: Vec<&str> = Vec::new();
+        for tag in shot.family(pv::CONTEXT_SEAT) {
+            if pv::context_word(tag).is_some() {
+                seats += 1;
+            } else if pv::context_value_slug(tag).is_some() {
+                values += 1;
+            } else {
+                orphans.push(tag);
+            }
+        }
+
+        // ── the reassembly strip: seats, then lanes ─────────────────────────
+        let mut strip_seats = 0usize;
+        let mut lanes = 0usize;
+        for tag in shot.family(pv::REASSEMBLY_SEAT) {
+            if pv::reassembly_word(tag).is_some() {
+                strip_seats += 1;
+            } else if pv::reassembly_lane_index(tag).is_some() {
+                lanes += 1;
+            } else {
+                orphans.push(tag);
+            }
+        }
+
+        assert!(
+            orphans.is_empty(),
+            "★★★★★ {} mark(s) under `{}` or `{}` are at addresses no declared \
+             reader recovers — painted, and findable by nothing: {orphans:?}",
+            orphans.len(),
+            pv::CONTEXT_SEAT,
+            pv::REASSEMBLY_SEAT
+        );
+        for (what, count) in [
+            ("context seats", seats),
+            ("negotiated values", values),
+            ("reassembly seats", strip_seats),
+            ("reassembly lanes", lanes),
+        ] {
+            assert!(
+                count > 0,
+                "★★ no painted mark was claimed as one of the {what} — with the \
+                 claims ORed, a reader describing nothing makes the zero above \
+                 mean less than it reads (context seats {seats}, values \
+                 {values}, strip seats {strip_seats}, lanes {lanes})"
+            );
+        }
+
+        let joined = every_announced_value_slugs_from_the_key_a_reader_hears(&shot);
+        assert_eq!(
+            joined, values,
+            "★★★★★ the strip paints {values} negotiated value(s) and announces \
+             {joined} — the two surfaces are the same population or a reader \
+             using one of them is missing part of the premise the decode rests on"
+        );
+        println!(
+            "[r2114] {} mark(s) under `{}`: {seats} seat(s), {values} value(s); \
+             {} under `{}`: {strip_seats} seat(s), {lanes} lane(s); 0 orphan(s)",
+            seats + values,
+            pv::CONTEXT_SEAT,
+            strip_seats + lanes,
+            pv::REASSEMBLY_SEAT
+        );
+    });
+}
+
+/// ★★★★★ R2114 — **the slug rule itself, end to end in the assembled
+/// application**, and the number of values that were joined.
+///
+/// The half the count in
+/// [`r2114_every_mark_the_mounted_strips_paint_has_an_address_a_reader_recovers`]
+/// cannot see: a substitution that drifted still produces a WELL-FORMED value
+/// address, so it would be COUNTED there and the screen would go on looking
+/// correct while the census enumerated a mark nobody paints.
+///
+/// ⚠ The two sides are the KEY A READER HEARS and the SLUG IN THE ADDRESS,
+/// joined through the one declaration. The accessibility tree is where that key
+/// survives: the painted run carries only the negotiated VALUE (`off`, `u16`),
+/// so the paint alone cannot say what is off, and the node's name is the
+/// screen's own answer to that. Reached this way rather than through the
+/// screen's own tables, which are that crate's business and not a page's.
+///
+/// ⚠⚠ Lifted out of the gate rather than silenced with an
+/// `allow(clippy::too_many_lines)`, which is R2112's call one round earlier: the
+/// bound is a real reading about a function doing two things, and this IS the
+/// second claim rather than more of the first. The caller floors the returned
+/// count against the painted population, so an empty tree cannot pass here by
+/// describing nothing.
+fn every_announced_value_slugs_from_the_key_a_reader_hears(shot: &Painted) -> usize {
+    use hello_packet_view::address as pv;
+    use pinion_a11y::WidgetA11y;
+
+    let announced = super::AnalyzerShellView::access_node(&ScreenState::default(), None);
+    let mut joined = 0usize;
+    for node in &announced {
+        let Some(slug) = pv::context_value_slug(&node.tag) else {
+            continue;
+        };
+        let key = node.name.as_deref().unwrap_or_else(|| {
+            panic!(
+                "★★ the value at `{}` is announced with no name, so a reader is \
+                 told what was negotiated and never what it is about",
+                node.tag
+            )
+        });
+        assert_eq!(
+            pv::context_slug(key),
+            slug,
+            "★★★★★ the key a reader HEARS ({key:?}) does not slug to the key in \
+             the address the paint used ({slug:?}). Until this round that \
+             substitution was written out in five places with nothing comparing \
+             them, and a drift lands exactly here"
+        );
+        assert!(
+            shot.rect(&node.tag).is_some(),
+            "★★★★★ `{}` is announced and nothing paints it — a reader who cannot \
+             see is told about a mark a reader who can see does not have",
+            node.tag
+        );
+        joined += 1;
+    }
+    joined
 }
 
 /// ★★★★★ R1874 — **the node palette's body has NO box too short for its face**,

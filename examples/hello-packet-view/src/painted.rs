@@ -359,11 +359,11 @@ fn r1663_every_declared_element_of_the_screen_is_painted() {
             "pv.appbar.rate".into(),
             super::address::FILTER.into(),
             super::address::FILTER_COUNT.into(),
-            "pv.context".into(),
-            "pv.context.session".into(),
-            "pv.reassembly".into(),
-            "pv.reassembly.title".into(),
-            "pv.reassembly.counts".into(),
+            crate::address::CONTEXT.into(),
+            crate::address::CONTEXT_SESSION.into(),
+            crate::address::REASSEMBLY.into(),
+            crate::address::REASSEMBLY_TITLE.into(),
+            crate::address::REASSEMBLY_COUNTS.into(),
             crate::address::BYTES_SPAN.into(),
         ];
         // The panes and their scrolling bodies come from the specification's
@@ -398,10 +398,10 @@ fn r1663_every_declared_element_of_the_screen_is_painted() {
         // judged by the query gate below.
         wanted.push(super::address::FILTER_QUERY.to_owned());
         for value in spec::CONTEXT {
-            wanted.push(format!("pv.context.{}", value.key.replace(' ', "_")));
+            wanted.push(crate::address::context_value(value.key));
         }
         for n in 0..spec::LANES.len() {
-            wanted.push(format!("pv.reassembly.lane.{n}"));
+            wanted.push(crate::address::reassembly_lane(n));
         }
         // Every decode row the screen currently shows.
         for (path, ..) in visible_fields(state) {
@@ -516,11 +516,11 @@ fn r1663_every_painted_tag_belongs_to_a_declared_family() {
         "pv.root",
         "pv.appbar",
         super::address::FILTER,
-        "pv.context",
+        super::address::CONTEXT,
         super::address::LIST,
         super::address::TREE,
         super::address::BYTES,
-        "pv.reassembly",
+        super::address::REASSEMBLY,
     ];
     // ★★★★★ R1857 — the population is the SCREEN, not the part of it above the
     // fold. This read `shot.tags` alone, so an element painted inside a pane
@@ -596,7 +596,7 @@ fn r1663_the_fixed_families_are_the_size_the_specification_gives_them() {
             .collect();
         assert_eq!(drawn, state.kept(), "{case}: the message rows drawn");
         assert_eq!(
-            shot.family("pv.reassembly.lane.").len(),
+            shot.family(crate::address::REASSEMBLY_LANE_SEAT).len(),
             spec::LANES.len(),
             "{case}: reassembly lanes"
         );
@@ -2348,14 +2348,14 @@ fn r1774_the_sweep_reaches_both_sides_of_every_clamp() {
                 "context: values",
                 spec::CONTEXT
                     .iter()
-                    .map(|v| format!("pv.context.{}", v.key.replace(' ', "_")))
+                    .map(|v| crate::address::context_value(v.key))
                     .collect(),
                 false,
             ),
             (
                 "reassembly: lanes",
                 (0..spec::LANES.len())
-                    .map(|n| format!("pv.reassembly.lane.{n}"))
+                    .map(crate::address::reassembly_lane)
                     .collect(),
                 false,
             ),
@@ -2516,8 +2516,8 @@ fn r1852_the_premise_says_its_reach_and_its_ink_says_whether_it_covers_this_row(
     sweep(|state, shot, scene, _, case| {
         // ⚠ Matched by CONTENT and not by owner. `tagged_label` puts the tag on
         // the text node itself, and `Painted::of` reads a run's owner as its
-        // nearest tagged ANCESTOR — so every run of this strip answers to
-        // `pv.context`, and filtering by the run's own tag finds nothing. R1851
+        // nearest tagged ANCESTOR — so every run of this strip answers to the
+        // strip's own tag, and filtering by the run's own tag finds nothing. R1851
         // hit the mirror image of this on the other screen.
         let said: Vec<&String> = shot
             .runs
@@ -2532,7 +2532,7 @@ fn r1852_the_premise_says_its_reach_and_its_ink_says_whether_it_covers_this_row(
         );
 
         let covered = spec::row_in_session(state.row.get());
-        let ink = run_ink(scene, "pv.context.session")
+        let ink = run_ink(scene, crate::address::CONTEXT_SESSION)
             .unwrap_or_else(|| panic!("{case}: the session run is painted"));
         let theme = pinion_core::theme::Theme::default();
         let warn = theme.resolve(pinion_core::theme::ColorRole::Warning);
