@@ -43,13 +43,15 @@
 //!   (`Standing::is_active`), so *active* is a property of a state rather than
 //!   a number somebody typed beside a list it does not come from.
 
-/// ★★★★★ R2121 — where this screen's painted addresses come from.
-///
-/// Public because the ASSEMBLED shell needs it: the analyzer shell mounts this
-/// section and its integration gate has to recover a mark's key from the
-/// paint, and the only alternative is for the shell to carry a second copy of
-/// this screen's composition — the class this module exists to remove.
 pub mod address;
+
+/// The shape of a part in either pane's roster.
+///
+/// Re-exported because [`address::parts`] hands one to every caller: a public
+/// signature has to name a type its callers can name, and `spec` is this
+/// crate's own business. Before R2121 that function returned a type nobody
+/// outside could write down.
+pub use spec::PartSpec;
 mod judge;
 mod spec;
 

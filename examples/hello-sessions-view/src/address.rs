@@ -1,6 +1,21 @@
 //! ★★★★★ R2121 §5.2 §5.11 — **where a painted mark's address comes from, for
 //! the sessions section.**
 //!
+//! Public because the ASSEMBLED shell needs it: the analyzer shell mounts this
+//! section and its integration gate has to recover a mark's key from the paint,
+//! and the only alternative is for the shell to carry a second copy of this
+//! screen's composition — the class this module exists to remove.
+//!
+//! ⚠ **And that paragraph lives HERE rather than on the `pub mod` line, which
+//! is not a matter of taste.** A module that carries BOTH an outer doc at its
+//! declaration and an inner `//!` header has the two MERGED, and the merged
+//! documentation is resolved in the DECLARING file's scope — so every link to
+//! this module's own items stops resolving, while the links into the private
+//! `spec` module start resolving and are then refused for being private.
+//! Measured at R2121's push gate: four correctly-written links, all `unresolved
+//! link to ...`, all reported against `lib.rs` rather than this file. One
+//! module, one documentation site.
+//!
 //! # What was missing
 //!
 //! Every mark this screen paints is named with a dotted address under `sv.`,
@@ -20,7 +35,7 @@
 //!
 //! # ★★★★★ The roster was already here, and it was not the addresses
 //!
-//! [`crate::spec::LIST`] and [`crate::spec::DETAIL`] name every part of both
+//! `spec::LIST` and `spec::DETAIL` name every part of both
 //! panes — key and title — and the conformance judge and the accessibility
 //! roster have both derived from them since R1948. What those tables do NOT
 //! publish is the ADDRESS, so each painter composed `sv.<pane>.<key>` by hand
@@ -107,7 +122,7 @@ pub const CHILD_WORDS: &[&str] = &["box", "pill", "head", "dot"];
 
 /// The address the list pane paints `part` under.
 ///
-/// `part` is one of [`spec::LIST`]'s keys — the painter names the part, this
+/// `part` is one of `spec::LIST`'s keys — the painter names the part, this
 /// composes the address, and nobody does both.
 #[must_use]
 pub fn list(part: &str) -> String {
@@ -180,7 +195,7 @@ pub fn ours(tag: &str) -> bool {
 ///
 /// ⚠ Refuses a part's CHILD (`sv.list.filter.box`): the answer to *which part
 /// is this* for a child is the child's own business, and a reader handed
-/// `filter.box` as a part key would look it up in [`spec::LIST`] and find
+/// `filter.box` as a part key would look it up in `spec::LIST` and find
 /// nothing — quietly.
 #[must_use]
 pub fn list_part(tag: &str) -> Option<&str> {
@@ -230,11 +245,11 @@ fn bare(rest: &str) -> Option<&str> {
 
 /// Every part the two panes declare, beside the address it is painted at.
 ///
-/// Derived from [`spec::LIST`] and [`spec::DETAIL`] rather than listed again:
+/// Derived from `spec::LIST` and `spec::DETAIL` rather than listed again:
 /// the specification is what says which parts exist, and a second roster here
 /// would be exactly the drift this module removes.
 ///
-/// ⚠⚠ Each row carries the [`spec::PartSpec`] ITSELF rather than its key, and
+/// ⚠⚠ Each row carries the [`crate::PartSpec`] ITSELF rather than its key, and
 /// that is not tidiness — **the two panes share key words**. Both name a part
 /// `title`, and a caller handed `("title", "sv.detail.title")` that went back
 /// to the tables to look the title up would find the LIST's row first and name
