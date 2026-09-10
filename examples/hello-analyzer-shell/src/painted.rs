@@ -9771,7 +9771,15 @@ fn short_box_convention_report_of(key: &str, short: &[pinion_core::containment::
 fn r1872_no_run_in_the_message_list_sits_in_a_box_too_short_for_its_face() {
     /// Every run of the message list's table: its column headings, its cells,
     /// and the annotations that share the name column.
-    const FAMILY: &str = "pv.list.";
+    ///
+    /// ★★★★★ R2111 — taken from the screen's own declaration rather than typed
+    /// here. This const was the one site OUTSIDE the capture viewer's crate that
+    /// spelled the family, and it is the interesting one: a gate asserting a
+    /// family is non-empty, whose family name is a second copy of the screen's
+    /// address, passes by describing nothing the day the screen renames it. The
+    /// non-emptiness guard below catches that — but only after a round has gone
+    /// by wondering why a zero moved.
+    const FAMILY: &str = hello_packet_view::address::LIST_SEAT;
 
     let owner = Owner::new();
     owner.run(|| {
@@ -9806,6 +9814,96 @@ fn r1872_no_run_in_the_message_list_sits_in_a_box_too_short_for_its_face() {
              being bypassed rather than a number to raise: {cut:#?}",
             cut.len(),
         );
+    });
+}
+
+/// ★★★★★ R2111 — **every mark the mounted capture grid paints is at an address
+/// the screen's declaration can RECOVER.**
+///
+/// The integrated half of this round, and the claim the screen's own gates
+/// cannot make. Those assert *nobody re-spells the address* and *the composers
+/// round-trip*; this one drives the whole application, opens the capture
+/// section, and asks the paint the question the debt is actually about: **given a
+/// mark on the screen, can anything find it by name?**
+///
+/// The grid's family is reached by five declared readers — a fixed seat, a
+/// column heading, a row, a cell, a row's annotation — and a mark under the
+/// family that none of them claims is a mark whose address exists only in the
+/// painter. That is the defect this campaign repays, stated as a property of the
+/// assembly rather than of one module.
+///
+/// ⚠ Each reader's population is asserted NON-EMPTY first, and that is the
+/// denominator R2108 learned to check: with the five claims ORed, a family whose
+/// members had all become cells would pass while four readers described nothing.
+/// Five populations, five floors.
+///
+/// ⚠⚠ The grid's own tag is checked apart from the family, because the family
+/// stem carries the separator and the grid's address does not — which is the
+/// same reason the declaration publishes the two forms separately.
+#[test]
+fn r2111_every_mark_the_mounted_grid_paints_has_an_address_a_reader_recovers() {
+    use hello_packet_view::address as grid;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        state
+            .go("packets")
+            .unwrap_or_else(|why| panic!("the capture section is open and refused: {why:?}"));
+        let (shot, _) = painted_at((WIN_W, WIN_H));
+
+        assert!(
+            shot.rect(grid::LIST).is_some(),
+            "the mounted capture section paints no `{}` — the grid itself is \
+             missing, and every count below would be about something else",
+            grid::LIST
+        );
+
+        let painted = shot.family(grid::LIST_SEAT);
+        let mut seats = 0usize;
+        let mut heads = 0usize;
+        let mut rows = 0usize;
+        let mut cells = 0usize;
+        let mut notes = 0usize;
+        let mut orphans: Vec<&str> = Vec::new();
+        for tag in painted {
+            if grid::list_word(tag).is_some() {
+                seats += 1;
+            } else if grid::list_head_index(tag).is_some() {
+                heads += 1;
+            } else if grid::list_row_index(tag).is_some() {
+                rows += 1;
+            } else if grid::list_cell_at(tag).is_some() {
+                cells += 1;
+            } else if grid::list_row_annotation_of(tag).is_some() {
+                notes += 1;
+            } else {
+                orphans.push(tag);
+            }
+        }
+        assert!(
+            orphans.is_empty(),
+            "★★★★★ {} mark(s) under `{}` are at addresses no declared reader \
+             recovers — painted, and findable by nothing: {orphans:?}",
+            orphans.len(),
+            grid::LIST_SEAT
+        );
+        for (what, count) in [
+            ("fixed seats", seats),
+            ("column headings", heads),
+            ("message rows", rows),
+            ("grid cells", cells),
+            ("row annotations", notes),
+        ] {
+            assert!(
+                count > 0,
+                "★★ no painted mark was claimed as one of the grid's {what} — \
+                 with the five claims ORed, a reader describing nothing makes \
+                 the zero above mean less than it reads \
+                 (seats {seats}, headings {heads}, rows {rows}, cells {cells}, \
+                 annotations {notes})"
+            );
+        }
     });
 }
 

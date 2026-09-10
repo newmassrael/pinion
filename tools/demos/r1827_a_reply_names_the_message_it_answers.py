@@ -88,6 +88,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    list_cell_at,
+    list_cell_join,
+    list_cell_prefix,
     run_demo,
 )
 
@@ -113,23 +116,23 @@ def announced_cells(app: RpcSubprocess) -> dict[str, list[str]]:
     claims is that a *reader* is told — and the model saying so is a different
     claim from the tree carrying it.
     """
+    # ★★★★★ R2111 — the prefix AND the join come off the wire, and the split is
+    # the screen's own. This read used to strip a prefix it had typed and split
+    # on a character it had typed: three sites, two conventions, and a mismatch
+    # in either answers `{}` — which reads here as *no cell is announced*, a
+    # wrong answer that looks exactly like the defect this section hunts.
+    prefix = list_cell_prefix(app, ext=EXT)
+    join = list_cell_join(app, ext=EXT)
     result = app.request("scene/access").result
-    out: dict[str, list[str]] = {}
-    cells: dict[str, str] = {}
+    at: dict[tuple[int, int], str] = {}
     for node in result["nodes"]:
-        tag = node.get("tag") or ""
-        if tag.startswith("pv.list.cell."):
-            cells[tag] = node.get("name") or ""
-    for tag, name in cells.items():
-        row = tag.removeprefix("pv.list.cell.").split("_")[0]
-        out.setdefault(row, [])
-    for row in out:
-        out[row] = [
-            cells[t]
-            for t in sorted(
-                (t for t in cells if t.removeprefix("pv.list.cell.").split("_")[0] == row),
-                key=lambda t: int(t.rsplit("_", 1)[1]),
-            )
+        place = list_cell_at(node.get("tag") or "", prefix, join)
+        if place is not None:
+            at[place] = node.get("name") or ""
+    out: dict[str, list[str]] = {}
+    for row in sorted({row for row, _ in at}):
+        out[str(row)] = [
+            at[(row, column)] for _, column in sorted(p for p in at if p[0] == row)
         ]
     return out
 

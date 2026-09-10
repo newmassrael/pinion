@@ -77,6 +77,9 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     filter_saved_prefix,
     filter_seats,
+    list_root,
+    list_row_address,
+    list_row_prefix,
     png_pixel,
     read_png_rgba8,
     run_demo,
@@ -109,9 +112,16 @@ def centre(rect: tuple[int, int, int, int]) -> tuple[int, int]:
 
 
 def drawn_rows(tf: RpcSubprocess) -> list[int]:
-    """Which message rows the screen is painting, by source index."""
+    """Which message rows the screen is painting, by source index.
+
+    ★★★★★ R2111 — the row prefix comes off the wire. A walk that typed it would
+    answer `[]` for a one-letter slip, and `[]` is exactly what *the filter hid
+    everything* looks like here — a wrong answer this demo would have ASSERTED
+    rather than noticed.
+    """
     rects = abs_rects_of(tf.snapshot(source="paint"))
-    return [n for n in range(HELD) if f"pv.list.row.{n}" in rects]
+    row_at = list_row_prefix(tf, ext=EXT)
+    return [n for n in range(HELD) if list_row_address(row_at, n) in rects]
 
 
 def kept(tf: RpcSubprocess) -> list[int]:
@@ -153,6 +163,9 @@ def body(tf: RpcSubprocess) -> None:
     # of these out; a wrong letter in any of them looks for a mark that is not
     # there, which reads as *the screen did not paint it* rather than as a typo.
     seat = filter_seats(screen_spec(tf, EXT))
+    # ★★★★★ R2111 — and the grid's own tag plus its row prefix, the same way.
+    grid = list_root(tf, ext=EXT)
+    row_at = list_row_prefix(tf, ext=EXT)
     saved_at = filter_saved_prefix(tf, ext=EXT)
 
     # ── A. the query bar is a field a person can type in ───────────────────
@@ -207,7 +220,7 @@ def body(tf: RpcSubprocess) -> None:
     # ── C. what is drawn is what is pressed ────────────────────────────────
     print("\n== C. no press reaches a hidden message ==")
     rects = abs_rects_of(tf.snapshot(source="paint"))
-    list_rect = rects["pv.list"]
+    list_rect = rects[grid]
     hidden = [n for n in range(HELD) if n not in EXPECTED_KEPT]
     reached = set()
     x = list_rect[0] + list_rect[2] // 2
@@ -247,9 +260,9 @@ def body(tf: RpcSubprocess) -> None:
     # ── D. pixels ──────────────────────────────────────────────────────────
     print("\n== D. the list is visibly shorter ==")
     out_dir = Path(tempfile.mkdtemp(prefix="r1707-"))
-    px_filtered = ink_rows(shoot(tf, out_dir / "filtered.png"), rects["pv.list"])
+    px_filtered = ink_rows(shoot(tf, out_dir / "filtered.png"), rects[grid])
     tf.invoke(f"{EXT}/filter", "")
-    px_all = ink_rows(shoot(tf, out_dir / "unfiltered.png"), rects["pv.list"])
+    px_all = ink_rows(shoot(tf, out_dir / "unfiltered.png"), rects[grid])
     print(f"  rows of ink in the list pane: filtered {px_filtered}, unfiltered {px_all}")
     assert px_filtered < px_all, (
         "★ the screenshot shows the same amount of list either way — every "
@@ -276,10 +289,10 @@ def body(tf: RpcSubprocess) -> None:
     print("\n== F. a reader hears the list the query kept ==")
     tf.invoke(f"{EXT}/filter", tf.query(f"{EXT}/spec")["example_query"])
     nodes, _ = access(tf)
-    rows = [t for t in nodes if t.startswith("pv.list.row.") and t.count(".") == 3]
+    rows = [t for t in nodes if t.startswith(row_at) and t.count(".") == 3]
     assert_eq(
         sorted(rows),
-        sorted(f"pv.list.row.{n}" for n in EXPECTED_KEPT),
+        sorted(list_row_address(row_at, n) for n in EXPECTED_KEPT),
         "the accessibility tree holds the kept rows and no others",
     )
     checks += 1

@@ -5555,6 +5555,142 @@ def filter_saved(tf, index, *, ext: str = "/external") -> str:
     return filter_saved_address(filter_saved_prefix(tf, ext=ext), index)
 
 
+def list_root(tf, *, ext: str = "/external") -> str:
+    """The tag the capture viewer's MESSAGE GRID itself is painted under.
+
+    ★★★★★ R2111 — published beside the seat roster rather than as its first row,
+    for [`filter_root`]'s reason: the container's address is the prefix WITHOUT
+    the separator, so a row for it would hand every later reader a prefix that
+    runs the grid's own tag straight into a seat's word.
+    """
+    return screen_spec(tf, ext)["list_addresses"]["tag"]
+
+
+def list_seats(spec: Any) -> dict:
+    """Every FIXED seat of the message grid, keyed by the word the screen
+    declares it under — from a specification a caller has ALREADY read.
+
+    ⚠ FIXED only: the scrolling body, the heading row and the band behind the
+    open message. The headings, the rows and the cells expand over the capture,
+    so each is published as a prefix and reached through its own door below.
+    """
+    return {row["word"]: row["tag"] for row in spec["list_addresses"]["seats"]}
+
+
+def list_tag(tf, word: str, *, ext: str = "/external") -> str:
+    """The address the message grid's seat called `word` is painted under.
+
+    Takes the seat's WORD, which is what the screen declares and the wire
+    publishes, so the address a walk reads and the address the paint used are one
+    spelling by construction. A word the grid does not address is a `KeyError`
+    naming it.
+    """
+    return list_seats(screen_spec(tf, ext))[word]
+
+
+def list_head_prefix(tf, *, ext: str = "/external") -> str:
+    """The prefix every COLUMN HEADING of the message grid is painted under.
+
+    Ask once and hold it when classifying a snapshot by family; use
+    [`list_head_address`] for one heading.
+    """
+    return screen_spec(tf, ext)["list_addresses"]["head"]
+
+
+def list_head_address(prefix: str, n) -> str:
+    """The address of the column heading at `n`, composed onto a prefix the
+    caller already holds.
+
+    ★★★★★ R2111 — [`filter_saved_address`]'s shape, and R2109.1's rule: the
+    prefix the screen publishes CARRIES its separator, so a walk that glues its
+    own on asks for an address nothing carries — and an empty answer looks
+    exactly like a screen that did not paint the heading. PURE, so a walk
+    checking all seven columns pays one query rather than seven.
+    """
+    return f"{prefix}{n}"
+
+
+def list_head(tf, n, *, ext: str = "/external") -> str:
+    """The address of the message grid's column heading at `n`."""
+    return list_head_address(list_head_prefix(tf, ext=ext), n)
+
+
+def list_row_prefix(tf, *, ext: str = "/external") -> str:
+    """The prefix every MESSAGE ROW of the grid is painted under.
+
+    ⚠ The row's key is its index in the CAPTURE, not its position in the list: a
+    query hides rows, so the row drawn third is not row three. `spec["rows"]` is
+    the population.
+    """
+    return screen_spec(tf, ext)["list_addresses"]["row"]
+
+
+def list_row_address(prefix: str, n) -> str:
+    """The address of the message row whose capture index is `n`, composed onto a
+    prefix the caller already holds.
+    """
+    return f"{prefix}{n}"
+
+
+def list_row(tf, n, *, ext: str = "/external") -> str:
+    """The address of the message row whose capture index is `n`."""
+    return list_row_address(list_row_prefix(tf, ext=ext), n)
+
+
+def list_cell_prefix(tf, *, ext: str = "/external") -> str:
+    """The prefix every CELL of the message grid is painted under."""
+    return screen_spec(tf, ext)["list_addresses"]["cell"]
+
+
+def list_cell_join(tf, *, ext: str = "/external") -> str:
+    """What joins a cell's two indexes inside its key.
+
+    ★★★★★ R2111 — published because a cell's key is a PRODUCT, so a walk
+    composing or splitting one needs the join as well as the prefix. Before this
+    the join was typed in the painter, in the specification's population
+    expander, and in every walk that read a cell's row back out of its tag —
+    four homes for one character, and a mismatch there answers nothing rather
+    than answering wrongly.
+    """
+    return screen_spec(tf, ext)["list_addresses"]["cell_join"]
+
+
+def list_cell_address(prefix: str, join: str, row, column) -> str:
+    """The address of the cell at `row`, `column`, composed onto a prefix and a
+    join the caller already holds.
+
+    PURE, and it takes the join for the reason the prefix is taken: a walk
+    checking a 16x7 grid would otherwise pay 112 queries, or spell the join
+    itself — which is the same defect one character further in.
+    """
+    return f"{prefix}{row}{join}{column}"
+
+
+def list_cell(tf, row, column, *, ext: str = "/external") -> str:
+    """The address of the message grid's cell at `row`, `column`."""
+    spec = screen_spec(tf, ext)["list_addresses"]
+    return list_cell_address(spec["cell"], spec["cell_join"], row, column)
+
+
+def list_cell_at(tag: str, prefix: str, join: str):
+    """The `(row, column)` a cell's address names, or `None` when the tag is not
+    a cell under `prefix`.
+
+    ★★★★★ R2111 — [`list_cell_address`]'s inverse, and the half the walks
+    actually needed: three of them read a row back out of a cell's tag by
+    stripping a prefix they had typed and splitting on a join they had typed.
+    Both halves of that are now the screen's, and `None` for a tail that is not
+    two numbers is the honest answer — a walk that accepted one would group marks
+    that are not cells.
+    """
+    if not tag.startswith(prefix):
+        return None
+    row, _, column = tag[len(prefix) :].partition(join)
+    if not row.isdigit() or not column.isdigit():
+        return None
+    return int(row), int(column)
+
+
 def pin_prefix(tf, *, ext: str = "/external") -> str:
     """The prefix every pin of every card on the node graph is painted under.
 

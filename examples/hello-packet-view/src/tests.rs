@@ -12,9 +12,9 @@ use pinion_core::reactive::Owner;
 use pinion_core::widgets::field_bytes::{Coverage, FieldSpan, SourceId};
 
 use super::{
-    NAME_COLUMN, PacketView, capture_filler, cell_texts, char_count, comma, cycle_sort, decode,
-    frame_bytes, lane_reading, link_width, list_cell_tag, pane_cursor, row_cells, run_sort,
-    run_width, select_byte, select_field, select_message, sibling_place, spec, use_view_state,
+    NAME_COLUMN, PacketView, address, capture_filler, cell_texts, char_count, comma, cycle_sort,
+    decode, frame_bytes, lane_reading, link_width, pane_cursor, row_cells, run_sort, run_width,
+    select_byte, select_field, select_message, sibling_place, spec, use_view_state,
 };
 use pinion_a11y::WidgetA11y;
 use pinion_core::WidgetCore;
@@ -1234,7 +1234,7 @@ fn press_key(focused: Option<&str>, chord: &str) -> bool {
 
 /// The three panes that own a keyboard cursor, and the key that advances each.
 const PANE_CURSORS: [(&str, &str); 3] = [
-    ("pv.list", "ArrowDown"),
+    (address::LIST, "ArrowDown"),
     ("pv.tree", "ArrowDown"),
     ("pv.bytes", "ArrowRight"),
 ];
@@ -1337,7 +1337,7 @@ fn r1698_an_arrow_on_a_plain_button_moves_no_pane() {
 #[test]
 fn r1698_the_list_cursor_is_the_selection_and_it_is_published() {
     with_state(|state| {
-        let roving = pane_cursor(state, "pv.list").expect("the list has a cursor");
+        let roving = pane_cursor(state, address::LIST).expect("the list has a cursor");
         assert_eq!(
             roving.spec().activation,
             pinion_core::widgets::roving::Activation::Follows,
@@ -1349,19 +1349,19 @@ fn r1698_the_list_cursor_is_the_selection_and_it_is_published() {
             "and it reports the row the screen already holds, not a second one"
         );
 
-        assert!(press_key(Some("pv.list"), "ArrowDown"));
+        assert!(press_key(Some(address::LIST), "ArrowDown"));
         assert_eq!(
-            pane_cursor(state, "pv.list").and_then(|r| r.cursor()),
+            pane_cursor(state, address::LIST).and_then(|r| r.cursor()),
             Some(state.row.get()),
             "moving the cursor moved the selection — one fact, not two"
         );
 
-        let focus = PacketView::access_focus_target(&IDLE_FIELD, Some("pv.list"))
+        let focus = PacketView::access_focus_target(&IDLE_FIELD, Some(address::LIST))
             .expect("a focused pane reports a focus target");
-        assert_eq!(focus.focus_tag, "pv.list");
+        assert_eq!(focus.focus_tag, address::LIST);
         assert_eq!(
             focus.active_descendant,
-            Some(format!("pv.list.row.{}", state.row.get())),
+            Some(address::list_row(state.row.get())),
             "and the active descendant names the row the cursor is on"
         );
     });
@@ -1388,28 +1388,28 @@ fn r1698_the_list_cursor_is_the_selection_and_it_is_published() {
 fn r1699_a_message_row_is_entered_and_its_cells_are_walked() {
     with_state(|state| {
         let descendant = || {
-            PacketView::access_focus_target(&IDLE_FIELD, Some("pv.list"))
+            PacketView::access_focus_target(&IDLE_FIELD, Some(address::LIST))
                 .and_then(|t| t.active_descendant)
         };
         let row = state.row.get();
-        assert_eq!(descendant(), Some(format!("pv.list.row.{row}")));
+        assert_eq!(descendant(), Some(address::list_row(row)));
         assert_eq!(state.cell.get(), None, "the screen opens on the row");
 
         // The cross-axis arrow descends, because a row IS a composite.
-        assert!(press_key(Some("pv.list"), "ArrowRight"));
+        assert!(press_key(Some(address::LIST), "ArrowRight"));
         assert_eq!(
             descendant(),
-            Some(list_cell_tag(row, 0)),
+            Some(address::list_cell(row, 0)),
             "★ entering a row lands on its first cell"
         );
         assert_eq!(state.cell.get(), Some(0));
 
-        assert!(press_key(Some("pv.list"), "ArrowRight"));
-        assert_eq!(descendant(), Some(list_cell_tag(row, 1)));
-        assert!(press_key(Some("pv.list"), "End"));
+        assert!(press_key(Some(address::LIST), "ArrowRight"));
+        assert_eq!(descendant(), Some(address::list_cell(row, 1)));
+        assert!(press_key(Some(address::LIST), "End"));
         assert_eq!(
             descendant(),
-            Some(list_cell_tag(row, spec::COLUMNS.len() - 1)),
+            Some(address::list_cell(row, spec::COLUMNS.len() - 1)),
             "End reaches the last column"
         );
         // ★★★★★ The `Ends::Stop` declaration is tested by an ADVANCE past the
@@ -1418,10 +1418,10 @@ fn r1699_a_message_row_is_entered_and_its_cells_are_walked() {
         // `End` asserted that `Last` is idempotent and nothing else. A
         // counterfactual flipping this row's cells to `Ends::Wrap` PASSED
         // against it — the assertion was in a place it could not fail.
-        assert!(press_key(Some("pv.list"), "ArrowRight"));
+        assert!(press_key(Some(address::LIST), "ArrowRight"));
         assert_eq!(
             descendant(),
-            Some(list_cell_tag(row, spec::COLUMNS.len() - 1)),
+            Some(address::list_cell(row, spec::COLUMNS.len() - 1)),
             "and an advance past the last column STOPS — a row is not a ring, \
              unlike the tab list beside it on the sibling screen"
         );
@@ -1432,11 +1432,11 @@ fn r1699_a_message_row_is_entered_and_its_cells_are_walked() {
         );
 
         // Escape leaves the row without leaving the pane.
-        assert!(press_key(Some("pv.list"), "Escape"));
-        assert_eq!(descendant(), Some(format!("pv.list.row.{row}")));
+        assert!(press_key(Some(address::LIST), "Escape"));
+        assert_eq!(descendant(), Some(address::list_row(row)));
         assert_eq!(state.cell.get(), None);
         assert!(
-            press_key(Some("pv.list"), "ArrowDown"),
+            press_key(Some(address::LIST), "ArrowDown"),
             "and the pane's own axis answers again"
         );
         assert_eq!(state.row.get(), row + 1, "which moves between rows");
@@ -1455,7 +1455,7 @@ fn r1699_the_grid_publishes_the_cell_a_reader_is_in() {
         let focused_cells = || {
             PacketView::access_node(&IDLE_FIELD, None)
                 .into_iter()
-                .filter(|n| n.state.focused && n.tag.starts_with("pv.list.cell."))
+                .filter(|n| n.state.focused && n.tag.starts_with(address::LIST_CELL_SEAT))
                 .map(|n| n.tag)
                 .collect::<Vec<_>>()
         };
@@ -1465,11 +1465,11 @@ fn r1699_the_grid_publishes_the_cell_a_reader_is_in() {
         );
 
         let row = state.row.get();
-        assert!(press_key(Some("pv.list"), "ArrowRight"));
-        assert!(press_key(Some("pv.list"), "ArrowRight"));
+        assert!(press_key(Some(address::LIST), "ArrowRight"));
+        assert!(press_key(Some(address::LIST), "ArrowRight"));
         assert_eq!(
             focused_cells(),
-            vec![list_cell_tag(row, 1)],
+            vec![address::list_cell(row, 1)],
             "★ exactly one cell is current, and it is the one the arrows reached"
         );
 
@@ -1478,7 +1478,7 @@ fn r1699_the_grid_publishes_the_cell_a_reader_is_in() {
         let nodes = PacketView::access_node(&IDLE_FIELD, None);
         let row_node = nodes
             .iter()
-            .find(|n| n.tag == format!("pv.list.row.{row}"))
+            .find(|n| n.tag == address::list_row(row))
             .expect("the row is in the tree");
         let nav = row_node
             .navigation
@@ -2198,9 +2198,9 @@ fn r1829_the_ordered_column_is_the_one_that_announces_it() {
             PacketView::access_node(&IDLE_FIELD, None)
                 .into_iter()
                 .filter_map(|node| {
-                    let tag = node.tag.strip_prefix("pv.list.head.")?.to_owned();
+                    let column = address::list_head_index(&node.tag)?;
                     let dir = node.sort?;
-                    Some((tag.parse::<usize>().ok()?, format!("{dir:?}")))
+                    Some((column, format!("{dir:?}")))
                 })
                 .collect()
         };
@@ -2610,32 +2610,96 @@ fn r2109_every_module_is_read() {
     );
 }
 
-/// ★★★★★ R2109 — **a filter-bar address is typed in ONE place, and this
-/// counts.**
+/// Every address family `address.rs` DECLARES, read off its own source.
 ///
-/// The twelfth instalment of an address debt whose shape eleven rounds settled:
-/// a painted address had no declaring site, so every reader re-typed it and one
-/// wrong letter compiled, painted, and made every query looking for the mark
-/// answer nothing.
+/// ★★★★★ R2111 — DERIVED, and that is the whole difference between this and the
+/// gate it replaces. R2109 named its needle (`concat!("pv.", "filter")`), so the
+/// family this round converted needed a second gate and the family after it a
+/// third: **a per-family gate is a hand-written list wearing a test's clothes**,
+/// and the member nobody adds is the member nobody checks (R2053). With the
+/// needles derived, the next family joins the gate the moment it is declared.
 ///
-/// ⚠ The needle is assembled with `concat!`, because this file is one of the
-/// sources it reads — a gate that counts by reading source has its own source
-/// in the population, and assembling puts it there on the same terms as the
-/// rest instead of excusing it by name.
+/// ⚠ Anchored at the OPENING QUOTE, so a family this module MENTIONS in
+/// backticks is not one it claims and a family it spells inside a literal is.
+/// The direction of the approximation is stated rather than left to be found: a
+/// prose sentence that quoted an address would ADD a needle and fail loudly,
+/// never drop one.
+fn declared_families() -> std::collections::BTreeSet<String> {
+    // Assembled, so this file does not itself spell the screen's prefix — the
+    // gate below reads this file too, and excusing it by name would be the one
+    // exemption that matters (R2105's substitution ate its own needle).
+    const ANCHOR: &str = concat!("\"", "pv", ".");
+    let source = include_str!("address.rs");
+    let mut out = std::collections::BTreeSet::new();
+    for (at, _) in source.match_indices(ANCHOR) {
+        let literal = &source[at + 1..];
+        let Some(end) = literal.find('"') else {
+            continue;
+        };
+        let mut parts = literal[..end].split('.');
+        if let (Some(screen), Some(family)) = (parts.next(), parts.next()) {
+            out.insert(format!("{screen}.{family}"));
+        }
+    }
+    out
+}
+
+/// ★★★★★ R2109, re-derived R2111 — **an address of a DECLARED family is typed
+/// in one place, and this counts.**
+///
+/// The thirteenth instalment of an address debt whose shape eleven rounds
+/// settled: a painted address had no declaring site, so every reader re-typed it
+/// and one wrong letter compiled, painted, and made every query looking for the
+/// mark answer nothing.
+///
+/// ⚠ Two vacuity guards, because this gate's whole output is a list that is
+/// SUPPOSED to be empty. A scan that found no family would pass by describing
+/// nothing, and a module roster whose bodies were empty would too.
 #[test]
-fn r2109_a_filter_address_is_typed_in_one_place() {
-    const FILTER_ANY: &str = concat!("pv.", "filter");
+fn r2111_no_module_but_the_declaration_spells_a_declared_family() {
+    let families = declared_families();
+    assert!(
+        families.len() >= 2,
+        "★ the scan found {} declared family/families in `address.rs`, which is \
+         not what that module holds: the scan is broken rather than the \
+         declaration being small",
+        families.len()
+    );
     let sources = crate_sources();
-    let spellers: Vec<(&str, usize)> = sources
+    for (name, body) in &sources {
+        assert!(
+            !body.is_empty(),
+            "★ `{name}` reads as empty — the roster's `include_str!` is not \
+             reaching the file, and a gate counting over nothing is green"
+        );
+    }
+    let declaration = sources
         .iter()
-        .map(|(name, body)| (*name, body.matches(FILTER_ANY).count()))
-        .filter(|(name, count)| *count > 0 && *name != "address.rs")
-        .collect();
-    assert_eq!(
-        spellers,
-        Vec::new(),
-        "★★★★★ a filter-bar address is declared in `address.rs` and taken from \
-         there everywhere else; these file(s) spell it themselves"
+        .find(|(name, _)| *name == "address.rs")
+        .expect("the declaring module is in the roster");
+    for family in &families {
+        assert!(
+            declaration.1.contains(family.as_str()),
+            "★ `{family}` was derived from the declaration and is not in it"
+        );
+    }
+    let mut spellers: Vec<(&str, &str, usize)> = Vec::new();
+    for (name, body) in &sources {
+        if *name == "address.rs" {
+            continue;
+        }
+        for family in &families {
+            let count = body.matches(family.as_str()).count();
+            if count > 0 {
+                spellers.push((name, family.as_str(), count));
+            }
+        }
+    }
+    assert!(
+        spellers.is_empty(),
+        "★★★★★ an address of a declared family is declared in `address.rs` and \
+         taken from there everywhere else; these (file, family, times) spell it \
+         themselves: {spellers:?}"
     );
 }
 
@@ -2731,5 +2795,227 @@ fn r2109_every_filter_address_is_derived() {
         seats, declared,
         "★★★★★ the seats the wire publishes and the ones `address::FILTER_SEATS` \
          declares are not the same list, in the same order"
+    );
+}
+
+/// ★★★★★ R2111 — **every message-grid address is what its declaration derives,
+/// and each of its four readers refuses the other three's tags.**
+///
+/// The grid is the first family this campaign has converted whose members live
+/// on FOUR shapes at once — fixed seats, column headings, rows, and cells over
+/// the product of the last two — with a fifth hanging off a row's own address.
+/// So the interesting claim is not only *each composer round-trips* but *no
+/// reader claims a tag that belongs to another*: R1829 found that a heading and
+/// a row share their address up to the family, and a parse that took what it
+/// could would make a press on an annotation select a message.
+#[test]
+fn r2111_every_list_address_is_derived() {
+    // The two forms of the stem agree, so a reader composing on the separator
+    // form cannot drift from one classifying by the bare one.
+    assert_eq!(
+        address::LIST_SEAT,
+        format!("{}{}", address::LIST, address::SEPARATOR)
+    );
+    // ★ Every declared fixed seat IS the derivation of its word, and the round
+    // trip is what catches a roster carrying one tag under two words — neither
+    // direction finds that alone.
+    for (word, tag) in address::LIST_SEATS {
+        assert_eq!(
+            &address::list(word),
+            tag,
+            "★ the declared address for `{word}` is not what `list()` derives"
+        );
+        assert_eq!(
+            address::list_word(tag),
+            Some(*word),
+            "★ `{tag}` does not round-trip back to its word"
+        );
+    }
+    assert_eq!(
+        address::list_word(address::LIST),
+        None,
+        "★★ the grid's own tag is not one of its seats"
+    );
+    // ★★ Each parametric family hangs off the grid's stem and ends in the
+    // separator, and its template is that prefix with the placeholder. Checked
+    // structurally rather than against a re-typed string, so the assertion does
+    // not become the second spelling it exists to prevent.
+    for (prefix, template) in [
+        (address::LIST_HEAD_SEAT, address::LIST_HEAD_TEMPLATE),
+        (address::LIST_ROW_SEAT, address::LIST_ROW_TEMPLATE),
+        (address::LIST_CELL_SEAT, address::LIST_CELL_TEMPLATE),
+    ] {
+        assert!(
+            prefix.starts_with(address::LIST_SEAT) && prefix.ends_with(address::SEPARATOR),
+            "★ `{prefix}` is not a family of this grid's stem"
+        );
+        assert_eq!(
+            template,
+            format!("{prefix}{{}}"),
+            "★ `{template}` is not `{prefix}` with the population's placeholder"
+        );
+    }
+    list_family_round_trips();
+    list_annotations_round_trip();
+}
+
+/// The three indexed families' round trips, and each reader's refusal of the
+/// others' tags.
+///
+/// Split out for the workspace's hundred-line bound, and it reads as one
+/// decision on its own: *what does each inverse answer, and what does it
+/// refuse*.
+fn list_family_round_trips() {
+    for n in 0..spec::COLUMNS.len() {
+        assert_eq!(address::list_head_index(&address::list_head(n)), Some(n));
+        assert_eq!(
+            address::LIST_HEAD_TEMPLATE.replace("{}", &n.to_string()),
+            address::list_head(n),
+            "★ the specification's heading template and the painter's composer \
+             disagree at column {n}"
+        );
+    }
+    for n in 0..spec::ROWS.len() {
+        assert_eq!(address::list_row_index(&address::list_row(n)), Some(n));
+        assert_eq!(
+            address::LIST_ROW_TEMPLATE.replace("{}", &n.to_string()),
+            address::list_row(n),
+            "★ the specification's row template and the painter's composer \
+             disagree at row {n}"
+        );
+    }
+    // ★★★★★ The cell family is a PRODUCT, and the specification enumerates it by
+    // key while the painter composes it into an address. The two used to spell
+    // the join between the indexes separately; this is the assertion that they
+    // are one rule now.
+    let expanded: Vec<String> = spec::Population::Cells.members();
+    let composed: Vec<String> = (0..spec::ROWS.len())
+        .flat_map(|row| (0..spec::COLUMNS.len()).map(move |col| address::list_cell_key(row, col)))
+        .collect();
+    assert_eq!(
+        expanded, composed,
+        "★★★★★ the specification's cell population and the declared cell key are \
+         not the same enumeration"
+    );
+    for (row, column) in [(0, 0), (spec::ROWS.len() - 1, spec::COLUMNS.len() - 1)] {
+        let tag = address::list_cell(row, column);
+        assert_eq!(address::list_cell_at(&tag), Some((row, column)));
+        assert_eq!(
+            address::LIST_CELL_TEMPLATE.replace("{}", &address::list_cell_key(row, column)),
+            tag,
+            "★ the specification's cell template and the painter's composer \
+             disagree at {row},{column}"
+        );
+    }
+    // ★★★ And the refusals. A heading is not a row, a row is not a cell, and the
+    // grid's own tag is none of them — which is what keeps the hit router's arms
+    // from depending on the order they happen to be written in.
+    assert_eq!(address::list_head_index(&address::list_row(0)), None);
+    assert_eq!(address::list_row_index(&address::list_head(0)), None);
+    assert_eq!(address::list_cell_at(&address::list_row(0)), None);
+    assert_eq!(address::list_row_index(address::LIST), None);
+    assert_eq!(
+        address::list_cell_at(&format!(
+            "{}x{}1",
+            address::LIST_CELL_SEAT,
+            address::SEPARATOR
+        )),
+        None,
+        "★★ a non-numeric half is not a cell — answering `Some` there would make \
+         the router accept a mark that is never painted"
+    );
+}
+
+/// The annotation axis: it composes onto a ROW's address, so the row's own parse
+/// has to refuse it and its own parse has to refuse the row.
+fn list_annotations_round_trip() {
+    for (word, template) in address::LIST_ROW_ANNOTATIONS {
+        for n in [0, spec::ROWS.len() - 1] {
+            let tag = address::list_row_annotation(n, word);
+            assert_eq!(
+                template.replace("{}", &n.to_string()),
+                tag,
+                "★ the specification's template for `{word}` and the painter's \
+                 composer disagree at row {n}"
+            );
+            assert_eq!(
+                address::list_row_annotation_of(&tag),
+                Some((n, *word)),
+                "★ `{tag}` does not round-trip back to its row and word"
+            );
+            assert_eq!(
+                address::list_row_index(&tag),
+                None,
+                "★★★★★ `{tag}` reads back as a ROW — a press on an annotation \
+                 would select a message"
+            );
+        }
+    }
+    assert_eq!(
+        address::list_row_annotation_of(&address::list_row(0)),
+        None,
+        "★★ a row's own address carries no annotation"
+    );
+    assert_eq!(
+        address::list_row_annotation_of(&address::list_row_annotation(0, "nothing-paints-this")),
+        None,
+        "★★ a tail this screen does not paint is not an annotation — answering \
+         `Some` would let any mark under a row's address pass as one"
+    );
+}
+
+/// ★★★★★ R2111 — **the wire carries the grid's declaration, and the two
+/// surfaces that name the grid agree.**
+///
+/// This is the half the walks stand on: they are Python and cannot call any of
+/// the above, so a prefix that stopped agreeing here would hand ten walks an
+/// address matching no mark — which reads to every one of them as *the screen
+/// did not paint it*.
+///
+/// ⚠ `panes` has named the grid and its scrolling body since R1662, so the grid
+/// is on the wire TWICE. Both derive from one declaration, and this asserts they
+/// are equal rather than leaving a reader to notice they happen to agree.
+#[test]
+fn r2111_the_wire_publishes_the_grids_declaration() {
+    let wire = super::spec_json();
+    let published = &wire["list_addresses"];
+    assert_eq!(published["tag"].as_str(), Some(address::LIST));
+    assert_eq!(published["head"].as_str(), Some(address::LIST_HEAD_SEAT));
+    assert_eq!(published["row"].as_str(), Some(address::LIST_ROW_SEAT));
+    assert_eq!(published["cell"].as_str(), Some(address::LIST_CELL_SEAT));
+    assert_eq!(
+        published["cell_join"].as_str(),
+        Some(address::LIST_CELL_JOIN)
+    );
+    let seats: Vec<(String, String)> = published["seats"]
+        .as_array()
+        .expect("the wire publishes the grid's seats as a list")
+        .iter()
+        .map(|row| {
+            (
+                row["word"].as_str().unwrap_or_default().to_owned(),
+                row["tag"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    let declared: Vec<(String, String)> = address::LIST_SEATS
+        .iter()
+        .map(|(word, tag)| ((*word).to_owned(), (*tag).to_owned()))
+        .collect();
+    assert_eq!(
+        seats, declared,
+        "★★★★★ the seats the wire publishes and the ones `address::LIST_SEATS` \
+         declares are not the same list, in the same order"
+    );
+    let pane = &wire["panes"][0];
+    assert_eq!(
+        pane["tag"].as_str(),
+        published["tag"].as_str(),
+        "★★ the pane table and the address table name different grids"
+    );
+    assert_eq!(
+        pane["body"].as_str(),
+        Some(address::LIST_BODY),
+        "★★ the pane table's scrolling body is not the declared seat"
     );
 }

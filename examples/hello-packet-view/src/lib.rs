@@ -861,7 +861,7 @@ fn use_view_state() -> Rc<ViewState> {
     // resolved BEFORE the factory runs, because `Owner::cache` cannot re-enter
     // itself and a factory that calls another `use_*` hook does exactly that.
     let map = use_byte_map("packet_view.map", || decode(spec::OPENING_ROW));
-    let list_scroll = pinion_core::widgets::scroll::use_scroll_state("pv.list.body");
+    let list_scroll = pinion_core::widgets::scroll::use_scroll_state(address::LIST_BODY);
     let tree_scroll = pinion_core::widgets::scroll::use_scroll_state("pv.tree.body");
     let bytes_scroll = pinion_core::widgets::scroll::use_scroll_state("pv.bytes.body");
     // R1707 — the query field's own buffer, resolved out here for the same
@@ -1411,12 +1411,11 @@ impl Hit {
     /// [`Hit::at`] answers at the centre of that tag's **painted** rectangle —
     /// two derivations of one fact, with the paint as the arbiter.
     fn of_tag(state: &ViewState, tag: &str) -> Self {
-        // R1829 — before the row arm, because `pv.list.head.` and
-        // `pv.list.row.` share a prefix up to the family and only diverge
-        // after it.
-        if let Some(n) = tag
-            .strip_prefix("pv.list.head.")
-            .and_then(|n| n.parse::<usize>().ok())
+        // R1829 — before the row arm, because a heading's prefix and a row's
+        // share the family and diverge only after it. ★ R2111 — each is now
+        // recovered through its own declared inverse, so which arm matches is
+        // decided by the declaration rather than by two strings typed here.
+        if let Some(n) = address::list_head_index(tag)
             && n < spec::COLUMNS.len()
         {
             return Self::Header(n);
@@ -1426,9 +1425,7 @@ impl Hit {
         {
             return Self::Saved(n);
         }
-        if let Some(n) = tag
-            .strip_prefix("pv.list.row.")
-            .and_then(|n| n.parse::<usize>().ok())
+        if let Some(n) = address::list_row_index(tag)
             && n < spec::ROWS.len()
         {
             return Self::Message(n);
@@ -1447,10 +1444,7 @@ impl Hit {
         // current). Registered rather than improvised, because this screen has
         // no behaviour canon for cell selection and inventing one would diverge
         // from the reference instead of matching it.
-        if let Some((row, _column)) = tag
-            .strip_prefix("pv.list.cell.")
-            .and_then(|rest| rest.split_once('_'))
-            && let Ok(row) = row.parse::<usize>()
+        if let Some((row, _column)) = address::list_cell_at(tag)
             && row < spec::ROWS.len()
         {
             return Self::Message(row);
@@ -1947,7 +1941,7 @@ fn activate_tag(state: &Rc<ViewState>, path: &[&str]) {
 /// the page a reader is trying to leave.
 fn pane_cursor(state: &Rc<ViewState>, stop: &str) -> Option<Roving> {
     let (spec, members, at) = match stop {
-        "pv.list" => (
+        address::LIST => (
             RovingSpec::new(Axis::Vertical).with_activation(Activation::Follows),
             // ★★★ R1707 — the roster is what the query KEPT. A cursor that
             // walked the hidden rows would step onto messages the list does not
@@ -1962,7 +1956,7 @@ fn pane_cursor(state: &Rc<ViewState>, stop: &str) -> Option<Roving> {
                 // inside a row before moving the selection onto it, and a
                 // roster that appeared when the selection arrived would make
                 // the answer depend on where somebody is standing.
-                .map(|n| Member::new(format!("pv.list.row.{n}")).containing(row_cells_cursor(n)))
+                .map(|n| Member::new(address::list_row(n)).containing(row_cells_cursor(n)))
                 .collect::<Vec<_>>(),
             // ★★★ R1707 — the cursor rests on the selected message when the
             // query kept it, and otherwise on the first message it did keep.
@@ -1972,7 +1966,7 @@ fn pane_cursor(state: &Rc<ViewState>, stop: &str) -> Option<Roving> {
             // path, and a view is not allowed to mutate (§6.3). The reference
             // prototype leaves its selection alone too — what would be wrong is
             // a cursor pointing at a row that is not in its own roster.
-            format!("pv.list.row.{}", state.cursor_row()),
+            address::list_row(state.cursor_row()),
         ),
         "pv.tree" => (
             RovingSpec::new(Axis::Vertical).with_activation(Activation::Follows),
@@ -2002,14 +1996,14 @@ fn pane_cursor(state: &Rc<ViewState>, stop: &str) -> Option<Roving> {
         // `Stop` at the ends, like a row's cells: the first and the last column
         // are ends a reader is meant to feel, and wrapping from the length back
         // to the timestamp would read as a jump into another row.
-        LIST_HEADER => (
+        address::LIST_HEADER => (
             RovingSpec::new(Axis::Horizontal)
                 .with_ends(Ends::Stop)
                 .with_activation(Activation::Explicit),
             (0..spec::COLUMNS.len())
-                .map(|n| Member::new(format!("pv.list.head.{n}")))
+                .map(|n| Member::new(address::list_head(n)))
                 .collect(),
-            format!("pv.list.head.{}", state.head_cursor.get()),
+            address::list_head(state.head_cursor.get()),
         ),
         // ★★★★★ R1721 — the saved-filter bar's cursor is not written out here at
         // all: the row's own rule builds it, seats it, and picks the policy. The
@@ -2024,12 +2018,12 @@ fn pane_cursor(state: &Rc<ViewState>, stop: &str) -> Option<Roving> {
     // ★★★★★ R1699 — the descent is projected too, from the one fact that holds
     // it. `Some(column)` means the reader went into the selected row, so the
     // composite is entered and its inner cursor points at that cell.
-    if stop == "pv.list"
+    if stop == address::LIST
         && let Some(column) = state.cell.get()
     {
         roving.enter();
         if let Some(inner) = roving.inner_at_cursor_mut() {
-            inner.point_at(&list_cell_tag(state.row.get(), column));
+            inner.point_at(&address::list_cell(state.row.get(), column));
         }
     }
     Some(roving)
@@ -2050,7 +2044,7 @@ fn row_cells_cursor(row: usize) -> Roving {
     );
     cells.seat(
         (0..spec::COLUMNS.len())
-            .map(|c| Member::new(list_cell_tag(row, c)))
+            .map(|c| Member::new(address::list_cell(row, c)))
             .collect(),
     );
     cells
@@ -2063,7 +2057,7 @@ fn row_cells_cursor(row: usize) -> Roving {
 fn seat_pane_cursor(state: &Rc<ViewState>, stop: &str, roving: &Roving) {
     let Some(index) = roving.cursor() else { return };
     match stop {
-        "pv.list" => {
+        address::LIST => {
             select_message(state, index);
             // ★★★★★ R1699 — the descent is written back with the row, in the
             // same place, so a cursor that went into a cell and a selection
@@ -2091,7 +2085,7 @@ fn seat_pane_cursor(state: &Rc<ViewState>, stop: &str, roving: &Roving) {
         // is told is the column they arrived at; the sentence the description
         // register carries for it is shown by the same arrival, from the
         // register rather than from here.
-        LIST_HEADER => {
+        address::LIST_HEADER => {
             state.head_cursor.set(index);
             if let Some(column) = spec::COLUMNS.get(index) {
                 state.say(Utterance::unchanged(column.title.to_owned()));
@@ -2188,7 +2182,7 @@ fn key_at(state: &Rc<ViewState>, focused: Option<&str>, chord: &str) -> bool {
         // `None` still reaches it, deliberately — that is the wire's own
         // channel (`invoke("key", …)` with nothing focused), where an agent
         // asking the list to move its selection is asking for exactly that.
-        "ArrowDown" | "ArrowUp" if focused.is_none_or(|tag| tag == "pv.list") => {
+        "ArrowDown" | "ArrowUp" if focused.is_none_or(|tag| tag == address::LIST) => {
             let row = state.row.get();
             let next = if chord == "ArrowDown" {
                 (row + 1).min(spec::ROWS.len() - 1)
@@ -2623,7 +2617,7 @@ fn descriptions() -> Descriptions {
     let mut described = Descriptions::new();
     for (n, column) in spec::COLUMNS.iter().enumerate() {
         described.describe(
-            format!("pv.list.head.{n}"),
+            address::list_head(n),
             format!("{} - press to sort by it", column.description),
         );
     }
@@ -2732,7 +2726,7 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     // makes it one. The seven headings were loose runs until now, so a keyboard
     // could not stand on any of them: they are not stops and they were in no
     // roster, while the accessibility tree had already been announcing them as
-    // a row of column headers under [`LIST_HEADER`] since R1694. Two structures
+    // a row of column headers under [`address::LIST_HEADER`] since R1694. Two structures
     // for one row, and the one a reader travels by was the missing one.
     //
     // Pointer-transparent, for the reason the saved-filter bar's group is: a
@@ -2744,7 +2738,7 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     for (n, column) in spec::COLUMNS.iter().enumerate() {
         let col = list_col(n);
         headings.push(tagged_label(
-            &format!("pv.list.head.{n}"),
+            &address::list_head(n),
             column.title,
             run_band(list_head_seat(), col.x, col.w.saturating_sub(8)),
             FONT_SMALL,
@@ -2754,7 +2748,7 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     children.push(
         Scene::Container(
             ContainerNode::new(headings)
-                .with_tag(LIST_HEADER.to_owned())
+                .with_tag(address::LIST_HEADER.to_owned())
                 .with_layout(absolute(list_head_seat()).with_pointer_transparent(true)),
         )
         .with_focusable(true),
@@ -2770,7 +2764,7 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     // one this screen already behaves like: the arrows move the selection
     // *inside* it rather than off it.
     panel(
-        "pv.list",
+        address::LIST,
         rect,
         ink.bg,
         Some(ink.outline),
@@ -2802,7 +2796,7 @@ fn list_row_paint(n: usize, visual: usize, selected: usize, ink: Ink) -> Vec<Sce
         let row = list_row(visual);
         if n == selected {
             children.push(
-                box_at("pv.list.selected", row, ink.lit, Some(ink.accent), 0).silenced(
+                box_at(address::LIST_SELECTED, row, ink.lit, Some(ink.accent), 0).silenced(
                     Silence::decorative(
                         "the band behind the open message; the row says it is selected",
                     ),
@@ -2810,7 +2804,7 @@ fn list_row_paint(n: usize, visual: usize, selected: usize, ink: Ink) -> Vec<Sce
             );
         }
         children.push(box_at(
-            &format!("pv.list.row.{n}"),
+            &address::list_row(n),
             Rect::new(row.x, row.y, row.w, row.h),
             Color::rgba(0, 0, 0, 0),
             None,
@@ -2881,7 +2875,7 @@ fn name_column_paint(n: usize, name_col: Rect, row: Rect, name: &str, ink: Ink) 
         right = right.saturating_sub(width + gap);
         runs.push(
             tagged_label(
-                &format!("pv.list.row.{n}.{suffix}"),
+                &address::list_row_annotation(n, suffix),
                 text,
                 // ★ R1872 — the ROW is the seat, not one of its edges. This took
                 // `y: u32` and could only add a hand-picked offset to it; a band
@@ -2894,7 +2888,7 @@ fn name_column_paint(n: usize, name_col: Rect, row: Rect, name: &str, ink: Ink) 
             // Painted inside the name column and announced as part of that
             // cell: an annotation read as its own stop would tell a reader
             // "out of band" with nothing to attach it to.
-            .silenced(Silence::part_of(list_cell_tag(n, NAME_COLUMN))),
+            .silenced(Silence::part_of(address::list_cell(n, NAME_COLUMN))),
         );
     };
     // ★★★★★ R1827 — the exchange this message is half of, in the accent ink so a
@@ -2915,10 +2909,17 @@ fn name_column_paint(n: usize, name_col: Rect, row: Rect, name: &str, ink: Ink) 
     //
     //   r1663_every_declared_element_of_the_screen_is_painted
     //     `the specification declares 11 element(s) the screen does not paint
-    //      and no scroll reaches: ["pv.list.cell.4_7", … "pv.list.cell.15_7"]`
+    //      and no scroll reaches: [<the link column's cell in rows 4..16>]`
     //   r1693_the_screen_speaks_and_is_quiet_exactly_where_the_specification_says
-    //     `the specification declares pv.list.row.2.linked quiet and nothing
-    //      paints it`
+    //     `the specification declares <row 2's exchange annotation> quiet and
+    //      nothing paints it`
+    //
+    // ⚠ R2111 — the two quotes carried the ADDRESSES verbatim, and this round
+    // replaced them with what each names. Not cosmetic: the gate that holds
+    // this family to one declaring site counts spellings by READING these
+    // modules, so a quoted measurement is a spelling like any other and being a
+    // record does not exempt it. The fact is unchanged and the round that
+    // measured it is still named.
     //
     // A fact that is absent is absent. ⚠ Eleven, not the fourteen rows that are
     // in no exchange — the gate runs at the DECLARED FLOOR, where four message
@@ -2926,10 +2927,16 @@ fn name_column_paint(n: usize, name_col: Rect, row: Rect, name: &str, ink: Ink) 
     // from the eleven below it. The count is quoted because it was measured;
     // which of the two cases each row fell into was not, and is not claimed.
     if let Some(link) = spec::link_text(n) {
-        annotation(&mut runs, "linked", link, 8, ink.accent);
+        annotation(&mut runs, address::LIST_ROW_LINKED, link, 8, ink.accent);
     }
     if !message.note.is_empty() {
-        annotation(&mut runs, "note", message.note.to_owned(), 0, ink.warn);
+        annotation(
+            &mut runs,
+            address::LIST_ROW_NOTE,
+            message.note.to_owned(),
+            0,
+            ink.warn,
+        );
     }
     if let Some(fragment) = &message.fragment {
         // ★★★★★ R2012 — the non-`Drop` arm was `ink.warn`, and it said the
@@ -2949,7 +2956,7 @@ fn name_column_paint(n: usize, name_col: Rect, row: Rect, name: &str, ink: Ink) 
             ink.info
         };
         let marker = format!("{} {}", fragment.marker, fragment.piece);
-        annotation(&mut runs, "fragment", marker, 8, ink_for);
+        annotation(&mut runs, address::LIST_ROW_FRAGMENT, marker, 8, ink_for);
     }
     runs.push(cell_label(
         n,
@@ -3050,17 +3057,6 @@ fn tree_head_seat() -> Rect {
     Rect::new(0, 0, tree_rect().w, HEAD_H)
 }
 
-/// The tag one message cell is addressed by: the row and the column it is in.
-///
-/// A function rather than a `format!` at each of the seven sites, because the
-/// spelling is a join — [`spec::ROWS`] crossed with [`spec::COLUMNS`] — and both
-/// the paint and [`spec::VOICES`] have to produce it from the same rule or the
-/// census would be comparing two conventions.
-#[must_use]
-fn list_cell_tag(row: usize, column: usize) -> String {
-    format!("pv.list.cell.{row}_{column}")
-}
-
 /// One message cell, tagged so a reader can traverse the grid a column at a
 /// time. Its accessible name is the text painted here, which is why nothing
 /// re-states the value in the accessibility layer.
@@ -3076,7 +3072,7 @@ fn list_cell_tag(row: usize, column: usize) -> String {
 /// index, so none of them can pass the wrong answer or forget to pass one.
 fn cell_label(row: usize, column: usize, text: impl Into<String>, rect: Rect, fg: Color) -> Scene {
     let style = run_style(FONT_SMALL, fg).with_numeric(spec::COLUMNS[column].numeric_style());
-    text_run(list_cell_tag(row, column), text, rect, style)
+    text_run(address::list_cell(row, column), text, rect, style)
 }
 
 /// One decode row: its selection band, its fold chevron, its name, its derived
@@ -3327,7 +3323,7 @@ fn bytes_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
 
 /// The tag one row of the byte grid addresses its offset by.
 ///
-/// Named here for the same reason [`list_cell_tag`] is: the paint and
+/// Named here for the same reason [`address::list_cell`] is: the paint and
 /// [`spec::VOICES`] both produce this spelling, and a second convention would
 /// make the census compare two things.
 #[must_use]
@@ -4252,6 +4248,41 @@ fn spec_json() -> serde_json::Value {
             })).collect::<Vec<_>>(),
             "saved": address::FILTER_SAVED_SEAT,
         }),
+        // ★★★★★ R2111 — **the message grid: its own tag, its three fixed seats,
+        // and the prefix each of its three parametric families hangs off.**
+        //
+        // The largest family of this screen and the largest this address
+        // campaign has converted: measured at entry, 78 sites in this crate, 32
+        // across ten walks and one in the shell that mounts this screen as a
+        // page.
+        //
+        // ⚠ The grid's tag is published HERE as well as in `panes`, and that is
+        // deliberate rather than a leftover. `panes` answers *where are the
+        // three panes and how wide*; this answers *what is the message grid's
+        // family called*. Both derive from `address::LIST`, so they cannot
+        // drift — and the gate asserts the two surfaces are equal rather than
+        // leaving a reader to notice they happen to agree.
+        //
+        // ⚠⚠ The three prefixes are prefixes and not rosters because their
+        // populations are the CAPTURE's: a walk reads `rows` and `columns` from
+        // this same document and composes. The separator lives in the prefix and
+        // the cell's JOIN lives in the harness, so a walk spells neither — R2109.1
+        // is the round that learned a walk gluing its own separator is this debt
+        // wearing the shape of a fix.
+        //
+        // ⚠⚠⚠ The row ANNOTATIONS are absent on purpose: no walk addresses one,
+        // and a published surface with no reader is the rotting thing this debt
+        // produces (R2104 measured it and deleted the helper it had just built).
+        "list_addresses": serde_json::json!({
+            "tag": address::LIST,
+            "seats": address::LIST_SEATS.iter().map(|(word, tag)| serde_json::json!({
+                "word": word, "tag": tag,
+            })).collect::<Vec<_>>(),
+            "head": address::LIST_HEAD_SEAT,
+            "row": address::LIST_ROW_SEAT,
+            "cell": address::LIST_CELL_SEAT,
+            "cell_join": address::LIST_CELL_JOIN,
+        }),
         // ★★★ R1707 — what this screen tells a person the mouse and keyboard
         // do. Published rather than painted: the sibling screen prints a hint
         // strip because the reference's node canvas does, and the reference's
@@ -4588,7 +4619,7 @@ impl WidgetA11y for PacketView {
 ///
 /// In PAINT ORDER, which is Tab order (§5.39 enumerates depth-first over the
 /// scene), so the two ring censuses can compare against it as a sequence.
-const PROJECTED_STOPS: [&str; 4] = ["pv.list", LIST_HEADER, "pv.tree", "pv.bytes"];
+const PROJECTED_STOPS: [&str; 4] = [address::LIST, address::LIST_HEADER, "pv.tree", "pv.bytes"];
 
 /// The application bar: what capture is open, how fast it is arriving, and the
 /// running commentary.
@@ -4754,7 +4785,7 @@ fn list_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     let sort = state.sort.get();
     let grid_columns: Vec<GridColumn> = (0..columns)
         .map(|n| GridColumn {
-            tag: format!("pv.list.head.{n}"),
+            tag: address::list_head(n),
             sort: col_sort_dir(sort, n).map(SortDirection::from_ascending),
         })
         .collect();
@@ -4765,14 +4796,14 @@ fn list_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
         .kept()
         .into_iter()
         .map(|n| GridRow {
-            tag: format!("pv.list.row.{n}"),
+            tag: address::list_row(n),
             selected: n == selected,
             state: RadioState::Idle,
             cells: row_cells(n)
                 .into_iter()
                 .enumerate()
                 .map(|(c, text)| GridCell {
-                    tag: list_cell_tag(n, c),
+                    tag: address::list_cell(n, c),
                     name: text,
                     // ★★★★★ R1699 — the cell a reader has gone into. The slot
                     // existed from R1694 and was hard-coded `false`, which is
@@ -4786,23 +4817,14 @@ fn list_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
         })
         .collect();
     grid_table_nodes(
-        "pv.list",
+        address::LIST,
         spec::PANES[0].title,
         false,
-        LIST_HEADER,
+        address::LIST_HEADER,
         &grid_columns,
         &grid_rows,
     )
 }
-
-/// The tag the header row is announced under — and, since R2061, painted under.
-///
-/// ⚠ This doc used to say *"nothing paints it"*, and that sentence was the
-/// defect: a row a reader is told to descend through, with no painted node to
-/// stand on, is a row no keyboard can enter. It is now a pointer-transparent
-/// container over the head strip carrying the seven headings, focusable, so the
-/// accessibility tree's row and the paint's row are one thing.
-const LIST_HEADER: &str = "pv.list.header";
 
 /// What one message's cells **paint**, left to right — one entry per
 /// [`spec::COLUMNS`] entry.

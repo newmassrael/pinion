@@ -41,6 +41,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_router_press_moves,
     filter_saved,
+    list_row,
     run_demo,
 )
 
@@ -328,7 +329,11 @@ def body() -> None:
             if (owner := q(app, MAP, f"owner.0.{b}")) is not None and owner != row_field
         )
         targets = [
-            ("a message row", "pv.list.row.2", lambda: q(app, VIEW, "selected_row")),
+            (
+                "a message row",
+                list_row(app, 2, ext=f"/{VIEW}/external"),
+                lambda: q(app, VIEW, "selected_row"),
+            ),
             (
                 "a decode row",
                 f"pv.tree.field.{row_field}",

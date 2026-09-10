@@ -41,10 +41,10 @@ pub struct PaneSpec {
 /// leave, because it is the pane a reader spends the session in.
 pub const PANES: &[PaneSpec] = &[
     PaneSpec {
-        tag: "pv.list",
+        tag: crate::address::LIST,
         title: "Messages",
         width: 0,
-        body: Some("pv.list.body"),
+        body: Some(crate::address::LIST_BODY),
     },
     PaneSpec {
         tag: "pv.tree",
@@ -1937,8 +1937,14 @@ impl Population {
             Population::One => vec![String::new()],
             Population::Columns => indexes(COLUMNS.len()),
             Population::Rows => indexes(ROWS.len()),
+            // ★★★★★ R2111 — the JOIN comes from the declaration. This expander
+            // and the painter both composed a cell's key, and nothing compared
+            // the two spellings of the separator between the indexes: two homes
+            // for one character, which is this debt at the narrowest it gets.
             Population::Cells => (0..ROWS.len())
-                .flat_map(|row| (0..COLUMNS.len()).map(move |col| format!("{row}_{col}")))
+                .flat_map(|row| {
+                    (0..COLUMNS.len()).map(move |col| crate::address::list_cell_key(row, col))
+                })
                 .collect(),
             Population::Fields => FIELDS.iter().map(|f| f.path.to_owned()).collect(),
             Population::Layers => LAYERS.iter().map(|(id, _)| (*id).to_owned()).collect(),
@@ -2064,7 +2070,7 @@ pub const VOICES: &[VoiceSpec] = &[
     // arrow keys move the selection, and what a reader is told they can do has
     // to be what they can do.
     VoiceSpec {
-        tag: "pv.list",
+        tag: crate::address::LIST,
         role: "grid",
         population: Population::One,
     },
@@ -2074,22 +2080,22 @@ pub const VOICES: &[VoiceSpec] = &[
     // can enter — so the paint grew the container and this table grew the entry
     // that keeps the two spellings of that row one thing.
     VoiceSpec {
-        tag: "pv.list.header",
+        tag: crate::address::LIST_HEADER,
         role: "row",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "pv.list.head.{}",
+        tag: crate::address::LIST_HEAD_TEMPLATE,
         role: "columnheader",
         population: Population::Columns,
     },
     VoiceSpec {
-        tag: "pv.list.row.{}",
+        tag: crate::address::LIST_ROW_TEMPLATE,
         role: "row",
         population: Population::Rows,
     },
     VoiceSpec {
-        tag: "pv.list.cell.{}",
+        tag: crate::address::LIST_CELL_TEMPLATE,
         role: "gridcell",
         population: Population::Cells,
     },
@@ -2161,7 +2167,7 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     ("packet_view", Population::One, "layout"),
     ("pv.root", Population::One, "layout"),
     // The scrolling bodies. What a reader lands on is what is inside them.
-    ("pv.list.body", Population::One, "layout"),
+    (crate::address::LIST_BODY, Population::One, "layout"),
     ("pv.tree.body", Population::One, "layout"),
     ("pv.bytes.body", Population::One, "layout"),
     // ★ R1707 — the query text inside the query box. The framework's text-field
@@ -2179,16 +2185,28 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     ("pv.reassembly.title", Population::One, "name_of"),
     // Selection bands. The row and the item announce that they are selected;
     // the ink behind them is how a sighted reader is told the same thing.
-    ("pv.list.selected", Population::One, "decorative"),
+    (crate::address::LIST_SELECTED, Population::One, "decorative"),
     ("pv.tree.selected", Population::One, "decorative"),
     // Annotations painted inside the name column, announced with that cell —
     // "out of band" as its own stop names nothing.
-    ("pv.list.row.{}.note", Population::Annotated, "part_of"),
-    ("pv.list.row.{}.fragment", Population::Fragmented, "part_of"),
+    (
+        crate::address::LIST_ROW_NOTE_TEMPLATE,
+        Population::Annotated,
+        "part_of",
+    ),
+    (
+        crate::address::LIST_ROW_FRAGMENT_TEMPLATE,
+        Population::Fragmented,
+        "part_of",
+    ),
     // ★★★★★ R1827 — and the exchange the message is half of. `part_of` for the
     // same reason as its two neighbours: "answers 1182" read as its own stop
     // names nothing, and the cell it belongs to announces it.
-    ("pv.list.row.{}.linked", Population::Correlated, "part_of"),
+    (
+        crate::address::LIST_ROW_LINKED_TEMPLATE,
+        Population::Correlated,
+        "part_of",
+    ),
     // The fold chevron and the derived badge, announced with the item they
     // belong to: `aria-expanded` is the state the chevron draws, and "derived"
     // is a fact about the field beside it.

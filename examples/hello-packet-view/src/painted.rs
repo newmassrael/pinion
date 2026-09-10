@@ -177,9 +177,12 @@ const SIZES: &[(&str, (u32, u32))] = &[
 /// column headings, the 112 cells and the nine row annotations together.
 ///
 /// **128 runs, and the arithmetic is checkable in both directions**: 290 - 162 =
-/// 128 = 7 + 112 + 9, and the census the integrated shell takes named
-/// `pv.list.cell.*` at 112 as the largest single site in the whole application
-/// before this round. The population is unchanged — no run was added or removed,
+/// 128 = 7 + 112 + 9, and the census the integrated shell takes named the
+/// message grid's CELL family at 112 as the largest single site in the whole
+/// application before this round (R2111 replaced the address that stood here
+/// with what it names, so the gate holding this family to one declaring site
+/// reads no spelling in this file — a measurement's quote is a spelling too).
+/// The population is unchanged — no run was added or removed,
 /// only re-seated — so this is the improvement direction of the very ambiguity
 /// the paragraph above warns the pin cannot tell apart, and it is argued here
 /// for that reason.
@@ -372,7 +375,7 @@ fn r1663_every_declared_element_of_the_screen_is_painted() {
             }
         }
         for n in 0..spec::COLUMNS.len() {
-            wanted.push(format!("pv.list.head.{n}"));
+            wanted.push(crate::address::list_head(n));
         }
         // R1693 — every message row, and every CELL of it. The cells were
         // untagged runs until this round, which is why sixteen messages of seven
@@ -382,9 +385,9 @@ fn r1663_every_declared_element_of_the_screen_is_painted() {
         // screen" is conditional on the query for exactly this family, and the
         // sweep drives a state with a saved filter applied.
         for n in state.kept() {
-            wanted.push(format!("pv.list.row.{n}"));
+            wanted.push(crate::address::list_row(n));
             for c in 0..spec::COLUMNS.len() {
-                wanted.push(crate::list_cell_tag(n, c));
+                wanted.push(crate::address::list_cell(n, c));
             }
         }
         for n in 0..spec::SAVED_FILTERS.len() {
@@ -514,7 +517,7 @@ fn r1663_every_painted_tag_belongs_to_a_declared_family() {
         "pv.appbar",
         super::address::FILTER,
         "pv.context",
-        "pv.list",
+        super::address::LIST,
         "pv.tree",
         "pv.bytes",
         "pv.reassembly",
@@ -574,7 +577,7 @@ fn r1663_every_painted_tag_belongs_to_a_declared_family() {
 fn r1663_the_fixed_families_are_the_size_the_specification_gives_them() {
     sweep(|state, shot, _, _, case| {
         assert_eq!(
-            shot.family("pv.list.head.").len(),
+            shot.family(crate::address::LIST_HEAD_SEAT).len(),
             spec::COLUMNS.len(),
             "{case}: column headers"
         );
@@ -589,7 +592,7 @@ fn r1663_the_fixed_families_are_the_size_the_specification_gives_them() {
         // exact tag rather than by prefix, because a row's note and its cells
         // live under the same stem.
         let drawn: Vec<usize> = (0..spec::ROWS.len())
-            .filter(|n| shot.present(&format!("pv.list.row.{n}")))
+            .filter(|&n| shot.present(&crate::address::list_row(n)))
             .collect();
         assert_eq!(drawn, state.kept(), "{case}: the message rows drawn");
         assert_eq!(
@@ -663,7 +666,7 @@ fn r1663_every_painted_control_answers_at_the_centre_of_its_own_rectangle() {
                 what: "message rows",
                 source: Expectation::Painter,
                 members: (0..spec::ROWS.len())
-                    .map(|n| (format!("pv.list.row.{n}"), Hit::Message(n)))
+                    .map(|n| (crate::address::list_row(n), Hit::Message(n)))
                     .collect(),
                 // A filter can leave the list empty, and that is a case this
                 // sweep drives on purpose.
@@ -771,7 +774,7 @@ fn r1663_every_painted_control_answers_at_the_centre_of_its_own_rectangle() {
 fn r1663_every_painted_mark_is_inside_the_pane_its_address_names() {
     sweep(|_, shot, _, size, case| {
         let panes: BTreeMap<&str, Rect> = [
-            ("pv.list", list_rect()),
+            (crate::address::LIST, list_rect()),
             ("pv.tree", tree_rect()),
             ("pv.bytes", bytes_rect()),
         ]
@@ -881,7 +884,7 @@ fn r1663_no_two_rows_of_a_list_are_painted_over_each_other() {
         };
         let mut rows: Vec<(String, Rect)> = Vec::new();
         for n in 0..spec::ROWS.len() {
-            if let Some(rect) = shot.tags.get(&format!("pv.list.row.{n}")) {
+            if let Some(rect) = shot.tags.get(&crate::address::list_row(n)) {
                 rows.push((format!("message {n}"), *rect));
             }
         }
@@ -1352,7 +1355,7 @@ fn r1707_every_gesture_this_screen_advertises_is_answered() {
             |gesture| {
                 match gesture {
                     "click a message" => {
-                        let rect = shot.tags["pv.list.row.2"];
+                        let rect = shot.tags[&crate::address::list_row(2)];
                         let (px, py) = centre(rect);
                         super::move_cursor(&state, px, py);
                         press(&state);
@@ -1377,7 +1380,7 @@ fn r1707_every_gesture_this_screen_advertises_is_answered() {
                     // one the feature exists for is what makes the driver
                     // readable as the gesture rather than as a poke.
                     "click a column header" => {
-                        let rect = shot.tags["pv.list.head.0"];
+                        let rect = shot.tags[&crate::address::list_head(0)];
                         let (px, py) = centre(rect);
                         super::move_cursor(&state, px, py);
                         press(&state);
@@ -1426,7 +1429,7 @@ fn r1707_a_query_narrows_the_paint_the_press_the_cursor_and_the_count() {
         let (opening, _) = painted_at(&state, (WIN_W, WIN_H));
         let drawn = |shot: &Painted| {
             (0..spec::ROWS.len())
-                .filter(|n| shot.present(&format!("pv.list.row.{n}")))
+                .filter(|&n| shot.present(&crate::address::list_row(n)))
                 .collect::<Vec<_>>()
         };
         assert_eq!(
@@ -1449,7 +1452,7 @@ fn r1707_a_query_narrows_the_paint_the_press_the_cursor_and_the_count() {
         // The press. Every drawn row answers as itself, and no hidden row is
         // reachable at any point of the list.
         for &n in &kept {
-            let (px, py) = centre(shot.tags[&format!("pv.list.row.{n}")]);
+            let (px, py) = centre(shot.tags[&crate::address::list_row(n)]);
             assert_eq!(
                 Hit::at(&state, px, py),
                 Hit::Message(n),
@@ -1471,12 +1474,13 @@ fn r1707_a_query_narrows_the_paint_the_press_the_cursor_and_the_count() {
         }
 
         // The cursor's roster is the kept set, and it stands on a member.
-        let cursor = super::pane_cursor(&state, "pv.list").expect("the list has a cursor");
+        let cursor =
+            super::pane_cursor(&state, crate::address::LIST).expect("the list has a cursor");
         let roster: Vec<String> = cursor.members().iter().map(|m| m.tag.clone()).collect();
         assert_eq!(
             roster,
             kept.iter()
-                .map(|n| format!("pv.list.row.{n}"))
+                .map(|&n| crate::address::list_row(n))
                 .collect::<Vec<_>>(),
             "the keyboard walks the rows the query kept"
         );
@@ -1603,7 +1607,7 @@ fn r1707_a_press_in_the_query_box_lands_on_a_byte_of_the_query() {
         );
         // And unfocused: nothing, whatever the coordinates say.
         assert_eq!(
-            caret(r.x + r.w / 2, r.y + r.h / 2, Some("pv.list")),
+            caret(r.x + r.w / 2, r.y + r.h / 2, Some(crate::address::LIST)),
             None,
             "the box only takes a caret while it has focus"
         );
@@ -2294,7 +2298,7 @@ fn r1774_the_sweep_reaches_both_sides_of_every_clamp() {
                 state
                     .kept()
                     .iter()
-                    .map(|n| format!("pv.list.row.{n}"))
+                    .map(|&n| crate::address::list_row(n))
                     .collect(),
                 true,
             ),
@@ -2330,7 +2334,7 @@ fn r1774_the_sweep_reaches_both_sides_of_every_clamp() {
             (
                 "list: columns",
                 (0..spec::COLUMNS.len())
-                    .map(|n| format!("pv.list.head.{n}"))
+                    .map(crate::address::list_head)
                     .collect(),
                 false,
             ),
@@ -2827,7 +2831,7 @@ fn r2012_a_fragment_that_is_not_a_fault_is_not_painted_as_one() {
             let Some(fragment) = &row.fragment else {
                 continue;
             };
-            let tag = format!("pv.list.row.{n}.fragment");
+            let tag = crate::address::list_row_annotation(n, crate::address::LIST_ROW_FRAGMENT);
             let Some(ink) = run_ink(scene, &tag) else {
                 // Not every row is above the fold in every swept state; a row
                 // the frame did not draw is not a row this gate can judge.
@@ -2895,7 +2899,7 @@ fn r2015_the_columns_compared_down_ask_for_figures_of_one_width() {
     sweep(|_, _, scene, _, case| {
         for (n, _) in spec::ROWS.iter().enumerate() {
             for (c, column) in spec::COLUMNS.iter().enumerate() {
-                let tag = super::list_cell_tag(n, c);
+                let tag = super::address::list_cell(n, c);
                 let Some(style) = cell_text_style(scene, &tag) else {
                     // Not every row is above the fold in every swept state.
                     continue;

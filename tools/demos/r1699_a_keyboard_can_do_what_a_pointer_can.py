@@ -50,6 +50,8 @@ from rpc_verify import (  # noqa: E402
     address_prefix,
     assert_eq,
     filter_seats,
+    list_row_address,
+    list_seats,
     run_demo,
     screen_spec,
     shell_palette_root,
@@ -321,7 +323,16 @@ def dashboard(app: RpcSubprocess) -> None:
 def capture(app: RpcSubprocess) -> None:
     banner("H — ★ a message row is entered and its cells are walked (the grid pattern)")
     # ★★★★★ R2109 — the filter bar's seats, from the screen that paints them.
-    seat = filter_seats(screen_spec(app, EXT))
+    spec = screen_spec(app, EXT)
+    seat = filter_seats(spec)
+    # ★★★★★ R2111 — and the message grid's, the same way: its own tag, its fixed
+    # seats, and the prefix a row hangs off. The cell addresses are not composed
+    # here at all — the row PUBLISHES its members, so `cells` below is the
+    # screen's own roster rather than a second derivation of it.
+    grid = spec["list_addresses"]["tag"]
+    grid_seat = list_seats(spec)
+    row_at = spec["list_addresses"]["row"]
+    cell_at = spec["list_addresses"]["cell"]
     walked = stops(app)
     # R1708 — by name, not by count. See the sibling note in
     # `r1698_a_composite_has_a_cursor_inside_it.py`: a hand-written `6` reported
@@ -339,45 +350,45 @@ def capture(app: RpcSubprocess) -> None:
         [
             seat["query"],
             seat["saved"],
-            "pv.list",
-            "pv.list.header",
+            grid,
+            grid_seat["header"],
             "pv.tree",
             "pv.bytes",
         ],
         "H: the capture viewer's Tab ring, by name",
     )
-    app.request("focus/set", {"tag": "pv.list"})
+    app.request("focus/set", {"tag": grid})
     app.tick_ms(16)
     row = app.query(f"{EXT}/selected_row")
-    assert_eq(cursor(app), f"pv.list.row.{row}", "H: the cursor opens on the row")
+    assert_eq(cursor(app), list_row_address(row_at, row), "H: the cursor opens on the row")
 
     nodes, _ = tree(app)
-    nav = nodes["pv.list"]["navigation"]
+    nav = nodes[grid]["navigation"]
     composites = [m for m in nav["members"] if m["composite"]]
     assert_eq(
         len(composites),
         len(nav["members"]),
         "H: ★ EVERY row is a composite — that is what `grid` means",
     )
-    inner = nodes[f"pv.list.row.{row}"].get("navigation")
+    inner = nodes[list_row_address(row_at, row)].get("navigation")
     ok("H: ★ a row publishes the cells its arrows reach", inner is not None)
     cells = [m["tag"] for m in inner["members"]]
     ok("H: seven columns", len(cells) == 7)
 
-    app.key(path="pv.list", name=nav["entry_keys"][0])
+    app.key(path=grid, name=nav["entry_keys"][0])
     app.tick_ms(16)
     assert_eq(cursor(app), cells[0], "H: ★ entering a row lands on its first cell")
-    app.key(path="pv.list", name="ArrowRight")
+    app.key(path=grid, name="ArrowRight")
     app.tick_ms(16)
     assert_eq(cursor(app), cells[1], "H: the inner axis walks the columns")
-    app.key(path="pv.list", name="End")
+    app.key(path=grid, name="End")
     app.tick_ms(16)
     assert_eq(cursor(app), cells[-1], "H: End reaches the last column")
     # ★ The ends policy is tested by an ADVANCE past the last member, not by
     # pressing End twice: `End` lands on the last index whatever the policy is,
     # so that assertion could not fail and a counterfactual flipping this row to
     # `Wrap` walked straight through it.
-    app.key(path="pv.list", name="ArrowRight")
+    app.key(path=grid, name="ArrowRight")
     app.tick_ms(16)
     assert_eq(
         cursor(app),
@@ -394,14 +405,18 @@ def capture(app: RpcSubprocess) -> None:
     current = [
         t
         for t, n in nodes.items()
-        if t.startswith("pv.list.cell.") and (n.get("state") or {}).get("focused")
+        if t.startswith(cell_at) and (n.get("state") or {}).get("focused")
     ]
     assert_eq(current, [cells[-1]], "H: ★ exactly one cell is current, and it is that one")
 
-    app.key(path="pv.list", name="Escape")
+    app.key(path=grid, name="Escape")
     app.tick_ms(16)
-    assert_eq(cursor(app), f"pv.list.row.{row}", "H: Escape leaves the row, not the pane")
-    app.key(path="pv.list", name="ArrowDown")
+    assert_eq(
+        cursor(app),
+        list_row_address(row_at, row),
+        "H: Escape leaves the row, not the pane",
+    )
+    app.key(path=grid, name="ArrowDown")
     app.tick_ms(16)
     assert_eq(
         app.query(f"{EXT}/selected_row"),

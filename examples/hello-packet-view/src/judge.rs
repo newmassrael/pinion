@@ -75,7 +75,11 @@ const FILTER: &str = crate::address::FILTER_SEAT;
 /// Where the session-context strip's parts are addressed.
 const CONTEXT: &str = "pv.context.";
 /// Where the message list's column headers are addressed.
-const HEADERS: &str = "pv.list.head.";
+///
+/// ★ R2111 — taken from the declaration, like [`FILTER`] above and for its
+/// reason: the local name is what the table below wants, and a wrong letter in
+/// it is now impossible rather than silent.
+const HEADERS: &str = crate::address::LIST_HEAD_SEAT;
 /// Where a decode row is addressed — a layer by its own path, and the rows
 /// under it by a path beneath that, which is what makes the layer headings
 /// findable by the shape of a name rather than by a list.

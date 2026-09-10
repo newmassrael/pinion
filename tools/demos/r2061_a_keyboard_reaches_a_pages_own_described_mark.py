@@ -362,8 +362,8 @@ def repay(app: RpcSubprocess, page: str) -> tuple[dict, str]:
     )
     # ★★★★★ The mark lives INSIDE the stop, and that is asked of the ANNOUNCED
     # TREE rather than of the tags' spelling. A first draft compared prefixes —
-    # `pv.list.head.0` does sit under `pv.list` — and the second page disproved
-    # it at once: this section's heading row is `kp.list.header` and its
+    # the capture grid's first heading does sit under the grid — and the second
+    # page disproved it at once: this section's heading row is `kp.list.header` and its
     # headings are `kp.column.*`, two families for one containment, which is
     # perfectly legal. A predicate written from ONE example is a predicate about
     # that example.

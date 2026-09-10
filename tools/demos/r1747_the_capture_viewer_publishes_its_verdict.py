@@ -100,6 +100,7 @@ from rpc_verify import (  # noqa: E402
     address_prefix,
     assert_eq,
     filter_seats,
+    list_head_prefix,
     resize_and_settle,
     run_demo,
     screen_spec,
@@ -118,11 +119,12 @@ SEAT = "packets"
 #: them separately instead of quietly skipping them.
 #: ★★★★★ R2109 — `filter_bar` is absent here on purpose: its stem is ASKED of
 #: the mounted capture viewer in section E rather than written down, because
-#: this table is module-level and cannot query anything. The other four are
-#: families this instalment did not convert and still say their own stem.
+#: this table is module-level and cannot query anything.
+#: ★★★★★ R2111 — and `list_columns` joined it, for the same reason and by the
+#: same route. The three that remain are families this campaign has not reached
+#: and still say their own stem.
 STEMS = {
     "context": "pv.context.",
-    "list_columns": "pv.list.head.",
     "decode_layers": "pv.tree.field.",
     "reassembly": "pv.reassembly.",
 }
@@ -573,9 +575,16 @@ def section_e(app: RpcSubprocess) -> None:
         if row["key"] == SEAT
     )
     seats = filter_seats(screen_spec(app, mounted))
-    stems = dict(STEMS, filter_bar=address_prefix(
-        [{"key": word, "tag": tag} for word, tag in seats.items()]
-    ))
+    stems = dict(
+        STEMS,
+        filter_bar=address_prefix(
+            [{"key": word, "tag": tag} for word, tag in seats.items()]
+        ),
+        # ★★★★★ R2111 — the message grid's heading prefix, from the same mounted
+        # screen. Published as a prefix already, so it is taken rather than
+        # recovered: the grid's column population is the capture's.
+        list_columns=list_head_prefix(app, ext=mounted),
+    )
     pin = packets_spec()
     missing: list[str] = []
     compared = 0

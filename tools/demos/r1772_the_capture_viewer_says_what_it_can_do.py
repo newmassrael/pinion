@@ -66,6 +66,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    list_tag,
     resize_and_settle,
     run_demo,
 )
@@ -249,8 +250,11 @@ def section_e(app: RpcSubprocess) -> None:
     # can scroll this pane at some size this screen is laid out for*, which is
     # the same shape the in-process gate's driver uses and for the same reason.
     moved = []
+    # ★★★★★ R2111 — the message grid's scrolling body is a seat the screen
+    # declares, taken by its word. The other two are families this campaign has
+    # not reached and still say their own tag.
     for pane, tag in (
-        ("list", "pv.list.body"),
+        ("list", list_tag(app, "body", ext=EXT)),
         ("tree", "pv.tree.body"),
         ("bytes", "pv.bytes.body"),
     ):

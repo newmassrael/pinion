@@ -85,6 +85,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    list_head_address,
+    list_head_prefix,
     run_demo,
 )
 
@@ -110,11 +112,15 @@ def head_sort(app: RpcSubprocess) -> dict[int, str]:
     is that a *reader* is told, and the model saying so is a different claim
     from the tree carrying it.
     """
+    # ★★★★★ R2111 — the heading prefix comes off the wire. Typed, a slip answers
+    # `{}` and this walk would read that as *no column announces its order*,
+    # which is the very defect section E exists to catch.
+    prefix = list_head_prefix(app, ext=EXT)
     out: dict[int, str] = {}
     for node in app.request("scene/access").result["nodes"]:
         tag = node.get("tag") or ""
-        if tag.startswith("pv.list.head.") and node.get("sort"):
-            out[int(tag.removeprefix("pv.list.head."))] = node["sort"]
+        if tag.startswith(prefix) and node.get("sort"):
+            out[int(tag.removeprefix(prefix))] = node["sort"]
     return out
 
 
@@ -224,7 +230,8 @@ def body() -> None:
         # ── (F) the pointer does it too ──────────────────────────────
         banner("F — pressing the column header cycles the order")
         d.invoke(f"{EXT}/order", "none")
-        head = f"pv.list.head.{time_col}"
+        head_at = list_head_prefix(d, ext=EXT)
+        head = list_head_address(head_at, time_col)
         seen = []
         for _ in range(3):
             d.click(path=head)
@@ -235,7 +242,7 @@ def body() -> None:
             "a header press cycles unsorted -> ascending -> descending -> unsorted",
         )
         d.click(path=head)
-        d.click(path=f"pv.list.head.{len_col}")
+        d.click(path=list_head_address(head_at, len_col))
         assert_eq(
             d.query(f"{EXT}/sort"),
             f"{len_col}:ascending",

@@ -56,6 +56,10 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     access_node_by_tag,
     assert_eq,
+    list_cell_address,
+    list_head_address,
+    list_row_address,
+    list_seats,
     run_demo,
     voice_rows,
 )
@@ -117,6 +121,17 @@ def body() -> None:
         ok("the screen publishes a specification", isinstance(spec, dict))
         rows, columns, fields = spec["rows"], spec["columns"], spec["fields"]
         voices, silences = spec["voices"], spec["silences"]
+        # ★★★★★ R2111 — the grid's addresses come off the WIRE, not out of this
+        # file. Before this round ten walks spelled them; a walk's copy of an
+        # address cannot be checked against the paint, and one wrong letter makes
+        # every query answer nothing, which reads here as *the screen did not
+        # paint it*. The prefixes are read once and composed onto, so the
+        # separator and the cell's join live in one place each.
+        addresses = spec["list_addresses"]
+        grid_tag = addresses["tag"]
+        head_at, row_at = addresses["head"], addresses["row"]
+        cell_at, cell_join = addresses["cell"], addresses["cell_join"]
+        seats = list_seats(spec)
         ok("the specification declares what owes a voice", len(voices) > 0)
         ok("the specification declares what owes a silence", len(silences) > 0)
         print(
@@ -158,20 +173,20 @@ def body() -> None:
         # are in the list pane's own space, so the first one's x IS the pane's
         # padding — read rather than assumed, because a number assumed here would
         # be a second copy of a constant the painter owns.
-        pad = rects["pv.list.head.0"]["x"]
-        flex = rects["pv.list"]["w"] - sum(c["width"] for c in columns) - pad * 2
+        pad = rects[list_head_address(head_at, 0)]["x"]
+        flex = rects[grid_tag]["w"] - sum(c["width"] for c in columns) - pad * 2
         ok("A2: the flexible column has room", flex > 0)
         offset = 0
         for n, column in enumerate(columns):
             assert_eq(
-                rects[f"pv.list.head.{n}"]["x"],
+                rects[list_head_address(head_at, n)]["x"],
                 pad + offset,
                 f"A2: column {column['title']!r} starts where the widths put it",
             )
             offset += column["width"] or flex
         assert_eq(
             offset + pad * 2,
-            rects["pv.list"]["w"],
+            rects[grid_tag]["w"],
             "A2: ★ and the seven columns fill the pane exactly",
         )
         CHECKS.extend(["panes tile", "column offsets", "columns fill the pane"])
@@ -229,7 +244,7 @@ def body() -> None:
         # ── (D) the grid ───────────────────────────────────────────────────
         banner("D — the message list is a grid a reader can traverse")
         tree = nodes_by_tag(app)
-        grid = tree["pv.list"]
+        grid = tree[grid_tag]
         assert_eq(grid["role"], "grid", "D: the list announces as a grid")
         # `aria-rowcount` is the TOTAL, header row included — WAI-ARIA's own
         # reading, and the one this tree's chart tables already use.
@@ -237,7 +252,7 @@ def body() -> None:
         assert_eq(grid["column_count"], len(columns), "D: and how many columns")
         CHECKS.extend(["grid role", "grid rowcount", "grid colcount"])
 
-        header = tree["pv.list.header"]
+        header = tree[seats["header"]]
         assert_eq(header["role"], "row", "D: the headers sit in a row")
         assert_eq(len(header["children"]), len(columns), "D: one header per column")
         # ★ R1694 — the header row is row ONE, because `aria-rowcount` above
@@ -246,7 +261,7 @@ def body() -> None:
         # and the first message claimed the header's place.
         assert_eq(header["row_index"], 1, "D: the header row is row one")
         for n, column in enumerate(columns):
-            head = tree[f"pv.list.head.{n}"]
+            head = tree[list_head_address(head_at, n)]
             assert_eq(head["role"], "columnheader", f"D: head {n} is a column header")
             assert_eq(head["name"], column["title"], f"D: head {n} is named")
             assert_eq(head["column_index"], n + 1, f"D: head {n} says which column")
@@ -255,24 +270,24 @@ def body() -> None:
 
         # Every cell of every message, addressable and placed.
         for n, message in enumerate(rows):
-            row_node = tree[f"pv.list.row.{n}"]
+            row_node = tree[list_row_address(row_at, n)]
             assert_eq(row_node["role"], "row", f"D: message {n} is a row")
             assert_eq(row_node["row_index"], n + 2, f"D: message {n} says which row")
             assert_eq(len(row_node["children"]), len(columns), f"D: message {n} cells")
             for c in range(len(columns)):
-                cell = tree[f"pv.list.cell.{n}_{c}"]
+                cell = tree[list_cell_address(cell_at, cell_join, n, c)]
                 assert_eq(cell["role"], "gridcell", f"D: cell {n},{c}")
                 assert_eq(cell["row_index"], n + 2, f"D: cell {n},{c} row")
                 assert_eq(cell["column_index"], c + 1, f"D: cell {n},{c} column")
             # And the cells say what is painted in them.
             assert_eq(
-                tree[f"pv.list.cell.{n}_0"]["name"],
+                tree[list_cell_address(cell_at, cell_join, n, 0)]["name"],
                 message["time"],
                 f"D: message {n}'s timestamp cell",
             )
         assert_eq(
-            tree[f"pv.list.row.{len(rows) - 1}"]["row_index"],
-            tree["pv.list"]["row_count"],
+            tree[list_row_address(row_at, len(rows) - 1)]["row_index"],
+            tree[grid_tag]["row_count"],
             "D: ★ the last message is the row count, so no row is unreachable",
         )
         CHECKS.extend(["every row", "every cell", "cell coordinates", "cell contents"])
@@ -283,7 +298,8 @@ def body() -> None:
         marked = next(n for n, r in enumerate(rows) if r["note"])
         ok(
             "D: ★ an annotated message announces its note with its name",
-            rows[marked]["note"] in tree[f"pv.list.cell.{marked}_5"]["name"],
+            rows[marked]["note"]
+            in tree[list_cell_address(cell_at, cell_join, marked, 5)]["name"],
         )
 
         # ── (E) the tree ───────────────────────────────────────────────────
@@ -339,7 +355,7 @@ def body() -> None:
         banner("G — the announcement follows the screen")
         opening = q(app, "selected_row")
         assert_eq(
-            tree[f"pv.list.row.{opening}"]["selected"],
+            tree[list_row_address(row_at, opening)]["selected"],
             True,
             "G: the open message is the announced selection",
         )
@@ -353,13 +369,13 @@ def body() -> None:
         ok("G: ★ a real arrow key moved the selection", moved != opening)
         tree = nodes_by_tag(app)
         assert_eq(
-            tree[f"pv.list.row.{moved}"]["selected"],
+            tree[list_row_address(row_at, moved)]["selected"],
             True,
             "G: and the announcement moved with it",
         )
         ok(
             "G: ★ the message left behind stopped claiming to be selected",
-            tree[f"pv.list.row.{opening}"].get("selected") is not True,
+            tree[list_row_address(row_at, opening)].get("selected") is not True,
         )
         assert_eq(app.conform()["counts"]["empty"], 0, "G: still well formed")
         CHECKS.extend(["selection announced", "selection follows", "sound after"])

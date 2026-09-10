@@ -64,6 +64,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_gesture_reads_one_fact,
     card_prefix,
+    list_row,
     run_demo,
 )
 
@@ -338,7 +339,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         (
             "hello-packet-view",
             1.2,
-            lambda a, r: "pv.list.row.2",
+            lambda a, r: list_row(a, 2),
             lambda a: str(a.query("/external/selected_row")),
             "screen B: pressing a capture row selects it",
         ),

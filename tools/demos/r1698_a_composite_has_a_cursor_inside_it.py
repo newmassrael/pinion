@@ -43,6 +43,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     filter_seats,
+    list_seats,
     run_demo,
     screen_spec,
     shell_palette_root,
@@ -239,7 +240,14 @@ def capture(app: RpcSubprocess) -> None:
     # ★★★★★ R2109 — the filter bar's seats, by the word the screen declares them
     # under. `app` here is the capture viewer itself, so `EXT` is its own
     # external and the seats come from the screen that paints them.
-    seat = filter_seats(screen_spec(app, EXT))
+    spec = screen_spec(app, EXT)
+    seat = filter_seats(spec)
+    # ★★★★★ R2111 — and the message grid's, the same way. The ring this demo
+    # asserts BY NAME is the one place those names are written down, so taking
+    # them from the screen is what makes the assertion about the screen rather
+    # than about two copies of a string.
+    grid = spec["list_addresses"]["tag"]
+    grid_seat = list_seats(spec)
     walked = stops(app)
     # R1708 — asserted BY NAME rather than by count. This line was a
     # hand-written `== 6`, and when R1707 gave the filter bar a real query field
@@ -264,14 +272,14 @@ def capture(app: RpcSubprocess) -> None:
         [
             seat["query"],
             seat["saved"],
-            "pv.list",
-            "pv.list.header",
+            grid,
+            grid_seat["header"],
             "pv.tree",
             "pv.bytes",
         ],
         "E: the capture viewer's Tab ring, by name",
     )
-    panes = [s for s in walked if s in ("pv.list", "pv.tree", "pv.bytes")]
+    panes = [s for s in walked if s in (grid, "pv.tree", "pv.bytes")]
     assert_eq(len(panes), 3, "E: three panes own a cursor")
 
     # ★ R2063 — the heading row is checked here too, and separately, because its
@@ -284,7 +292,7 @@ def capture(app: RpcSubprocess) -> None:
     # asserted by name — but repeating the name to drive it would be three
     # unchecked copies of one address instead of one, which is what the painted
     # address ratchet counts. A typo here now fails on the assertion above.
-    head = walked[walked.index("pv.list") + 1]
+    head = walked[walked.index(grid) + 1]
     app.request("focus/set", {"tag": head})
     # ⚠ `tick_ms`, not `tick` — the sites around this one read `tick(16)` and
     # mean one frame, which is sixteen SECONDS. Copying the local style is how
