@@ -16714,6 +16714,274 @@ fn r2121_a_caption_the_mounted_sessions_section_paints_is_counted_as_its_box() {
     });
 }
 
+/// Which declared reader of the topology section recovers `tag`, or `None`.
+///
+/// ★★ CLASSIFIED, NOT PREFIXED. Four of that screen's stems carry two
+/// vocabularies each — `tv.node.` names a node AND its selection ring,
+/// `tv.toggle.` a switch AND its knob, `tv.inspector.` a part AND that part's
+/// child AND that part's entries, `tv.link.` nothing but a label — so a reader
+/// that stopped at the prefix would file a ring under nodes and a child under
+/// parts, in both directions and silently. Each mark is put to the screen's own
+/// declared inverses, which refuse what is not theirs.
+///
+/// ⚠ A caption is recovered as ITS BOX by the framework's name for the suffix.
+/// `pinion_widget_paint::caption` writes `.caption` onto the tag its caller
+/// hands over — the screen never composes it — and publishes `CAPTION_SUFFIX`
+/// so a census can exclude it by that name rather than by a literal each reader
+/// spells again.
+fn topology_reader_of(tag: &str) -> Option<&'static str> {
+    use hello_topology_view::address as tv;
+    use pinion_widget_paint::caption::CAPTION_SUFFIX;
+
+    if let Some(box_tag) = tag.strip_suffix(CAPTION_SUFFIX) {
+        return topology_reader_of(box_tag);
+    }
+    // ⚠ The lone marks first: a pane's own tag is deliberately NOT one of its
+    // parts, so no inverse claims it and it would read as an orphan without
+    // this arm. The highlight field is lone for a different reason — it is
+    // drawn inside a rail group and addressed outside it, which is a fact
+    // about the paint the declaration states rather than smooths over.
+    if tag == tv::ROOT || tag == tv::FILTERS || tag == tv::GRAPH || tag == tv::INSPECTOR {
+        return Some("pane");
+    }
+    if tag == tv::TIP {
+        return Some("tip");
+    }
+    if tag == tv::HIGHLIGHT {
+        return Some("highlight field");
+    }
+    if tv::filters_part(tag).is_some() {
+        return Some("rail part");
+    }
+    if tv::graph_part(tag).is_some() {
+        return Some("graph part");
+    }
+    if tv::inspector_part(tag).is_some() {
+        return Some("inspector part");
+    }
+    if tv::node_id(tag).is_some() {
+        return Some("node");
+    }
+    if tv::layout_index(tag).is_some() {
+        return Some("layout button");
+    }
+    if tv::toggle_key(tag).is_some() {
+        return Some("switch");
+    }
+    if tv::chip_index(tag).is_some() {
+        return Some("chip");
+    }
+    if tv::link_label_index(tag).is_some() {
+        return Some("link label");
+    }
+    if tv::entry_of(tag).is_some() {
+        return Some("entry of a part");
+    }
+    // A mark's own child hangs off that mark's address, so it is recovered by
+    // walking back to the mark that owns it rather than by a family of its own
+    // — and the owner has to be recovered too, or `tv.nothing.box` would pass.
+    tv::child_of(tag)
+        .and_then(|(owner, _)| topology_reader_of(owner))
+        .map(|_| "inside a mark")
+}
+
+/// The mounted topology section, opened, plus the frame a pointer resting on
+/// one of its nodes produces.
+///
+/// 🟥🟥🟥 ★★★★★ THE SECOND FRAME IS NOT A CONVENIENCE. The resting description
+/// is a family only a GESTURE reveals — the tip is painted while a pointer
+/// rests on a described mark and at no other time — so a census over the
+/// opening frame alone finds that reader empty and, with a floor on it, red.
+/// R2116 met this on the node lab's reset seats and answered it with a
+/// whole-state sweep; the answer here, as on the sessions section, is to
+/// perform the one gesture that reveals it through the HOST's own router —
+/// which also proves the shell delivers a hover to the mounted section.
+fn topology_frames() -> (Painted, Painted) {
+    use hello_topology_view::address as tv;
+
+    let state = use_shell_state_off_disk();
+    state
+        .go("topology")
+        .unwrap_or_else(|why| panic!("the topology section is open and refused: {why:?}"));
+    let (shot, _) = painted_at((WIN_W, WIN_H));
+    // ★ The node is found IN THE PAINT and identified by the screen's own
+    // inverse, rather than composed from an identifier this file would then be
+    // spelling. A gate that composed the address it went looking for would be
+    // checking that the page paints what the gate asked for.
+    let node_tag = shot
+        .family(tv::NODE_SEAT)
+        .into_iter()
+        .find(|t| tv::node_id(t).is_some())
+        .expect("the mounted section paints at least one observed node")
+        .to_owned();
+    let node = shot.rect(&node_tag).expect("it was just found by its tag");
+    let mut hand = hand_on(painted_at(shot.size).1);
+    hand.cursor((node.x + node.w / 2, node.y + node.h / 2));
+    assert!(
+        hand.hovering().is_some(),
+        "a rest on the mounted node resolves to no surface, so the host would \
+         deliver it nowhere"
+    );
+    let resting = painted_at(shot.size).0;
+    (shot, resting)
+}
+
+/// ★★★★★ R2122 — **every mark the ASSEMBLED topology section paints is at an
+/// address one of its declared readers recovers.**
+///
+/// # Why this is not the crate's own gate
+///
+/// `hello-topology-view` holds itself to *nobody but the declaration spells the
+/// stem*, which is a claim about its SOURCE. This is the claim about the PAGE:
+/// the shell mounts the section inside a board, behind its own rail and app
+/// bar, and *the composition is declared* and *what this assembly paints is
+/// what the declaration composes* are two facts. Only the second is about the
+/// tool a person opens.
+///
+/// # ⚠ Floors per reader, not one over the union
+///
+/// Thirteen readers, thirteen floors. ORed together, twelve readers describing
+/// nothing would leave the orphan count at zero and the gate would read as
+/// green while asserting almost nothing — R2108's denominator lesson, and
+/// R2113's split.
+#[test]
+fn r2122_every_mark_the_mounted_topology_section_paints_has_a_declared_reader() {
+    use hello_topology_view::address as tv;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let (shot, resting) = topology_frames();
+        let mut by_reader: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
+        let mut orphans: Vec<&str> = Vec::new();
+        for frame in [&shot, &resting] {
+            for tag in frame.family(tv::NAMESPACE) {
+                if let Some(reader) = topology_reader_of(tag) {
+                    *by_reader.entry(reader).or_default() += 1;
+                } else {
+                    orphans.push(tag);
+                }
+            }
+        }
+
+        assert!(
+            orphans.is_empty(),
+            "★★★★★ the mounted topology section paints {} mark(s) in its own \
+             namespace that no declared reader recovers: {orphans:?}. Either \
+             the screen grew a region nothing declares — the hole every \
+             per-family gate in this campaign was blind to — or a declaration \
+             drifted from what the painter composes.",
+            orphans.len()
+        );
+        for reader in [
+            "chip",
+            "entry of a part",
+            "graph part",
+            "highlight field",
+            "inside a mark",
+            "inspector part",
+            "layout button",
+            "link label",
+            "node",
+            "pane",
+            "rail part",
+            "switch",
+            "tip",
+        ] {
+            assert!(
+                by_reader.get(reader).copied().unwrap_or(0) > 0,
+                "★★ no painted mark was claimed by the `{reader}` reader — \
+                 with the claims ORed, a reader describing nothing makes the \
+                 zero orphans above mean less than it reads. Counted: \
+                 {by_reader:?}"
+            );
+        }
+        // ★★★ And the ambiguous stems are told apart ON THIS PAGE, not only in
+        // the crate's own fixtures: the assembly paints one selection ring per
+        // frame and a knob per switch, so the marks INSIDE other marks
+        // outnumber the panes — a `node` or `switch` inverse swallowing its
+        // child would show up here as that number collapsing.
+        let inside = by_reader.get("inside a mark").copied().unwrap_or(0);
+        let panes = by_reader.get("pane").copied().unwrap_or(0);
+        assert!(
+            inside > panes,
+            "★★★ the page paints {panes} pane(s) and {inside} mark(s) inside \
+             another mark; every switch has a knob, every tile a box and the \
+             picked node a ring, so a count at or below the pane count means \
+             an owner's inverse is swallowing what is inside it"
+        );
+        println!(
+            "[r2122] the mounted topology section paints {} mark(s) under `{}`, \
+             all recovered: {by_reader:?}",
+            by_reader.values().sum::<usize>(),
+            tv::NAMESPACE
+        );
+    });
+}
+
+/// 🟥🟥🟥 ★★★★★ R2122 — **a caption the ASSEMBLED page paints is counted as its
+/// own box, and its box is painted.**
+///
+/// The other half of the gate above, split off for the seam R2121 measured on
+/// the sessions section: *every mark is recovered* and *a caption is its box's*
+/// fail for different reasons and should say which.
+///
+/// # Why it is not a clause of the census
+///
+/// Measured there — a counterfactual filing every caption under a reader that
+/// is not its box's left the whole shell suite green. The orphan count stays
+/// zero because a misfiled caption is still recovered, and every floor stays
+/// non-empty because each reader has non-caption marks of its own. What it
+/// costs is a census that reports one family short and another long — in both
+/// directions, silently.
+///
+/// ⚠ It compares two OUTCOMES of the classifier rather than trusting one, so
+/// this is not the classifier asserting about itself: the caption and the box
+/// are put to it separately and the answers must agree.
+#[test]
+fn r2122_a_caption_the_mounted_topology_section_paints_is_counted_as_its_box() {
+    use hello_topology_view::address as tv;
+    use pinion_widget_paint::caption::CAPTION_SUFFIX;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let (shot, resting) = topology_frames();
+        let mut captions = 0;
+        for frame in [&shot, &resting] {
+            for tag in frame.family(tv::NAMESPACE) {
+                let Some(box_tag) = tag.strip_suffix(CAPTION_SUFFIX) else {
+                    continue;
+                };
+                assert!(
+                    frame.rect(box_tag).is_some(),
+                    "★★★★★ `{tag}` is a caption and the box it belongs to \
+                     (`{box_tag}`) is not painted — a caption without its box \
+                     is a run bound to nothing"
+                );
+                assert_eq!(
+                    topology_reader_of(tag),
+                    topology_reader_of(box_tag),
+                    "★★★★★ `{tag}` is counted under a different reader from \
+                     the box it is part of. A caption is part of its box, not \
+                     a member of the box's family, and a census that files it \
+                     elsewhere reports the box's family one short and some \
+                     other family one long — in both directions, silently"
+                );
+                captions += 1;
+            }
+        }
+        assert!(
+            captions >= 30,
+            "{captions} caption(s) were checked, and this page draws one on \
+             every node, every chip, every layout button, every measurement \
+             tile and every key row — a number this low means the framework \
+             stopped composing the suffix and the assertions above proved \
+             nothing"
+        );
+        println!("[r2122] {captions} caption(s) counted as their own boxes");
+    });
+}
+
 /// ★★★★★ R2120 — **every settings row the ASSEMBLED lab paints is keyed at a
 /// path the target's own option surface declares, and exactly one of them has
 /// a ceiling.**

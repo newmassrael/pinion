@@ -1,7 +1,7 @@
 //! ★★★★★ R1947 — what this section claims about itself, asserted rather than
 //! written down.
 
-use super::{Hit, spec, use_view_state};
+use super::{Hit, address, spec, use_view_state};
 
 /// The state, reset — the module-level cache is shared across tests in one
 /// thread, so a test that changed the selection would otherwise decide what the
@@ -149,7 +149,7 @@ fn r1947_a_hit_resolves_the_same_from_a_point_and_from_a_tag() {
     for node in spec::NODES {
         let rect = super::node_rect(node, state.layout(), state.zoom.get());
         let by_point = Hit::at(&state, rect.x + rect.w / 2, rect.y + rect.h / 2);
-        let by_tag = Hit::of_tag(&format!("tv.node.{}", node.id));
+        let by_tag = Hit::of_tag(&address::node(node.id));
         assert_eq!(
             by_point, by_tag,
             "{} resolves differently by point and by tag",
@@ -349,4 +349,300 @@ fn r1947_the_specified_parts_are_the_parts_this_build_tables() {
             );
         }
     }
+}
+
+/// Every module of this crate, for the address gate to read.
+fn crate_sources() -> [(&'static str, &'static str); 6] {
+    [
+        ("address.rs", include_str!("address.rs")),
+        ("lib.rs", include_str!("lib.rs")),
+        ("spec.rs", include_str!("spec.rs")),
+        ("judge.rs", include_str!("judge.rs")),
+        ("painted.rs", include_str!("painted.rs")),
+        ("tests.rs", include_str!("tests.rs")),
+    ]
+}
+
+/// ★★★★★ R2122 — **every module this crate declares is one the address gate
+/// reads.**
+///
+/// Derived from `lib.rs`'s own `mod` lines rather than compared with a second
+/// list. Without it the roster above is hand-written, and a module added
+/// tomorrow could spell a hundred addresses while the namespace gate reported
+/// zero — the shape R2053 measured on the node lab, where the gate's own
+/// population was six modules of eleven and the one nobody had looked at had
+/// been composing addresses all along.
+#[test]
+fn r2122_every_module_is_read() {
+    const LIB: &str = include_str!("lib.rs");
+    let mut declared: Vec<String> = LIB
+        .lines()
+        .filter_map(|line| {
+            let name = line
+                .trim()
+                .strip_prefix("pub mod ")
+                .or_else(|| line.trim().strip_prefix("mod "))?
+                .strip_suffix(';')?;
+            (!name.contains(' ')).then(|| format!("{name}.rs"))
+        })
+        .collect();
+    declared.push("lib.rs".to_owned());
+    declared.sort_unstable();
+    declared.dedup();
+    let mut read: Vec<String> = crate_sources()
+        .iter()
+        .map(|(name, _)| (*name).to_owned())
+        .collect();
+    read.sort_unstable();
+    assert_eq!(
+        declared, read,
+        "★★★★★ the address gate reads {read:?} and this crate declares \
+         {declared:?} — a module outside that roster can spell any address it \
+         likes and the namespace gate below will report zero"
+    );
+}
+
+/// ★★★★★ R2122 — **nobody but the declaration spells this screen's
+/// namespace.**
+///
+/// The end state of the paint-address campaign for this section, and an
+/// assertion of ZERO rather than a ratchet because zero is where this crate
+/// actually stands: measured at entry, **ninety-four literals** over
+/// ninety-four lines, every one of them inside these six files — the shell
+/// spells none and the walks spell none, which is what let one round reach the
+/// end state the capture viewer needed seven instalments for.
+///
+/// ⚠ The census charges eighty-three of those ninety-four; see `address.rs`'s
+/// header for why the two numbers are both right. THIS gate counts literals,
+/// not charged sites, because what it refuses is a second SPELLING — and the
+/// bare stem, quoted with no separator after it, is one even though no census
+/// would bill it.
+///
+/// ⚠⚠ And that sentence cannot NAME the thing it is about, which is this gate
+/// working rather than a limitation: the needle is plain text over the whole
+/// file, comments included, so a doc comment quoting the stem is a speller. The
+/// first draft of the paragraph above did exactly that and this gate refused
+/// it, `[("tests.rs", 1)]`.
+///
+/// ⚠ The needle is the BARE stem rather than the namespace, so a module
+/// spelling the stem with no separator — `paint_stems` wanted exactly that
+/// until this round — is caught too. The namespace on its own would have let
+/// that one literal stand.
+///
+/// ⚠⚠ The vacuity guard comes FIRST. A needle that matched nothing would clear
+/// every module below and read exactly like success, which is the failure this
+/// family of gates is most exposed to: the emptiness IS the claim, so an empty
+/// needle proves it by accident.
+#[test]
+fn r2122_no_module_but_the_declaration_spells_this_screens_namespace() {
+    let anchor = format!("\"{}", address::STEM);
+    let sources = crate_sources();
+    let declaration = sources
+        .iter()
+        .find(|(name, _)| *name == "address.rs")
+        .expect("the declaring module is in the roster");
+    let declared = declaration.1.matches(anchor.as_str()).count();
+    assert!(
+        declared >= 15,
+        "★ `address.rs` spells the stem {declared} time(s), which is not what a \
+         module declaring three panes, a root, a tip, a highlight field and \
+         five keyed families looks like — the anchor is wrong and the emptiness \
+         below means nothing"
+    );
+    let mut spellers: Vec<(&str, usize)> = Vec::new();
+    for (name, body) in &sources {
+        if *name == "address.rs" {
+            continue;
+        }
+        let count = body.matches(anchor.as_str()).count();
+        if count > 0 {
+            spellers.push((name, count));
+        }
+    }
+    assert!(
+        spellers.is_empty(),
+        "★★★★★ every painted address of this screen begins `{}` and is \
+         declared in `address.rs`; these (file, times) spell one themselves: \
+         {spellers:?}. A literal here is a second copy of a composition the \
+         declaration already publishes, and one wrong letter in it paints a \
+         mark no reader can find.",
+        address::NAMESPACE
+    );
+}
+
+/// ★★★★★ R2122 — **the declaration agrees with itself and with the
+/// specification, and its inverses are disjoint.**
+///
+/// The second half of the gate above, and its own test rather than a clause of
+/// it: *nobody re-spells the address* and *the composition is right* are two
+/// claims, and the first is satisfied by a declaration that composes nonsense.
+#[test]
+fn r2122_every_topology_address_is_derived() {
+    // The two spellings of the stem agree, so a reader matching on the bare
+    // form cannot drift from one composing on the separator form.
+    assert_eq!(address::NAMESPACE, format!("{}.", address::STEM));
+    // The two forms of each pane's prefix agree, for the same reason.
+    assert_eq!(address::FILTERS_SEAT, format!("{}.", address::FILTERS));
+    assert_eq!(address::GRAPH_SEAT, format!("{}.", address::GRAPH));
+    assert_eq!(address::INSPECTOR_SEAT, format!("{}.", address::INSPECTOR));
+    // ★ The four parts a caller needs as a `&'static str` ARE the derivation.
+    assert_eq!(address::CANVAS, address::graph("canvas"));
+    assert_eq!(address::FIT, address::graph("fit"));
+    assert_eq!(address::ZOOM_IN, address::graph("zoom_in"));
+    assert_eq!(address::ZOOM_OUT, address::graph("zoom_out"));
+    // ★★ Every part the SPECIFICATION names round-trips through its own pane's
+    // inverse and is refused by the other two — and the pane is most of the
+    // answer, because all three tables name a part `title`.
+    let mut checked = 0;
+    for (pane, table) in [
+        (0_usize, spec::FILTERS),
+        (1, spec::GRAPH),
+        (2, spec::INSPECTOR),
+    ] {
+        for part in table {
+            let tag = match pane {
+                0 => address::filters(part.key),
+                1 => address::graph(part.key),
+                _ => address::inspector(part.key),
+            };
+            let recovered = [
+                address::filters_part(&tag),
+                address::graph_part(&tag),
+                address::inspector_part(&tag),
+            ];
+            assert_eq!(
+                recovered
+                    .iter()
+                    .filter(|answer| **answer == Some(part.key))
+                    .count(),
+                1,
+                "★ `{tag}` is claimed by {recovered:?} — exactly one pane's \
+                 inverse may answer for a part, or a reader looking a key up \
+                 finds the wrong pane's row"
+            );
+            assert_eq!(recovered[pane], Some(part.key));
+            checked += 1;
+        }
+    }
+    assert!(
+        checked >= 25,
+        "{checked} part(s) were round-tripped, and a specification whose \
+         tables had emptied would pass every assertion above by describing \
+         nothing"
+    );
+    // ★★★ A pane's own tag is not one of its parts — container and content,
+    // and a prefix that swallowed the separator would resolve a reader asking
+    // about the PANE to whichever part sorted first.
+    assert_eq!(address::filters_part(address::FILTERS), None);
+    assert_eq!(address::graph_part(address::GRAPH), None);
+    assert_eq!(address::inspector_part(address::INSPECTOR), None);
+    // ★★★★ Everything this module composes is IN the namespace, and the
+    // membership test says so. Without this the gate above could be satisfied
+    // by a declaration that stopped composing `tv.` at all.
+    for (_, tag) in address::parts() {
+        assert!(
+            address::ours(&tag),
+            "`{tag}` is not in this screen's namespace"
+        );
+    }
+    for lone in [
+        address::ROOT,
+        address::FILTERS,
+        address::GRAPH,
+        address::INSPECTOR,
+        address::TIP,
+        address::HIGHLIGHT,
+        address::CANVAS,
+        address::FIT,
+        address::ZOOM_IN,
+        address::ZOOM_OUT,
+    ] {
+        assert!(
+            address::ours(lone),
+            "`{lone}` is not in this screen's namespace"
+        );
+    }
+}
+
+/// ★★★★★ R2122 — **what is INSIDE a mark is not that mark, in every family
+/// whose stem carries two vocabularies.**
+///
+/// Split from the gate above at the line budget's insistence, and a better seam
+/// than it looks — the same seam R2121 was pushed into: *the panes compose
+/// their parts correctly* and *a ring is not a node* fail for different reasons
+/// and should say which. This half fails in the direction that reads as sense:
+/// a reader handed `badge.box` as a part key looks it up in the specification
+/// and finds nothing, quietly.
+#[test]
+fn r2122_what_is_inside_a_mark_is_not_that_mark() {
+    let badge = address::inspector("badge");
+    let badge_box = address::child(&badge, "box");
+    assert_eq!(address::inspector_part(&badge_box), None);
+    assert_eq!(address::child_of(&badge_box), Some((badge.as_str(), "box")));
+    assert_eq!(
+        address::entry_of(&badge_box),
+        None,
+        "★ `{badge_box}` is a part's child and the entry inverse claimed it — \
+         an ordinal and a child word are two different things hanging off one \
+         part, and a reader told `box` is entry 0 files it under the band"
+    );
+    assert_eq!(address::inspector_part(&address::entry("keys", 1)), None);
+    assert_eq!(
+        address::entry_of(&address::entry("keys", 1)),
+        Some(("keys", 1))
+    );
+    assert_eq!(address::entry_of(&badge), None);
+    // ★★★★★ The two keyed families whose members carry a child, which is the
+    // same ambiguity a level down.
+    for node in spec::NODES {
+        let tag = address::node(node.id);
+        assert_eq!(address::node_id(&tag), Some(node.id));
+        let ring = address::child(&tag, "ring");
+        assert_eq!(
+            address::node_id(&ring),
+            None,
+            "★ `{ring}` is a ring and the node inverse claimed it — a press on \
+             it would then pick whatever that spelling happened to parse as"
+        );
+        assert_eq!(address::child_of(&ring), Some((tag.as_str(), "ring")));
+    }
+    for toggle in spec::TOGGLES {
+        let tag = address::toggle(toggle.key);
+        assert_eq!(address::toggle_key(&tag), Some(toggle.key));
+        let knob = address::child(&tag, "knob");
+        assert_eq!(address::toggle_key(&knob), None);
+        assert_eq!(address::child_of(&knob), Some((tag.as_str(), "knob")));
+    }
+    // ★★★★★★ The ordinal families, and that no other family's inverse answers
+    // for one of them.
+    for n in 0..spec::LAYOUTS.len() {
+        let tag = address::layout(n);
+        assert_eq!(address::layout_index(&tag), Some(n));
+        assert_eq!(address::chip_index(&tag), None);
+        assert_eq!(address::node_id(&tag), None);
+    }
+    for n in 0..spec::HIGHLIGHT_CHIPS.len() {
+        let tag = address::chip(n);
+        assert_eq!(address::chip_index(&tag), Some(n));
+        assert_eq!(address::layout_index(&tag), None);
+    }
+    for n in 0..spec::LINKS.len() {
+        let tag = address::link_label(n);
+        assert_eq!(address::link_label_index(&tag), Some(n));
+        assert_eq!(
+            address::link_label_index(&format!("{}{n}", address::LINK_SEAT)),
+            None,
+            "★ this screen paints no bare link mark, and an inverse that \
+             answered for one would hand a reader an address to go looking for"
+        );
+    }
+    // ★★★★★★★ And a fifth child word cannot be addressed without being
+    // declared, which is what keeps the part inverses able to say where a
+    // mark's address ends.
+    assert!(
+        std::panic::catch_unwind(|| address::child(&badge, "halo")).is_err(),
+        "★ `halo` is not one of this screen's child words and the declaration \
+         composed an address for it anyway — an open suffix here makes every \
+         inverse above unable to tell a mark from what is inside it"
+    );
 }

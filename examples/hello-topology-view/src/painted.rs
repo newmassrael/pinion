@@ -22,8 +22,8 @@ use pinion_core::test_fixtures::screen_ink::{assert_boxes_hold_their_text, asser
 use pinion_core::{Frame, Scene};
 
 use super::{
-    CANVAS_TAG, FILTER_TAG, GRAPH_TAG, INSPECTOR_TAG, VIEW_TAG, ViewState, WIN_H, WIN_W, spec,
-    use_view_state,
+    CANVAS_TAG, FILTER_TAG, GRAPH_TAG, INSPECTOR_TAG, VIEW_TAG, ViewState, WIN_H, WIN_W, address,
+    spec, use_view_state,
 };
 
 /// How many runs on this screen sit in a box too short for their own face.
@@ -229,7 +229,7 @@ fn r1947_every_declared_node_is_painted_inside_the_plot() {
         let plot =
             rect_of(scene, CANVAS_TAG).unwrap_or_else(|| panic!("{case}: the plot is not painted"));
         for node in spec::NODES {
-            let tag = format!("tv.node.{}", node.id);
+            let tag = address::node(node.id);
             let at = rect_of(scene, &tag)
                 .unwrap_or_else(|| panic!("{case}: {} is declared and not painted", node.id));
             assert!(
@@ -262,7 +262,7 @@ fn r1947_no_two_nodes_are_painted_over_each_other() {
     sweep(|_, scene, _, case| {
         let mut drawn: Vec<(&str, Rect)> = Vec::new();
         for node in spec::NODES {
-            if let Some(at) = rect_of(scene, &format!("tv.node.{}", node.id)) {
+            if let Some(at) = rect_of(scene, &address::node(node.id)) {
                 drawn.push((node.id, at));
             }
         }
@@ -289,9 +289,9 @@ fn r1947_no_two_nodes_are_painted_over_each_other() {
 fn r1947_the_selection_ring_and_the_inspector_agree_on_one_node() {
     sweep(|state, scene, _, case| {
         let picked = state.picked();
-        let ring = rect_of(scene, &format!("tv.node.{}.ring", picked.id))
+        let ring = rect_of(scene, &address::child(&address::node(picked.id), "ring"))
             .unwrap_or_else(|| panic!("{case}: the picked node has no ring"));
-        let body = rect_of(scene, &format!("tv.node.{}", picked.id))
+        let body = rect_of(scene, &address::node(picked.id))
             .unwrap_or_else(|| panic!("{case}: the picked node is not painted"));
         assert!(
             ring.x <= body.x
@@ -303,11 +303,11 @@ fn r1947_the_selection_ring_and_the_inspector_agree_on_one_node() {
         // And exactly one node wears one.
         let rings = spec::NODES
             .iter()
-            .filter(|n| rect_of(scene, &format!("tv.node.{}.ring", n.id)).is_some())
+            .filter(|n| rect_of(scene, &address::child(&address::node(n.id), "ring")).is_some())
             .count();
         assert_eq!(rings, 1, "{case}: {rings} nodes are drawn as picked");
         // The inspector's headline is that node, read off the paint.
-        let id = rect_of(scene, "tv.inspector.id");
+        let id = rect_of(scene, &address::inspector("id"));
         assert!(
             id.is_some(),
             "{case}: the inspector draws no identifier for {}",
@@ -335,7 +335,7 @@ fn r1947_hiding_a_link_class_removes_its_labels_from_the_frame() {
                 .iter()
                 .enumerate()
                 .filter(|(n, link)| {
-                    link.label.is_some() && rect_of(scene, &format!("tv.link.{n}.label")).is_some()
+                    link.label.is_some() && rect_of(scene, &address::link_label(*n)).is_some()
                 })
                 .count()
         };
@@ -378,4 +378,56 @@ fn r1947_every_run_is_contained_and_no_box_is_too_short_for_its_face() {
         assert_contained_ink(case, scene, size);
         assert_boxes_hold_their_text(case, scene, SHORT_BOX_BUDGET);
     });
+}
+
+// ── 7. Every announced address is one the paint carries ─────────────────────
+
+/// 🟥🟥🟥 ★★★★★ R2122 — **every accessibility node this section publishes in
+/// its own namespace names a mark the PAINT actually carries.**
+///
+/// # Why a section that composes in one place still needs this
+///
+/// R2121 measured the class on the sessions section: a counterfactual that
+/// moved one pane's accessibility nodes onto the OTHER pane's prefix left the
+/// whole crate green, because both panes name a part `title` and the spelling
+/// that came out still looked like an address of that screen. Here three panes
+/// name a part `title`, so the same mistake has one more way to be made and
+/// exactly as few ways to be caught: the paint gates never looked at the
+/// roster, and the roster never looked at the paint.
+///
+/// What it costs is not a colour — an accessibility node is what a screen
+/// reader is handed, and one naming an address nothing paints points a reader
+/// at nothing.
+///
+/// ⚠ The nodes are filtered to THIS SCREEN's namespace before the comparison,
+/// because a section publishes nodes for marks the framework paints as well,
+/// and those are not this screen's to compose or to answer for.
+#[test]
+fn r2122_every_announced_address_is_painted() {
+    let mut checked = 0_u32;
+    sweep(|state, scene, _, case| {
+        let announced: Vec<String> = super::access_nodes(state, None)
+            .into_iter()
+            .map(|node| node.tag)
+            .filter(|tag| address::ours(tag))
+            .collect();
+        assert!(
+            announced.len() >= 30,
+            "{case}: the section announced {} node(s) in its own namespace, and \
+             a roster that had emptied would satisfy every assertion below by \
+             describing nothing",
+            announced.len()
+        );
+        for tag in &announced {
+            assert!(
+                rect_of(scene, tag).is_some(),
+                "{case}: the accessibility tree announces `{tag}` and the frame \
+                 paints no such mark — a reader following that node arrives \
+                 nowhere, and no gate on either side of it was looking"
+            );
+            checked += 1;
+        }
+    });
+    assert!(checked > 0, "the sweep ran no case at all");
+    println!("[r2122] {checked} announced address(es) held against the paint");
 }

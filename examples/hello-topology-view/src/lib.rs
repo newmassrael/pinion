@@ -53,6 +53,14 @@
 //!   population is one list, the inspector needs no second path, and a capture
 //!   that observed two routers would draw both.
 
+pub mod address;
+
+/// The shape of a part in any of the three panes' rosters.
+///
+/// Re-exported because [`address::parts`] hands one to every caller: a public
+/// signature has to name a type its callers can name, and `spec` is this
+/// crate's own business.
+pub use spec::PartSpec;
 mod judge;
 mod spec;
 
@@ -94,21 +102,21 @@ vello_renderer_impl!(HelloTopologyViewRenderer, HelloTopologyViewRendererError);
 const VIEW_TAG: &str = "topology_view";
 
 /// The root group every mark of this screen hangs under.
-const ROOT_TAG: &str = "tv.root";
+const ROOT_TAG: &str = address::ROOT;
 
 /// The theme this screen reads its palette from.
 const THEME_TAG: &str = "app";
 
 /// The filter rail's own group.
-const FILTER_TAG: &str = "tv.filters";
+const FILTER_TAG: &str = address::FILTERS;
 /// The graph column's own group.
-const GRAPH_TAG: &str = "tv.graph";
+const GRAPH_TAG: &str = address::GRAPH;
 /// The inspector's own group.
-const INSPECTOR_TAG: &str = "tv.inspector";
+const INSPECTOR_TAG: &str = address::INSPECTOR;
 /// The plot, which is the graph column's pressable body.
-const CANVAS_TAG: &str = "tv.graph.canvas";
+const CANVAS_TAG: &str = address::CANVAS;
 /// Where a resting description is painted and announced.
-const TOOLTIP_TAG: &str = "tv.tip";
+const TOOLTIP_TAG: &str = address::TIP;
 
 // ── Geometry ────────────────────────────────────────────────────────────────
 
@@ -717,37 +725,35 @@ impl Hit {
     /// What is under a paint tag — the same answer by another address, which is
     /// what lets a press by tag and a press by point be one behaviour.
     fn of_tag(tag: &str) -> Self {
-        if let Some(id) = tag.strip_prefix("tv.node.")
+        if let Some(id) = address::node_id(tag)
             && let Some(n) = spec::NODES.iter().position(|node| node.id == id)
         {
             return Self::Node(n);
         }
-        if let Some(rest) = tag.strip_prefix("tv.layout.")
-            && let Ok(n) = rest.parse::<usize>()
+        if let Some(n) = address::layout_index(tag)
             && n < spec::LAYOUTS.len()
         {
             return Self::Layout(n);
         }
-        if let Some(key) = tag.strip_prefix("tv.toggle.")
+        if let Some(key) = address::toggle_key(tag)
             && let Some(n) = spec::TOGGLES.iter().position(|t| t.key == key)
         {
             return Self::Toggle(n);
         }
-        if let Some(rest) = tag.strip_prefix("tv.chip.")
-            && let Ok(n) = rest.parse::<usize>()
+        if let Some(n) = address::chip_index(tag)
             && n < spec::HIGHLIGHT_CHIPS.len()
         {
             return Self::Chip(n);
         }
-        if let Some(key) = tag.strip_prefix("tv.inspector.")
+        if let Some(key) = address::inspector_part(tag)
             && let Some(n) = spec::ACTIONS.iter().position(|a| a.key == key)
         {
             return Self::Action(n);
         }
         match tag {
-            "tv.graph.fit" => Self::Fit,
-            "tv.graph.zoom_in" => Self::Zoom(true),
-            "tv.graph.zoom_out" => Self::Zoom(false),
+            address::FIT => Self::Fit,
+            address::ZOOM_IN => Self::Zoom(true),
+            address::ZOOM_OUT => Self::Zoom(false),
             _ => Self::Nothing,
         }
     }
@@ -1135,7 +1141,7 @@ fn filter_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     let rail = filter_rect();
     let mut children = vec![
         part_box(
-            "tv.filters.title",
+            &address::filters("title"),
             seat(rail.x + PAD, 18, rail.w.saturating_sub(PAD * 2), FONT_TITLE),
             vec![label(
                 "Filters and layers",
@@ -1145,7 +1151,7 @@ fn filter_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
             )],
         ),
         part_box(
-            "tv.filters.observed",
+            &address::filters("observed"),
             seat(rail.x + PAD, 42, rail.w.saturating_sub(PAD * 2), FONT_SMALL),
             vec![label(
                 observed_sentence(),
@@ -1156,28 +1162,28 @@ fn filter_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
         ),
     ];
     children.push(group(
-        "tv.filters.layout",
+        &address::filters("layout"),
         0,
         "LAYOUT",
         ink,
         layout_group(state, ink),
     ));
     children.push(group(
-        "tv.filters.links",
+        &address::filters("links"),
         1,
         "SHOW LINKS",
         ink,
         links_group(state, ink),
     ));
     children.push(group(
-        "tv.filters.highlight",
+        &address::filters("highlight"),
         2,
         "HIGHLIGHT KEY PATTERN",
         ink,
         highlight_group(ink),
     ));
     children.push(group(
-        "tv.filters.streaming",
+        &address::filters("streaming"),
         3,
         "STREAMING",
         ink,
@@ -1217,7 +1223,7 @@ fn layout_group(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
         let chosen = state.layout.get() == n;
         let local = Rect::new(rect.x - head.x, rect.y - head.y, rect.w, rect.h);
         out.push(captioned_box(
-            &format!("tv.layout.{n}"),
+            &address::layout(n),
             local,
             if chosen { ink.accent } else { ink.raised },
             Some(ink.edge),
@@ -1281,7 +1287,7 @@ fn toggle_row_scene(
             ink.text,
         ),
         box_at(
-            &format!("tv.toggle.{}", toggle.key),
+            &address::toggle(toggle.key),
             track,
             if on { ink.accent } else { ink.raised },
             Some(ink.edge),
@@ -1290,7 +1296,7 @@ fn toggle_row_scene(
             None,
         ),
         box_at(
-            &format!("tv.toggle.{}.knob", toggle.key),
+            &address::child(&address::toggle(toggle.key), "knob"),
             Rect::new(
                 if on { track.x + 20 } else { track.x + 2 },
                 track.y + 2,
@@ -1300,7 +1306,7 @@ fn toggle_row_scene(
             ink.surface,
             None,
             8,
-            Some(Silence::part_of(format!("tv.toggle.{}", toggle.key))),
+            Some(Silence::part_of(address::toggle(toggle.key))),
         ),
     ]
 }
@@ -1310,20 +1316,20 @@ fn highlight_group(ink: Ink) -> Vec<Scene> {
     let row = group_row_rect(2, 0);
     let local = Rect::new(row.x - head.x, row.y - head.y, row.w, row.h);
     let mut out = vec![captioned_box(
-        "tv.highlight",
+        address::HIGHLIGHT,
         local,
         ink.raised,
         Some(ink.border),
         8,
         (spec::HIGHLIGHT, FONT_BODY, ink.dim),
-        Some(Silence::part_of("tv.filters.highlight")),
+        Some(Silence::part_of(address::filters("highlight"))),
     )];
     for (n, chip) in spec::HIGHLIGHT_CHIPS.iter().enumerate() {
         let nth = u32::try_from(n).unwrap_or(0);
         let rect = chip_rect(nth);
         let chip_local = Rect::new(rect.x - head.x, rect.y - head.y, rect.w, rect.h);
         out.push(captioned_box(
-            &format!("tv.chip.{n}"),
+            &address::chip(n),
             chip_local,
             ink.raised,
             Some(ink.border),
@@ -1357,7 +1363,7 @@ fn graph_pane(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
         // ★ R1953 — the second of the three stops; see the filter pane.
         panel(GRAPH_TAG, graph_rect(), ink.ground, None, Vec::new()).with_focusable(true),
         part_box(
-            "tv.graph.title",
+            &address::graph("title"),
             band(head.x + 18, 150),
             vec![label(
                 "Network topology",
@@ -1367,7 +1373,7 @@ fn graph_pane(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
             )],
         ),
         part_box(
-            "tv.graph.layout_label",
+            &address::graph("layout_label"),
             band(head.x + 180, 160),
             vec![label(
                 format!("{} layout", state.layout().in_force()),
@@ -1383,7 +1389,7 @@ fn graph_pane(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
     // cannot read at all.
     let live = live_rect();
     out.push(part_box(
-        "tv.graph.live",
+        &address::graph("live"),
         band(live.x, live.w),
         vec![label(
             if state.capturing() { "LIVE" } else { "PAUSED" },
@@ -1418,7 +1424,7 @@ fn graph_pane(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
     // section states the rule in its own paint helper — *the face is this
     // node's style rather than a child box* — and this is that rule applied.
     out.push(captioned_box(
-        "tv.graph.fit",
+        address::FIT,
         fit,
         ink.raised,
         Some(ink.edge),
@@ -1430,9 +1436,9 @@ fn graph_pane(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
     for (n, closer) in [(0_u32, true), (1_u32, false)] {
         let rect = zoom_rect(n);
         let tag = if closer {
-            "tv.graph.zoom_in"
+            address::ZOOM_IN
         } else {
-            "tv.graph.zoom_out"
+            address::ZOOM_OUT
         };
         // ★ R1953 — one node per control; see the `Fit` control above.
         out.push(captioned_box(
@@ -1447,7 +1453,7 @@ fn graph_pane(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
     }
     let hint = hint_rect();
     out.push(part_box(
-        "tv.graph.hint",
+        &address::graph("hint"),
         seat(hint.x, hint.y, hint.w, FONT_TINY),
         vec![label(
             "click a node to inspect",
@@ -1492,7 +1498,7 @@ fn canvas(state: &Rc<ViewState>, ink: Ink) -> Scene {
                 i64::midpoint(shift(a).1, shift(b).1),
             );
             children.push(tagged_label(
-                &format!("tv.link.{n}.label"),
+                &address::link_label(n),
                 text,
                 Rect::new(
                     u32::try_from(mid.0.max(0)).unwrap_or(0),
@@ -1520,7 +1526,7 @@ fn canvas(state: &Rc<ViewState>, ink: Ink) -> Scene {
         if node.id == picked.id {
             let ring = node_ring_rect(node, layout, zoom);
             children.push(box_at(
-                &format!("tv.node.{}.ring", node.id),
+                &address::child(&address::node(node.id), "ring"),
                 Rect::new(
                     ring.x.saturating_sub(plot.x),
                     ring.y.saturating_sub(plot.y),
@@ -1539,7 +1545,7 @@ fn canvas(state: &Rc<ViewState>, ink: Ink) -> Scene {
         // it is a second run and stays adjacent, because a box carries one
         // caption and the reference draws two lines here.
         children.push(captioned_box(
-            &format!("tv.node.{}", node.id),
+            &address::node(node.id),
             local,
             ink.raised,
             Some(standing_ink(node.standing, ink)),
@@ -1566,7 +1572,7 @@ fn inspector_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     let node = state.picked();
     let mut children = vec![
         part_box(
-            "tv.inspector.title",
+            &address::inspector("title"),
             seat(PAD, 18, 120, FONT_TITLE),
             vec![label(
                 "Inspector",
@@ -1576,20 +1582,20 @@ fn inspector_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
             )],
         ),
         part_box(
-            "tv.inspector.badge",
+            &address::inspector("badge"),
             Rect::new(pane.w.saturating_sub(PAD + 82), 17, 82, 24),
             vec![captioned_box(
-                "tv.inspector.badge.box",
+                &address::child(&address::inspector("badge"), "box"),
                 Rect::new(0, 0, 82, 24),
                 ink.raised,
                 Some(ink.border),
                 6,
                 (node.id, FONT_SMALL, ink.dim),
-                Some(Silence::part_of("tv.inspector.badge")),
+                Some(Silence::part_of(address::inspector("badge"))),
             )],
         ),
         part_box(
-            "tv.inspector.id",
+            &address::inspector("id"),
             seat(PAD, 66, pane.w.saturating_sub(PAD * 2), FONT_HEADLINE),
             vec![label(
                 node.id,
@@ -1599,10 +1605,10 @@ fn inspector_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
             )],
         ),
         part_box(
-            "tv.inspector.status",
+            &address::inspector("status"),
             Rect::new(PAD, 104, 118, 24),
             vec![captioned_box(
-                "tv.inspector.status.pill",
+                &address::child(&address::inspector("status"), "pill"),
                 Rect::new(0, 0, 118, 24),
                 ink.raised,
                 Some(standing_ink(node.standing, ink)),
@@ -1612,11 +1618,11 @@ fn inspector_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
                     FONT_SMALL,
                     standing_ink(node.standing, ink),
                 ),
-                Some(Silence::part_of("tv.inspector.status")),
+                Some(Silence::part_of(address::inspector("status"))),
             )],
         ),
         part_box(
-            "tv.inspector.role",
+            &address::inspector("role"),
             seat(
                 PAD + 128,
                 107,
@@ -1631,7 +1637,7 @@ fn inspector_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
             )],
         ),
         part_box(
-            "tv.inspector.zid",
+            &address::inspector("zid"),
             seat(PAD, 136, pane.w.saturating_sub(PAD * 2), FONT_SMALL),
             vec![label(
                 format!("session \u{00B7} {}", node.zid),
@@ -1663,14 +1669,14 @@ fn measurement_tiles(node: &spec::NodeSpec, pane: Rect, ink: Ink) -> Vec<Scene> 
         let rect = tile_rect(nth);
         let local = Rect::new(rect.x - pane.x, rect.y, rect.w, rect.h);
         out.push(part_box(
-            &format!("tv.inspector.{key}"),
+            &address::inspector(key),
             local,
             vec![
                 // ★ The VALUE is bound to the tile; the heading above it stays a
                 // separate run, because the tile's box carries one caption and
                 // the reference draws a label over a measurement.
                 captioned_box(
-                    &format!("tv.inspector.{key}.box"),
+                    &address::child(&address::inspector(key), "box"),
                     Rect::new(0, 0, local.w, local.h),
                     ink.raised,
                     Some(ink.border),
@@ -1684,7 +1690,7 @@ fn measurement_tiles(node: &spec::NodeSpec, pane: Rect, ink: Ink) -> Vec<Scene> 
                             ink.text
                         },
                     ),
-                    Some(Silence::part_of(format!("tv.inspector.{key}"))),
+                    Some(Silence::part_of(address::inspector(key))),
                 ),
                 label(
                     heading,
@@ -1708,7 +1714,7 @@ fn action_row(pane: Rect, ink: Ink) -> Vec<Scene> {
         // ★ R1953 — one node per control; see the `Fit` control in the graph
         // header for the two-nodes-under-one-address defect this removes.
         out.push(captioned_box(
-            &format!("tv.inspector.{}", action.key),
+            &address::inspector(action.key),
             local,
             ink.raised,
             Some(ink.border),
@@ -1751,18 +1757,18 @@ fn keys_band(node: &spec::NodeSpec, pane: Rect, ink: Ink) -> Scene {
             let nth = u32::try_from(n).unwrap_or(0);
             let local = Rect::new(PAD, KEYS_ROW_TOP + nth * KEYS_ROW_PITCH, wide, 28);
             children.push(captioned_box(
-                &format!("tv.inspector.keys.{n}"),
+                &address::entry("keys", n),
                 local,
                 ink.raised,
                 Some(ink.border),
                 7,
                 (key, FONT_SMALL, ink.text),
-                Some(Silence::part_of("tv.inspector.keys")),
+                Some(Silence::part_of(address::inspector("keys"))),
             ));
         }
     }
     part_box(
-        "tv.inspector.keys",
+        &address::inspector("keys"),
         Rect::new(1, KEYS_BAND_TOP, pane.w.saturating_sub(2), keys_band_h()),
         children,
     )
@@ -1830,19 +1836,19 @@ fn descriptions() -> Descriptions {
     let mut described = Descriptions::new();
     for toggle in spec::TOGGLES {
         described.describe(
-            format!("tv.toggle.{}", toggle.key),
+            address::toggle(toggle.key),
             format!("Show or hide {}", toggle.title.to_lowercase()),
         );
     }
     for (n, layout) in spec::LAYOUTS.iter().enumerate() {
         described.describe(
-            format!("tv.layout.{n}"),
+            address::layout(n),
             format!("Arrange the plot in the {} layout", layout.in_force()),
         );
     }
     for action in spec::ACTIONS {
         described.describe(
-            format!("tv.inspector.{}", action.key),
+            address::inspector(action.key),
             format!(
                 "{} is not in this release - booked under {}",
                 action.title, action.reserved_for
@@ -1851,13 +1857,13 @@ fn descriptions() -> Descriptions {
     }
     for node in spec::NODES {
         described.describe(
-            format!("tv.node.{}", node.id),
+            address::node(node.id),
             format!("{} - {}, {}", node.id, node.role, node.standing.label()),
         );
     }
-    described.describe("tv.graph.fit", "Return the plot to the zoom it opened at");
-    described.describe("tv.graph.zoom_in", "Draw the plot closer");
-    described.describe("tv.graph.zoom_out", "Draw the plot further away");
+    described.describe(address::FIT, "Return the plot to the zoom it opened at");
+    described.describe(address::ZOOM_IN, "Draw the plot closer");
+    described.describe(address::ZOOM_OUT, "Draw the plot further away");
     described
 }
 
@@ -1893,7 +1899,7 @@ fn view(_state: (), _frame: Frame) -> Scene {
             tip,
             vec![
                 box_at(
-                    "tv.tip.box",
+                    &address::child(address::TIP, "box"),
                     Rect::new(0, 0, tip.w, tip.h),
                     ink.raised,
                     Some(ink.edge),
@@ -1960,22 +1966,18 @@ fn access_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode>
     // would collide — rather than written out, because a list of five keys
     // here would be a fourth statement of which parts are controls and the
     // first one to go stale would go stale silently.
-    let mut parts: Vec<AccessNode> = Vec::new();
-    for (stem, table) in [
-        ("tv.filters", spec::FILTERS),
-        ("tv.graph", spec::GRAPH),
-        ("tv.inspector", spec::INSPECTOR),
-    ] {
-        for part in table {
-            parts.push(
-                AccessNode::new(format!("{stem}.{}", part.key), AriaRole::Group)
-                    .with_name(part.title),
-            );
-        }
-    }
+    //
+    // ⚠⚠ R2122 — the roster is `address::parts()`, which hands over the part's
+    // OWN row beside its address. A loop that paired a bare key with a table
+    // would have to say which table it came from, and all three panes name a
+    // part `title`.
+    let parts: Vec<AccessNode> = address::parts()
+        .into_iter()
+        .map(|(part, tag)| AccessNode::new(tag, AriaRole::Group).with_name(part.title))
+        .collect();
     for (n, layout) in spec::LAYOUTS.iter().enumerate() {
         nodes.push(
-            AccessNode::new(format!("tv.layout.{n}"), AriaRole::RadioButton)
+            AccessNode::new(address::layout(n), AriaRole::RadioButton)
                 .with_name(layout.label())
                 .with_selected(state.layout.get() == n)
                 .with_set_position(n, spec::LAYOUTS.len()),
@@ -1983,7 +1985,7 @@ fn access_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode>
     }
     for (n, toggle) in spec::TOGGLES.iter().enumerate() {
         nodes.push(
-            AccessNode::new(format!("tv.toggle.{}", toggle.key), AriaRole::Switch)
+            AccessNode::new(address::toggle(toggle.key), AriaRole::Switch)
                 .with_name(toggle.title)
                 .with_value(AccessValue::Bool(state.toggle(n))),
         );
@@ -1993,7 +1995,7 @@ fn access_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode>
     // "chip" has been told nothing.
     for (n, chip) in spec::HIGHLIGHT_CHIPS.iter().enumerate() {
         nodes.push(
-            AccessNode::new(format!("tv.chip.{n}"), AriaRole::Button)
+            AccessNode::new(address::chip(n), AriaRole::Button)
                 .with_name(format!("Highlight {chip}"))
                 .with_set_position(n, spec::HIGHLIGHT_CHIPS.len()),
         );
@@ -2001,14 +2003,14 @@ fn access_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode>
     let picked = state.picked();
     for node in spec::NODES {
         nodes.push(
-            AccessNode::new(format!("tv.node.{}", node.id), AriaRole::Button)
+            AccessNode::new(address::node(node.id), AriaRole::Button)
                 .with_name(format!("{} {}", node.id, node.role))
                 .with_selected(node.id == picked.id),
         );
     }
     for action in spec::ACTIONS {
         nodes.push(
-            AccessNode::new(format!("tv.inspector.{}", action.key), AriaRole::Button)
+            AccessNode::new(address::inspector(action.key), AriaRole::Button)
                 .with_name(action.title)
                 .with_state(AccessState {
                     disabled: true,
@@ -2016,9 +2018,9 @@ fn access_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode>
                 }),
         );
     }
-    nodes.push(AccessNode::new("tv.graph.fit", AriaRole::Button).with_name("Fit"));
-    nodes.push(AccessNode::new("tv.graph.zoom_in", AriaRole::Button).with_name("Zoom in"));
-    nodes.push(AccessNode::new("tv.graph.zoom_out", AriaRole::Button).with_name("Zoom out"));
+    nodes.push(AccessNode::new(address::FIT, AriaRole::Button).with_name("Fit"));
+    nodes.push(AccessNode::new(address::ZOOM_IN, AriaRole::Button).with_name("Zoom in"));
+    nodes.push(AccessNode::new(address::ZOOM_OUT, AriaRole::Button).with_name("Zoom out"));
     // ★ R1953 — the table's parts, less every tag something above declared for
     // itself. See the note where `parts` is built.
     let richer: std::collections::BTreeSet<&str> =
@@ -2118,13 +2120,13 @@ impl External for ViewOracle {
 /// Which described mark a point is resting on.
 fn resting_tag(state: &Rc<ViewState>, px: u32, py: u32) -> Option<String> {
     match Hit::at(state, px, py) {
-        Hit::Node(n) => Some(format!("tv.node.{}", spec::NODES[n].id)),
-        Hit::Layout(n) => Some(format!("tv.layout.{n}")),
-        Hit::Toggle(n) => Some(format!("tv.toggle.{}", spec::TOGGLES[n].key)),
-        Hit::Action(n) => Some(format!("tv.inspector.{}", spec::ACTIONS[n].key)),
-        Hit::Fit => Some("tv.graph.fit".to_owned()),
-        Hit::Zoom(true) => Some("tv.graph.zoom_in".to_owned()),
-        Hit::Zoom(false) => Some("tv.graph.zoom_out".to_owned()),
+        Hit::Node(n) => Some(address::node(spec::NODES[n].id)),
+        Hit::Layout(n) => Some(address::layout(n)),
+        Hit::Toggle(n) => Some(address::toggle(spec::TOGGLES[n].key)),
+        Hit::Action(n) => Some(address::inspector(spec::ACTIONS[n].key)),
+        Hit::Fit => Some(address::FIT.to_owned()),
+        Hit::Zoom(true) => Some(address::ZOOM_IN.to_owned()),
+        Hit::Zoom(false) => Some(address::ZOOM_OUT.to_owned()),
         Hit::Chip(_) | Hit::Nothing => None,
     }
 }
@@ -2403,7 +2405,7 @@ impl WidgetCore for TopologyView {
     /// ★★★★★ R1911 — this screen's marks are addressed under `tv.`, not under
     /// its root tag; the root is one marker node.
     fn paint_stems() -> Vec<&'static str> {
-        vec![VIEW_TAG, "tv"]
+        vec![VIEW_TAG, address::STEM]
     }
 
     fn read_state(_scene: &Scene) -> Self::State {}
@@ -2439,7 +2441,7 @@ impl WidgetCore for TopologyView {
         chord: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        let mine = focused.is_none_or(|tag| tag == VIEW_TAG || tag.starts_with("tv."));
+        let mine = focused.is_none_or(|tag| tag == VIEW_TAG || address::ours(tag));
         mine && key_at(&use_view_state(), chord)
     }
 }
@@ -2452,7 +2454,7 @@ impl WidgetA11y for TopologyView {
     fn access_focus_target(_state: &(), focused: Option<&str>) -> Option<AccessFocus> {
         let state = use_view_state();
         (focused == Some(CANVAS_TAG))
-            .then(|| AccessFocus::composite(CANVAS_TAG, format!("tv.node.{}", state.picked().id)))
+            .then(|| AccessFocus::composite(CANVAS_TAG, address::node(state.picked().id)))
     }
 }
 

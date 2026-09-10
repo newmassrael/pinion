@@ -23,14 +23,14 @@
 use pinion_core::conformance::{Built, DocumentReport, parts_titled, titles_from};
 use pinion_core::painted::PaintedRegions;
 
-use crate::{VIEW_TAG, spec};
+use crate::{VIEW_TAG, address, spec};
 
 /// Where the filter rail's parts are addressed.
-const FILTERS: &str = "tv.filters.";
+const FILTERS: &str = address::FILTERS_SEAT;
 /// Where the graph column's parts are addressed.
-const GRAPH: &str = "tv.graph.";
+const GRAPH: &str = address::GRAPH_SEAT;
 /// Where the inspector's parts are addressed.
-const INSPECTOR: &str = "tv.inspector.";
+const INSPECTOR: &str = address::INSPECTOR_SEAT;
 
 /// How much of `docs/analyzer-topology-spec.json` this build is showing.
 ///
