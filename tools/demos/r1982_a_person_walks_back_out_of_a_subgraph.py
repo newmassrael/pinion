@@ -91,6 +91,20 @@ def surface_of(app: RpcSubprocess, seat: str) -> str:
     return row["screen"]["address"]
 
 
+def crumb_addresses(app: RpcSubprocess, surface: str) -> dict:
+    """Where this screen paints its breadcrumb, as the SCREEN publishes it.
+
+    ★★★★★ R2125 — this walk spelled six of these. It drives the SHELL, so
+    `{EXT}/spec` is the HOST's specification and answers nothing about a page it
+    mounts — the claim R2123 withdrew rather than weakened. What it does have is
+    the mounted screen's own SURFACE address, already used for `standing` and
+    `nodes`, and the guest answers `spec` on it. So the address comes from the
+    guest through the guest's own path, which is the same fact the host's chrome
+    is read by and not a second copy of it.
+    """
+    return js(app.query(f"{surface}/spec"))["owed_addresses"]["crumb"]
+
+
 def standing(app: RpcSubprocess, surface: str) -> dict:
     return js(app.query(f"{surface}/standing"))
 
@@ -100,18 +114,24 @@ def cards(app: RpcSubprocess, surface: str) -> list[str]:
     return [name for name in raw.split(",") if name]
 
 
-def crumb_marks(app: RpcSubprocess) -> dict[str, tuple[int, int, int, int]]:
+def crumb_marks(
+    app: RpcSubprocess, seats: dict
+) -> dict[str, tuple[int, int, int, int]]:
     """Every breadcrumb chip on the frame, by tag.
 
     Read off the FRAME rather than off the wire: the claim is that a person
     looking at the screen has somewhere to press, and only the paint says
     whether a control is there to be pressed.
+
+    ★ R2125 — WHICH tags count is the screen's answer (`seats`), not this walk's.
+    The two facts stay apart: what is painted comes from the paint, and what the
+    breadcrumb is CALLED comes from the screen that names it.
     """
     marks = abs_rects_of(app.snapshot(source="paint", viewport=VIEWPORT))
     return {
         tag: rect
         for tag, rect in marks.items()
-        if tag == "lab.crumb" or tag.startswith("lab.crumb.up.")
+        if tag == seats["here"] or tag.startswith(seats["up_seat"])
     }
 
 
@@ -169,13 +189,16 @@ def body() -> None:
             app.query(f"{EXT}/nav") == SEAT,
         )
         surface = surface_of(app, SEAT)
+        # ★★★★★ R2125 — the breadcrumb's addresses, from the SCREEN that paints
+        # them. Six sites below spelled them.
+        crumb = crumb_addresses(app, surface)
         at = standing(app, surface)
         ok(f"A: ★ it opens at the top — {at}", at["depth"] == 0)
-        top = crumb_marks(app)
+        top = crumb_marks(app, crumb)
         ok(
             f"A: ★★★★★ and at the top there is NO step to press, because there "
             f"is nowhere above — {sorted(top)}",
-            sorted(top) == ["lab.crumb"],
+            sorted(top) == [crumb["here"]],
         )
 
         banner("B — two cards are folded and entered (R1981's capability)")
@@ -184,14 +207,15 @@ def body() -> None:
         ok(f"B: ★ one descent deep — {at}", at["depth"] == 1)
 
         banner("C — ★★★★★ the frame carries a door, and pressing it opens it")
-        marks = crumb_marks(app)
+        marks = crumb_marks(app, crumb)
+        step_0 = f"{crumb['up_seat']}0"
         ok(
             f"C: ★★★★★ a PRESSABLE step for the tree above is on the frame — "
             f"{sorted(marks)}. Before R1982 the breadcrumb only SAID where a "
             "person was, so a pointer could go in and not come out",
-            "lab.crumb.up.0" in marks,
+            step_0 in marks,
         )
-        press(app, marks["lab.crumb.up.0"])
+        press(app, marks[step_0])
         at = standing(app, surface)
         ok(
             f"C: ★★★★★ and the press puts them back at the top — {at}",
@@ -203,7 +227,7 @@ def body() -> None:
         # what it does is fall through to the canvas, which is what the rest of
         # the chip's area does.
         before = standing(app, surface)
-        press(app, crumb_marks(app)["lab.crumb"])
+        press(app, crumb_marks(app, crumb)[crumb["here"]])
         ok(
             f"D: ★ pressing where you already are changes nothing about where "
             f"you are — {before} then {standing(app, surface)}",
@@ -260,12 +284,12 @@ def body() -> None:
         fold_and_enter(app, surface, "inner")
         at = standing(app, surface)
         ok(f"G: ★ two descents deep — {at['through']}", at["depth"] == 2)
-        marks = crumb_marks(app)
+        marks = crumb_marks(app, crumb)
         ok(
             f"G: ★ a step is offered for EACH tree above — {sorted(marks)}",
-            "lab.crumb.up.0" in marks and "lab.crumb.up.1" in marks,
+            step_0 in marks and f"{crumb['up_seat']}1" in marks,
         )
-        press(app, marks["lab.crumb.up.0"])
+        press(app, marks[step_0])
         at = standing(app, surface)
         ok(
             f"G: ★★★★★ and pressing the first climbs ALL the way, which a "

@@ -1001,17 +1001,17 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         // ★ R1688 — the fit seat, demanded like every other toolbar control.
         super::address::TOOLBAR_FIT.into(),
         super::address::TOOLBAR_RUN.into(),
-        "lab.gate".into(),
-        "lab.gate.verdict".into(),
-        "lab.hint".into(),
-        "lab.hint.text".into(),
+        super::address::GATE.into(),
+        super::address::GATE_VERDICT.into(),
+        super::address::HINT.into(),
+        super::address::HINT_TEXT.into(),
         // ★★★★★ R1981 — the breadcrumb, demanded UNCONDITIONALLY for the reach
         // meter's reason one block down: it is a fact about where a person is
         // standing, and the top of the document is a place like any other. A
         // chip that appeared only inside a subgraph would leave "am I at the
         // top" answered by an absence.
-        "lab.crumb".into(),
-        "lab.crumb.caption".into(),
+        super::address::CRUMB.into(),
+        super::address::CRUMB_CAPTION.into(),
         // ★★★ R1690 — the reach meter, demanded UNCONDITIONALLY. It is a fact
         // about the palette rather than about the selection, so a screen with
         // nothing selected still has to carry it — and the states below include
@@ -1452,9 +1452,9 @@ fn owning_pane(tag: &str) -> Option<Rect> {
     if tag.starts_with(super::address::CARD)
         || tag.starts_with("lab.frame.")
         || tag.starts_with(super::address::LINK)
-        || tag.starts_with("lab.gate")
-        || tag.starts_with("lab.hint")
-        || tag.starts_with("lab.crumb")
+        || tag.starts_with(super::address::GATE)
+        || tag.starts_with(super::address::HINT)
+        || tag.starts_with(super::address::CRUMB)
         || tag.starts_with(super::address::PIN)
     {
         return Some(canvas_rect());
@@ -1479,51 +1479,18 @@ fn is_conditional_reset(tag: &str) -> bool {
 /// ★★★★★ R2116 — which declared reader of `address.rs` recovers `tag`, or
 /// `None` when nothing here addresses it.
 ///
-/// ★★ TWO KINDS OF ARM, and the difference is worth reading rather than
-/// smoothing over. Four families have an INVERSE — the address is handed back
-/// the key it was made from — so those arms prove the address is well formed as
-/// well as in the right family. The rest have only a declared PREFIX, because
-/// their keys are a card's name, a definition the document holds or a form
-/// row's path, and a reader that parsed those back would be claiming to know
-/// what the document contains. Those arms claim membership and not structure,
-/// which is weaker and is said here rather than left for a later round to find.
+/// ★★★★★ R2125 — **the arms moved to [`crate::address::reader_of`]**, and this
+/// is now the name this file's gates call it by. They were written twice — here
+/// and, arm for arm, inside the shell's own copy of this gate — and compared at
+/// R2125 the two were identical. That is this campaign's defect one level up:
+/// not an address retyped at every reader, but the CLASSIFICATION of addresses
+/// retyped at every gate. Declaring five more families would have made it twelve
+/// arms in two files that nothing compares.
+///
+/// What each gate still owns is its POPULATION, and that difference is real:
+/// this crate sweeps [`STATES`], the shell paints one frame of the assembly.
 fn declared_reader_of(tag: &str) -> Option<&'static str> {
-    use super::address as lab;
-    if tag == lab::TOOLBAR || lab::toolbar_word(tag).is_some() {
-        return Some("toolbar");
-    }
-    if tag == lab::INSPECTOR || lab::inspector_word(tag).is_some() {
-        return Some("inspector");
-    }
-    if lab::reset_word(tag).is_some() {
-        return Some("reset");
-    }
-    if lab::pin_of(tag).is_some() {
-        return Some("pin");
-    }
-    if tag == lab::PALETTE || tag.starts_with(lab::PALETTE_SEAT) {
-        return Some("palette");
-    }
-    if tag == lab::FORM || tag.starts_with(lab::FORM_STEM) {
-        return Some("form");
-    }
-    if tag.starts_with(&lab::card("")) {
-        return Some("node");
-    }
-    if tag.starts_with(&lab::frame("")) {
-        return Some("frame");
-    }
-    if lab::card_of_way_in(tag).is_some() {
-        return Some("inside");
-    }
-    // ★★★★★ R2118 — the family with two heads, and ONE reader for both. A tag
-    // this classifier answers about is recovered whichever head it belongs to,
-    // which is what let `lab.link` leave `UNADDRESSED_FAMILIES` as a whole
-    // rather than half of it.
-    if lab::link_mark_of(tag).is_some() {
-        return Some("link");
-    }
-    None
+    super::address::reader_of(tag)
 }
 
 /// Whether a tag names something drawn INSIDE the canvas viewport, as opposed
@@ -1534,7 +1501,7 @@ fn is_graph_content(tag: &str) -> bool {
         || tag.starts_with("lab.frame.")
         || tag.starts_with(super::address::LINK)
         || tag.starts_with(super::address::PIN)
-        || tag.starts_with("lab.gate")
+        || tag.starts_with(super::address::GATE)
 }
 
 /// (1) FORWARD — every element the specification declares is painted.
@@ -2163,7 +2130,9 @@ fn r1681_a_reported_link_is_drawn_in_a_rhythm_a_drawn_one_is_not() {
                 // and would have stopped being true the day this test ran with
                 // a link picked — it would have called a chrome panel a link
                 // somebody drew and asserted it was solid.
-                if super::address::link_of(tag).is_some() || tag.starts_with("lab.observed.") {
+                if super::address::link_of(tag).is_some()
+                    || super::address::observed_of(tag).is_some()
+                {
                     let dashed = path.style.stroke.and_then(|s| s.dash).is_some();
                     rhythms.push((tag.to_owned(), dashed));
                 }
@@ -2175,7 +2144,7 @@ fn r1681_a_reported_link_is_drawn_in_a_rhythm_a_drawn_one_is_not() {
             .collect();
         let reported: Vec<&(String, bool)> = rhythms
             .iter()
-            .filter(|(tag, _)| tag.starts_with("lab.observed."))
+            .filter(|(tag, _)| super::address::observed_of(tag).is_some())
             .collect();
         assert!(
             !drawn.is_empty() && !reported.is_empty(),
@@ -2704,6 +2673,215 @@ fn r2116_every_family_this_screen_paints_is_declared_or_owed() {
     });
 }
 
+/// ★★★★★ R2125 — **the five families this round declared agree with themselves,
+/// and their inverses are disjoint.**
+///
+/// *Nobody re-spells the address* and *the composition is right* are two claims,
+/// and the first is satisfied by a declaration that composes nonsense. The
+/// ratchet above says every painted mark is recovered; this says the thing that
+/// recovers it is not lying.
+#[test]
+fn r2125_every_owed_lab_address_is_derived() {
+    use super::address as lab;
+    use pinion_widget_paint::caption::CAPTION_SUFFIX;
+
+    // ★ The CONSTS a table needs are the DERIVATION. Rust cannot concatenate
+    // two `&'static str` consts in a const initializer, so the framework's
+    // caption suffix cannot be composed where the silenced-mark table needs it —
+    // it is declared and held here instead, the arrangement `lv`'s list header
+    // has and for the same reason.
+    assert_eq!(
+        lab::CRUMB_CAPTION,
+        format!("{}{CAPTION_SUFFIX}", lab::CRUMB)
+    );
+    assert_eq!(lab::CRUMB_TRAIL, format!("{}.trail", lab::CRUMB));
+    assert_eq!(lab::CRUMB_UP_SEAT, format!("{}.up.", lab::CRUMB));
+    assert_eq!(lab::GATE_SEAT, format!("{}.", lab::GATE));
+    assert_eq!(lab::HINT_SEAT, format!("{}.", lab::HINT));
+    assert_eq!(lab::OBSERVED_SEAT, format!("{}.", lab::OBSERVED));
+    assert_eq!(lab::GATE_LINE_SEAT, format!("{}line.", lab::GATE_SEAT));
+    for whole in [lab::GATE_HEAD, lab::GATE_VERDICT, lab::GATE_MORE] {
+        assert!(
+            lab::gate_part(whole).is_some(),
+            "`{whole}` is meant to be a PART of the check panel"
+        );
+    }
+    assert_eq!(lab::gate_part(lab::HINT_TEXT), None);
+    // ★★ The DEEPER SEAT: a line is not a part and a part is not a line, in
+    // both directions and over a real population.
+    for n in 0..12 {
+        let line = lab::gate_line(n);
+        assert_eq!(lab::gate_line_index(&line), Some(n));
+        assert_eq!(
+            lab::gate_part(&line),
+            None,
+            "★ `{line}` is a line and the panel's PART inverse claimed it — a \
+             reader handed `line` as a part key finds nothing, quietly"
+        );
+        let step = lab::crumb_up(n);
+        assert_eq!(lab::crumb_up_depth(&step), Some(n));
+    }
+    // ★★★ A family's own stem is not a member of it, and the breadcrumb's two
+    // lone marks are not steps: a caller handed either as a depth would offer a
+    // journey out of the tree the reader is already in.
+    assert_eq!(lab::gate_part(lab::GATE), None);
+    assert_eq!(lab::gate_line_index(lab::GATE), None);
+    assert_eq!(lab::crumb_up_depth(lab::CRUMB), None);
+    assert_eq!(lab::crumb_up_depth(lab::CRUMB_TRAIL), None);
+    // ★★★★ The JOIN, which is the SEPARATOR here where the two sections folded
+    // before this one both joined on an underscore. Round-tripped over the
+    // fixture's own observations rather than over invented names.
+    let mut seen = 0;
+    for (from, to) in spec::OBSERVED {
+        let tag = lab::observed(from, to);
+        assert_eq!(
+            lab::observed_of(&tag),
+            Some((*from, *to)),
+            "★ `{tag}` did not round-trip"
+        );
+        seen += 1;
+    }
+    assert!(
+        seen > 0,
+        "the fixture declares no observed link, so every assertion above \
+         describes nothing"
+    );
+    // ★★★★★ And the inverse REFUSES what is not a two-endpoint link: a bare
+    // stem, one endpoint, and three segments — the last of which is what a
+    // dotted parse would happily accept.
+    assert_eq!(lab::observed_of(lab::OBSERVED_SEAT), None);
+    assert_eq!(
+        lab::observed_of(&format!("{}alone", lab::OBSERVED_SEAT)),
+        None
+    );
+    assert_eq!(
+        lab::observed_of(&format!("{}a.b.c", lab::OBSERVED_SEAT)),
+        None
+    );
+    // ★★★★★★ Every one of the five is in this screen's namespace, and each is
+    // recovered by the reader this round declared for it.
+    for (tag, reader) in [
+        (lab::CANVAS.to_owned(), "canvas"),
+        (lab::CRUMB.to_owned(), "crumb"),
+        (lab::CRUMB_TRAIL.to_owned(), "crumb"),
+        (lab::crumb_up(2), "crumb"),
+        (format!("{}{CAPTION_SUFFIX}", lab::CRUMB), "crumb"),
+        (lab::GATE.to_owned(), "gate"),
+        (lab::GATE_HEAD.to_owned(), "gate"),
+        (lab::gate_line(3), "gate"),
+        (lab::HINT.to_owned(), "hint"),
+        (lab::HINT_TEXT.to_owned(), "hint"),
+        (lab::observed("a", "b"), "observed"),
+    ] {
+        assert!(tag.starts_with(lab::NAMESPACE), "`{tag}` is not ours");
+        assert_eq!(
+            lab::reader_of(&tag),
+            Some(reader),
+            "`{tag}` is not recovered by the `{reader}` reader"
+        );
+    }
+}
+
+/// ★★★★★ R2125 — **the screen HANDS the walks every address they used to
+/// spell.**
+///
+/// Three walks spelled these twelve times, and a walk is Python: no Rust gate
+/// reads it, so the walk half cannot be asserted from here. What CAN be asserted
+/// is the thing the walks depend on — that the wire carries each of these
+/// addresses, so a walk never has to compose one. If this regressed the walks
+/// would go back to spelling and nothing would say so.
+#[test]
+fn r2125_the_wire_hands_over_the_addresses_the_walks_used_to_spell() {
+    use super::address as lab;
+    let published = super::spec_json();
+    let owed = &published["owed_addresses"];
+    assert_eq!(owed["canvas"], lab::CANVAS);
+    assert_eq!(owed["crumb"]["here"], lab::CRUMB);
+    assert_eq!(owed["crumb"]["trail"], lab::CRUMB_TRAIL);
+    assert_eq!(owed["crumb"]["caption"], lab::CRUMB_CAPTION);
+    assert_eq!(owed["crumb"]["up_seat"], lab::CRUMB_UP_SEAT);
+    assert_eq!(owed["gate"]["panel"], lab::GATE);
+    assert_eq!(owed["gate"]["head"], lab::GATE_HEAD);
+    assert_eq!(owed["gate"]["verdict"], lab::GATE_VERDICT);
+    assert_eq!(owed["gate"]["more"], lab::GATE_MORE);
+    assert_eq!(owed["gate"]["line_seat"], lab::GATE_LINE_SEAT);
+    assert_eq!(owed["hint"]["band"], lab::HINT);
+    assert_eq!(owed["hint"]["text"], lab::HINT_TEXT);
+    assert_eq!(owed["observed_seat"], lab::OBSERVED_SEAT);
+    // ★ And every one of them is a mark of this screen — a key that published
+    // the empty string would satisfy every equality above.
+    let mut published_marks = 0;
+    for value in [
+        &owed["canvas"],
+        &owed["crumb"]["here"],
+        &owed["crumb"]["trail"],
+        &owed["crumb"]["caption"],
+        &owed["crumb"]["up_seat"],
+        &owed["gate"]["panel"],
+        &owed["gate"]["head"],
+        &owed["gate"]["verdict"],
+        &owed["gate"]["more"],
+        &owed["gate"]["line_seat"],
+        &owed["hint"]["band"],
+        &owed["hint"]["text"],
+        &owed["observed_seat"],
+    ] {
+        let tag = value.as_str().expect("every address publishes as a string");
+        assert!(
+            tag.starts_with(lab::NAMESPACE),
+            "`{tag}` is not in this screen's namespace"
+        );
+        published_marks += 1;
+    }
+    assert_eq!(published_marks, 13);
+}
+
+/// ★★★★★ R2125 — **the declared remainder is the standalone screen's, and it
+/// says so.**
+///
+/// The list was NINE families and is now FOUR. The five that left are exactly
+/// the ones the ASSEMBLED page paints, which is why the shell can now assert its
+/// owed map is empty; the four that stay are the application bar, the rail, the
+/// toast and the fault panel, which the shell draws itself so a mounted page
+/// never paints them.
+///
+/// ⚠ This is a claim about WHICH four, not about how many. A count would pass
+/// with the wrong four in it, and the two gates that read this list — the sweep
+/// in this crate and the assembly's next door — would then disagree about a
+/// family without either being able to say so.
+#[test]
+fn r2125_the_declared_remainder_is_what_the_shell_does_not_mount() {
+    use super::address as lab;
+    assert_eq!(
+        lab::UNADDRESSED_FAMILIES,
+        &["lab.appbar", "lab.faults", "lab.rail", "lab.toast"],
+        "★★★★★ the remainder is the four families the STANDALONE binary paints \
+         and a mounted page does not. A name added here is a family that stopped \
+         being declared; a name removed is one whose reader arrived — and either \
+         way the assembly's gate and this crate's sweep have to move together."
+    );
+    // ★ None of the four is recovered by a reader — which is what makes them a
+    // remainder rather than a stale list. The other direction (that each still
+    // owns a painted mark) is `r2116_every_family_this_screen_paints_is_
+    // declared_or_owed`'s, over the whole state sweep.
+    for stem in lab::UNADDRESSED_FAMILIES {
+        assert_eq!(
+            lab::reader_of(stem),
+            None,
+            "`{stem}` has a declared reader now and is still listed as owed"
+        );
+    }
+    // ★★ And the five this round declared are NOT in it, named rather than
+    // counted: a round that declared a family and forgot to strike it out would
+    // leave the remainder claiming work that is done.
+    for done in [lab::CANVAS, lab::CRUMB, lab::GATE, lab::HINT, lab::OBSERVED] {
+        assert!(
+            !lab::UNADDRESSED_FAMILIES.contains(&done),
+            "`{done}` is declared and still listed as owed"
+        );
+    }
+}
+
 /// ★★★★★ R2118 — **both heads of the wire family are what the frame draws**,
 /// in every state this screen has.
 ///
@@ -3118,14 +3296,18 @@ fn r1653_the_painted_screen_invented_nothing() {
             // ★★★★★ R1970 — the observed layer, which became VISIBLE to this
             // census the moment a wire started carrying a placement, and which
             // this gate refused on its first run: *the screen paints 1 tag(s)
-            // the specification does not declare and no family accounts for:
-            // ["lab.observed.P-01.P-02"]*. It had been painted all along; the
-            // index simply could not hold it. Sized from the specification's own
+            // the specification does not declare and no family accounts for*,
+            // naming one reported link between two of the fixture's cards. (The
+            // address itself is no longer quoted here — R2110's rule, that a
+            // prose copy of an address is the copy that goes stale, and this one
+            // was the family's last spelled site.) It had been painted all
+            // along; the index simply could not hold it. Sized from the
+            // specification's own
             // list rather than pinned, because a second observed link would
             // otherwise pass unremarked — the exact hole the `lab.link` family's
             // `None` leaves and which this one does not have to.
-            ("lab.observed.", Some(spec::OBSERVED.len())),
-            ("lab.gate", None),
+            (super::address::OBSERVED_SEAT, Some(spec::OBSERVED.len())),
+            (super::address::GATE, None),
             (super::address::CARD, None),
             (super::address::PIN, None),
             ("lab.frame.", None),
@@ -3133,8 +3315,8 @@ fn r1653_the_painted_screen_invented_nothing() {
             (super::address::INSPECTOR_SEAT, None),
             (super::address::TOOLBAR_SEAT, None),
             ("lab.appbar.", None),
-            ("lab.hint.", None),
-            ("lab.crumb", None),
+            (super::address::HINT_SEAT, None),
+            (super::address::CRUMB, None),
             (super::address::PALETTE_DISCOVERY, None),
             // ★★★★★ R2047 — the definitions register. THREE entries and not one
             // prefix, because one prefix would sweep the heading in with the
@@ -3734,9 +3916,9 @@ fn r1653_a_pan_past_the_edge_stops_painting_the_graph() {
 
         // And the chrome that floats over the canvas does not pan with it.
         for tag in [
-            "lab.gate",
-            "lab.hint",
-            "lab.crumb",
+            super::address::GATE,
+            super::address::HINT,
+            super::address::CRUMB,
             super::address::TOOLBAR_TITLE,
         ] {
             assert!(shot.tags.contains_key(tag), "{tag} is chrome, not content");
@@ -3773,7 +3955,7 @@ fn r1654_the_screen_fills_whatever_window_it_is_given() {
             let shot = painted_at(&state, size).0;
             let rail = shot.tags["lab.rail"];
             let palette = shot.tags[crate::address::PALETTE];
-            let canvas = shot.tags["lab.canvas"];
+            let canvas = shot.tags[super::address::CANVAS];
             let inspector = shot.tags[crate::address::INSPECTOR];
             let appbar = shot.tags["lab.appbar"];
 
@@ -3810,8 +3992,8 @@ fn r1654_the_screen_fills_whatever_window_it_is_given() {
             assert_eq!(inspector.w, super::INSP_W, "{size:?}: fixed width");
         }
         // And the canvas is the one that absorbs the difference.
-        let narrow = painted_at(&state, (900, 620)).0.tags["lab.canvas"];
-        let wide = painted_at(&state, (1920, 1200)).0.tags["lab.canvas"];
+        let narrow = painted_at(&state, (900, 620)).0.tags[super::address::CANVAS];
+        let wide = painted_at(&state, (1920, 1200)).0.tags[super::address::CANVAS];
         assert!(
             wide.w > narrow.w && wide.h > narrow.h,
             "the canvas takes the room the window gained: {narrow:?} -> {wide:?}"
@@ -5326,7 +5508,7 @@ const HINT_GESTURES: &[HintDriver] = &[
     ("drag empty space", "pan", |state, shot| {
         let canvas = *shot
             .tags
-            .get("lab.canvas")
+            .get(super::address::CANVAS)
             .expect("the canvas is painted, or there is no screen");
         let from = (canvas.x + canvas.w - 40, canvas.y + canvas.h - 40);
         drag_from(state, from, (-30, -20));
@@ -5546,7 +5728,7 @@ fn r1704_a_link_that_has_left_the_canvas_takes_its_affordances_with_it() {
         let shot = painted(&state);
         let canvas = *shot
             .tags
-            .get("lab.canvas")
+            .get(super::address::CANVAS)
             .expect("the canvas is painted, or there is no screen");
 
         // Pick the link the way a person does — on the wire between two cards.
@@ -5594,7 +5776,7 @@ fn r1704_a_link_that_has_left_the_canvas_takes_its_affordances_with_it() {
 
         // ★ And the half that has consequences: whatever is at that place now,
         // pressing it must not delete a link nobody can see.
-        press_tag(&state, &gone, "lab.canvas");
+        press_tag(&state, &gone, super::address::CANVAS);
         assert_eq!(
             link_count(&state),
             links_before,
@@ -5644,7 +5826,7 @@ fn r1704_the_picked_links_column_is_never_half_out_of_the_canvas() {
         let shot = painted(&state);
         let canvas = *shot
             .tags
-            .get("lab.canvas")
+            .get(super::address::CANVAS)
             .expect("the canvas is painted, or there is no screen");
         press_wire(&state, &shot, "P-01", "R-01");
 
@@ -7120,7 +7302,10 @@ fn r1690_the_gate_panel_is_bounded_by_the_canvas_and_counts_what_it_hides() {
 
         let floor = (super::MIN_W, super::MIN_H);
         let (shot, _) = painted_and_scene(&state, floor);
-        let canvas = *shot.tags.get("lab.gate").expect("the panel is painted");
+        let canvas = *shot
+            .tags
+            .get(super::address::GATE)
+            .expect("the panel is painted");
         let pane = super::canvas_rect();
         assert!(
             canvas.y >= pane.y && canvas.y + canvas.h <= pane.y + pane.h,
@@ -7144,7 +7329,7 @@ fn r1690_the_gate_panel_is_bounded_by_the_canvas_and_counts_what_it_hides() {
         );
         let said = shot
             .said
-            .get("lab.gate.more")
+            .get(super::address::GATE_MORE)
             .expect("the panel says how many it is not showing");
         assert!(
             said.contains(&hidden.to_string()),
@@ -7160,7 +7345,7 @@ fn r1690_the_gate_panel_is_bounded_by_the_canvas_and_counts_what_it_hides() {
         assert_eq!(none, 0, "the opening graph fits");
         assert_eq!(few.len(), state.gate_lines().len());
         assert!(
-            !painted(&state).tags.contains_key("lab.gate.more"),
+            !painted(&state).tags.contains_key(super::address::GATE_MORE),
             "and the panel does not claim to be hiding anything",
         );
     });
@@ -8030,7 +8215,7 @@ fn r1774_the_sweep_reaches_both_sides_of_every_clamp() {
                     let drawn = shot
                         .tags
                         .keys()
-                        .filter(|t| t.starts_with("lab.gate.line."))
+                        .filter(|t| super::address::gate_line_index(t).is_some())
                         .count();
                     census.note("gate: problem lines", drawn < wanted);
                 }

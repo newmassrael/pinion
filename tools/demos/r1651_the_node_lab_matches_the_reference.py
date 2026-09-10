@@ -241,6 +241,10 @@ def body() -> None:
         # they hang and `pin_address` composes. Hoisted here beside its
         # neighbours because the blocks below compose one per card.
         pins = spec["pin_addresses"]["prefix"]
+        # ★★★★★ R2125 — the five families this screen owed until that round. The
+        # walk is HANDED them; before R2125 it spelled four itself, in a language
+        # where no compiler and no Rust gate could see the copy drift.
+        owed = spec["owed_addresses"]
         # ★★★★★ R2118 — and the WIRE family, which is the first here whose stem
         # carries TWO vocabularies: a mark under it is either a wire the document
         # holds, keyed by that wire's own id, or one of a closed roster of words.
@@ -461,10 +465,14 @@ def body() -> None:
             seat_tag["gate"],
             seat_tag["zoom"],
             seat_tag["run"],
-            "lab.gate",
-            "lab.gate.verdict",
-            "lab.hint",
-            "lab.hint.text",
+            # ★★★★★ R2125 — RECEIVED, not composed. These four were the last of
+            # this walk's spelled addresses; the screen publishes them under
+            # `owed_addresses`, which is the remainder R2116 declared and the
+            # key a later instalment empties.
+            owed["gate"]["panel"],
+            owed["gate"]["verdict"],
+            owed["hint"]["band"],
+            owed["hint"]["text"],
             link_seat["label"],
             ins_tag["id"],
             ins_tag["degree"],

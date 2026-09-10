@@ -530,6 +530,18 @@
       ]
     },
     {
+      "name": "debt-the-address-ratchet-cannot-charge-a-two-segment-mark",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
       "name": "debt-the-canon-census-counts-markup-and-not-pixels",
       "substituted": false,
       "blocked_by": "campaign",

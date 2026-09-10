@@ -239,7 +239,8 @@ def body() -> None:
         body_row = rows[palette_seats(spec)["body"]]
         assert_eq(body_row["reason"], "layout")
         assert_eq(body_row["relay"], "children")
-        caption = rows["lab.hint.text"]
+        # ★ R2125 — received from the screen's own `owed_addresses`.
+        caption = rows[spec["owed_addresses"]["hint"]["text"]]
         assert_eq(caption["reason"], "name_of")
         assert_eq(caption["relay"], "peer")
         assert_eq(

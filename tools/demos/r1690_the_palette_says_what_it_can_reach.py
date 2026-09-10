@@ -362,10 +362,15 @@ def body() -> None:
                 f"★★ the panel stays inside the canvas with every card wrong: "
                 f"gate {gate_box} vs canvas {canvas}"
             )
-        lines = [t for t in painted_now if t.startswith("lab.gate.line.")]
+        # ★★★★★ R2125 — the seat and the mark are RECEIVED. This walk spelled
+        # three of this family's addresses; the screen publishes them under
+        # `owed_addresses`, so a wrong letter here can no longer look for a mark
+        # that is not there and read as the screen failing to paint it.
+        owed = spec["owed_addresses"]["gate"]
+        lines = [t for t in painted_now if t.startswith(owed["line_seat"])]
         assert lines, "and it is showing problems"
-        if "lab.gate.more" in painted_now:
-            said = run_of(tf, "lab.gate.more")
+        if owed["more"] in painted_now:
+            said = run_of(tf, owed["more"])
             assert "more" in said, said
             print(f"[K] the gate panel shows {len(lines)} line(s) and says: {said!r}")
         else:

@@ -1401,6 +1401,295 @@ pub fn link_of(tag: &str) -> Option<LinkId> {
     }
 }
 
+// ─── R2125: the five families the ASSEMBLED page owed ────────────────────────
+//
+// ★★★★★ THE CUT IS A GATE POINT, NOT A FAMILY. This screen's remainder is
+// twelve families and 125 charged sites — larger than one round, and the round
+// before this one said so. What made a subset choosable was measuring which
+// families the ASSEMBLY paints rather than which are biggest: R2116's ratchet,
+// asked with `--nocapture`, answers `13 owed {lab.canvas: 1, lab.crumb: 3,
+// lab.gate: 6, lab.hint: 2, lab.observed: 1}` — five stems. The other four in
+// `UNADDRESSED_FAMILIES` (the application bar, the rail, the toast and the
+// fault panel) are painted by the STANDALONE binary only, because the shell
+// draws its own bar and its own rail.
+//
+// ⇒ closing exactly these five empties the assembled ratchet's owed map, which
+// is an assertion that can be written and held (`r2125_the_mounted_lab_owes_
+// nothing`), where "some of lab is converted" is not. The standalone remainder
+// stays ratcheted, and the two gates now say different things: *the page a
+// person opens owes nothing* and *the screen's own sweep owes four families*.
+//
+// ⚠ THE SHAPE QUESTION, ASKED BEFORE ANY OF THIS WAS WRITTEN (R2123's rule,
+// R2124's second use). The five are not one shape and were not treated as one:
+//
+// * `lab.canvas` is a LONE mark — no members at all, spelled 36 times across
+//   three populations. One const.
+// * `lab.crumb.` and `lab.gate.` are the DEEP SEAT shape `lv.list.` had: word
+//   parts beside an indexed family whose head is itself a word (`up.`, `line.`).
+// * `lab.hint.` has exactly ONE member, so it is declared whole rather than
+//   composed — `lv`'s filter field precedent, and for the same reason: a
+//   composer for a family of one invites a second.
+// * `lab.observed.` JOINS TWO KEYS ON THE SEPARATOR, which is this tree's
+//   convention and NOT what the last two rounds met (`kp` and `lv` both join on
+//   an underscore). The inverse therefore splits on the separator and cannot
+//   use the shared `bare` rule, which refuses anything holding one.
+
+/// The graph viewport — the region cards, wires and frames are drawn inside.
+///
+/// ⚠ A LONE mark: nothing hangs off it, and that is why it survived eighteen
+/// instalments unnoticed. The census needle wants three segments (or two with a
+/// separator), so a two-segment address with nothing after it is charged to
+/// NOBODY — `--owed` reports zero for this family while thirty-six sites spell
+/// it. R2124 met the same class from the other side and stated it there: the
+/// literal count and the census count are two numbers about one file.
+pub const CANVAS: &str = "lab.canvas";
+
+/// The breadcrumb step a person is STANDING on.
+///
+/// ⚠ Bare, and deliberately so: R1982 gave the standing step the family's own
+/// tag so *where am I* is painted on every frame — including the opening one,
+/// where there is nowhere to go — while the steps above it are controls with
+/// their own seat. A reader who expected `lab.crumb.here` would find nothing.
+pub const CRUMB: &str = "lab.crumb";
+
+/// The breadcrumb row — the band the steps sit in, which is what a keyboard
+/// lands on (R2065; a pointer presses a chip and needs no such thing).
+pub const CRUMB_TRAIL: &str = "lab.crumb.trail";
+
+/// Where a step ABOVE the one a person is standing on is addressed.
+pub const CRUMB_UP_SEAT: &str = "lab.crumb.up.";
+
+/// The run inside the standing step's chip.
+///
+/// ⚠ The FRAMEWORK composes this — `caption::captioned` appends its own suffix
+/// to the tag its caller hands over — so this const is a *declaration of what
+/// that produces*, not a second composition. Rust cannot concatenate two
+/// `&'static str` consts in a const initializer, and a table of silenced marks
+/// needs a const, so the derivation is asserted at run time instead by
+/// `r2125_every_owed_lab_address_is_derived`. The same arrangement `lv`'s list
+/// header has, and for the same reason.
+pub const CRUMB_CAPTION: &str = "lab.crumb.caption";
+
+/// The pre-launch check panel.
+pub const GATE: &str = "lab.gate";
+
+/// [`GATE`] with the separator its parts hang off.
+pub const GATE_SEAT: &str = "lab.gate.";
+
+/// The check panel's heading.
+pub const GATE_HEAD: &str = "lab.gate.head";
+
+/// The check panel's verdict sentence.
+pub const GATE_VERDICT: &str = "lab.gate.verdict";
+
+/// What the panel had no room for, counted rather than dropped (R1690).
+pub const GATE_MORE: &str = "lab.gate.more";
+
+/// Where one line of the check panel is addressed.
+pub const GATE_LINE_SEAT: &str = "lab.gate.line.";
+
+/// The resting hint band.
+pub const HINT: &str = "lab.hint";
+
+/// The hint's own sentence.
+///
+/// ⚠ The ONE member this family has. Declared whole rather than composed,
+/// because `lab.hint.` with one member is a family in name only and a composer
+/// for it would invite a second — the argument `lv`'s filter field records.
+pub const HINT_TEXT: &str = "lab.hint.text";
+
+/// [`HINT`] with the separator, for a census that walks the family.
+pub const HINT_SEAT: &str = "lab.hint.";
+
+/// The family a REPORTED link — one the capture observed and nobody authored —
+/// is addressed under.
+///
+/// ⚠ Declared as the bare stem beside [`OBSERVED_SEAT`] because a GATE needs it
+/// as one: the remainder is a list of stems, and asserting a family is no longer
+/// on it means naming that family. Without this the assertion spelled the stem,
+/// which made this crate's last remaining literal sit inside the very gate whose
+/// job is to say there are none.
+pub const OBSERVED: &str = "lab.observed";
+
+/// Where a REPORTED link is addressed.
+pub const OBSERVED_SEAT: &str = "lab.observed.";
+
+/// The address the breadcrumb step at `depth` is painted under.
+#[must_use]
+pub fn crumb_up(depth: usize) -> String {
+    format!("{CRUMB_UP_SEAT}{depth}")
+}
+
+/// The address line `n` of the check panel is painted under.
+#[must_use]
+pub fn gate_line(n: usize) -> String {
+    format!("{GATE_LINE_SEAT}{n}")
+}
+
+/// The address the reported link from `from` to `to` is painted under.
+///
+/// 🟥 The join is the SEPARATOR here, where the last two sections this campaign
+/// folded both joined on an underscore. Composed in one place so a reader
+/// carrying either convention across cannot apply the wrong one — and so the
+/// inverse below is the only other thing that has to know.
+#[must_use]
+pub fn observed(from: &str, to: &str) -> String {
+    format!("{OBSERVED_SEAT}{from}.{to}")
+}
+
+/// The breadcrumb depth `tag` names, or `None`.
+///
+/// ⚠ Refuses [`CRUMB`] itself and [`CRUMB_TRAIL`]: the standing step and the
+/// row are not steps a person can go to, and a caller handed either as a depth
+/// would offer a journey out of the tree they are already in.
+#[must_use]
+pub fn crumb_up_depth(tag: &str) -> Option<usize> {
+    bare(tag.strip_prefix(CRUMB_UP_SEAT)?)?.parse().ok()
+}
+
+/// The check-panel part `tag` names, or `None`.
+///
+/// ⚠ Refuses a LINE, which hangs one segment deeper — the deep-seat shape, so
+/// the parts and the indexed family cannot claim each other.
+#[must_use]
+pub fn gate_part(tag: &str) -> Option<&str> {
+    bare(tag.strip_prefix(GATE_SEAT)?)
+}
+
+/// The check-panel line `tag` names, or `None`.
+#[must_use]
+pub fn gate_line_index(tag: &str) -> Option<usize> {
+    bare(tag.strip_prefix(GATE_LINE_SEAT)?)?.parse().ok()
+}
+
+/// The two endpoints `tag`'s reported link runs between, or `None`.
+///
+/// The inverse of [`observed`], and the only other place that knows the join is
+/// the separator.
+///
+/// ⚠ It cannot use [`bare`], which refuses a remainder holding a separator —
+/// and here the separator IS the join. Both halves are required non-empty and
+/// the second is required to hold no further separator, which is what stops a
+/// three-segment tail parsing as a two-endpoint link.
+#[must_use]
+pub fn observed_of(tag: &str) -> Option<(&str, &str)> {
+    let (from, to) = tag.strip_prefix(OBSERVED_SEAT)?.split_once('.')?;
+    (!from.is_empty() && !to.is_empty() && !to.contains('.')).then_some((from, to))
+}
+
+/// A key with nothing further hanging off it, or `None`.
+///
+/// The rule the inverses above share, written once: a remainder that still
+/// holds a separator is not a key of that family, and an EMPTY remainder is the
+/// family's own stem rather than a member of it.
+fn bare(rest: &str) -> Option<&str> {
+    (!rest.is_empty() && !rest.contains('.')).then_some(rest)
+}
+
+/// Which declared reader of this module recovers `tag`, or `None` when nothing
+/// here addresses it.
+///
+/// # ★★★★★ R2125 — why this is HERE and not in the two gates that ask it
+///
+/// It was written twice: once in this crate's paint gates and once, arm for
+/// arm, inside the shell's `r2116_every_mark_the_mounted_lab_paints_is_declared_
+/// or_owed`. Compared at R2125 the two were identical — the same ten arms in the
+/// same order with the same words — which is this whole campaign's defect one
+/// level up: not an ADDRESS retyped at every reader but the CLASSIFICATION of
+/// addresses retyped at every gate. Adding five families would have made it
+/// twelve arms in two files, and a round that declared an eleventh in one of
+/// them would leave the other reporting a family as owed while the screen had
+/// stopped owing it.
+///
+/// So the classification lives beside the composers and the inverses it is made
+/// of, and both gates call it. What each gate still owns is its POPULATION —
+/// the crate sweeps every state, the shell paints one frame of the assembly —
+/// and that difference is real and stays split.
+///
+/// # ★★ TWO KINDS OF ARM, and the difference is worth reading
+///
+/// Some families have an INVERSE — the address is handed back the key it was
+/// made from — so those arms prove the address is well formed as well as in the
+/// right family. The rest have only a declared PREFIX, because their keys are a
+/// card's name, a definition the document holds or a form row's path, and a
+/// reader that parsed those back would be claiming to know what the document
+/// contains. Those arms claim membership and not structure, which is weaker and
+/// is said here rather than left for a later round to find.
+///
+/// ⚠ A CAPTION is recovered as its own box. `caption::captioned` writes the
+/// framework's suffix onto the tag its caller hands over — this screen never
+/// composes it — so *which reader owns this mark* is the question about the box
+/// underneath. Stripping once, here, is what keeps the equality arms and the
+/// prefix arms answering it the same way: before R2125 the prefix arms
+/// recovered their captions silently and the equality arms dropped theirs.
+#[must_use]
+pub fn reader_of(tag: &str) -> Option<&'static str> {
+    if let Some(box_tag) = tag.strip_suffix(pinion_widget_paint::caption::CAPTION_SUFFIX) {
+        return reader_of(box_tag);
+    }
+    // The families with inverses.
+    if tag == TOOLBAR || toolbar_word(tag).is_some() {
+        return Some("toolbar");
+    }
+    if tag == INSPECTOR || inspector_word(tag).is_some() {
+        return Some("inspector");
+    }
+    if reset_word(tag).is_some() {
+        return Some("reset");
+    }
+    if pin_of(tag).is_some() {
+        return Some("pin");
+    }
+    // The prefixed rest, each from the const this module declares.
+    if tag == PALETTE || tag.starts_with(PALETTE_SEAT) {
+        return Some("palette");
+    }
+    if tag == FORM || tag.starts_with(FORM_STEM) {
+        return Some("form");
+    }
+    if tag.starts_with(&card("")) {
+        return Some("node");
+    }
+    if tag.starts_with(&frame("")) {
+        return Some("frame");
+    }
+    if card_of_way_in(tag).is_some() {
+        return Some("inside");
+    }
+    // ★★★★★ R2118 — the family with TWO HEADS, and one classifier for both. It
+    // belongs with the inverses rather than with the prefixed rest: the answer
+    // is structural, and it is the one family here where a prefix test would be
+    // actively wrong — the stem carries a wire's own id and a fixed seat's word
+    // alike, so *what is left after the prefix* is not a key until the
+    // classifier has said which head it belongs to.
+    if link_mark_of(tag).is_some() {
+        return Some("link");
+    }
+    // ★★★★★ R2125 — the five the ASSEMBLED page owed.
+    if tag == CANVAS {
+        return Some("canvas");
+    }
+    // ⚠ The standing step wears the family's own bare tag (R1982), so it is
+    // recovered by equality rather than by an inverse — and the trail is the
+    // row, not a step, so `crumb_up_depth` refuses both by design.
+    if tag == CRUMB || tag == CRUMB_TRAIL || crumb_up_depth(tag).is_some() {
+        return Some("crumb");
+    }
+    // ★ The deeper seat FIRST: a line begins with the panel's own seat, so
+    // asking `gate_part` first would let it refuse the line and drop it as an
+    // orphan.
+    if tag == GATE || gate_line_index(tag).is_some() || gate_part(tag).is_some() {
+        return Some("gate");
+    }
+    if tag == HINT || tag == HINT_TEXT {
+        return Some("hint");
+    }
+    if observed_of(tag).is_some() {
+        return Some("observed");
+    }
+    None
+}
+
 // ─── what this module does NOT declare yet ──────────────────────────────────
 
 /// ★★★★★ R2116 — **the families this screen paints that nothing here
@@ -1440,17 +1729,14 @@ pub fn link_of(tag: &str) -> Option<LinkId> {
 /// `r2116_every_family_this_screen_paints_is_declared_or_owed` in this crate,
 /// over `STATES`, and the assembled gate next door only refuses a family that
 /// is in neither place.
-pub const UNADDRESSED_FAMILIES: &[&str] = &[
-    "lab.appbar",
-    "lab.canvas",
-    "lab.crumb",
-    "lab.faults",
-    "lab.gate",
-    "lab.hint",
-    "lab.observed",
-    "lab.rail",
-    "lab.toast",
-];
+/// ★★★★★ R2125 — **nine became four, and the four that are left are the ones
+/// the ASSEMBLED page does not paint.** The five struck out here — the canvas,
+/// the breadcrumb, the check panel, the hint and the reported links — are
+/// exactly the stems R2116's assembled ratchet reported as owed, so striking
+/// them empties that map and lets the shell assert it. What remains (the
+/// application bar, the rail, the toast, the fault panel) belongs to the
+/// STANDALONE binary, because the shell draws its own bar and its own rail.
+pub const UNADDRESSED_FAMILIES: &[&str] = &["lab.appbar", "lab.faults", "lab.rail", "lab.toast"];
 
 /// ★★★★★ R2116 — the namespace every address of this screen begins with, and
 /// the needle a gate over the whole screen uses.

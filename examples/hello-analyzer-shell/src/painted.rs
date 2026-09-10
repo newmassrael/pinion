@@ -9141,12 +9141,15 @@ fn lab_cards(state: &std::rc::Rc<ShellState>) -> Vec<String> {
 /// its name now says.
 fn a_clear_patch_of_canvas(shot: &Painted) -> (u32, u32) {
     let canvas = shot
-        .rect("lab.canvas")
+        .rect(hello_node_lab::address::CANVAS)
         .expect("the mounted lab paints its canvas");
     let cards: Vec<Rect> = shot
         .tags
         .iter()
-        .filter(|(tag, _)| tag.starts_with("lab.") && *tag != "lab.canvas")
+        .filter(|(tag, _)| {
+            tag.starts_with(hello_node_lab::address::NAMESPACE)
+                && *tag != hello_node_lab::address::CANVAS
+        })
         .map(|(_, rect)| *rect)
         .collect();
     (canvas.x + 24..canvas.x + canvas.w - 24)
@@ -11036,7 +11039,7 @@ const CANON_GESTURES: &[(&str, CanonReach, CanonDrive)] = &[
         },
         |state| {
             let shot = painted();
-            let Some(canvas) = shot.rect("lab.canvas") else {
+            let Some(canvas) = shot.rect(hello_node_lab::address::CANVAS) else {
                 return false; // no graph canvas is on screen to turn a wheel over
             };
             let mut externals = state.screens.externals(&state.journey.get());
@@ -15671,7 +15674,7 @@ fn the_mounted_screen_paints_what_the_register_publishes(closed: &str) {
     });
     let canvas = shot
         .tags
-        .get("lab.canvas")
+        .get(hello_node_lab::address::CANVAS)
         .copied()
         .expect("the mounted lab paints its canvas");
     assert!(
@@ -16131,58 +16134,20 @@ fn a_colour_under_the_floor_is_taken_and_reported(
 fn r2116_every_mark_the_mounted_lab_paints_is_declared_or_owed() {
     use hello_node_lab::address as lab;
 
-    /// Which declared reader recovers `tag`, or `None`.
-    ///
-    /// ★★ TWO KINDS OF ARM, and the difference is worth reading rather than
-    /// smoothing over. Four families have an INVERSE — the address is handed
-    /// back the key it was made from — and those arms prove the address is
-    /// well formed as well as in the right family. The rest have only a
-    /// declared PREFIX, because their keys are a card's name, a document's
-    /// definition or a form row's path, and a screen that could parse those
-    /// back would be claiming to know what the document holds. Those arms
-    /// claim membership and not structure, which is weaker and is said here
-    /// rather than left for a later round to discover.
-    fn reader_of(tag: &str) -> Option<&'static str> {
-        // The four with inverses.
-        if tag == lab::TOOLBAR || lab::toolbar_word(tag).is_some() {
-            return Some("toolbar");
-        }
-        if tag == lab::INSPECTOR || lab::inspector_word(tag).is_some() {
-            return Some("inspector");
-        }
-        if lab::reset_word(tag).is_some() {
-            return Some("reset");
-        }
-        if lab::pin_of(tag).is_some() {
-            return Some("pin");
-        }
-        // The prefixed rest, each from the const the screen declares.
-        if tag == lab::PALETTE || tag.starts_with(lab::PALETTE_SEAT) {
-            return Some("palette");
-        }
-        if tag == lab::FORM || tag.starts_with(lab::FORM_STEM) {
-            return Some("form");
-        }
-        if tag.starts_with(&lab::card("")) {
-            return Some("node");
-        }
-        if tag.starts_with(&lab::frame("")) {
-            return Some("frame");
-        }
-        if lab::card_of_way_in(tag).is_some() {
-            return Some("inside");
-        }
-        // ★★★★★ R2118 — the family with TWO HEADS, and one classifier for both.
-        // It belongs with the four above rather than with the prefixed rest:
-        // this answer is structural, and it is the one family here where a
-        // prefix test would be actively wrong — the stem carries a wire's own id
-        // and a fixed seat's word alike, so *what is left after the prefix* is
-        // not a key until the classifier has said which head it belongs to.
-        if lab::link_mark_of(tag).is_some() {
-            return Some("link");
-        }
-        None
-    }
+    // ★★★★★ R2125 — **the classifier is the GUEST's now.** This gate carried
+    // its own copy of it: ten arms, in the same order, with the same words as
+    // the one in `hello-node-lab`'s paint gates. Compared at R2125 the two were
+    // identical — which is this campaign's defect one level up, an address's
+    // CLASSIFICATION retyped at every gate rather than an address retyped at
+    // every reader. Adding five families would have made it twelve arms in two
+    // files that nothing compares, and a round declaring an eleventh in one of
+    // them would leave this host reporting a family as owed after the screen had
+    // stopped owing it.
+    //
+    // What this gate still owns is its POPULATION — one frame of the ASSEMBLY,
+    // where the guest's own gate sweeps every state — and that difference is
+    // why both gates exist.
+    let reader_of = lab::reader_of;
 
     let owner = Owner::new();
     owner.run(|| {
@@ -16230,6 +16195,15 @@ fn r2116_every_mark_the_mounted_lab_paints_is_declared_or_owed() {
         // seats are painted only once their scope has something to put back, so
         // `reset` legitimately claims one mark at boot and not five.
         for region in [
+            // ★★★★★ R2125 — the five this round declared. They are floors like
+            // the rest: a reader that stopped recovering its family would empty
+            // the owed map by describing nothing, and the assertion below would
+            // read as success.
+            "canvas",
+            "crumb",
+            "gate",
+            "hint",
+            "observed",
             "form",
             "frame",
             "inspector",
@@ -16260,6 +16234,31 @@ fn r2116_every_mark_the_mounted_lab_paints_is_declared_or_owed() {
         // (`r2116_every_family_this_screen_paints_is_declared_or_owed`), and
         // that split is what stops this gate from either passing vacuously or
         // demanding a mark that correct behaviour does not produce.
+        // ★★★★★ R2125 — AND THE OWED MAP IS EMPTY, which is the whole reason
+        // this round cut where it did.
+        //
+        // R2116 wrote this gate with a declared remainder because the screen was
+        // four times the size of its siblings and could not reach zero. That
+        // remainder was NINE families. Asking this gate with `--nocapture` said
+        // which of the nine THIS ASSEMBLY paints — five — and the other four are
+        // the standalone binary's, because the shell draws its own application
+        // bar and its own rail. So the reachable end state was never "lab is
+        // converted"; it was "the page a person opens owes nothing", and that is
+        // an assertion, where "some of lab is converted" is not.
+        //
+        // ⚠ This is deliberately NOT the exactness assertion the crate gate
+        // makes. That one sweeps every state and refuses a remainder entry that
+        // owns nothing; this one sees one frame and refuses a mark that nothing
+        // recovers. Two questions, and the comment above says why they cannot be
+        // merged.
+        assert!(
+            owed.is_empty(),
+            "★★★★★ the mounted lab paints {} mark(s) under a family nothing \
+             declares: {owed:?}. Since R2125 this page owes NOTHING — every \
+             family the assembly paints has a declared reader — so this is a \
+             family that came back rather than one that was never done.",
+            owed.values().sum::<usize>()
+        );
         let owed_total: usize = owed.values().sum();
         println!(
             "[r2116] {} mark(s) under `{}`: {claimed} recovered {by_reader:?}, \

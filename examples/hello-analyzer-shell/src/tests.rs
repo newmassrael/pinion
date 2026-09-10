@@ -3119,12 +3119,14 @@ fn r1724_the_lab_destination_is_the_node_lab_itself() {
         );
         // ★ R2105 — the inspector's address comes from the lab's own
         // declaration, the way the toolbar consts beside it already do.
-        // ★★ R2106 — and the palette's does now. The canvas is the last one
-        // still spelled: that family has no declaring site yet, and this is
-        // where the next instalment finds it.
+        // ★★ R2106 — and the palette's does now. ★★★★★ R2125 — and the canvas,
+        // which this comment named as the last one still spelled and pointed
+        // the next instalment at. It was spelled thirty-six times across three
+        // populations and charged to nobody: a two-segment address with nothing
+        // after it is not what the census needle looks for.
         for pane in [
             hello_node_lab::address::PALETTE,
-            "lab.canvas",
+            hello_node_lab::address::CANVAS,
             hello_node_lab::address::INSPECTOR,
         ] {
             assert!(

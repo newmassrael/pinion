@@ -164,7 +164,7 @@ pub const PANES: &[PaneSpec] = &[
         holds: &[crate::address::PALETTE],
     },
     PaneSpec {
-        tag: "lab.canvas",
+        tag: crate::address::CANVAS,
         title: "",
         width: 0,
         // The canvas moves under a PAN, over a world surface it sizes itself,
@@ -183,7 +183,7 @@ pub const PANES: &[PaneSpec] = &[
         // so nothing here is ever excused — which is the point of writing it
         // down anyway: the gate can then check that the four lists PARTITION
         // the screen rather than merely covering the folding panes.
-        holds: &["lab.canvas", crate::address::CARD, "lab.wire."],
+        holds: &[crate::address::CANVAS, crate::address::CARD, "lab.wire."],
     },
     PaneSpec {
         tag: crate::address::INSPECTOR,
@@ -1601,7 +1601,7 @@ pub const VOICES: &[VoiceSpec] = &[
     },
     // The canvas.
     VoiceSpec {
-        tag: "lab.canvas",
+        tag: crate::address::CANVAS,
         role: "group",
         population: Population::One,
     },
@@ -1635,7 +1635,7 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.gate",
+        tag: crate::address::GATE,
         role: "list",
         population: Population::One,
     },
@@ -1643,7 +1643,7 @@ pub const VOICES: &[VoiceSpec] = &[
     // do, and it was inaudible — a reader was left to discover panning, zooming
     // and link authoring by trying.
     VoiceSpec {
-        tag: "lab.hint",
+        tag: crate::address::HINT,
         role: "status",
         population: Population::One,
     },
@@ -1652,7 +1652,7 @@ pub const VOICES: &[VoiceSpec] = &[
     // rather than labelling something, and going inside a subgraph changes what
     // every card on the canvas means.
     VoiceSpec {
-        tag: "lab.crumb",
+        tag: crate::address::CRUMB,
         role: "status",
         population: Population::One,
     },
@@ -1670,7 +1670,7 @@ pub const VOICES: &[VoiceSpec] = &[
     // navigation landmark and `r1725_one_application_has_one_navigation` refuses
     // a second. See the note beside the node itself.
     VoiceSpec {
-        tag: "lab.crumb.trail",
+        tag: crate::address::CRUMB_TRAIL,
         role: "group",
         population: Population::One,
     },
@@ -1815,12 +1815,12 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
         "name_of",
     ),
     (crate::address::TOOLBAR_ZOOM, Population::One, "name_of"),
-    ("lab.gate.head", Population::One, "name_of"),
-    ("lab.gate.verdict", Population::One, "part_of"),
-    ("lab.hint.text", Population::One, "name_of"),
+    (crate::address::GATE_HEAD, Population::One, "name_of"),
+    (crate::address::GATE_VERDICT, Population::One, "part_of"),
+    (crate::address::HINT_TEXT, Population::One, "name_of"),
     // ★ `.caption` and not `.text`: the run is `caption::captioned`'s child and
     // the framework names it, so this cannot drift from what is painted.
-    ("lab.crumb.caption", Population::One, "name_of"),
+    (crate::address::CRUMB_CAPTION, Population::One, "name_of"),
     (
         crate::address::INSPECTOR_DEGREE_TEXT,
         Population::One,

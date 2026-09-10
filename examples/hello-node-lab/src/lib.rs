@@ -6443,7 +6443,7 @@ impl Hit {
         if let Some(key) = address::form_part_key("disown", tag) {
             return Self::DisownField(key.to_owned());
         }
-        if tag == "lab.canvas" {
+        if tag == address::CANVAS {
             return Self::Canvas;
         }
         Self::Nothing
@@ -9015,7 +9015,7 @@ fn crumb_seats(state: &LabState) -> Vec<(usize, Rect)> {
 /// ★★★★★ R2065 — the steps have had tags since R1982 and the row had none,
 /// because nothing needed to name it: a pointer presses a chip. A keyboard
 /// cannot, and this is what it lands on.
-const CRUMB_TRAIL_TAG: &str = "lab.crumb.trail";
+const CRUMB_TRAIL_TAG: &str = address::CRUMB_TRAIL;
 
 /// ★★★★★ R2065 — the trail's cursor, or `None` when there is nowhere to go.
 ///
@@ -9128,7 +9128,7 @@ fn canvas_cursor(state: &LabState) -> Option<Roving> {
 /// what it costs when those two answer differently.
 fn canvas_attention(state: &LabState, stop: &str) -> Option<String> {
     match stop {
-        "lab.canvas" => canvas_cursor(state)?.active_descendant().map(str::to_owned),
+        address::CANVAS => canvas_cursor(state)?.active_descendant().map(str::to_owned),
         CRUMB_TRAIL_TAG => crumb_trail_cursor(state)?
             .active_descendant()
             .map(str::to_owned),
@@ -9149,7 +9149,7 @@ fn card_tag(state: &LabState, node: NodeId) -> String {
 /// A function rather than a `format!` at each site: the paint, the
 /// accessibility tree and the cursor all have to produce it from one rule.
 fn crumb_step_tag(depth: usize) -> String {
-    format!("lab.crumb.up.{depth}")
+    address::crumb_up(depth)
 }
 
 /// The chips of the breadcrumb, in `origin`'s own coordinates.
@@ -9181,9 +9181,9 @@ fn canvas_crumb(state: &LabState, ink: Ink, origin: Rect) -> Vec<Scene> {
             // where there is nowhere to go — and the pressable steps appear
             // only when there is somewhere to go.
             let (tag, above) = if depth == here {
-                ("lab.crumb".to_owned(), false)
+                (address::CRUMB.to_owned(), false)
             } else {
-                (format!("lab.crumb.up.{depth}"), true)
+                (crumb_step_tag(depth), true)
             };
             let (chip, _) = captioned(
                 &tag,
@@ -12608,11 +12608,7 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
             };
             let chosen = selected_link == Some(LinkPick::Observed(seen.from, seen.to));
             children.push(dashed_wire(
-                &format!(
-                    "lab.observed.{}.{}",
-                    state.name_of(seen.from.node),
-                    state.name_of(seen.to.node)
-                ),
+                &address::observed(&state.name_of(seen.from.node), &state.name_of(seen.to.node)),
                 centre(pin_rect(state, a, true)),
                 centre(pin_rect(state, b, false)),
                 ink.warn,
@@ -13342,10 +13338,16 @@ fn canvas_overlays(state: &LabState, theme: &Theme, ink: Ink) -> Vec<Scene> {
     children.push(crumb_trail(state, ink, rect));
 
     let hint = local(hint_rect());
-    children.push(box_at("lab.hint", hint, ink.surface, Some(ink.outline), 8));
+    children.push(box_at(
+        address::HINT,
+        hint,
+        ink.surface,
+        Some(ink.outline),
+        8,
+    ));
     children.push(quiet(
         tagged_label(
-            "lab.hint.text",
+            address::HINT_TEXT,
             hint_text(),
             Rect::new(hint.x + 10, hint.y + 6, hint.w - 20, 13),
             9,
@@ -13354,7 +13356,7 @@ fn canvas_overlays(state: &LabState, theme: &Theme, ink: Ink) -> Vec<Scene> {
         // The strip's whole content is the run inside it, and the strip is what
         // announces it — this screen's only statement of what the pointer can
         // do, which a reader needs most and could not hear at all.
-        Silence::name_of("lab.hint"),
+        Silence::name_of(address::HINT),
     ));
 
     children.extend(canvas_toast(state, ink));
@@ -13377,7 +13379,7 @@ fn launch_gate_panel(state: &LabState, ink: Ink, rect: Rect) -> Vec<Scene> {
     let gate = local(gate_rect(state));
     let verdict = state.verdict();
     children.push(box_at(
-        "lab.gate",
+        address::GATE,
         gate,
         ink.surface,
         Some(ink.outline_2),
@@ -13396,17 +13398,17 @@ fn launch_gate_panel(state: &LabState, ink: Ink, rect: Rect) -> Vec<Scene> {
     // already generous enough.
     children.push(quiet(
         tagged_label(
-            "lab.gate.head",
+            address::GATE_HEAD,
             "pre-launch check",
             Rect::new(gate.x + 12, gate.y + 10, 150, line_box(FONT_SMALL)),
             FONT_SMALL,
             ink.text,
         ),
-        Silence::name_of("lab.gate"),
+        Silence::name_of(address::GATE),
     ));
     children.push(quiet(
         tagged_label(
-            "lab.gate.verdict",
+            address::GATE_VERDICT,
             verdict.sentence(),
             Rect::new(
                 gate.x + 12,
@@ -13423,7 +13425,7 @@ fn launch_gate_panel(state: &LabState, ink: Ink, rect: Rect) -> Vec<Scene> {
         ),
         // The sentence IS the panel's value; the panel is one stop and the
         // findings under it are the list a reader walks.
-        Silence::part_of("lab.gate"),
+        Silence::part_of(address::GATE),
     ));
     let (shown, hidden) = gate_shown(state);
     let line_at = |n: usize| {
@@ -13436,7 +13438,7 @@ fn launch_gate_panel(state: &LabState, ink: Ink, rect: Rect) -> Vec<Scene> {
     };
     for (n, (blocks, sentence)) in shown.iter().enumerate() {
         children.push(tagged_label(
-            &format!("lab.gate.line.{n}"),
+            &address::gate_line(n),
             sentence.clone(),
             line_at(n),
             GATE_LINE_FONT,
@@ -13446,7 +13448,7 @@ fn launch_gate_panel(state: &LabState, ink: Ink, rect: Rect) -> Vec<Scene> {
     // ★ R1690 — what the panel has no room for, counted rather than dropped.
     if hidden > 0 {
         children.push(tagged_label(
-            "lab.gate.more",
+            address::GATE_MORE,
             format!("+{hidden} more — the verdict counts all of them"),
             line_at(shown.len()),
             GATE_LINE_FONT,
@@ -13784,7 +13786,7 @@ fn canvas(state: &LabState, theme: &Theme, ink: Ink) -> Scene {
     // that can do nothing is worse than no stop.
     Scene::Container(
         ContainerNode::new(children)
-            .with_tag("lab.canvas")
+            .with_tag(address::CANVAS)
             // ★★★★★ R1705 — the grid rides the VIEWPORT, not the world surface,
             // which is what makes it endless. A lattice on the world would be
             // bounded by the world exactly as the enumerated pips were, and
@@ -18486,6 +18488,40 @@ fn link_addresses_wire() -> serde_json::Value {
     })
 }
 
+/// ★★★★★ R2125 — **the five families the assembled page owed, for the walks.**
+///
+/// A walk is Python: it cannot name a Rust const, so the only way it stops
+/// spelling an address is if the screen HANDS it one. Three walks spelled these
+/// twelve times, and what made them spellable rather than derivable is that
+/// nothing published them — the same finding R2116 recorded for the reset seats
+/// and R2124 for a sibling screen, here for the last five families of this one.
+///
+/// ⚠ Seats where the family is indexed and whole addresses where it is not, so a
+/// walk composes only what genuinely varies: a breadcrumb step's depth and a
+/// check-panel line's ordinal are the walk's own numbers, while the canvas, the
+/// standing step, the trail and the hint's sentence are single marks with
+/// nothing to vary.
+fn owed_addresses_wire() -> serde_json::Value {
+    serde_json::json!({
+        "canvas": address::CANVAS,
+        "crumb": {
+            "here": address::CRUMB,
+            "trail": address::CRUMB_TRAIL,
+            "caption": address::CRUMB_CAPTION,
+            "up_seat": address::CRUMB_UP_SEAT,
+        },
+        "gate": {
+            "panel": address::GATE,
+            "head": address::GATE_HEAD,
+            "verdict": address::GATE_VERDICT,
+            "more": address::GATE_MORE,
+            "line_seat": address::GATE_LINE_SEAT,
+        },
+        "hint": { "band": address::HINT, "text": address::HINT_TEXT },
+        "observed_seat": address::OBSERVED_SEAT,
+    })
+}
+
 /// ★★★★★ R2053 — the prefix each part of a form row is addressed under.
 ///
 /// Its own function for the reason the rosters beside it have one — the
@@ -18891,6 +18927,15 @@ fn spec_json() -> serde_json::Value {
         // executed rather than repeated — and R2106's, which is that the check
         // has to be made in every namespace and not only in this table's keys.
         "link_addresses": link_addresses_wire(),
+        // ★★★★★ R2125 — the five families this screen owed until this round.
+        //
+        // ⚠ Under `owed_addresses` rather than a word per family, because that
+        // is what these five have in common and nothing else does: they are the
+        // remainder R2116 declared, and the day the standalone four join them
+        // this key is what the last instalment empties. A key per family would
+        // publish the grouping as five unrelated facts and lose the one thing a
+        // reader needs — that this is a LIST WITH AN END.
+        "owed_addresses": owed_addresses_wire(),
         "addable": spec::ADDABLE,
         "gestures": spec::GESTURES.iter().map(|(g, w)| serde_json::json!([g, w])).collect::<Vec<_>>(),
         // ★ R1678 — the reset affordances, and which of them are CONDITIONAL.
@@ -25082,7 +25127,7 @@ impl WidgetCore for NodeLabView {
         // SELECTS, so the inspector opens on whatever the cursor reaches. One
         // write, through `select_only` — the same verb the pointer and the wire
         // use — so a keyboard walk and a click cannot mean two things.
-        if focused == Some("lab.canvas")
+        if focused == Some(address::CANVAS)
             && let Some(mut roving) = canvas_cursor(&state)
         {
             let Some(landing) = roving.key(key) else {
@@ -25598,7 +25643,7 @@ fn canvas_access(state: &LabState) -> Vec<AccessNode> {
     // what the missing half costs — a client is told the stop exists with no
     // way to learn what is inside it or which keys move there, and every test
     // passes because the screen behaves correctly.
-    let mut canvas = AccessNode::new("lab.canvas", AriaRole::Group)
+    let mut canvas = AccessNode::new(address::CANVAS, AriaRole::Group)
         .with_name("canvas")
         // ★★ R1706 — a canvas whose frame gesture selects six cards at once
         // is multi-selectable, and saying so is what makes the per-card
@@ -25856,7 +25901,7 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
         let from = state.name_of(seen.from.node);
         let to = state.name_of(seen.to.node);
         nodes.push(
-            AccessNode::new(format!("lab.observed.{from}.{to}"), AriaRole::Group)
+            AccessNode::new(address::observed(&from, &to), AriaRole::Group)
                 .with_name(format!("reported link {from} to {to}, not authored"))
                 .with_selected(selected == Some(LinkPick::Observed(seen.from, seen.to))),
         );
@@ -29139,16 +29184,16 @@ fn fault_access(state: &LabState) -> Vec<AccessNode> {
 fn gate_access(state: &LabState) -> Vec<AccessNode> {
     let verdict = state.verdict();
     let (shown, hidden) = gate_shown(state);
-    let mut gate = AccessNode::new("lab.gate", AriaRole::List)
+    let mut gate = AccessNode::new(address::GATE, AriaRole::List)
         .with_name("pre-launch check")
         .with_value(AccessValue::Text(verdict.sentence()));
     for n in 0..shown.len() {
-        gate = gate.with_child(format!("lab.gate.line.{n}"));
+        gate = gate.with_child(address::gate_line(n));
     }
     let mut nodes = vec![gate];
     for (n, (blocks, sentence)) in shown.iter().enumerate() {
         nodes.push(
-            AccessNode::new(format!("lab.gate.line.{n}"), AriaRole::ListItem)
+            AccessNode::new(address::gate_line(n), AriaRole::ListItem)
                 .with_name(format!(
                     "{}: {sentence}",
                     if *blocks { "blocks launch" } else { "warning" }
@@ -29158,7 +29203,7 @@ fn gate_access(state: &LabState) -> Vec<AccessNode> {
     }
     if hidden > 0 {
         nodes.push(
-            AccessNode::new("lab.gate.more", AriaRole::Status)
+            AccessNode::new(address::GATE_MORE, AriaRole::Status)
                 .with_name(format!("{hidden} more the panel has no room for")),
         );
     }
@@ -29171,7 +29216,7 @@ fn gate_access(state: &LabState) -> Vec<AccessNode> {
         );
     }
     nodes.push(
-        AccessNode::new("lab.hint", AriaRole::Status).with_name(
+        AccessNode::new(address::HINT, AriaRole::Status).with_name(
             spec::GESTURES
                 .iter()
                 .map(|(g, what)| format!("{g} = {what}"))
@@ -29188,7 +29233,7 @@ fn gate_access(state: &LabState) -> Vec<AccessNode> {
     // mesh-failover" — the second is the one a reader who wants to get back out
     // needs.
     nodes.push(
-        AccessNode::new("lab.crumb", AriaRole::Status).with_name(if state.inside() {
+        AccessNode::new(address::CRUMB, AriaRole::Status).with_name(if state.inside() {
             format!("inside {}", state.breadcrumb().join(", of "))
         } else {
             format!("in {}, at the top", state.breadcrumb().join(", of "))
@@ -29220,7 +29265,7 @@ fn gate_access(state: &LabState) -> Vec<AccessNode> {
     // where that bites, because landmarks are counted per application.
     let mut trail = AccessNode::new(CRUMB_TRAIL_TAG.to_owned(), AriaRole::Group)
         .with_name("Where you are")
-        .with_child("lab.crumb");
+        .with_child(address::CRUMB);
     for (depth, name, _) in crumb_steps(state) {
         if depth < state.path.borrow().depth() {
             trail = trail.with_child(crumb_step_tag(depth));
