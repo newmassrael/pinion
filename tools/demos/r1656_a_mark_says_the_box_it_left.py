@@ -38,8 +38,10 @@ from rpc_verify import (  # noqa: E402
     call,
     card_prefix,
     form_part_prefixes,
+    link_prefix,
     resize_and_settle,
     run_demo,
+    screen_spec,
     walk_nodes,
 )
 
@@ -266,26 +268,32 @@ def run(tf: RpcSubprocess) -> None:
     # where the chrome actually is.
     #
     # ★★★★★ R1970 — and the WIRES are subtracted, by the ids the screen
-    # publishes rather than by a shape of tag. `lab.link.` is a prefix, and a
-    # prefix is an acceptance: until R1970 gave a wire its placement the
-    # seven `lab.link.{id}` paths had no rectangle at all, so this sweep
-    # happened to name only the picked link's seats. The moment they became
-    # visible it named eight more — and a wire's bounding box is most of the
-    # canvas by construction (see `dashed_wire`), so this check reported the
-    # overlay covering two cards it does not touch.
+    # publishes rather than by a shape of tag. The family stem is a prefix, and a
+    # prefix is an acceptance: until R1970 gave a wire its placement the seven
+    # wire paths had no rectangle at all, so this sweep happened to name only the
+    # picked link's seats. The moment they became visible it named eight more —
+    # and a wire's bounding box is most of the canvas by construction (see
+    # `dashed_wire`), so this check reported the overlay covering two cards it
+    # does not touch.
     #
     # ⚠ A wire is also POINTER TRANSPARENT, so it could not intercept the press
     # this loop is about even where it is drawn. The excuse belongs to the
     # seats, and the seats are what is left when the published links are taken
     # away.
-    wire_tags = {
-        f"lab.link.{link['id']}"
-        for link in json.loads(tf.query(f"{EXT}/links"))
-    }
+    #
+    # ★★★★★ R2118 — and BOTH halves of that subtraction are handed over now.
+    # The stem was spelled here and each wire's address was assembled from an id,
+    # which is this family's own shape working against a reader: its stem carries
+    # two vocabularies, so what is left after the prefix is not a key until
+    # something says which head it belongs to. The screen says. Each `links` row
+    # carries the address the canvas drew that wire under, and the prefix comes
+    # off the published template.
+    stem = link_prefix(screen_spec(tf, EXT))
+    wire_tags = {link["tag"] for link in json.loads(tf.query(f"{EXT}/links"))}
     chrome = [
         rect
         for tag, rect in abs_rects_of(tf.snapshot(source="paint")).items()
-        if tag.startswith("lab.link.") and tag not in wire_tags
+        if tag.startswith(stem) and tag not in wire_tags
     ]
 
     def under_chrome(px, py):

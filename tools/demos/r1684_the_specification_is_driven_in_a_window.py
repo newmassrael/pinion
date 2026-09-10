@@ -51,6 +51,8 @@ from rpc_verify import (  # noqa: E402
     form_part_tag,
     frame_tag,
     inspector_tag,
+    link_endpoint_tag,
+    link_tag,
     palette_tag,
     pin_tag,
     press_painted_tag,
@@ -337,17 +339,22 @@ GESTURES = {
     "author a link": lambda tf: drag_onto(
         tf, pin_tag(tf, "S-01", "dial"), pin_tag(tf, "P-02", "accept")
     ),
+    # ★★★★★ R2118 — the seat's WORD, and the screen hands back the address it
+    # painted it under, the same pair as the zoom and the discovery switch
+    # below. Spelled here until this round — and this family is the one where a
+    # walk could not have worked the address out for itself even in principle,
+    # because its stem carries a wire's id and a seat's word alike.
     "delete a link": lambda tf: (
         press_wire(tf, "Q-01", "R-01"),
-        press(tf, "lab.link.act"),
+        press(tf, link_tag(tf, "act", ext=EXT)),
     ),
     "rewire a link": lambda tf: drag_onto(
         tf, pin_tag(tf, "R-01", "accept"), pin_tag(tf, "P-03", "accept")
     ),
-    "select a link endpoint": lambda tf: press(tf, "lab.link.endpoint.1"),
+    "select a link endpoint": lambda tf: press(tf, link_endpoint_tag(tf, 1, ext=EXT)),
     "adopt an observed link": lambda tf: (
         press_wire(tf, "P-01", "P-02"),
-        press(tf, "lab.link.act"),
+        press(tf, link_tag(tf, "act", ext=EXT)),
     ),
     # the view
     "pan": lambda tf: drag_from_canvas(tf, (-30, 20)),

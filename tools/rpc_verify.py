@@ -5299,6 +5299,109 @@ def reset_tag(tf, scope: str, *, ext: str = "/external") -> str:
     return reset_seats(screen_spec(tf, ext))[scope]
 
 
+def link_prefix(spec: Any) -> str:
+    """The prefix every mark of the wire family hangs off.
+
+    ★★★★★ R2118 — recovered from the published TEMPLATE rather than published
+    separately, because the template is what the screen's specification rows
+    already carry and two publications of one prefix could disagree. The
+    placeholder is taken off the end, which is [`address_prefix`]'s rule for a
+    roster applied to a family whose population only the document can enumerate.
+
+    Raises rather than guessing when the template does not end in the
+    placeholder: a prefix worked out from a template that does not would be a
+    plausible string addressing nothing, and this family is the one where that
+    failure reads as *the screen did not draw the wire*.
+    """
+    template = spec["link_addresses"]["template"]
+    assert template.endswith("{}"), (
+        f"{template!r} does not end with its placeholder, so it is not a "
+        "template a wire's id is appended to"
+    )
+    return template[: -len("{}")]
+
+
+def link_seats(spec: Any) -> dict:
+    """Every FIXED seat of the wire family, keyed by the word the screen
+    declares it under — from a specification a caller has ALREADY read.
+
+    ★★★★★ R2118 — [`toolbar_seats`]'s pair of doors, and this family is the one
+    where the door matters most, because **its stem carries two vocabularies**.
+    A mark under it is either a wire the document holds — an open, numeric
+    population keyed by the document's own link id — or one of these fixed words.
+    A walk that strips the prefix and stops has not got a key: it cannot tell a
+    wire's id from a seat's word without re-deriving the rule the screen already
+    states, and it gets no error when it guesses wrong, only a mark that is not
+    there.
+
+    So the two heads come over the wire as the two different things they are:
+    this is the roster, [`link_prefix`] is the census head's template, and the
+    live `links` path carries each wire's own address for a walk asking about one
+    that exists.
+    """
+    return {row["word"]: row["tag"] for row in spec["link_addresses"]["seats"]}
+
+
+def link_tag(tf, word: str, *, ext: str = "/external") -> str:
+    """The address the fixed seat called `word` of the wire family is painted
+    under.
+
+    ★★★★★ R2118 — the walks' half of this family's address declaration:
+    **twelve sites across three walks** typed one of these out.
+
+    Takes the seat's WORD, which is what the screen declares and the wire
+    publishes, so the address a walk presses and the address the paint used are
+    one spelling by construction. A word the screen does not address is a
+    `KeyError` naming it.
+
+    ⚠ Most of these seats are painted only while a wire is PICKED, and two of
+    them only when the picked wire is one the document holds. This answers where
+    the seat is; whether it is there right now is what `link_roster` says.
+    """
+    return link_seats(screen_spec(tf, ext))[word]
+
+
+def link_endpoint_prefix(spec: Any) -> str:
+    """The prefix an endpoint chip of the picked wire hangs off — from a
+    specification a caller has ALREADY read.
+
+    ★★★★★ R2118 — a PREFIX rather than a roster word, because the chips are one
+    per endpoint the target offers: the vocabulary is open the way the census
+    head's is, while the family it belongs to is the closed one. `pin_addresses`
+    draws the same line one family over.
+    """
+    return spec["link_addresses"]["endpoint"]
+
+
+def link_endpoint_tag(tf, at: int, *, ext: str = "/external") -> str:
+    """The address the endpoint chip at position `at` is painted under.
+
+    ★★★★★ R2118 — [`link_endpoint_prefix`]'s second door, for [`toolbar_tag`]'s
+    reason: a walk holding the specification should not pay a round trip, and a
+    walk without one should not compose the address by hand.
+    """
+    return f"{link_endpoint_prefix(screen_spec(tf, ext))}{at}"
+
+
+def link_roster(tf, *, ext: str = "/external") -> list:
+    """Every address the wire family occupies RIGHT NOW that is not a wire, in
+    painted order.
+
+    ★★★★★ R2118 — the `faults_roster` arrangement (R1857): what the application
+    publishes as the addresses a region occupies, so a walk can hold it against
+    what the frame drew instead of working the answer out. This family's roster
+    head is conditional almost all the way through — four seats on a wire being
+    picked, two more on that wire being one the document holds, the preview on a
+    hand being mid-drag — and the one walk that needed the count wrote it down as
+    a constant beside a derived one.
+
+    ⚠ The application composes this from the same two answers the painter draws
+    from, reached by a different path, so an equality against the frame can fail.
+    A roster read off the scene would be a mirror.
+    """
+    return tf.query(f"{ext}/link_roster")
+
+
 def palette_root(tf, *, ext: str = "/external") -> str:
     """The tag the node palette ITSELF is painted under — the pane, not a seat.
 

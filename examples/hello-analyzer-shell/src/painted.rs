@@ -16156,6 +16156,15 @@ fn r2116_every_mark_the_mounted_lab_paints_is_declared_or_owed() {
         if lab::card_of_way_in(tag).is_some() {
             return Some("inside");
         }
+        // ★★★★★ R2118 — the family with TWO HEADS, and one classifier for both.
+        // It belongs with the four above rather than with the prefixed rest:
+        // this answer is structural, and it is the one family here where a
+        // prefix test would be actively wrong — the stem carries a wire's own id
+        // and a fixed seat's word alike, so *what is left after the prefix* is
+        // not a key until the classifier has said which head it belongs to.
+        if lab::link_mark_of(tag).is_some() {
+            return Some("link");
+        }
         None
     }
 
@@ -16208,6 +16217,10 @@ fn r2116_every_mark_the_mounted_lab_paints_is_declared_or_owed() {
             "form",
             "frame",
             "inspector",
+            // ★★★★★ R2118 — the wires, which this assembly draws at boot: the
+            // graph the page opens on is authored, so the canvas has wires on
+            // it before anybody touches anything.
+            "link",
             "node",
             "palette",
             "pin",
@@ -16237,6 +16250,194 @@ fn r2116_every_mark_the_mounted_lab_paints_is_declared_or_owed() {
              {owed_total} owed {owed:?}",
             claimed + owed_total,
             lab::NAMESPACE
+        );
+    });
+}
+
+/// The mounted lab's wire-family marks in one shot, split by which head each
+/// belongs to.
+///
+/// ★★★★★ R2118 — module scope rather than an inner `fn`, because the two gates
+/// below are one claim split in two and a helper each would be the second copy
+/// this whole campaign is about.
+///
+/// ★ Anything under the stem that classifies as NEITHER is returned as an orphan
+/// rather than dropped: a mark this page paints that the declaration cannot name
+/// is the whole point of asking.
+fn mounted_wire_family_heads(shot: &Painted) -> (Vec<&str>, Vec<&str>, Vec<&str>) {
+    use hello_node_lab::address as lab;
+    let mut wires = Vec::new();
+    let mut seats = Vec::new();
+    let mut orphans = Vec::new();
+    for tag in shot.family(lab::LINK) {
+        match lab::link_mark_of(tag) {
+            Some(lab::LinkMark::Wire(_)) => wires.push(tag),
+            Some(_) => seats.push(tag),
+            None => orphans.push(tag),
+        }
+    }
+    wires.sort_unstable();
+    seats.sort_unstable();
+    orphans.sort_unstable();
+    (wires, seats, orphans)
+}
+
+/// ★★★★★ R2118 — **the ASSEMBLED node lab draws both heads of its wire family.**
+///
+/// The screen's own crate holds this family to its two authorities over every
+/// state it has. What that gate cannot see is the page: the shell draws its own
+/// bar and its own rail, mounts the lab inside a board, and routes every press
+/// through its own hit test before the mounted screen ever hears about it. A
+/// wire is the mark where that matters most — it is a path, pointer transparent,
+/// with a bounding box that is most of the canvas — so *the wires are drawn* and
+/// *the wires are drawn HERE, reachable through the host* are two facts.
+///
+/// What this asserts, in the assembly:
+///
+/// * every mark under the family's stem belongs to exactly one head, so a page
+///   that mounted a screen and mangled its addresses fails;
+/// * BOTH heads are non-empty at boot — the graph the page opens on is authored
+///   and one of its wires is picked, so the canvas has wires and the picked
+///   wire's chrome.
+///
+/// The GESTURE half is next door
+/// ([`r2118_a_press_through_the_host_moves_the_picked_wires_chrome`]), split off
+/// at the line budget's insistence and a better seam than it looks: *the page
+/// mounted the addresses* and *the host's router reaches them* fail for
+/// different reasons and should say which.
+#[test]
+fn r2118_the_mounted_lab_draws_both_heads_of_its_wire_family() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        state
+            .go("lab")
+            .unwrap_or_else(|why| panic!("the node lab section is open and refused: {why:?}"));
+        let (shot, _) = painted_at((WIN_W, WIN_H));
+        let (wires, seats, orphans) = mounted_wire_family_heads(&shot);
+        assert!(
+            orphans.is_empty(),
+            "★★★★★ the mounted lab paints {} mark(s) under its wire family's \
+             stem that belong to neither of its heads: {orphans:?}",
+            orphans.len()
+        );
+        assert!(
+            !wires.is_empty(),
+            "★★★★★ the assembled page draws NO wire — the graph it opens on is \
+             authored, so either the mount lost the canvas's paths or their \
+             addresses stopped being the ones the declaration composes"
+        );
+        assert!(
+            !seats.is_empty(),
+            "★★★★★ the assembled page draws no seat of the picked wire's chrome. \
+             The page opens with a wire picked, so this is the mounted screen's \
+             floating annotation going missing inside the board — which no \
+             count of the wires would notice"
+        );
+        println!(
+            "[r2118] the mounted lab draws {} wire(s) and {} roster seat(s)",
+            wires.len(),
+            seats.len()
+        );
+    });
+}
+
+/// ★★★★★ R2118 — **a press delivered through the HOST's router moves the picked
+/// wire's chrome, and moves nothing else.**
+///
+/// The gesture half of the gate above. Picking is not authoring: a press that
+/// changed WHICH WIRES EXIST would be the screen losing the difference between
+/// its two heads, which is exactly what a stem carrying two vocabularies makes
+/// possible — and the host is where it would happen unseen, because the shell
+/// resolves the point before the mounted screen hears about it.
+///
+/// ⚠ The wire is pressed at the MIDPOINT OF ITS TWO PINS rather than at its own
+/// rectangle, and that is forced: a path's painted rectangle is its bounding box
+/// and its centre is nowhere near the stroke. The screen's own sweeps aim the
+/// same way, and the pins are addressed through the same declaration.
+///
+/// ⚠⚠ AND THE PRESS IS ASSERTED TO HAVE DONE SOMETHING. Without the last
+/// assertion the three comparisons here are satisfied by a press the host
+/// delivered nowhere — they would compare a screen with itself, and this
+/// repository has twice written down that an assertion with no path to failure
+/// should be deleted rather than kept. The picked wire's chrome is drawn at that
+/// wire's midpoint, so *which* wire is picked is readable as WHERE the caption
+/// is.
+#[test]
+fn r2118_a_press_through_the_host_moves_the_picked_wires_chrome() {
+    use hello_node_lab::address as lab;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        state
+            .go("lab")
+            .unwrap_or_else(|why| panic!("the node lab section is open and refused: {why:?}"));
+        let (shot, _) = painted_at((WIN_W, WIN_H));
+        let (wires, _, _) = mounted_wire_family_heads(&shot);
+
+        // A press on another wire, through the HOST's router.
+        let seat = |tag: String| -> (u32, u32) {
+            let rect = shot
+                .tags
+                .get(&tag)
+                .unwrap_or_else(|| panic!("{tag} is painted, so the wire has an end there"));
+            (rect.x + rect.w / 2, rect.y + rect.h / 2)
+        };
+        let a = seat(lab::pin("Q-01", "dial"));
+        let b = seat(lab::pin("R-01", "accept"));
+        let at = (u32::midpoint(a.0, b.0), u32::midpoint(a.1, b.1));
+        let mut hand = hand_on(painted_at(shot.size).1);
+        hand.cursor(at);
+        assert!(
+            hand.hovering().is_some(),
+            "a press on the wire at {at:?} resolves to no surface, so the host \
+             would deliver it nowhere"
+        );
+        hand.press();
+        hand.release();
+
+        let (after_shot, _) = painted_at((WIN_W, WIN_H));
+        let (after_wires, after_seats, after_orphans) = mounted_wire_family_heads(&after_shot);
+        assert!(
+            after_orphans.is_empty(),
+            "★★★★★ after the press the page paints {} mark(s) under this stem \
+             that belong to neither head: {after_orphans:?}",
+            after_orphans.len()
+        );
+        assert_eq!(
+            after_wires, wires,
+            "★★★★★ picking a wire changed WHICH WIRES EXIST — the census head \
+             moved on a gesture that only selects, so the two heads of this \
+             family are not being kept apart"
+        );
+        assert!(
+            !after_seats.is_empty(),
+            "★★★★★ the chrome went away when a wire was pressed through the \
+             host's router: {after_seats:?}"
+        );
+        // The press did something — see this test's own header for why that has
+        // to be asserted rather than assumed.
+        let label = |shot: &Painted| {
+            *shot
+                .tags
+                .get(lab::LINK_LABEL)
+                .expect("the picked wire carries a caption")
+        };
+        let (was, now) = (label(&shot), label(&after_shot));
+        assert_ne!(
+            (was.x, was.y),
+            (now.x, now.y),
+            "★★★★★ the press picked no different wire — the caption is where it \
+             was, so every comparison above is this screen against itself"
+        );
+        println!(
+            "[r2118] a press through the host moves the caption {:?} -> {:?} \
+             and leaves {} wire(s) and {} roster seat(s)",
+            (was.x, was.y),
+            (now.x, now.y),
+            after_wires.len(),
+            after_seats.len()
         );
     });
 }

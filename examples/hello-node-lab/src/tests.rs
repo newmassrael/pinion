@@ -2025,6 +2025,210 @@ fn r2117_every_card_address_is_derived() {
     }
 }
 
+/// ★★★★★ R2118 — **a wire's address is typed in ONE place, and this counts.**
+///
+/// The twenty-first instalment, and the largest family this screen had left:
+/// **44 sites over four modules** here and **12 more across three walks**.
+///
+/// ⚠ The needle is assembled with `concat!`, because this file is one of the
+/// sources it reads.
+///
+/// ⚠⚠ The needle is the bare stem, so PROSE is in the population — and this
+/// family's declaration is an argument ABOUT what its stem means, so two of the
+/// comments explaining it live in `address.rs`, which this gate excuses for that
+/// reason and for no other.
+#[test]
+fn r2118_a_link_address_is_typed_in_one_place() {
+    const LINK_ANY: &str = concat!("lab.", "link.");
+    let sources = crate_sources();
+    let spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(LINK_ANY).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ a wire's address is declared in `address.rs` and taken from \
+         there everywhere else; these file(s) spell it themselves"
+    );
+}
+
+/// ★★★★★ R2118 — **THE TWO HEADS OF THIS FAMILY ARE DISJOINT**, and that is a
+/// property of the addresses rather than of any reader's ordering.
+///
+/// This is the first family this campaign has converted whose stem carries two
+/// vocabularies: an open numeric census — the stem carrying a wire's own id,
+/// one mark per wire the document holds — and a closed roster of fixed words.
+/// R2116's family was the
+/// first whose keys came from a TYPE; this is the first where *what is left
+/// after the prefix* is not a key at all until something has said which head it
+/// belongs to.
+///
+/// ★★★★★ WHY AN ORDERING WOULD NOT DO. [`address::link_mark_of`] tries the
+/// census head last, and if that ordering were the only thing keeping the heads
+/// apart then a roster word that came to parse as a number — a seat called `2`,
+/// a future seat called `0` meaning *the first one* — would silently be read as
+/// a wire, and the wire it named would be shadowed. `card_of`'s own comment
+/// records the general form: an order is a property of one call site, a refusal
+/// is a property of the address. So the disjointness is asserted over the whole
+/// roster, which is what makes the ordering safe rather than lucky.
+///
+/// ⚠ And in the other direction too: a `u32` tail is never a seat. That half
+/// cannot fail today and is asserted anyway, because the failure it guards
+/// against is a roster gaining an entry, not a reader changing.
+#[test]
+fn r2118_the_two_heads_of_the_link_family_are_disjoint() {
+    use super::address as lab;
+    use pinion_node_graph::LinkId;
+
+    for (word, tag) in lab::LINK_SEATS {
+        assert_eq!(
+            &lab::link_seat(word),
+            tag,
+            "★ the declared address for `{word}` is not what `link_seat()` derives"
+        );
+        assert_eq!(
+            lab::link_mark_of(tag),
+            Some(lab::LinkMark::Seat(word)),
+            "★ `{tag}` does not classify as its own seat"
+        );
+        assert_eq!(
+            lab::link_of(tag),
+            None,
+            "★★★★★ `{tag}` is a roster seat and reads as a WIRE — the two heads \
+             of this family have collided, and the wire it shadows is drawn, \
+             announced and unreachable"
+        );
+        assert_eq!(
+            word.parse::<u32>().ok(),
+            None,
+            "★★★★★ the roster word `{word}` parses as a link id, so the only \
+             thing telling the two heads apart is the order `link_mark_of` \
+             happens to try them in"
+        );
+    }
+    // ★★ The census head, both ways, over the ids this document actually
+    // issues and the boundary values a `u32` has.
+    for raw in [0u32, 1, 7, 42, u32::MAX] {
+        let id = LinkId(raw);
+        assert_eq!(lab::link(id), format!("{}{raw}", lab::LINK));
+        assert_eq!(
+            lab::LINK_TEMPLATE.replace("{}", &raw.to_string()),
+            lab::link(id)
+        );
+        assert_eq!(
+            lab::link_of(&lab::link(id)),
+            Some(id),
+            "★ link {raw} does not round-trip through its own address"
+        );
+        assert_eq!(
+            lab::link_mark_of(&lab::link(id)),
+            Some(lab::LinkMark::Wire(id))
+        );
+    }
+    // ★★★ The endpoint chips: a position, and the word inside one, told apart.
+    // Before this round the only thing separating them was that
+    // `"1.text".parse::<usize>()` fails — true by accident of the parser rather
+    // than by anything the address said.
+    for at in [0usize, 1, 12] {
+        assert_eq!(
+            lab::link_mark_of(&lab::link_endpoint(at)),
+            Some(lab::LinkMark::Endpoint { at, text: false }),
+            "★ the chip at {at} does not classify as itself"
+        );
+        assert_eq!(
+            lab::link_mark_of(&lab::link_endpoint_text(at)),
+            Some(lab::LinkMark::Endpoint { at, text: true }),
+            "★★ the WORD inside the chip at {at} classifies as the chip — a \
+             press on the word would move the endpoint the caption names"
+        );
+        assert_eq!(
+            lab::link_of(&lab::link_endpoint(at)),
+            None,
+            "★ an endpoint chip is not a wire"
+        );
+    }
+    // ★★★★ Refusals: the bare stem, a tail this family does not address, and
+    // tags of the families it shares a canvas with.
+    //
+    // ⚠ Composed from the declaration rather than spelled, which R2117's card
+    // gate does for the same reason and which this round had to be told twice:
+    // a refusal written out as a literal is a spelled address like any other.
+    // The first draft assembled these with `concat!` the way the speller gate
+    // above does, and the census reported a NEW FAMILY — correctly, because
+    // splitting an address after its screen prefix leaves a fragment that is
+    // itself a dotted address, and this file is in the population it reads.
+    for other in [
+        lab::LINK.to_owned(),
+        format!("{}nosuch", lab::LINK),
+        lab::LINK_ENDPOINT.to_owned(),
+        format!("{}x", lab::LINK_ENDPOINT),
+        // ★ A tail that is DIGITS and still not a wire, because it is wider
+        // than the id type. `u32::MAX + 1` is the boundary the census head's
+        // parse draws, and without a case here the refusal at that edge rested
+        // on nobody having looked.
+        format!("{}{}", lab::LINK, u64::from(u32::MAX) + 1),
+        lab::CARD.to_owned(),
+        lab::TOOLBAR.to_owned(),
+        lab::RESET_VIEW.to_owned(),
+    ] {
+        assert_eq!(
+            lab::link_mark_of(&other),
+            None,
+            "★ `{other}` is not a mark of the wire family"
+        );
+    }
+}
+
+/// ★★★★★ R2118 — **the wire publishes the roster the paint is composed from.**
+///
+/// The half the walks stand on: they are Python and cannot call the declaration,
+/// and this family is the one where a walk cannot even take the stem apart for
+/// itself — so what it is handed has to be the two heads AS two heads.
+///
+/// Its own test rather than the tail of the one above, and the split is the
+/// budget's doing rather than a preference (`clippy::too_many_lines`, 102/100).
+/// It is the right seam anyway: *nobody re-spells it*, *the declarations agree*
+/// and *the wire says the same thing* are three claims, and
+/// `r2108_every_pin_address_is_derived` already records the first split of that
+/// series.
+#[test]
+fn r2118_the_wire_publishes_the_roster_the_paint_composes() {
+    use super::address as lab;
+
+    let spec = super::spec_json();
+    let published = &spec["link_addresses"];
+    assert_eq!(
+        published["template"].as_str(),
+        Some(lab::LINK_TEMPLATE),
+        "★★★★★ the specification publishes a wire template that is not the one \
+         the paint is composed from"
+    );
+    assert_eq!(published["endpoint"].as_str(), Some(lab::LINK_ENDPOINT));
+    assert_eq!(published["text"].as_str(), Some(lab::LINK_TEXT));
+    let seats: Vec<(String, String)> = published["seats"]
+        .as_array()
+        .expect("the specification publishes the wire family's roster")
+        .iter()
+        .map(|row| {
+            (
+                row["word"].as_str().expect("a seat word").to_owned(),
+                row["tag"].as_str().expect("a seat address").to_owned(),
+            )
+        })
+        .collect();
+    let declared: Vec<(String, String)> = lab::LINK_SEATS
+        .iter()
+        .map(|(word, tag)| ((*word).to_owned(), (*tag).to_owned()))
+        .collect();
+    assert_eq!(
+        seats, declared,
+        "★★★★★ the roster the wire publishes is not the roster the paint is \
+         composed from"
+    );
+}
+
 /// ★★★★★ R2105 — **no two entries of the published specification claim the same
 /// name.**
 ///
@@ -7570,7 +7774,8 @@ fn r1975_editing_the_address_in_the_inspector_moves_the_wires_too() {
         //
         // ⚠ This guard was demanded by two gates neither of which this round
         // wrote: `r1691_every_addressable_region_is_classified_in_every_state`
-        // reported `lab.link.label (mumbled)` and R1853's injection walk found
+        // reported the picked wire's caption seat as `(mumbled)`, and R1853's
+        // injection walk found
         // TWO blocking findings where it declares one. A form takes whatever a
         // person types, so a card holding a non-address is a real state the
         // launch gate names — carrying it into a landing would make a wire

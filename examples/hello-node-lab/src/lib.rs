@@ -6196,7 +6196,7 @@ impl Hit {
             .filter(|(tag, _)| {
                 tag.starts_with(address::CARD)
                     || tag.starts_with(address::PIN)
-                    || tag.starts_with("lab.link.")
+                    || tag.starts_with(address::LINK)
                     // ★★★★★ R2001 — the advanced-fold chip's own family. A
                     // filter that drops a family HIDES it from every press,
                     // and the mark goes on being drawn: R1982 recorded exactly
@@ -6364,21 +6364,22 @@ impl Hit {
         {
             return Self::Frame(id);
         }
-        if tag == "lab.link.act" {
+        if tag == address::LINK_ACT {
             return Self::LinkAct;
         }
         // ★ R2000 — beside its neighbour rather than folded into it: `link:act`
         // is one seat with two meanings because both answer *should this link
         // be in the drawing*; this answers a different question about a link
         // that already is, so it is a different seat.
-        if tag == "lab.link.turn" {
+        if tag == address::LINK_TURN {
             return Self::LinkTurn;
         }
-        if let Some(n) = tag
-            .strip_prefix("lab.link.endpoint.")
-            .and_then(|n| n.parse::<usize>().ok())
-        {
-            return Self::Endpoint(n);
+        // ★★★★★ R2118 — the classifier, not a strip-and-parse. The two together
+        // were the whole of what told an endpoint chip from its own word, and
+        // the WORD inside a chip parses as nothing so it fell through — true by
+        // accident of `usize::from_str` rather than by anything said here.
+        if let Some(address::LinkMark::Endpoint { at, text: false }) = address::link_mark_of(tag) {
+            return Self::Endpoint(at);
         }
         if let Some(act) = NodeAct::ALL.into_iter().find(|a| a.tag() == tag)
             && state.active_card().is_some()
@@ -11831,6 +11832,69 @@ struct LinkChrome {
     turn_refusal: Option<String>,
 }
 
+/// The card a wire is being drawn FROM right now, or `None` when no hand is
+/// holding one.
+///
+/// ★★★★★ R2118 — lifted out of the painter because the roster the screen
+/// publishes has to answer the same question, and a second reading of
+/// `state.drag` there is how the published roster would come to say the preview
+/// is drawn while the canvas is not drawing it. Authoring and re-aiming are one
+/// answer for the reason R1681 gave when it made them one block: they draw the
+/// same preview from the same pin, and the only difference is whether a wire
+/// already exists at the far end.
+fn wire_in_flight(state: &LabState) -> Option<NodeId> {
+    match state.drag.get() {
+        Some(Drag::Wire { from, .. } | Drag::Rewire { from, .. }) => Some(from),
+        _ => None,
+    }
+}
+
+/// ★★★★★ R2118 — **every address this family occupies right now that is not a
+/// wire**, in painted order.
+///
+/// The `faults_roster` arrangement, R1857's: what the application publishes as
+/// the addresses a region occupies, checked by a walk against what the frame
+/// drew. The census head needs nothing like it — the
+/// document enumerates the wires and each one carries its own `tag` on the live
+/// path — but the roster head's members are CONDITIONAL, four of them on a wire
+/// being picked, two more on that wire being one the document holds, and the
+/// preview on a hand being in the middle of a drag. A reader that wanted to know
+/// what this family should be showing had to work all of that out, and the one
+/// walk that did wrote the answer down as a constant: `len(links) + 6`.
+///
+/// ⚠ Derived from [`link_chrome`] and [`wire_in_flight`] rather than from the
+/// paint tree, so this and [`link_affordances`] are two code paths over one
+/// state and the equality a walk asserts between them can fail. Reading the
+/// scene here would make that assertion a mirror.
+fn link_roster(state: &LabState) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(chrome) = link_chrome(state) {
+        out.push(address::LINK_LABEL.to_owned());
+        out.push(address::LINK_LABEL_TEXT.to_owned());
+        for n in 0..chrome.chips.len() {
+            out.push(address::link_endpoint(n));
+            out.push(address::link_endpoint_text(n));
+        }
+        out.push(address::LINK_ACT.to_owned());
+        out.push(address::LINK_ACT_TEXT.to_owned());
+        if chrome.turn.is_some() {
+            out.push(address::LINK_TURN.to_owned());
+            out.push(address::LINK_TURN_TEXT.to_owned());
+        }
+    }
+    // ⚠ The card the drag started from, not merely the drag: the painter draws
+    // the preview from that card's pin and a card it cannot place has no pin to
+    // draw from, so a roster that stopped at `is_some()` would claim a mark the
+    // canvas legitimately does not draw.
+    if wire_in_flight(state)
+        .and_then(|from| card_rect(state, from))
+        .is_some()
+    {
+        out.push(address::LINK_PREVIEW.to_owned());
+    }
+    out
+}
+
 /// The chrome of whichever link is picked, or `None` when none is.
 fn link_chrome(state: &LabState) -> Option<LinkChrome> {
     let pick = state.selected_link.get()?;
@@ -12195,37 +12259,37 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
         )
     };
     let mut out = vec![panel(
-        "lab.link.label",
+        address::LINK_LABEL,
         chrome.label,
         ink.accent_soft,
         Some(ink.accent_line),
         vec![quiet(
             placed_label(
-                "lab.link.label.text",
+                address::LINK_LABEL_TEXT,
                 chrome.caption.clone(),
                 inner(chrome.label, &chrome.caption),
                 chrome.font,
                 ink.accent,
             ),
-            Silence::name_of("lab.link.label"),
+            Silence::name_of(address::LINK_LABEL),
         )],
     )];
     for (n, (endpoint, seat)) in chrome.chips.iter().enumerate() {
         let picked = n == chrome.current;
         out.push(panel(
-            &format!("lab.link.endpoint.{n}"),
+            &address::link_endpoint(n),
             *seat,
             ink.surface,
             Some(if picked { ink.accent } else { ink.outline }),
             vec![quiet(
                 placed_label(
-                    &format!("lab.link.endpoint.{n}.text"),
+                    &address::link_endpoint_text(n),
                     endpoint.clone(),
                     inner(*seat, endpoint),
                     chrome.font,
                     if picked { ink.accent } else { ink.text_2 },
                 ),
-                Silence::name_of(format!("lab.link.endpoint.{n}")),
+                Silence::name_of(address::link_endpoint(n)),
             )],
         ));
     }
@@ -12235,19 +12299,19 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
         ("delete", ink.err)
     };
     out.push(panel(
-        "lab.link.act",
+        address::LINK_ACT,
         chrome.act,
         ink.surface,
         Some(edge),
         vec![quiet(
             placed_label(
-                "lab.link.act.text",
+                address::LINK_ACT_TEXT,
                 word.to_owned(),
                 inner(chrome.act, word),
                 chrome.font,
                 edge,
             ),
-            Silence::name_of("lab.link.act"),
+            Silence::name_of(address::LINK_ACT),
         )],
     ));
     // ★★★★★ R2000 — **the seat the graph will not honour is drawn as one that
@@ -12263,19 +12327,19 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
             (ink.surface, ink.accent_line)
         };
         out.push(panel(
-            "lab.link.turn",
+            address::LINK_TURN,
             seat,
             fill,
             Some(line),
             vec![quiet(
                 placed_label(
-                    "lab.link.turn.text",
+                    address::LINK_TURN_TEXT,
                     TURN_WORD.to_owned(),
                     inner(seat, TURN_WORD),
                     chrome.font,
                     if refused { ink.text_2 } else { ink.accent },
                 ),
-                Silence::name_of("lab.link.turn"),
+                Silence::name_of(address::LINK_TURN),
             )],
         ));
     }
@@ -12293,8 +12357,8 @@ fn link_chrome_access(state: &LabState) -> Vec<AccessNode> {
         return Vec::new();
     };
     let mut nodes = vec![
-        AccessNode::new("lab.link.label", AriaRole::Status).with_name(chrome.caption.clone()),
-        AccessNode::new("lab.link.act", AriaRole::Button).with_name(if chrome.adopt {
+        AccessNode::new(address::LINK_LABEL, AriaRole::Status).with_name(chrome.caption.clone()),
+        AccessNode::new(address::LINK_ACT, AriaRole::Button).with_name(if chrome.adopt {
             "adopt this reported link into the drawing"
         } else {
             "delete this link"
@@ -12309,7 +12373,7 @@ fn link_chrome_access(state: &LabState) -> Vec<AccessNode> {
     // `turn_name`, so the refusal cannot cost the seat its label.
     if chrome.turn.is_some() {
         nodes.push(
-            AccessNode::new("lab.link.turn", AriaRole::Button)
+            AccessNode::new(address::LINK_TURN, AriaRole::Button)
                 .with_name(turn_name(chrome.turn_refusal.as_deref()))
                 .with_state(AccessState {
                     disabled: chrome.turn_refusal.is_some(),
@@ -12319,7 +12383,7 @@ fn link_chrome_access(state: &LabState) -> Vec<AccessNode> {
     }
     for (n, (endpoint, _)) in chrome.chips.iter().enumerate() {
         nodes.push(
-            AccessNode::new(format!("lab.link.endpoint.{n}"), AriaRole::RadioButton)
+            AccessNode::new(address::link_endpoint(n), AriaRole::RadioButton)
                 .with_name(endpoint.clone())
                 .with_state(AccessState {
                     checked: Some(n == chrome.current),
@@ -12485,13 +12549,7 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
                     _ if chosen => (ink.accent, 2),
                     _ => (ink.accent_line, 1),
                 };
-                children.push(wire(
-                    &format!("lab.link.{}", link.id.0),
-                    from,
-                    to,
-                    stroke,
-                    weight,
-                ));
+                children.push(wire(&address::link(link.id), from, to, stroke, weight));
             }
         }
         // ★★ R1681 — what a source reported: the warning colour AND the dash
@@ -12529,17 +12587,13 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
     // the same pin, and the only difference is whether a wire already exists at
     // the far end. Two copies of it is how the second one would come to be
     // drawn from somewhere else.
-    let in_flight = match state.drag.get() {
-        Some(Drag::Wire { from, .. } | Drag::Rewire { from, .. }) => Some(from),
-        _ => None,
-    };
-    if let Some(from) = in_flight
+    if let Some(from) = wire_in_flight(state)
         && let Some(card) = card_rect(state, from)
     {
         let cursor = state.cursor.get();
         let (cx, cy) = window_to_content(state, cursor.0, cursor.1);
         children.push(wire(
-            "lab.link.preview",
+            address::LINK_PREVIEW,
             centre(pin_rect(state, card, true)),
             (
                 u32::try_from(cx).unwrap_or(0),
@@ -15110,6 +15164,12 @@ const FIELDS: &[SchemaField] = &{
         // itself had to spell the shape a second time. That second copy is what
         // this round is repaying one level up.
         SchemaField::new("faults_roster", "json"),
+        // ★★★★★ R2118 — and the same question about the wire family's ROSTER
+        // head: every address it occupies right now, in painted order. The
+        // census head is answered by `links`, whose rows carry each wire's own
+        // address; this is the half whose members are conditional and which a
+        // reader therefore could not derive from any table.
+        SchemaField::new("link_roster", "json"),
         // ★★★★★ R1850 — and what the form is WILLING to hold, which `form`
         // cannot say. `form` lists the rows that are there; a reader deciding
         // whether to take one off needs to know whether it comes back, and a
@@ -16358,6 +16418,16 @@ impl ExternalIntrospect for LabOracle {
                     .map(serde_json::Value::String)
                     .collect(),
             ))),
+            // ★★★★★ R2118 — the addresses the wire family's roster head
+            // occupies, composed from `link_chrome` and `wire_in_flight` — the
+            // same two answers the painter draws from, reached by a different
+            // path, so the equality a walk asserts against the frame can fail.
+            "link_roster" => Ok(IntrospectValue::Json(serde_json::Value::Array(
+                link_roster(state)
+                    .into_iter()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ))),
             "verdict" => {
                 let verdict = state.verdict();
                 text(
@@ -16608,6 +16678,15 @@ impl ExternalIntrospect for LabOracle {
                             .map(|l| {
                                 serde_json::json!({
                                     "id": l.id.0,
+                                    // ★★★★★ R2118 — and WHERE it is drawn. The
+                                    // id has been published since R1678 and the
+                                    // address never was, so every reader that
+                                    // wanted the wire's mark composed it from a
+                                    // prefix it spelled: a table that publishes
+                                    // a key and not the address that key names
+                                    // makes every one of its readers assemble
+                                    // the same string.
+                                    "tag": address::link(l.id),
                                     "from": state.name_of(l.from.node),
                                     "to": state.name_of(l.to.node),
                                     // ★ R1681 — WHICH endpoint of the target
@@ -18291,6 +18370,61 @@ fn pin_addresses_wire() -> serde_json::Value {
     serde_json::json!({ "prefix": address::PIN })
 }
 
+/// ★★★★★ R2118 — the wires, and the picked wire's own chrome: **both heads of
+/// one family**, published as the two different things they are.
+///
+/// The rosters beside this one each publish a single vocabulary. This family has
+/// two under one stem — a mark per wire the document holds, keyed by the
+/// document's own link id, and a closed roster of fixed words — and a walk that
+/// received them mixed would be back where it started, unable to tell
+/// a wire's own address from the act seat's without re-deriving the rule.
+///
+/// So the census head is published as a TEMPLATE (the population is the
+/// document's and only the document can enumerate it — the live `links` path
+/// carries each wire's own `tag` for a walk asking about one that exists) and the
+/// roster head as a roster. `endpoint` is a prefix beside them because its key is
+/// a position rather than a word, which is [`pin_addresses_wire`]'s answer to
+/// the same question one family over.
+/// Every reset scope, whether its seat is conditional, and where it is painted.
+///
+/// ★★★★★ R2118 — lifted out of `spec_json` because that function is at a hard
+/// line budget and this round's own row pushed it one line over
+/// (`clippy::too_many_lines`, 101/100). It is the shape its six siblings already
+/// have — `toolbar_wire`, `inspector_wire`, `palette_addresses_wire`,
+/// `pin_addresses_wire`, `form_parts_wire`, `link_addresses_wire` — so the
+/// budget was paid by making an inline table look like the named ones beside it
+/// rather than by widening the budget.
+///
+/// ⚠ The KEY stays in `spec_json`, which is not incidental:
+/// `r2105_the_published_specification_names_nothing_twice` reads that function's
+/// SOURCE and counts keys at the outer object's depth, so a row moved out
+/// wholesale would leave the duplicate-key gate quietly blind to it.
+fn resets_wire() -> serde_json::Value {
+    ResetScope::ALL
+        .iter()
+        .map(|scope| {
+            serde_json::json!({
+                "scope": scope.wire(),
+                "gated": scope.gated(),
+                "tag": address::reset(scope.wire()),
+            })
+        })
+        .collect::<Vec<_>>()
+        .into()
+}
+
+fn link_addresses_wire() -> serde_json::Value {
+    serde_json::json!({
+        "template": address::LINK_TEMPLATE,
+        "seats": address::LINK_SEATS
+            .iter()
+            .map(|(word, tag)| serde_json::json!({ "word": word, "tag": tag }))
+            .collect::<Vec<_>>(),
+        "endpoint": address::LINK_ENDPOINT,
+        "text": address::LINK_TEXT,
+    })
+}
+
 /// ★★★★★ R2053 — the prefix each part of a form row is addressed under.
 ///
 /// Its own function for the reason the rosters beside it have one — the
@@ -18676,6 +18810,15 @@ fn spec_json() -> serde_json::Value {
         // fourth, which R2108 found, was this crate's own `const PIN` — a pin's
         // diameter — and nothing but a reader would ever have caught that one.
         "pin_addresses": pin_addresses_wire(),
+        // ★★★★★ R2118 — **the wires and the picked wire's chrome**, the first
+        // family here whose stem carries two vocabularies.
+        //
+        // ⚠ Under `link_addresses` and not `links`, which is taken twice over:
+        // this table already publishes the opening wires under that word, and
+        // the introspection path answers the live ones under it. R2105's lesson
+        // executed rather than repeated — and R2106's, which is that the check
+        // has to be made in every namespace and not only in this table's keys.
+        "link_addresses": link_addresses_wire(),
         "addable": spec::ADDABLE,
         "gestures": spec::GESTURES.iter().map(|(g, w)| serde_json::json!([g, w])).collect::<Vec<_>>(),
         // ★ R1678 — the reset affordances, and which of them are CONDITIONAL.
@@ -18689,11 +18832,7 @@ fn spec_json() -> serde_json::Value {
         // twenty-two sites of a composition this screen already performs. The
         // row now carries the address the paint used, so the two cannot be two
         // spellings.
-        "resets": ResetScope::ALL.iter().map(|scope| serde_json::json!({
-            "scope": scope.wire(),
-            "gated": scope.gated(),
-            "tag": address::reset(scope.wire()),
-        })).collect::<Vec<_>>(),
+        "resets": resets_wire(),
         // ★★ R1677 — what the screen can be asked to DO, beside what it has.
         // Published for the same reason every other row here is: a demo that
         // carried its own copy of this list would be checking the list against
@@ -25633,7 +25772,7 @@ fn wire_access(state: &LabState) -> Vec<AccessNode> {
         let from = state.name_of(link.from.node);
         let to = state.name_of(link.to.node);
         nodes.push(
-            AccessNode::new(format!("lab.link.{}", link.id.0), AriaRole::Group)
+            AccessNode::new(address::link(link.id), AriaRole::Group)
                 .with_name(format!("link {from} to {to}"))
                 .with_selected(selected == Some(LinkPick::Authored(link.id))),
         );
@@ -26589,7 +26728,8 @@ fn not_this_cards_transport(name: &str, side: Side) -> Option<String> {
 ///   launch gate is what says so. Carrying that into the landings would make a
 ///   wire claim to dial a string nobody can reach, and R1691's classification
 ///   walk and R1853's fault-injection walk BOTH went red on exactly that:
-///   `lab.link.label (mumbled)`, and a second blocking finding where the
+///   the picked wire's caption seat reported as `(mumbled)`, and a second
+///   blocking finding where the
 ///   injection declares one. So a landing keeps the address it has until a
 ///   readable one replaces it, which is the truthful state — the wire dialled
 ///   somewhere real and the card has since lost the row that named it.

@@ -43,6 +43,10 @@ from rpc_verify import (  # noqa: E402
     call,
     find_by_tag,
     inspector_seats,
+    link_endpoint_prefix,
+    link_prefix,
+    link_roster,
+    link_seats,
     palette_seats,
     pin_address,
     pin_of,
@@ -230,6 +234,16 @@ def body() -> None:
         # they hang and `pin_address` composes. Hoisted here beside its
         # neighbours because the blocks below compose one per card.
         pins = spec["pin_addresses"]["prefix"]
+        # ★★★★★ R2118 — and the WIRE family, which is the first here whose stem
+        # carries TWO vocabularies: a mark under it is either a wire the document
+        # holds, keyed by that wire's own id, or one of a closed roster of words.
+        # A walk that stripped the stem and stopped would not have a key. So the
+        # two heads arrive as the two different things they are — `wire` is the
+        # census head's prefix, `link_seat` its roster by word, `link_end` the
+        # prefix a chip's POSITION is appended to.
+        wire = link_prefix(spec)
+        link_seat = link_seats(spec)
+        link_end = link_endpoint_prefix(spec)
         assert_eq(q(tf, "graph"), spec["graph"], "the graph is the one declared")
         assert_eq(q(tf, "zoom"), spec["zoom"], "and it opens at the declared zoom")
         assert_eq(
@@ -444,7 +458,7 @@ def body() -> None:
             "lab.gate.verdict",
             "lab.hint",
             "lab.hint.text",
-            "lab.link.label",
+            link_seat["label"],
             ins_tag["id"],
             ins_tag["degree"],
         ):
@@ -773,15 +787,27 @@ def body() -> None:
             # ★ R1681 — the picked link now carries its own affordances: the
             # endpoint caption (a panel and its run) and the act seat (ditto).
             # Still derived, still not a constant.
-            # ★★ R2000 — +6, not +4: the TURN seat and the word it carries
-            # (`lab.link.turn` and `lab.link.turn.text`). It gained two and lost
-            # none, so the pin moving by exactly two is what says the seat
-            # landed whole rather than one arriving while another quietly went.
-            # ⚠ The seat is drawn only for an AUTHORED wire — a reported one is
-            # not in the drawing, so there is nothing whose ends could move —
-            # and this screen opens on an authored one, which is why the count
-            # is unconditional here rather than a branch.
-            "lab.link": len(spec["links"]) + 6,
+            # ★★ R2000 — +6, not +4: the TURN seat and the word it carries. It
+            # gained two and lost none, so the pin moving by exactly two is what
+            # says the seat landed whole rather than one arriving while another
+            # quietly went.
+            #
+            # 🟥🟥🟥 ★★★★★ R2118 — **AND THAT `+ 6` WAS THE HAND-WRITTEN HALF OF
+            # A TWO-HEADED FAMILY, sitting beside the derived half and reading
+            # as though both were derived.** The paragraph three families down
+            # states this file's own rule — *a family whose size is a function
+            # of the specification must not be pinned to a constant* — and names
+            # THIS family while doing it. `len(spec["links"])` is the census
+            # head. The 6 was the roster head, and it is a function of the
+            # specification too: four seats whenever a wire is picked, two more
+            # when the picked wire is one the document holds, the preview while
+            # a hand is mid-drag. Nothing published that, so it was counted by
+            # hand — twice, four rounds apart.
+            #
+            # The screen answers it now. `link_roster` is composed from the same
+            # two facts the painter draws from, reached by a different path, so
+            # section (D3) below can hold the two against each other and fail.
+            "lab.link": len(spec["links"]) + len(link_roster(tf, ext=EXT)),
             # And what a source reported is its own family, because it is its
             # own layer.
             "lab.observed": len(spec["observed"]),
@@ -1012,6 +1038,40 @@ def body() -> None:
               f"element by element, {counted} more pinned by member count across "
               f"{len(FAMILIES)} named families; nothing unaccounted for")
 
+        # ── (D3) R2118: BOTH HEADS of the wire family, each held to its own
+        #     authority ────────────────────────────────────────────────────
+        #
+        # ★★★★★ The count above is one number over a family that is two
+        # populations, and a count cannot tell them apart: a wire that stopped
+        # being drawn while a seat arrived would leave it unmoved. So the two
+        # heads are separated by the rule the SCREEN publishes — a mark is a
+        # wire iff it is one of the addresses the `links` table names — and each
+        # half is compared with the thing that decides it.
+        #
+        # ⚠ The roster half is the one that could not be asked before this
+        # round; it is why the pin above carried a hand-written `+ 6`. It is
+        # composed by the application from `link_chrome` and the drag, not read
+        # off the scene, so this equality is between two derivations and can
+        # fail. R1857's (D2) above is the same arrangement one region over.
+        wires_published = sorted(link["tag"] for link in json.loads(q(tf, "links")))
+        in_family = sorted(t for t in painted if t.startswith(wire))
+        wires_drawn = sorted(t for t in in_family if t in set(wires_published))
+        roster_drawn = sorted(t for t in in_family if t not in set(wires_published))
+        assert_eq(wires_drawn, wires_published,
+                  "★★★★★ the wires the canvas draws are not the wires the "
+                  "document publishes")
+        assert_eq(roster_drawn, sorted(link_roster(tf, ext=EXT)),
+                  "★★★★★ the addresses the wire family occupies are not the "
+                  "ones the application publishes at `link_roster` — one of "
+                  "them names a mark that is not on the screen")
+        assert wires_drawn and roster_drawn, (
+            f"★ {len(wires_drawn)} wire(s) and {len(roster_drawn)} seat(s) — "
+            "with either side empty the equalities above are about nothing"
+        )
+        print(f"[D3] the wire family occupies {len(in_family)} address(es) in "
+              f"two heads — {len(wires_drawn)} wire(s) the document names and "
+              f"{len(roster_drawn)} roster seat(s) the screen publishes")
+
         # ── (E) The inspector IS the settings editor ────────────────────────
         form = json.loads(q(tf, "form"))
         assert_eq(
@@ -1235,12 +1295,12 @@ def body() -> None:
                     # ANSWER, which is the screen's own vocabulary, rather than
                     # by a rectangle this side would have to re-derive.
                     #
-                    # ★ Never for the chrome's own seats: `lab.link.*` is
+                    # ★ Never for the chrome's own seats: the wire family is
                     # excluded, so "the delete seat is painted where nothing
                     # presses it" still fails here.
                     if answered.startswith(
                         ("link:act", "link:endpoint:")
-                    ) and not tag.startswith("lab.link."):
+                    ) and not tag.startswith(wire):
                         continue
                     bad.append((tag, want, answered))
             # And the ones under the fold, at the offset the screen itself says
@@ -1547,8 +1607,8 @@ def body() -> None:
         inv(tf, "select_link", f"{held['id']}")
 
         def seats() -> list:
-            return sorted(t for t in tags(paint(tf)) if t.startswith("lab.link.endpoint.")
-                          and not t.endswith(".text"))
+            return sorted(t for t in tags(paint(tf)) if t.startswith(link_end)
+                          and not t.endswith(spec["link_addresses"]["text"]))
 
         def addresses() -> list:
             row = next(f for f in json.loads(q(tf, "form")) if f["key"] == "listen.endpoints")
@@ -1567,7 +1627,7 @@ def body() -> None:
         # P3. Pressing the other seat MOVES the link's end — and the link keeps
         #     its identity, which is the whole reason the crate has one verb for
         #     this rather than a disconnect and a connect.
-        click(tf, at(tf, "lab.link.endpoint.1"))
+        click(tf, at(tf, f"{link_end}1"))
         moved = link_between("P-01", "R-01")
         assert moved is not None and moved["id"] == held["id"], (
             f"★ the link is the SAME link: {held} -> {moved}"
@@ -1606,8 +1666,8 @@ def body() -> None:
         target = link_between("S-01", "R-01")
         assert target is not None, links_now()
         inv(tf, "select_link", f"{target['id']}")
-        assert "lab.link.act" in tags(paint(tf)), "the picked link carries one act"
-        click(tf, at(tf, "lab.link.act"))
+        assert link_seat["act"] in tags(paint(tf)), "the picked link carries one act"
+        click(tf, at(tf, link_seat["act"]))
         assert link_between("S-01", "R-01") is None, (
             f"★ the act seat deleted it: {links_now()}"
         )
@@ -1627,7 +1687,7 @@ def body() -> None:
         assert_eq(q(tf, "selected_link"), f"{seen['from']}>{seen['to']}",
                   "a reported link is named by the pair it runs between")
         before = len(links_now())
-        click(tf, at(tf, "lab.link.act"))
+        click(tf, at(tf, link_seat["act"]))
         assert_eq(len(links_now()), before + 1, "★ adopting DRAWS it")
         drawn = link_between(seen["from"], seen["to"])
         assert drawn is not None, links_now()

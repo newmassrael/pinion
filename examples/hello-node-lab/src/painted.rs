@@ -1338,10 +1338,14 @@ fn must_answer(tag: &str) -> Option<String> {
     // sweeps now excuse whatever this chrome covers: an exception that took
     // reachability away without demanding it back would be a way to pass by
     // painting an affordance nobody can press.
-    if let Some(rest) = tag.strip_prefix("lab.link.endpoint.")
-        && !rest.contains('.')
+    // ★★★★★ R2118 — through the family's classifier, which is what a stem with
+    // two heads needs: the strip this replaced told an endpoint chip from the
+    // WORD inside it by asking whether a dot survived, and that reading has to
+    // be redone — correctly — at every reader of the family.
+    if let Some(crate::address::LinkMark::Endpoint { at, text: false }) =
+        crate::address::link_mark_of(tag)
     {
-        return Some(format!("link:endpoint:{rest}"));
+        return Some(format!("link:endpoint:{at}"));
     }
     match tag {
         // ★★ R1682 — the node's-life seats. Declared for the reason R1681.3
@@ -1357,7 +1361,7 @@ fn must_answer(tag: &str) -> Option<String> {
         // with its own hit target and is deliberately not demanded here.
         crate::address::INSPECTOR_RENAME => Some("card:rename".into()),
         crate::address::INSPECTOR_ADDKEY => Some("card:addkey".into()),
-        "lab.link.act" => Some("link:act".into()),
+        crate::address::LINK_ACT => Some("link:act".into()),
         // ★★★★★ R2000 — the turn seat, declared for the reason R1681.3 wrote
         // beside its neighbour: the card sweeps excuse whatever the picked
         // wire's chrome covers, so a seat painted inside that chrome and not
@@ -1365,7 +1369,7 @@ fn must_answer(tag: &str) -> Option<String> {
         // can press it. Adding it is what this gate found missing before a
         // person could: eighteen card corners answered `link:turn` while the
         // gate could not see that the seat is painted exactly there.
-        "lab.link.turn" => Some("link:turn".into()),
+        crate::address::LINK_TURN => Some("link:turn".into()),
         super::address::TOOLBAR_ZOOM_IN => Some("zoom:in".into()),
         super::address::TOOLBAR_ZOOM_OUT => Some("zoom:out".into()),
         // ★★ R1688 — the read-out is the view reset now, so it is a control and
@@ -1443,7 +1447,7 @@ fn owning_pane(tag: &str) -> Option<Rect> {
     }
     if tag.starts_with(super::address::CARD)
         || tag.starts_with("lab.frame.")
-        || tag.starts_with("lab.link.")
+        || tag.starts_with(super::address::LINK)
         || tag.starts_with("lab.gate")
         || tag.starts_with("lab.hint")
         || tag.starts_with("lab.crumb")
@@ -1508,6 +1512,13 @@ fn declared_reader_of(tag: &str) -> Option<&'static str> {
     if lab::card_of_way_in(tag).is_some() {
         return Some("inside");
     }
+    // ★★★★★ R2118 — the family with two heads, and ONE reader for both. A tag
+    // this classifier answers about is recovered whichever head it belongs to,
+    // which is what let `lab.link` leave `UNADDRESSED_FAMILIES` as a whole
+    // rather than half of it.
+    if lab::link_mark_of(tag).is_some() {
+        return Some("link");
+    }
     None
 }
 
@@ -1517,7 +1528,7 @@ fn declared_reader_of(tag: &str) -> Option<&'static str> {
 fn is_graph_content(tag: &str) -> bool {
     tag.starts_with(super::address::CARD)
         || tag.starts_with("lab.frame.")
-        || tag.starts_with("lab.link.")
+        || tag.starts_with(super::address::LINK)
         || tag.starts_with(super::address::PIN)
         || tag.starts_with("lab.gate")
 }
@@ -1733,7 +1744,7 @@ fn assert_reachable(when: &str, state: &LabState, shot: &Painted, size: (u32, u3
             // which includes the chrome, so making the `delete` seat
             // unpressable left this sweep green. An exception that swallows the
             // thing it is exchanged for is not an exception, it is a hole.
-            if !tag.starts_with("lab.link.") && super::chrome_covers(state, px, py) {
+            if !tag.starts_with(super::address::LINK) && super::chrome_covers(state, px, py) {
                 continue;
             }
             let got = Hit::at(state, px, py).word(state);
@@ -2101,7 +2112,7 @@ fn r1681_the_picked_links_chrome_paints_over_what_a_press_over_it_reaches() {
             // failing. The declaration answers "is this a card itself" now.
             .rposition(|tag| super::address::card_of(tag).is_some())
             .expect("cards are painted");
-        for seat in ["lab.link.label", "lab.link.act"] {
+        for seat in [super::address::LINK_LABEL, super::address::LINK_ACT] {
             let at = order
                 .iter()
                 .position(|tag| tag == seat)
@@ -2140,7 +2151,15 @@ fn r1681_a_reported_link_is_drawn_in_a_rhythm_a_drawn_one_is_not() {
                 let Some(tag) = path.tag.as_deref() else {
                     return;
                 };
-                if tag.starts_with("lab.link.") || tag.starts_with("lab.observed.") {
+                // ★★★★★ R2118 — the CENSUS head, not the family's prefix. A
+                // wire is the stem plus the document's own id; the picked
+                // wire's caption, its act
+                // and its turn seat live under the same stem and are panels
+                // rather than wires. The prefix was standing for "a drawn wire"
+                // and would have stopped being true the day this test ran with
+                // a link picked — it would have called a chrome panel a link
+                // somebody drew and asserted it was solid.
+                if super::address::link_of(tag).is_some() || tag.starts_with("lab.observed.") {
                     let dashed = path.style.stroke.and_then(|s| s.dash).is_some();
                     rhythms.push((tag.to_owned(), dashed));
                 }
@@ -2148,7 +2167,7 @@ fn r1681_a_reported_link_is_drawn_in_a_rhythm_a_drawn_one_is_not() {
         });
         let drawn: Vec<&(String, bool)> = rhythms
             .iter()
-            .filter(|(tag, _)| tag.starts_with("lab.link."))
+            .filter(|(tag, _)| super::address::link_of(tag).is_some())
             .collect();
         let reported: Vec<&(String, bool)> = rhythms
             .iter()
@@ -2681,6 +2700,177 @@ fn r2116_every_family_this_screen_paints_is_declared_or_owed() {
     });
 }
 
+/// ★★★★★ R2118 — **both heads of the wire family are what the frame draws**,
+/// in every state this screen has.
+///
+/// The declaration says a mark of this family is either a wire the document
+/// holds or one of a closed roster of words. That is a claim about the SCREEN, and a
+/// classifier alone cannot check it: `link_mark_of` would answer just as
+/// confidently about a mark the painter composed from somewhere else and about
+/// one that is drawn and belongs to no wire.
+///
+/// So the two heads are checked against two different authorities:
+///
+/// * the census head against the DOCUMENT — every wire it holds is drawn under
+///   its own address and nothing is drawn under an address no wire has, which is
+///   the direction that catches a stale mark surviving a delete;
+/// * the roster head against what the application PUBLISHES (`link_roster`),
+///   which is composed from `link_chrome` and `wire_in_flight` rather than read
+///   off the scene, so this equality can fail. R1857 built the same pair for the
+///   fault panel and stated the reason: a roster derived from the paint would be
+///   a mirror.
+///
+/// ⚠⚠ Over [`STATES`] and not one snapshot, for the reason R2116 measured one
+/// family over: four of this roster's seven seats are drawn only while a wire is
+/// picked, two more only when the picked wire is one the document holds, and the
+/// preview only while a hand is mid-drag. A single frame cannot see a family
+/// that only a gesture reveals — and here it is most of the family.
+#[test]
+fn r2118_both_heads_of_the_wire_family_are_what_the_frame_draws() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let mut states = 0usize;
+        let mut wires_seen = 0usize;
+        let mut seats_seen = 0usize;
+        for (when, mutate) in STATES {
+            mutate(&state);
+            states += 1;
+            let shot = painted(&state);
+            let mut drawn_wires: Vec<String> = Vec::new();
+            let mut drawn_seats: Vec<String> = Vec::new();
+            for tag in shot.tags.keys() {
+                match super::address::link_mark_of(tag) {
+                    Some(super::address::LinkMark::Wire(_)) => drawn_wires.push(tag.clone()),
+                    Some(_) => drawn_seats.push(tag.clone()),
+                    // A tag under this family's stem that classifies as neither
+                    // head is what `r2116_every_family_this_screen_paints_is_
+                    // declared_or_owed` fails on; here it would silently leave
+                    // both lists, so it is named where it is seen.
+                    None => assert!(
+                        !tag.starts_with(super::address::LINK),
+                        "★★★★★ {when}: `{tag}` is under this family's stem and \
+                         belongs to neither of its heads"
+                    ),
+                }
+            }
+            let mut from_document: Vec<String> = state
+                .doc
+                .borrow()
+                .tree(state.here())
+                .map(|tree| {
+                    tree.links()
+                        .iter()
+                        .map(|link| super::address::link(link.id))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut published = super::link_roster(&state);
+            drawn_wires.sort();
+            drawn_seats.sort();
+            from_document.sort();
+            published.sort();
+            assert_eq!(
+                drawn_wires, from_document,
+                "★★★★★ {when}: the wires the canvas draws are not the wires the \
+                 document holds"
+            );
+            assert_eq!(
+                drawn_seats, published,
+                "★★★★★ {when}: the addresses this family occupies are not the \
+                 ones the application publishes at `link_roster` — a walk asking \
+                 where to press is being told about a mark that is not there, or \
+                 not told about one that is"
+            );
+            wires_seen += drawn_wires.len();
+            seats_seen += drawn_seats.len();
+        }
+        assert_eq!(
+            states,
+            STATES.len(),
+            "★ the sweep did not reach every state"
+        );
+        assert!(
+            wires_seen > 0 && seats_seen > 0,
+            "★ {wires_seen} wire(s) and {seats_seen} seat(s) over the whole \
+             sweep — with an empty population both equalities above are about \
+             nothing"
+        );
+        println!(
+            "[r2118] over {states} state(s): {wires_seen} wire mark(s) and \
+             {seats_seen} roster mark(s), each held to its own authority"
+        );
+    });
+}
+
+/// ★★★★★ R2118 — **the wire a hand is still holding is in the published
+/// roster**, at the address the declaration composes.
+///
+/// ⚠⚠ ITS OWN TEST BECAUSE [`STATES`] CANNOT HOLD THIS STATE. That list is a
+/// chain of COMPLETED gestures — every entry leaves the screen somewhere a later
+/// entry can start from — so a half-finished drag cannot be an entry of it
+/// without leaking a held button into everything after. The preview wire is the
+/// one member of this family that exists only there.
+///
+/// This is R2116's finding arriving from the other side. That round measured
+/// that a single snapshot cannot see a family only a gesture reveals, and
+/// answered it with a state sweep; the answer has a floor of its own, which is
+/// the gesture a sweep cannot leave half-done. Without this frame the preview's
+/// address is the one member no gate could see, and the sweep next door would
+/// hold with it painted under any spelling at all — CF-4 of this round's
+/// counterfactual plan is caught HERE and nowhere else.
+#[test]
+fn r2118_the_wire_a_hand_is_holding_is_in_the_published_roster() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let shot = painted(&state);
+        let start = centre(
+            *shot
+                .tags
+                .get(&super::address::pin("S-01", "dial"))
+                .expect("a card's dial pin is painted, so a wire can start there"),
+        );
+        super::move_cursor(&state, start.0, start.1);
+        super::press(&state);
+        super::move_cursor(&state, start.0 + 90, start.1 + 60);
+        let mid_drag = painted(&state);
+        let mut in_flight: Vec<String> = mid_drag
+            .tags
+            .keys()
+            .filter(|tag| {
+                !matches!(
+                    super::address::link_mark_of(tag),
+                    Some(super::address::LinkMark::Wire(_))
+                ) && tag.starts_with(super::address::LINK)
+            })
+            .cloned()
+            .collect();
+        let mut published = super::link_roster(&state);
+        in_flight.sort();
+        published.sort();
+        assert!(
+            published.contains(&super::address::LINK_PREVIEW.to_owned()),
+            "★ mid-drag and the application publishes no preview, so the \
+             equality below is about a state this frame is not in: {published:?}"
+        );
+        assert_eq!(
+            in_flight, published,
+            "★★★★★ mid-drag: the addresses this family occupies are not the \
+             ones the application publishes — the wire that follows the cursor \
+             is the one member of this roster no completed gesture can reveal"
+        );
+        super::release(&state);
+        println!(
+            "[r2118] mid-drag: {} address(es) this family occupies that are \
+             not wires, the preview among them",
+            in_flight.len()
+        );
+    });
+}
+
 /// The one sweep, over every state.
 #[test]
 fn r1653_the_painted_screen_is_the_specification_in_every_state() {
@@ -2920,7 +3110,7 @@ fn r1653_the_painted_screen_invented_nothing() {
                 super::address::PALETTE_PROTOCOL,
                 Some(spec::PROTOCOLS.len()),
             ),
-            ("lab.link.", None),
+            (super::address::LINK, None),
             // ★★★★★ R1970 — the observed layer, which became VISIBLE to this
             // census the moment a wire started carrying a placement, and which
             // this gate refused on its first run: *the screen paints 1 tag(s)
@@ -3307,9 +3497,9 @@ fn r1969_a_dial_lands_on_an_accept_of_another_scheme_and_the_link_is_authored() 
         //
         // ⚠⚠ Asked of the SCENE and not of [`Painted`], and the reason is a
         // measurement this round made by accident. The first draft counted
-        // `shot.tags` keys under `lab.link.` and got FOUR before and FOUR after
-        // — and the four are `lab.link.{act,label}` and their runs, the
-        // selected link's CHROME. **Not one of the seven wires is in that
+        // `shot.tags` keys under this family's stem and got FOUR before and
+        // FOUR after — and the four are the act and caption seats and their
+        // runs, the selected link's CHROME. **Not one of the seven wires is in that
         // index.** A wire is a `Scene::Path` whose layout carries no absolute
         // rectangle (its bounding box is most of the canvas and it is pointer
         // transparent by design, R1655), so `Painted::of` sees `absolute_rect()
@@ -3331,11 +3521,11 @@ fn r1969_a_dial_lands_on_an_accept_of_another_scheme_and_the_link_is_authored() 
             .doc
             .borrow()
             .tree(super::ROOT)
-            .and_then(|t| t.links().last().map(|l| l.id.0))
+            .and_then(|t| t.links().last().map(|l| l.id))
             .expect("the link just authored");
         assert!(
-            drawn(&format!("lab.link.{fresh}")),
-            "★ the document gained link {fresh} and the canvas draws no path \
+            drawn(&super::address::link(fresh)),
+            "★ the document gained link {fresh:?} and the canvas draws no path \
              for it",
         );
     });
@@ -4644,7 +4834,7 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     // be proving the button works against a state no mouse can produce.
     ("delete a link", |state, shot| {
         press_wire(state, shot, "Q-01", "R-01");
-        press_tag(state, &painted(state), "lab.link.act");
+        press_tag(state, &painted(state), crate::address::LINK_ACT);
     }),
     ("rewire a link", |state, shot| {
         // Off the accept pin it lands on, onto another node's. Pressing an
@@ -4663,11 +4853,11 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         // The precondition grew the selected node's listen list, so the seats
         // are painted; the second one is the endpoint the link did not take.
         let _ = shot;
-        press_tag(state, &painted(state), "lab.link.endpoint.1");
+        press_tag(state, &painted(state), &crate::address::link_endpoint(1));
     }),
     ("adopt an observed link", |state, shot| {
         press_wire(state, shot, "P-01", "P-02");
-        press_tag(state, &painted(state), "lab.link.act");
+        press_tag(state, &painted(state), crate::address::LINK_ACT);
     }),
     ("pan", |state, _| {
         let canvas = canvas_rect();
@@ -5362,7 +5552,7 @@ fn r1704_a_link_that_has_left_the_canvas_takes_its_affordances_with_it() {
         press_wire(&state, &shot, "P-01", "R-01");
         let picked = painted(&state);
         assert!(
-            picked.tags.contains_key("lab.link.act"),
+            picked.tags.contains_key(super::address::LINK_ACT),
             "the picked link offers its `delete`, or this test is about nothing"
         );
         let link_count = |s: &std::rc::Rc<LabState>| -> usize {
@@ -5438,10 +5628,10 @@ fn r1704_a_link_that_has_left_the_canvas_takes_its_affordances_with_it() {
 /// The four tags the picked link's column paints, in the order the sizes below
 /// are taken in.
 const COLUMN: [&str; 4] = [
-    "lab.link.label",
-    "lab.link.label.text",
-    "lab.link.act",
-    "lab.link.act.text",
+    super::address::LINK_LABEL,
+    super::address::LINK_LABEL_TEXT,
+    super::address::LINK_ACT,
+    super::address::LINK_ACT_TEXT,
 ];
 
 #[test]

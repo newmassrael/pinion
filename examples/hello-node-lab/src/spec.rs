@@ -1593,7 +1593,7 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::Nodes,
     },
     VoiceSpec {
-        tag: "lab.link.{}",
+        tag: crate::address::LINK_TEMPLATE,
         role: "group",
         population: Population::Links,
     },

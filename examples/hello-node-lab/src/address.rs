@@ -37,6 +37,7 @@
 //! role and is handed the address the paint used.
 
 use crate::graph::Role;
+use pinion_node_graph::LinkId;
 
 /// ★★★★★ R2050 — the tag this screen paints its settings form under.
 ///
@@ -1144,6 +1145,262 @@ pub fn reset_word(tag: &str) -> Option<&'static str> {
         .map(|(word, _)| *word)
 }
 
+// ─── the wires, and the picked wire's own chrome ────────────────────────────
+//
+// ★★★★★ R2118 — **the first family with TWO HEADS on one stem.**
+//
+// Measured at entry: **12 sites across three walks** and **44 in this crate's
+// three modules** (`lib.rs` 23, `painted.rs` 20, `spec.rs` 1 — `tests.rs`
+// spelled this family zero times), none in the shell — 56 in all, and the
+// largest remainder this screen had left.
+//
+// Every family declared above carries ONE vocabulary under its stem: a bar seat
+// is a word, a card is a name, a form row is a config path, a reset is an arm of
+// an enum. This one carries two, and they are not the same kind of thing:
+//
+// * the **census** head — `lab.link.<id>`, one mark per wire the document holds,
+//   keyed by the document's own [`LinkId`], so the vocabulary is open and
+//   numeric and only the document can enumerate it;
+// * the **roster** head — the fixed words this family also addresses: the picked
+//   wire's caption, its one act, the turn seat, the wire a hand is still
+//   holding, and the endpoint chips indexed by position.
+//
+// ⚠ **A stem with two heads cannot be taken apart by stripping it.**
+// `lab.link.7` and `lab.link.act` both survive `strip_prefix("lab.link.")`, so a
+// reader that stops there reads `act` as a wire the document does not have and
+// `7` as a seat the screen does not paint — in BOTH directions, and both
+// silently. That is why the inverse here is a CLASSIFIER ([`link_mark_of`])
+// rather than a strip, and why the gate holds the two heads DISJOINT rather than
+// merely non-empty: every mark this family paints is recovered by exactly one of
+// them, and a roster word that came to parse as a number would be a failure
+// rather than a mark two readers each claim.
+//
+// ⚠⚠ The two heads are why the prefix on its own is a bad question, and this
+// crate was asking it SIX times (measured: five in the paint sweeps, one in the
+// press filter). The bare prefix was standing for four different meanings —
+// *is this drawn on the canvas*, *is this pressable*, *is this the chrome the
+// card sweeps excuse*, *is this a wire whose rhythm says which layer it is in* —
+// and the first three are genuinely about the whole family, chrome included.
+// EXACTLY ONE wanted the census head alone: the rhythm census, which would have
+// called a chrome panel a link somebody drew the first time it ran with a wire
+// picked. So the count of wrong readers is one, not six — what the other five
+// were missing is not correctness, it is that nothing SAID which question they
+// were asking, and a reader cannot tell a deliberate family-wide test from a
+// census head somebody spelled too widely.
+//
+// ⚠ That paragraph said "eight times" and "three of those four" in its first
+// draft, and both were written from memory. Measured against `HEAD` they are six
+// and one. The round whose whole subject is *a number that names one population
+// and is read as another* wrote two such numbers into its own declaration — the
+// fourth time in this campaign that the subject landed on its own draft.
+
+/// The prefix every mark of this family hangs off.
+///
+/// ★ Carried WITH its separator, for [`PIN`]'s and [`RESET_SEAT`]'s reason:
+/// every reader either composes onto it or strips it off, and there is no mark
+/// at the bare stem to want the other form for. A wire is drawn on the canvas
+/// and found through the canvas; nothing draws a box around the wires as a
+/// group, so there is no container here to address.
+pub const LINK: &str = "lab.link.";
+
+/// The address a **drawn wire** is painted under, as a template.
+///
+/// [`CARD_TEMPLATE`]'s shape, over a different population: the placeholder is
+/// the document's own link id, so the specification row that carries this
+/// template stands over `Population::Links` the way the card's stands over
+/// `Population::Nodes`.
+pub const LINK_TEMPLATE: &str = "lab.link.{}";
+
+/// The caption the picked wire carries.
+pub const LINK_LABEL: &str = "lab.link.label";
+
+/// The word inside that caption.
+pub const LINK_LABEL_TEXT: &str = "lab.link.label.text";
+
+/// The one act offered on the picked wire — `delete` on a drawn one, `adopt` on
+/// one a source merely reported.
+pub const LINK_ACT: &str = "lab.link.act";
+
+/// The word inside the act seat.
+pub const LINK_ACT_TEXT: &str = "lab.link.act.text";
+
+/// The seat that turns the picked wire around (R2000).
+pub const LINK_TURN: &str = "lab.link.turn";
+
+/// The word inside the turn seat.
+pub const LINK_TURN_TEXT: &str = "lab.link.turn.text";
+
+/// The wire a hand is still holding — drawn from the pin the drag started at to
+/// wherever the cursor is now, and belonging to no link because the document
+/// does not have one yet.
+///
+/// ⚠ This is the mark that makes the roster head more than "the picked wire's
+/// chrome": it is drawn when NOTHING is picked, so a reader that described this
+/// family as *the wires plus what a selection adds* would be wrong about it.
+pub const LINK_PREVIEW: &str = "lab.link.preview";
+
+/// The prefix an endpoint chip of the picked wire hangs off.
+///
+/// ★ Its own stem inside the roster head, because its key is a POSITION rather
+/// than a word: the chips are one per endpoint the target offers, so the
+/// vocabulary is open the way the census head's is while the family it belongs
+/// to is the closed one. [`PALETTE_PART`] is the same arrangement one screen
+/// region over.
+pub const LINK_ENDPOINT: &str = "lab.link.endpoint.";
+
+/// The suffix a seat's word-bearing child carries.
+///
+/// ⚠ Not the framework's `caption` suffix, and the difference is load-bearing:
+/// a caption is part of its box and is subtracted from a family's member count
+/// by every census in this workspace (R1792/R1794), while these runs are members
+/// in their own right — the picked wire's column is four marks and the sweep
+/// that keeps it inside the canvas measures all four (R1704).
+pub const LINK_TEXT: &str = ".text";
+
+/// ★★★★★ R2118 — every FIXED word this family addresses, beside the address
+/// declared for it.
+///
+/// [`RESET_SEATS`]'s shape. What makes this roster different from the bar's and
+/// the panel's is what sits beside it: this is not the whole family, it is the
+/// half of it whose vocabulary is closed, and the gate's job is to hold it
+/// disjoint from the half that is not ([`link`]).
+///
+/// ⚠ Not a list of what is PAINTED. Four of these are drawn only while a wire is
+/// picked, two more only when the picked wire is one the document holds, and the
+/// preview only while a hand is dragging. Only the painter knows that; what this
+/// roster says is what the screen is entitled to address, which is the question a
+/// reader classifying a tag is asking.
+pub const LINK_SEATS: &[(&str, &str)] = &[
+    ("label", LINK_LABEL),
+    ("label.text", LINK_LABEL_TEXT),
+    ("act", LINK_ACT),
+    ("act.text", LINK_ACT_TEXT),
+    ("turn", LINK_TURN),
+    ("turn.text", LINK_TURN_TEXT),
+    ("preview", LINK_PREVIEW),
+];
+
+/// The address of the wire the document calls `id`.
+///
+/// ★ Takes the document's own [`LinkId`] rather than a number, so a caller
+/// holding some other integer — an endpoint position, a row index, a count —
+/// cannot compose an address that looks right and names nothing. The card's
+/// declaration cannot do this (a card's key is a name the person typed); this
+/// family's can, because the id is a type.
+#[must_use]
+pub fn link(id: LinkId) -> String {
+    format!("{LINK}{}", id.0)
+}
+
+/// The address of the fixed seat called `word`.
+///
+/// `word` is one of [`LINK_SEATS`]; a word that is not composes an address
+/// nothing paints, which is a lookup answering nothing rather than a wrong mark
+/// — [`card_part`]'s direction, and the safe one.
+///
+/// ⚠ **ITS ONLY CALLER IS THE GATE THAT CHECKS IT, AND THAT IS MEASURED RATHER
+/// THAN OVERLOOKED.** Every caller in this crate arrives holding the seat CONST,
+/// because this roster's vocabulary is closed AND fixed — nothing expands over
+/// it — where [`reset`] next door is genuinely composed, its words coming from
+/// an enum a caller iterates.
+///
+/// ⚠⚠ AND WHICH CRATE KIND IT LIVES IN DECIDES WHO NOTICES. R2110's shell
+/// equivalent was refused by the COMPILER as dead code — `hello-analyzer-shell`
+/// is a BIN, where `pub` is not an exemption — and a count then confirmed it had
+/// no reader. THIS crate is a lib, so nothing refuses a `pub fn` nobody calls,
+/// and nothing refuses one whose only caller is its own gate in either kind. So
+/// the count here is by hand, and this round nearly deleted on it: [`palette`]
+/// next door has exactly this shape. Deleting would move the composition INTO
+/// the gate — the general form R2053 measured, though its instance was a gate's
+/// own POPULATION (a hand-written module list) rather than a composition. The
+/// composer stays and the roster is held against it.
+#[must_use]
+pub fn link_seat(word: &str) -> String {
+    format!("{LINK}{word}")
+}
+
+/// The address of the endpoint chip at position `at`.
+#[must_use]
+pub fn link_endpoint(at: usize) -> String {
+    format!("{LINK_ENDPOINT}{at}")
+}
+
+/// The address of the word inside that chip.
+#[must_use]
+pub fn link_endpoint_text(at: usize) -> String {
+    format!("{LINK_ENDPOINT}{at}{LINK_TEXT}")
+}
+
+/// Which of this family's two vocabularies an address belongs to.
+///
+/// ★★★★★ R2118 — the answer a `strip_prefix` cannot give. See the section
+/// comment above [`LINK`]: the two heads share a stem, so *what is left after
+/// the prefix* is not a key until something has said WHICH key it is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkMark {
+    /// A wire the document holds — the **census** head.
+    Wire(LinkId),
+    /// One of the fixed words of [`LINK_SEATS`] — the **roster** head.
+    Seat(&'static str),
+    /// An endpoint chip of the picked wire, or the word inside one — the roster
+    /// head's parametric part.
+    Endpoint {
+        /// Which endpoint the target offers, by position.
+        at: usize,
+        /// Whether this is the chip's word rather than the chip itself.
+        text: bool,
+    },
+}
+
+/// What a tag of this family names, or `None` when it is not one of them.
+///
+/// ★★★★★ The inverse of [`link`], [`link_seat`] and [`link_endpoint`] at once,
+/// and it has to be one function rather than three: three separate inverses over
+/// one stem would each answer about their own head and none of them could say
+/// that a tag belongs to *the other* one, which is the failure the section
+/// comment above [`LINK`] describes. Asked once, the answer is a classification.
+///
+/// The census head is tried LAST, and that ordering is not what keeps the heads
+/// apart — [`card_of`]'s comment records the lesson that an order is a property
+/// of one call site while a refusal is a property of the address. What keeps
+/// them apart is that a roster word never parses as a `u32`, which
+/// `r2118_the_two_heads_of_the_link_family_are_disjoint` asserts over the whole
+/// roster rather than leaving to a reading of these seven words.
+#[must_use]
+pub fn link_mark_of(tag: &str) -> Option<LinkMark> {
+    let tail = tag.strip_prefix(LINK)?;
+    if let Some(rest) = tail.strip_prefix("endpoint.") {
+        let (digits, text) = match rest.strip_suffix(LINK_TEXT) {
+            Some(head) => (head, true),
+            None => (rest, false),
+        };
+        return digits
+            .parse::<usize>()
+            .ok()
+            .map(|at| LinkMark::Endpoint { at, text });
+    }
+    if let Some((word, _)) = LINK_SEATS.iter().find(|(word, _)| *word == tail) {
+        return Some(LinkMark::Seat(word));
+    }
+    tail.parse::<u32>()
+        .ok()
+        .map(|id| LinkMark::Wire(LinkId(id)))
+}
+
+/// The wire a tag names, or `None` when it names anything else.
+///
+/// ★ [`link`]'s inverse for a caller that wants the census head alone — a hit
+/// test asking *which wire did the pointer land on*, a rhythm census asking
+/// *which of these paths is a drawn wire*. Written through [`link_mark_of`] so
+/// there is one statement of what separates the heads.
+#[must_use]
+pub fn link_of(tag: &str) -> Option<LinkId> {
+    match link_mark_of(tag)? {
+        LinkMark::Wire(id) => Some(id),
+        LinkMark::Seat(_) | LinkMark::Endpoint { .. } => None,
+    }
+}
+
 // ─── what this module does NOT declare yet ──────────────────────────────────
 
 /// ★★★★★ R2116 — **the families this screen paints that nothing here
@@ -1190,7 +1447,6 @@ pub const UNADDRESSED_FAMILIES: &[&str] = &[
     "lab.faults",
     "lab.gate",
     "lab.hint",
-    "lab.link",
     "lab.observed",
     "lab.rail",
     "lab.toast",
