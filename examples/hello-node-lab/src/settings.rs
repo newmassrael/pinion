@@ -379,7 +379,7 @@ pub fn shape_or_free(path: &str) -> FieldType {
 /// # ⚠⚠ Three of those spellings are authorities, and they stay
 ///
 /// `crate::spec::FIELDS` is what the reference declares, `form_for` is what
-/// this screen builds, and [`refinements`] is the shape the surface holds at
+/// this screen builds, and `refinements` is the shape the surface holds at
 /// that path — **three independent statements that gates compare against each
 /// other**. Collapsing them into one declaration would not repay a debt; it
 /// would delete the comparison. This family's floor is therefore not zero, and
@@ -606,10 +606,17 @@ pub fn not_config_names() -> &'static [String] {
     })
 }
 
-/// The sourced surface's paths alone, sorted — what [`drift`] compares against.
+/// The sourced surface's paths alone, sorted — what `drift` compares against.
 ///
-/// Derived from [`sourced_surface`] rather than parsed a second time: two
+/// Derived from `sourced_surface` rather than parsed a second time: two
 /// readings of one file are two lists that can disagree.
+///
+/// ⚠ R2120 — `drift` and `sourced_surface` are named in backticks rather than
+/// linked, and that is forced rather than sloppy: this item is RE-EXPORTED from
+/// the crate root now, so its documentation is public and rustdoc refuses a
+/// public page linking into a private module. The alternative was to widen the
+/// module's surface for the sake of two links, which is the tail wagging the
+/// dog. The push gate is what said so, over the four packages the push touched.
 pub fn sourced_paths() -> &'static [String] {
     static PATHS: OnceLock<Vec<String>> = OnceLock::new();
     PATHS.get_or_init(|| {
