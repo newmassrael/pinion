@@ -1567,10 +1567,11 @@ pub fn gate_line_index(tag: &str) -> Option<usize> {
 /// The inverse of [`observed`], and the only other place that knows the join is
 /// the separator.
 ///
-/// ⚠ It cannot use [`bare`], which refuses a remainder holding a separator —
-/// and here the separator IS the join. Both halves are required non-empty and
-/// the second is required to hold no further separator, which is what stops a
-/// three-segment tail parsing as a two-endpoint link.
+/// ⚠ It cannot use this module's shared `bare` rule — that rule refuses a
+/// remainder holding a separator, and here the separator IS the join. Both
+/// halves are required non-empty and the second is required to hold no further
+/// separator, which is what stops a three-segment tail parsing as a
+/// two-endpoint link.
 #[must_use]
 pub fn observed_of(tag: &str) -> Option<(&str, &str)> {
     let (from, to) = tag.strip_prefix(OBSERVED_SEAT)?.split_once('.')?;
