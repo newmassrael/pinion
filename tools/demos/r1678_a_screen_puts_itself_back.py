@@ -44,7 +44,9 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_router_press_moves,
     card_tag,
+    reset_seats,
     run_demo,
+    screen_spec,
 )
 
 EXAMPLE = "hello-node-lab"
@@ -66,18 +68,25 @@ def tags(tf) -> set:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        # ★★★★★ R2116 — where each affordance is painted, from the screen
+        # rather than composed here. This walk used to spell the address seven
+        # times; a wrong letter in any of them would have read as *the screen
+        # did not paint the affordance*, which is the accusation this whole
+        # file is about making truthfully.
+        seat = reset_seats(screen_spec(tf, EXT))
+
         # ── (A) boot: nothing has changed ───────────────────────────
         opened = changed(tf)
         for scope, flag in opened.items():
             assert_eq(flag, False, f"{scope} is as it opened")
         painted = tags(tf)
-        assert "lab.reset.view" in painted, (
+        assert seat["view"] in painted, (
             "the unconditional affordance is on the opening screen"
         )
         for scope in opened:
             if scope == "view":
                 continue
-            assert f"lab.reset.{scope}" not in painted, (
+            assert seat[scope] not in painted, (
                 f"★ nothing to put back, so the {scope} affordance is ABSENT — "
                 f"not present and inert, which is a button that lies"
             )
@@ -145,7 +154,7 @@ def body() -> None:
             now = changed(tf)
             assert_eq(now[scope], True, f"★ changing {scope} is reported by `changed`")
             painted = tags(tf)
-            assert f"lab.reset.{scope}" in painted, (
+            assert seat[scope] in painted, (
                 f"★ and the {scope} affordance is painted BECAUSE it is"
             )
 
@@ -156,13 +165,13 @@ def body() -> None:
             for other, was in others.items():
                 assert_eq(back[other], was, f"and left {other} exactly as it was")
             if scope != "view":
-                assert f"lab.reset.{scope}" not in tags(tf), (
+                assert seat[scope] not in tags(tf), (
                     f"★ the {scope} affordance goes away with the fact it reports"
                 )
 
         # ── (E) the view's affordance never disappears ──────────────
         assert_eq(changed(tf)["view"], False, "the view is back where it opened")
-        assert "lab.reset.view" in tags(tf), (
+        assert seat["view"] in tags(tf), (
             "★ and its affordance is still there — the declared asymmetry"
         )
 
@@ -173,7 +182,7 @@ def body() -> None:
         tf.invoke(f"{EXT}/set_field", "id=a7")
         assert_eq(changed(tf)["fields"], True, "a form edit is a change")
         assert_router_press_moves(
-            tf, "lab.reset.fields", lambda: q(tf, "form"), "the forms go back"
+            tf, seat["fields"], lambda: q(tf, "form"), "the forms go back"
         )
         assert_eq(
             changed(tf)["fields"],
@@ -182,7 +191,7 @@ def body() -> None:
         )
         tf.invoke(f"{EXT}/zoom_by", "in")
         assert_router_press_moves(
-            tf, "lab.reset.view", lambda: q(tf, "zoom"), "the view goes home"
+            tf, seat["view"], lambda: q(tf, "zoom"), "the view goes home"
         )
         assert_eq(changed(tf)["view"], False, "and the view reset answers a press too")
 

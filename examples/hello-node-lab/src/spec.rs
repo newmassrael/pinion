@@ -1612,7 +1612,7 @@ pub const VOICES: &[VoiceSpec] = &[
     // name — so this row is what makes that redirect true rather than
     // well-formed.
     VoiceSpec {
-        tag: "lab.reset.view",
+        tag: crate::address::RESET_VIEW,
         role: "button",
         population: Population::One,
     },

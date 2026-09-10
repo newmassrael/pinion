@@ -54,6 +54,7 @@ from rpc_verify import (  # noqa: E402
     palette_tag,
     pin_tag,
     press_painted_tag,
+    reset_tag,
     run_demo,
     toolbar_tag,
 )
@@ -357,11 +358,15 @@ GESTURES = {
     # ★★★★★ R2106 — the seat's WORD, the same pair as the zoom above it.
     "toggle discovery": lambda tf: press(tf, palette_tag(tf, "discovery", ext=EXT)),
     # putting things back
-    "reset the node set": lambda tf: press(tf, "lab.reset.nodes"),
-    "reset the layout": lambda tf: press(tf, "lab.reset.layout"),
-    "reset the fields": lambda tf: press(tf, "lab.reset.fields"),
-    "reset the links": lambda tf: press(tf, "lab.reset.links"),
-    "reset the view": lambda tf: press(tf, "lab.reset.view"),
+    # ★★★★★ R2116 — the SCOPE word, and the screen hands back the address it
+    # painted that seat under. The same pair as the zoom and the discovery
+    # toggle above: the word is the vocabulary the wire declares, the address is
+    # the screen's to compose.
+    "reset the node set": lambda tf: press(tf, reset_tag(tf, "nodes", ext=EXT)),
+    "reset the layout": lambda tf: press(tf, reset_tag(tf, "layout", ext=EXT)),
+    "reset the fields": lambda tf: press(tf, reset_tag(tf, "fields", ext=EXT)),
+    "reset the links": lambda tf: press(tf, reset_tag(tf, "links", ext=EXT)),
+    "reset the view": lambda tf: press(tf, reset_tag(tf, "view", ext=EXT)),
     # ★★ R1687 — what leaves the screen, from the two seats the reference puts
     # side by side. They were the last pair absent on BOTH channels.
     "export the configuration": lambda tf: press(tf, toolbar_tag(tf, "config", ext=EXT)),

@@ -1271,7 +1271,7 @@ fn r2104_a_toolbar_seat_address_is_typed_in_one_place() {
          reader asking about the bar to whichever seat sorted first"
     );
     assert_eq!(
-        super::address::toolbar_word("lab.reset.view"),
+        super::address::toolbar_word(super::address::RESET_VIEW),
         None,
         "★ and neither is the seat of another family that sits on this row"
     );
@@ -1776,6 +1776,137 @@ fn r2108_every_pin_address_is_derived() {
         "★★★★★ the specification publishes a pin prefix that is not the one the \
          paint is composed from"
     );
+}
+
+/// ★★★★★ R2116 — **a reset seat's address is typed in ONE place, and this
+/// counts.**
+///
+/// [`r2108_a_pin_address_is_typed_in_one_place`]'s shape, for the family that
+/// stood at the head of `tools/painted_addresses.py --owed` among the addresses
+/// this screen paints: **22 sites across four walks**, and **20 more in this
+/// crate's four modules** that the walk census cannot see.
+///
+/// ⚠ The needle is assembled with `concat!`, because this file is one of the
+/// sources it reads — R2105 fed a gate its own needle with a mechanical
+/// replacement and this is the guard against repeating it.
+///
+/// ⚠⚠ The needle is the bare stem, so PROSE is in the population too: a comment
+/// spelling one of these addresses is a second copy of the composition like any
+/// other, and the round that declared this family had to reword two of them.
+/// The sibling gates in this file all draw the line here; `hello-packet-view`
+/// draws it at the opening quote instead, and the difference is deliberate —
+/// there the module's own header is a long argument ABOUT addresses, here every
+/// occurrence in prose has been an example that a reader could copy.
+#[test]
+fn r2116_a_reset_seat_address_is_typed_in_one_place() {
+    const RESET_ANY: &str = concat!("lab.", "reset.");
+    let sources = crate_sources();
+    let spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(RESET_ANY).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ a reset seat's address is declared in `address.rs` and taken \
+         from there everywhere else; these file(s) spell it themselves"
+    );
+}
+
+/// ★★★★★ R2116 — **the reset seat roster and the scope enum are one
+/// vocabulary**, and the address a walk is handed is the address the paint used.
+///
+/// The second half of the gate above, split from it for the reason
+/// `r2108_every_pin_address_is_derived` states: *nobody re-spells it* and *the
+/// declarations agree* are two claims.
+///
+/// ★★★★★ This is the first family this campaign has converted whose KEYS COME
+/// FROM A TYPE. The bar, the inspector and the palette each declare a roster
+/// and that roster IS the vocabulary; here `ResetScope::WIRE_NAMES` is the
+/// vocabulary and the roster in `address.rs` is a second statement of it, so
+/// the pair can disagree in two directions and both are silent:
+///
+/// * a scope added to the enum and not addressed here gets a mark painted from
+///   `address::reset(scope.wire())` — a live seat with nothing publishing its
+///   address, which is a walk being unable to press it;
+/// * an address here for a scope the enum does not have is a seat the wire
+///   offers and the screen never paints, which reads to a walk as *the screen
+///   did not paint it*.
+///
+/// So the assertion is an EQUALITY of the two word sets, not a containment.
+/// R2105 learned the same thing about the inspector and raised a containment to
+/// a bijection there; this family is the case where the second table is not
+/// merely redundant but derived from somewhere else entirely.
+#[test]
+fn r2116_every_reset_seat_address_is_derived() {
+    // Every declared seat IS the derivation of its word, and the inverse gives
+    // the word back.
+    for (word, tag) in super::address::RESET_SEATS {
+        assert_eq!(
+            &super::address::reset(word),
+            tag,
+            "★ the declared address for `{word}` is not what `reset()` derives"
+        );
+        assert_eq!(
+            super::address::reset_word(tag),
+            Some(*word),
+            "★ `{tag}` does not round-trip back to its word"
+        );
+    }
+    // ★★ The roster and the enum name the SAME scopes. Sorted rather than
+    // zipped, because the order the panel draws them in is a fact about the
+    // panel and not about the vocabulary.
+    let mut declared: Vec<&str> = super::address::RESET_SEATS
+        .iter()
+        .map(|(word, _)| *word)
+        .collect();
+    let mut from_type: Vec<&str> = super::ResetScope::WIRE_NAMES.to_vec();
+    declared.sort_unstable();
+    from_type.sort_unstable();
+    assert_eq!(
+        declared, from_type,
+        "★★★★★ the reset seat roster and `ResetScope` do not name the same \
+         scopes — one of them has a seat the other has never heard of, and \
+         neither direction fails loudly on the screen"
+    );
+    // ★★★ A tag of another family is not one of these. The inverse compares
+    // whole addresses, so a seat of the bar this family shares a row with is
+    // refused, and so is the bare prefix — this family has no container mark.
+    for other in [
+        super::address::TOOLBAR_ZOOM,
+        super::address::TOOLBAR_FIT,
+        super::address::RESET_SEAT,
+    ] {
+        assert_eq!(
+            super::address::reset_word(other),
+            None,
+            "★ `{other}` is not a reset seat address"
+        );
+    }
+    // ★★★★ The WIRE carries the address, which is the half the walks stand on:
+    // they are Python and cannot call any of the above. A row that published
+    // only the scope word left four walks composing the address themselves,
+    // and a wrong letter there reads as *the screen did not paint the seat*.
+    let spec = super::spec_json();
+    let rows = spec["resets"]
+        .as_array()
+        .expect("the specification publishes the reset scopes")
+        .clone();
+    assert_eq!(
+        rows.len(),
+        super::ResetScope::ALL.len(),
+        "★ the published reset table is not the scope census"
+    );
+    for row in &rows {
+        let word = row["scope"].as_str().expect("a scope word");
+        assert_eq!(
+            row["tag"].as_str(),
+            Some(super::address::reset(word).as_str()),
+            "★★★★★ the specification publishes an address for `{word}` that is \
+             not the one the paint is composed from"
+        );
+    }
 }
 
 /// ★★★★★ R2105 — **no two entries of the published specification claim the same
@@ -9791,8 +9922,8 @@ fn r2102_the_toolbars_row_has_eight_pixels_of_slack() {
             on_row,
             ["focus", "zoom", "run"],
             "★ at the design width these three are what the row holds, and the \
-             specification's own reading of `lab.reset.view` depends on `zoom` \
-             being one of them"
+             specification's own reading of the view reset's seat depends on \
+             `zoom` being one of them"
         );
 
         // `right_cluster_wants` counts the run inset that `overflow::lay` was

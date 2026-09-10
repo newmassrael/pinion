@@ -46,14 +46,43 @@ walks written against `tools/rpc_verify.py`, it was in `rpc_verify.py`. A shared
 helper that spells an address spreads it to every walk that calls it, so it is
 counted here beside them.
 
-# ⚠⚠ What this gate CANNOT see, said rather than left to be discovered
+# ★★★★★ TWO POPULATIONS, ONE RATCHET (R2116)
 
-The population is Python: the walks and the harness. The RUST readers — a screen's
-own modules, and another crate reading a screen's marks — are not in it, and are
-held instead by each screen's own address gate (`r2049_…`, `r2050_…`, `r2053_…`,
-which read their sources with `include_str!`). So this tool's number is the WALKS'
-remainder, not the tree's. Two counts, two gates, and neither is the whole; asking
-this one "is the address debt repaid" gets an answer about a third of the tree.
+Until R2116 the population here was Python alone — the walks and the harness —
+and this docstring carried its own limit as a warning: *the RUST readers are not
+in it, so this tool's number is the WALKS' remainder, not the tree's; asking it
+"is the address debt repaid" gets an answer about a third of the tree.*
+
+That warning stood for sixty-two rounds while seventeen instalments were paid
+against it, and the reason it could not simply be lifted is the reason every
+gate in this campaign arrived late: **the Rust side is not at zero and will not
+be for many rounds, and a gate that is red on the day it is written is a gate
+nobody turns on.** A ratchet has no such problem — it pins what stands and
+refuses a rise — which is what this file already was for the walks.
+
+So each family now carries TWO numbers, ratcheted independently:
+
+* `walk` — sites in `tools/demos/` and the modules those walks import.
+* `rust` — sites in `examples/*/src/`, excluding each screen's `address.rs`.
+
+⚠ **`crates/` is deliberately NOT in the Rust population, and that is measured
+rather than assumed.** R2105 counted 129 Rust spellings of one screen's family
+and found 43 of them in `pinion-core` and `pinion-rpc`, where `ShrinkPolicy`
+uses that screen's addresses as ARBITRARY EXAMPLE TAGS — 42 inside `#[cfg(test)]`
+and one in a doc comment. Those are not readers of a screen and can never be
+converted, so counting them would pin a floor no round could ever lower, and the
+one number this gate exists to make monotone would stop meaning anything. The
+framework's own compositions have declaring sites inside their crates
+(`config_form::address`, R2050/R2052) and gates of their own.
+
+⚠⚠ **The two columns draw the comment line differently, on purpose.** The walk
+census reads structure, so a comment is not in the tree at all; the Rust census
+reads string literals, so a comment is not one either. What the Rust column
+therefore CANNOT see is a screen module's prose spelling an address — and that
+is held instead by each screen's own gate, whose needle is the bare stem and
+which refuses a comment like any other speller (`r2116_a_reset_seat_address_…`).
+Three gates, three populations, and this file now says which is which instead of
+leaving a reader to find out.
 
 Usage:
     python3 tools/painted_addresses.py --check         # the ratchet (pre-push)
@@ -74,6 +103,7 @@ import functools
 import re
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parent.parent
 BUDGET = ROOT / "docs" / "painted-address-budget.tsv"
@@ -93,7 +123,26 @@ ADDRESS = re.compile(r"^([a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)\.")
 #:
 #: [`sources`] is the corpus that SPELLS addresses (python); this is the corpus
 #: that MAKES them. Two different questions, so two names.
+#:
+#: ⚠ Used by [`unspelled`], which asks *does Rust spell this stem ANYWHERE* and
+#: wants the widest possible corpus for that. The RATCHET's Rust population is
+#: narrower — see [`RUST_CENSUS_ROOT`] and the module header for why.
 RUST_ROOTS: tuple[str, ...] = ("crates", "examples")
+
+#: The tree the Rust half of the ratchet counts, and the file it excludes.
+#:
+#: ★★★★★ R2116 — the screens and the hosts that mount them, which is where this
+#: campaign's Rust remainder lives. `address.rs` is each screen's DECLARING site:
+#: it is supposed to be full of these literals, and counting it would charge a
+#: family for being declared.
+#:
+#: ⚠ The exclusion is by FILE NAME rather than by a list of paths, so a screen
+#: that gains a declaring module joins the arrangement the day it does. What
+#: keeps that honest is [`selftest`], which asserts the census sees more than one
+#: crate and that at least one `address.rs` exists to be excluded — a filter that
+#: matched nothing would be silently equivalent to no filter at all.
+RUST_CENSUS_ROOT = "examples"
+RUST_DECLARING_FILE = "address.rs"
 
 #: A Rust string literal, escapes handled, quotes included.
 #:
@@ -248,20 +297,120 @@ def census(index: dict[str, list[tuple[str, int]]] | None = None) -> dict[str, i
     return {stem: len(found) for stem, found in index.items()}
 
 
-def read_budget() -> dict[str, int]:
+def rust_sites_in(text: str) -> list[tuple[int, str]]:
+    """`(line, family stem)` for every spelled painted address in Rust `text`.
+
+    ★★★★★ R2116 — PURE, and handed its text rather than a path, for the reason
+    [`rust_needles`] is: the discrimination this makes is what has to be tested,
+    and a case pinned to today's `examples/` rots the moment the family it names
+    is converted. The reader that hands it the world is asserted separately.
+
+    A literal is a site when the address is ANCHORED at its start — the same rule
+    the Python half uses, and for the same reason. A Rust doc comment is not a
+    literal, so prose is out of this population; what covers prose is each
+    screen's own gate, whose needle is the bare stem.
+
+    ⚠ [`RUST_LITERAL`] is approximate in one direction only (a raw string reads
+    as an ordinary one; a comment carrying a lone quote can open one), so this
+    can over-count and cannot under-count. Against a ratchet an over-count is a
+    stable offset rather than a hole: it makes the pinned number larger than the
+    truth, and a family whose real count RISES still rises here.
+    """
+    found: list[tuple[int, str]] = []
+    for match in RUST_LITERAL.finditer(text):
+        hit = ADDRESS.match(match.group(0)[1:])
+        if hit:
+            found.append((text.count("\n", 0, match.start()) + 1, hit.group(1)))
+    return sorted(found)
+
+
+@functools.lru_cache(maxsize=1)
+def rust_sources() -> tuple[Path, ...]:
+    """Every Rust file in the ratchet's Rust population.
+
+    Derived from the tree, never listed — R2053's lesson, which this file
+    already applies to its Python half.
+
+    ⚠ A crate's LIBRARY sources, so `build.rs` is out. That is a statement about
+    what a reader of a painted address is rather than a filter on what an
+    address looks like: a build script runs before there is a scene and cannot
+    read a mark. Measured when this population was first counted — every one of
+    the 224 build scripts names `app.pinion.xml`, the forge input, and the
+    address needle matched all 224 as a family. R2103 refused to put a
+    heuristic in the NEEDLE for exactly this shape and was right; the answer is
+    to say correctly which files are readers.
+    """
+    return tuple(
+        path
+        for path in sorted((ROOT / RUST_CENSUS_ROOT).glob("*/src/**/*.rs"))
+        if path.name != RUST_DECLARING_FILE
+    )
+
+
+def rust_scan() -> dict[str, list[tuple[str, int]]]:
+    """Every spelled Rust site in the population, indexed by family stem."""
+    index: dict[str, list[tuple[str, int]]] = {}
+    for path in rust_sources():
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        name = str(path.relative_to(ROOT))
+        for line, stem in rust_sites_in(body):
+            index.setdefault(stem, []).append((name, line))
+    return index
+
+
+def rust_census(
+    index: dict[str, list[tuple[str, int]]] | None = None,
+) -> dict[str, int]:
+    """How many Rust sites spell an address under each family stem."""
+    index = rust_scan() if index is None else index
+    return {stem: len(found) for stem, found in index.items()}
+
+
+class Pinned(NamedTuple):
+    """A family's two budgeted numbers.
+
+    ★ A pair rather than two dicts, so a caller cannot read one column and
+    believe it has the family's remainder — the defect this whole extension is
+    about, one level up.
+    """
+
+    walk: int
+    rust: int
+
+
+def read_budget() -> dict[str, Pinned]:
+    """The pinned pair per family.
+
+    ⚠ A row with one field is read as walk-only with the Rust column unknown,
+    and unknown is recorded as zero — which makes the FIRST run after this
+    format change report every Rust count as a rise. That is the correct
+    behaviour and the round that changed the format re-pinned deliberately; a
+    reader that silently accepted the old shape as "no claim" would have let the
+    whole Rust population in unmeasured.
+    """
     if not BUDGET.exists():
         return {}
-    out: dict[str, int] = {}
+    out: dict[str, Pinned] = {}
     for line in BUDGET.read_text(encoding="utf-8").splitlines():
         if not line.strip() or line.startswith("#"):
             continue
-        stem, _, count = line.partition("\t")
-        out[stem] = int(count)
+        parts = line.split("\t")
+        stem = parts[0]
+        walk = int(parts[1]) if len(parts) > 1 and parts[1] else 0
+        rust = int(parts[2]) if len(parts) > 2 and parts[2] else 0
+        out[stem] = Pinned(walk, rust)
     return out
 
 
-def write_budget(counts: dict[str, int], pin: str | None = None) -> None:
-    """Pin what stands, and keep a converted family pinned at zero.
+def write_budget(
+    counts: dict[str, int],
+    rust_counts: dict[str, int],
+    pin: str | None = None,
+) -> None:
+    """Pin what stands in both populations, and keep a converted family at zero.
 
     ★ A family the scan no longer finds is carried forward at 0 rather than
     dropped. A dropped row would let the next round re-acquire a speller in a
@@ -269,25 +418,34 @@ def write_budget(counts: dict[str, int], pin: str | None = None) -> None:
     only if the stem were new — which it is not.
 
     ★★ `pin` is how a family FIRST reaches zero. A converted family leaves no
-    trace in the corpus to be found by scanning — that is what converting it
+    trace in either corpus to be found by scanning — that is what converting it
     means — so the round that pays one off says so, and the claim is checked at
     the moment it is made rather than taken on trust.
+
+    ★★★ R2116 — a pin now requires BOTH columns at zero. A family converted in
+    the walks and still spelled in five Rust modules is not converted; the
+    single-column pin said it was, and eleven families carry that claim today.
     """
-    kept = dict(counts)
-    for stem in read_budget():
-        kept.setdefault(stem, 0)
+    stems = set(counts) | set(rust_counts) | set(read_budget())
+    kept = {
+        stem: Pinned(counts.get(stem, 0), rust_counts.get(stem, 0)) for stem in stems
+    }
     if pin is not None:
-        standing = counts.get(pin, 0)
-        if standing:
+        standing = kept.get(pin, Pinned(0, 0))
+        if standing.walk or standing.rust:
             raise SystemExit(
-                f"painted-addresses: refusing to pin {pin} at zero — the corpus "
-                f"still spells it {standing} time(s). Ask "
-                f"`--list {pin}` for where."
+                f"painted-addresses: refusing to pin {pin} at zero — it is still "
+                f"spelled {standing.walk} time(s) in the walks and "
+                f"{standing.rust} time(s) in Rust. Ask `--list {pin}` for where."
             )
-        kept[pin] = 0
+        kept[pin] = Pinned(0, 0)
     lines = [
-        "# R2054 — how many sites in the walk corpus SPELL a painted address",
-        "# instead of asking the screen for it, by family stem.",
+        "# R2054 — how many sites SPELL a painted address instead of asking the",
+        "# screen for it, by family stem. R2116 — in TWO populations.",
+        "#",
+        "#   column 2 `walk` — sites in tools/demos/ and the modules they import",
+        "#   column 3 `rust` — sites in examples/*/src/, minus each screen's",
+        "#                     own address.rs, which is where they are declared",
         "#",
         "# The gate allows a count to FALL or hold, refuses a rise, and refuses a",
         "# family stem it has never seen. A family at 0 is PINNED there: it was",
@@ -295,18 +453,31 @@ def write_budget(counts: dict[str, int], pin: str | None = None) -> None:
         "#",
         "# The fix at a site is to read the address off the wire — a screen",
         "# publishes its roles' rows, its form rows' controls, the prefix each",
-        "# part of a form row is addressed under, and its rail's seats.",
+        "# part of a form row is addressed under, and its rail's seats. In Rust",
+        "# the fix is to name the const the screen's `address.rs` declares.",
         "#",
         "# Rewritten by `tools/painted_addresses.py --write-budget`; do not",
         "# hand-edit.",
     ]
-    lines += [f"{stem}\t{n}" for stem, n in sorted(kept.items())]
+    lines += [f"{stem}\t{n.walk}\t{n.rust}" for stem, n in sorted(kept.items())]
     BUDGET.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _risen(
+    now: dict[str, int], before: dict[str, Pinned], column: str
+) -> list[tuple[str, int, int]]:
+    """Families whose count in `column` is above what the budget pins."""
+    return sorted(
+        (stem, getattr(before[stem], column) if stem in before else 0, n)
+        for stem, n in now.items()
+        if n > (getattr(before[stem], column) if stem in before else 0)
+    )
+
+
 def check() -> int:
-    index = scan()
-    now, before = census(index), read_budget()
+    index, rust_index = scan(), rust_scan()
+    now, rust_now = census(index), rust_census(rust_index)
+    before = read_budget()
     if not before:
         print(
             "painted-addresses: no budget yet — run --write-budget once to pin "
@@ -314,51 +485,80 @@ def check() -> int:
             file=sys.stderr,
         )
         return 1
-    risen = [(s, before.get(s, 0), n) for s, n in now.items() if n > before.get(s, 0)]
-    if risen:
+    bad = False
+    for column, values, found, what in (
+        ("walk", now, index, "a walk"),
+        ("rust", rust_now, rust_index, "a Rust reader"),
+    ):
+        risen = _risen(values, before, column)
+        if not risen:
+            continue
+        bad = True
         print(
-            "painted-addresses: a walk spells a painted address it could ask for",
+            f"painted-addresses: {what} spells a painted address it could ask for",
             file=sys.stderr,
         )
-        for stem, was, is_now in sorted(risen):
+        for stem, was, is_now in risen:
             known = "" if stem in before else " (a family this gate has not seen)"
-            print(f"  {stem}: {was} -> {is_now}{known}", file=sys.stderr)
-            for path, line in index.get(stem, []):
+            print(f"  [{column}] {stem}: {was} -> {is_now}{known}", file=sys.stderr)
+            for path, line in found.get(stem, []):
                 print(f"      {path}:{line}", file=sys.stderr)
+    if bad:
         print(
             "painted-addresses: a spelled address is a second copy of a\n"
             "            composition the screen already publishes, and a wrong\n"
             "            letter in it reads as the screen not painting the mark.\n"
-            "            Ask the screen — see `rpc_verify.form_part_prefixes`\n"
-            "            and `rpc_verify.address_prefix`. If the family really\n"
-            "            has nothing published to derive from, say so and re-run\n"
+            "            In a walk, ask the screen — see\n"
+            "            `rpc_verify.form_part_prefixes` and\n"
+            "            `rpc_verify.address_prefix`. In Rust, name the const\n"
+            "            the screen's own `address.rs` declares. If the family\n"
+            "            really has nothing to derive from, say so and re-run\n"
             "            `python3 tools/painted_addresses.py --write-budget`.",
             file=sys.stderr,
         )
         return 1
-    total_now, total_before = sum(now.values()), sum(before.values())
-    pinned = sum(1 for stem, n in before.items() if n == 0)
-    gone = total_before - total_now
+    families = set(now) | set(rust_now) | set(before)
+    walk_total, rust_total = sum(now.values()), sum(rust_now.values())
+    budget_total = sum(n.walk + n.rust for n in before.values())
+    pinned = sum(1 for n in before.values() if n.walk == 0 and n.rust == 0)
+    gone = budget_total - walk_total - rust_total
     trend = f", {gone} fewer than the budget" if gone > 0 else ""
     print(
-        f"painted-addresses: {total_now} spelled site(s) in {len(now)} family/ies"
-        f"{trend}; {pinned} family/ies pinned at zero"
+        f"painted-addresses: {walk_total} walk + {rust_total} rust spelled "
+        f"site(s) in {len(families)} family/ies{trend}; {pinned} family/ies "
+        f"pinned at zero in both"
     )
     return 0
 
 
 def owed() -> int:
-    """The work order: the families with the most sites left to convert."""
-    index = scan()
-    if not index:
+    """The work order: the families with the most sites left to convert.
+
+    ★★★★★ R2116 — BOTH columns, and the sort is on their sum. Until this round
+    the answer was the walks' remainder alone, and three consecutive rounds
+    opened by reconciling that number with a hand count of the Rust side that
+    the tool could not produce. A work order that names a third of the work is
+    not a work order.
+    """
+    index, rust_index = scan(), rust_scan()
+    stems = sorted(
+        set(index) | set(rust_index),
+        key=lambda s: (-(len(index.get(s, [])) + len(rust_index.get(s, []))), s),
+    )
+    if not stems:
         print("painted-addresses: nothing spelled anywhere")
         return 0
-    print(f"{'sites':>6}  {'files':>5}  family")
-    for stem, found in sorted(index.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-        files = len({path for path, _ in found})
-        print(f"{len(found):>6}  {files:>5}  {stem}")
-    total = sum(len(f) for f in index.values())
-    print(f"{total:>6}  total across {len(index)} family/ies")
+    print(f"{'walk':>6}  {'rust':>6}  {'files':>5}  family")
+    for stem in stems:
+        walk, rust = index.get(stem, []), rust_index.get(stem, [])
+        files = len({path for path, _ in walk} | {path for path, _ in rust})
+        print(f"{len(walk):>6}  {len(rust):>6}  {files:>5}  {stem}")
+    walk_total = sum(len(f) for f in index.values())
+    rust_total = sum(len(f) for f in rust_index.values())
+    print(
+        f"{walk_total:>6}  {rust_total:>6}         total across "
+        f"{len(stems)} family/ies"
+    )
     return 0
 
 
@@ -574,6 +774,98 @@ def selftest() -> int:
             failed += 1
             print(f"FAIL: {label}: rust_needles -> {got}, wanted {want}", file=sys.stderr)
 
+    # ★★★★★ R2116 — the RUST census's rule, against fixtures for the same
+    # reason: what must not rot is the discrimination, not today's families.
+    rust_cases: list[tuple[str, str, list[str]]] = [
+        (
+            "a whole address in a literal is a site",
+            'fn f() { press("lab.reset.nodes"); }',
+            ["lab.reset"],
+        ),
+        (
+            "★ a `format!` that spells the prefix is a site — the shape converted",
+            'let t = format!("lab.reset.{}", scope.wire());',
+            ["lab.reset"],
+        ),
+        (
+            "★ naming the const is NOT a site — the converted shape",
+            "let t = address::reset(scope.wire());",
+            [],
+        ),
+        (
+            "★★ a DOC COMMENT about an address is not a literal, so not a site",
+            "/// painted at `lab.reset.view`, which the panel draws.\nfn f() {}",
+            [],
+        ),
+        (
+            "★★ and neither is a line comment",
+            'fn f() { /* lab.reset.view */ press(X); }',
+            [],
+        ),
+        (
+            "★★★ the needle is anchored: a sentence inside a literal is not a site",
+            'panic!("the seat at lab.reset.view is gone");',
+            [],
+        ),
+        (
+            "a two-segment prefix is what a screen publishes, not a spelling",
+            'const STEM: &str = "lab.reset";',
+            [],
+        ),
+        (
+            "two families in one file are two sites",
+            'let a = "lab.form.remove.mode";\nlet b = "shell.rail.lab";',
+            ["lab.form", "shell.rail"],
+        ),
+        (
+            "an rpc method path is not an address",
+            'call("scene/containment");',
+            [],
+        ),
+        (
+            "⚠ an escaped quote does not end a literal early and split the next",
+            r'let a = "he said \"go\""; let b = "lab.pin.P-01.dial";',
+            ["lab.pin"],
+        ),
+    ]
+    for label, fixture, want in rust_cases:
+        got = sorted(stem for _, stem in rust_sites_in(fixture))
+        if got != sorted(want):
+            failed += 1
+            print(f"FAIL: {label}: want {want}, got {got}", file=sys.stderr)
+
+    # ★★★★★ And the RUST POPULATION, asserted rather than assumed — the same
+    # class the oracle case below is about. A `rglob` that matched nothing, or
+    # an exclusion that matched everything, both answer zero and read as a pass.
+    rust_pop = rust_sources()
+    crates_seen = {
+        path.relative_to(ROOT / RUST_CENSUS_ROOT).parts[0] for path in rust_pop
+    }
+    declaring = sorted((ROOT / RUST_CENSUS_ROOT).glob(f"*/src/**/{RUST_DECLARING_FILE}"))
+    if len(crates_seen) < 2:
+        failed += 1
+        print(
+            f"FAIL: the Rust census population spans {len(crates_seen)} crate(s) "
+            f"under {RUST_CENSUS_ROOT}/ — it is reading less than the tree holds, "
+            "and a census that sees nothing answers zero about everything",
+            file=sys.stderr,
+        )
+    if not declaring:
+        failed += 1
+        print(
+            f"FAIL: no `{RUST_DECLARING_FILE}` exists under {RUST_CENSUS_ROOT}/, so "
+            "the exclusion that keeps a declaring site from being charged for "
+            "declaring matches nothing and is not doing anything",
+            file=sys.stderr,
+        )
+    elif any(path in rust_pop for path in declaring):
+        failed += 1
+        print(
+            "FAIL: a declaring module is inside the Rust census population — "
+            "every screen would be charged for the file that fixes the defect",
+            file=sys.stderr,
+        )
+
     # ★★★★★ R2103 — and the ORACLE, against this repository's real Rust.
     #
     # Every case above hands the pure rule a fixture, which is what keeps them
@@ -653,22 +945,28 @@ def selftest() -> int:
     # ★★★★★ And the properties the BUDGET carries, driven against the tree it
     # describes rather than described in prose beside it. One scan, reused.
     now = census()
+    rust_now = rust_census()
     budget = read_budget()
 
     # A family the budget pins at zero must really be spelled nowhere. This is
     # what makes a conversion durable: R2049-R2053 converted five families with
     # nothing behind them but a Rust test that could not see a walk.
-    broken = [(s, now[s]) for s, n in budget.items() if n == 0 and now.get(s, 0) > 0]
+    broken = [
+        (s, now.get(s, 0), rust_now.get(s, 0))
+        for s, n in budget.items()
+        if n.walk == 0 and n.rust == 0 and (now.get(s, 0) or rust_now.get(s, 0))
+    ]
     if broken:
         failed += 1
         print(
-            f"FAIL: family/ies pinned at zero are spelled again: {broken}",
+            f"FAIL: family/ies pinned at zero are spelled again "
+            f"(stem, walk, rust): {broken}",
             file=sys.stderr,
         )
 
     # A budget describing a tree that has moved on is a budget nobody can read.
     if budget:
-        stale = [s for s in now if s not in budget]
+        stale = [s for s in set(now) | set(rust_now) if s not in budget]
         if stale:
             failed += 1
             print(
@@ -676,17 +974,36 @@ def selftest() -> int:
                 f"{sorted(stale)}",
                 file=sys.stderr,
             )
-        gone = [s for s, n in budget.items() if n > 0 and s not in now]
+        gone = [
+            s
+            for s, n in budget.items()
+            if (n.walk and s not in now) or (n.rust and s not in rust_now)
+        ]
         if gone:
             failed += 1
             print(
-                f"FAIL: the budget charges family/ies the census cannot find — "
+                f"FAIL: the budget charges family/ies a census cannot find — "
                 f"they were converted and never re-pinned: {sorted(gone)}. Run "
                 f"--write-budget.",
                 file=sys.stderr,
             )
+        # ★★★★★ R2116 — every budget row carries BOTH columns. A row left in the
+        # single-column shape reads as `rust = 0`, which is a claim about a
+        # population nobody measured, and it is the shape this format replaced.
+        thin = [
+            line.split("\t")[0]
+            for line in BUDGET.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#") and line.count("\t") != 2
+        ]
+        if thin:
+            failed += 1
+            print(
+                f"FAIL: budget row(s) carry one column and so claim a Rust count "
+                f"nobody measured: {thin}. Run --write-budget.",
+                file=sys.stderr,
+            )
 
-    total = len(cases) + len(needle_cases) + 6
+    total = len(cases) + len(needle_cases) + len(rust_cases) + 10
     print(f"painted_addresses selftest: {total - failed} of {total} cases OK")
     return 1 if failed else 0
 
@@ -714,7 +1031,7 @@ def main() -> int:
     if args.selftest:
         return selftest()
     if args.write_budget:
-        write_budget(census(), pin=args.pin)
+        write_budget(census(), rust_census(), pin=args.pin)
         pinned = f", {args.pin} pinned at zero" if args.pin else ""
         print(
             f"painted-addresses: budget written to {BUDGET.relative_to(ROOT)}{pinned}"
@@ -728,10 +1045,14 @@ def main() -> int:
     if args.unspelled:
         return unspelled()
     if args.list:
-        found = scan().get(args.list, [])
-        for path, line in found:
+        walk = scan().get(args.list, [])
+        rust = rust_scan().get(args.list, [])
+        for path, line in walk + rust:
             print(f"{path}:{line}")
-        print(f"{len(found)} site(s) under {args.list}")
+        print(
+            f"{len(walk) + len(rust)} site(s) under {args.list} "
+            f"({len(walk)} walk, {len(rust)} rust)"
+        )
         return 0
     return check()
 

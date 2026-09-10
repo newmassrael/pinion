@@ -201,10 +201,19 @@ FAILURE_MARKERS_BY_HARNESS = {
     # counterfactuals that were REALLY caught — the gate went red at both, with
     # the file and line named — and reported UNREADABLE, which does not count.
     #
+    # ⚠⚠ R2116 — the marker LOST ITS SUBJECT, and that is the repair rather than
+    # a loosening. `painted_addresses.py` gained a second population this round
+    # (the Rust readers beside the walks) and refuses each in its own words: *a
+    # walk spells…* and *a Rust reader spells…*. The marker as written named the
+    # walk, so a Rust-side catch — the gate red, the file and line printed —
+    # reported UNREADABLE, which does not count. Keeping the subject out is what
+    # makes the marker about the REFUSAL rather than about which half refused,
+    # and a third population would join it without a third edit here.
+    #
     # ⚠ The marker is the SENTENCE and not the tool's name prefix: every line
     # this tool prints starts `painted-addresses:`, its green summary included,
     # so a prefix marker would classify a passing run as a failure.
-    "painted-addresses ratchet": ("a walk spells a painted address it could ask for",),
+    "painted-addresses ratchet": ("spells a painted address it could ask for",),
 }
 
 #: Flattened, for the reader that only needs "does this line name a failure".

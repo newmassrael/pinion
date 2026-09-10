@@ -1,5 +1,9 @@
-# R2054 — how many sites in the walk corpus SPELL a painted address
-# instead of asking the screen for it, by family stem.
+# R2054 — how many sites SPELL a painted address instead of asking the
+# screen for it, by family stem. R2116 — in TWO populations.
+#
+#   column 2 `walk` — sites in tools/demos/ and the modules they import
+#   column 3 `rust` — sites in examples/*/src/, minus each screen's
+#                     own address.rs, which is where they are declared
 #
 # The gate allows a count to FALL or hold, refuses a rise, and refuses a
 # family stem it has never seen. A family at 0 is PINNED there: it was
@@ -7,118 +11,169 @@
 #
 # The fix at a site is to read the address off the wire — a screen
 # publishes its roles' rows, its form rows' controls, the prefix each
-# part of a form row is addressed under, and its rail's seats.
+# part of a form row is addressed under, and its rail's seats. In Rust
+# the fix is to name the const the screen's `address.rs` declares.
 #
 # Rewritten by `tools/painted_addresses.py --write-budget`; do not
 # hand-edit.
-admin.permissions	1
-bars.bar	2
-bars.xlabel	2
-card.alarms	2
-chart.area	3
-chart.axis	9
-chart.bar	1
-chart.box	16
-chart.candle	15
-chart.cap	6
-chart.colorbar	8
-chart.grid	14
-chart.inspect	53
-chart.label	19
-chart.legend	13
-chart.median	9
-chart.ohlc	9
-chart.outlier	9
-chart.point	13
-chart.ring	2
-chart.series	43
-chart.slice	7
-chart.spoke	3
-chart.tile	7
-chart.violin	8
-chart.whisker	5
-chart.wick	6
-chart.xlabel	3
-connect.endpoints	2
-detail.input_default	2
-detail.resolved_input	1
-dev.cell	1
-discovery.multicast	3
-expanded.struct	3
-hist.bar	3
-histogram.axis	6
-histogram.bar	14
-histogram.inspect	12
-item.bake	1
-item.dark	2
-item.ship	1
-item.toggle_window	2
-kind.elem	1
-kp.column	2
-kp.detail	1
-kp.list	1
-lab.crumb	6
-lab.faults	4
-lab.form	0
-lab.frame	0
-lab.gate	4
-lab.hint	2
-lab.inspector	0
-lab.link	12
-lab.node	0
-lab.palette	0
-lab.pin	0
-lab.rail	9
-lab.reset	22
-lab.toast	4
-lab.toolbar	0
-line.area	1
-line.focus	7
-line.series	7
-listen.endpoints	5
-lv.column	2
-lv.detail	2
-lv.list	1
-lv.severity	1
-modified.elem	7
-name.elem	1
-no.such	0
-nodegroups.frame	3
-nodegroups.node	6
-nodegroups.wire	1
-origin.l3	1
-profile.series	2
-pv.appbar	0
-pv.bytes	0
-pv.context	0
-pv.filter	0
-pv.list	0
-pv.reassembly	0
-pv.tree	0
-records.row	2
-scatter.legend	1
-scatter.point	6
-share.slice	5
-shell.appbar	3
-shell.carry	13
-shell.palette	0
-shell.preset	1
-shell.settings	16
-shell.status	1
-shell.subbar	6
-struct_modified.struct	4
-struct_summary.struct	1
-throughput.series	3
-timeline.axis	3
-timeline.grid	1
-timeline.lane	6
-timeline.playhead	4
-timeline.tick	1
-topology.node	3
-topology.wire	1
-transport.link	8
-transport.unicast	8
-trend.label	1
-value.elem	10
-vn.sprite	2
-zoom.block	1
+admin.permissions	1	10
+array_modified.struct	0	1
+bars.bar	2	5
+bars.xlabel	2	0
+card.alarms	2	4
+card.throughput	0	2
+chart.area	3	3
+chart.axis	9	3
+chart.bar	1	1
+chart.box	16	5
+chart.candle	15	5
+chart.cap	6	3
+chart.colorbar	8	8
+chart.grid	14	2
+chart.inspect	53	28
+chart.label	19	8
+chart.legend	13	9
+chart.median	9	3
+chart.ohlc	9	3
+chart.outlier	9	4
+chart.point	13	15
+chart.ring	2	1
+chart.series	43	46
+chart.slice	7	1
+chart.spoke	3	3
+chart.tile	7	3
+chart.violin	8	3
+chart.whisker	5	1
+chart.wick	6	1
+chart.xlabel	3	3
+chrome.header	0	1
+connect.endpoints	2	0
+detail.input_default	2	3
+detail.resolved_input	1	2
+dev.cell	1	2
+discovery.multicast	3	8
+echo.demo	0	4
+expanded.cat	0	2
+expanded.struct	3	0
+feed.head	0	3
+feed.row	0	3
+hello_modal_handoff.hover	0	5
+hello_modal_refocus.hover	0	6
+hello_window_refocus.hover	0	2
+hist.bar	3	3
+histogram.axis	6	1
+histogram.bar	14	1
+histogram.inspect	12	4
+item.bake	1	1
+item.dark	2	2
+item.ship	1	1
+item.toggle_window	2	2
+kind.elem	1	1
+kp.column	2	8
+kp.detail	1	12
+kp.filter	0	1
+kp.header	0	3
+kp.list	1	15
+lab.advanced	0	9
+lab.appbar	0	6
+lab.crumb	6	6
+lab.faults	4	9
+lab.form	0	0
+lab.frame	0	15
+lab.gate	4	13
+lab.hint	2	4
+lab.inspector	0	0
+lab.link	12	44
+lab.node	0	65
+lab.observed	0	6
+lab.palette	0	0
+lab.pin	0	0
+lab.rail	9	12
+lab.reset	0	0
+lab.scenario	0	11
+lab.toast	4	4
+lab.toolbar	0	0
+lab.wire	0	1
+line.area	1	0
+line.focus	7	2
+line.series	7	4
+listen.endpoints	5	3
+lv.column	2	7
+lv.detail	2	7
+lv.filter	0	1
+lv.header	0	7
+lv.list	1	14
+lv.severity	1	10
+match.spark	0	2
+modified.elem	7	6
+name.elem	1	1
+no.such	0	0
+nodegroups.frame	3	0
+nodegroups.node	6	0
+nodegroups.wire	1	0
+origin.l3	1	0
+palette.role	0	1
+palette.swatch	0	1
+profile.legend	0	3
+profile.series	2	2
+pv.appbar	0	0
+pv.bytes	0	0
+pv.context	0	0
+pv.filter	0	0
+pv.list	0	0
+pv.reassembly	0	0
+pv.tree	0	0
+records.row	2	4
+routing.interests	0	1
+routing.peer	0	4
+scatter.inspect	0	2
+scatter.legend	1	3
+scatter.point	6	7
+settings_panel.persistence	0	1
+share.legend	0	5
+share.slice	5	6
+shell.appbar	3	15
+shell.canvas	0	2
+shell.carry	13	16
+shell.palette	0	0
+shell.preset	1	8
+shell.settings	16	84
+shell.status	1	4
+shell.subbar	6	17
+shell.toast	0	3
+sizes.legend	0	1
+struct_modified.struct	4	3
+struct_summary.struct	1	1
+sv.chip	0	5
+sv.detail	0	37
+sv.list	0	10
+sv.row	0	12
+sv.tip	0	1
+the_tide.vn	0	2
+throughput.legend	0	4
+throughput.series	3	7
+timeline.axis	3	1
+timeline.grid	1	0
+timeline.lane	6	5
+timeline.playhead	4	5
+timeline.tick	1	0
+todomvc.persistence	0	1
+topology.label	0	2
+topology.node	3	2
+topology.wire	1	3
+trail.spark	0	1
+transport.link	8	23
+transport.unicast	8	6
+trend.label	1	2
+tv.chip	0	3
+tv.filters	0	8
+tv.graph	0	21
+tv.inspector	0	23
+tv.layout	0	5
+tv.link	0	2
+tv.node	0	13
+tv.tip	0	1
+tv.toggle	0	7
+value.elem	10	22
+vn.sprite	2	0
+zoom.block	1	3

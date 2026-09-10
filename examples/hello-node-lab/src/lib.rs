@@ -7711,7 +7711,7 @@ impl ToolGroup {
             Self::Focus => &[address::TOOLBAR_FOCUS],
             Self::Zoom => &[
                 address::TOOLBAR_ZOOM_OUT,
-                "lab.reset.view",
+                address::RESET_VIEW,
                 address::TOOLBAR_ZOOM_IN,
                 address::TOOLBAR_FIT,
             ],
@@ -8403,7 +8403,7 @@ fn view_seats(state: &LabState) -> Vec<ToolbarSeat> {
         // only "reset the view" is the label-in-name failure, and this seat is
         // exactly the case that rule is about.
         seat(
-            "lab.reset.view",
+            address::RESET_VIEW,
             view_reset_rect(),
             Hit::Reset(ResetScope::View),
             format!("zoom {}%, reset the view", state.zoom.get()),
@@ -8592,7 +8592,7 @@ fn seat_group(tag: &str) -> Option<ToolGroup> {
     match tag {
         address::TOOLBAR_ZOOM_OUT
         | address::TOOLBAR_ZOOM_IN
-        | "lab.reset.view"
+        | address::RESET_VIEW
         | address::TOOLBAR_FIT => Some(ToolGroup::Zoom),
         address::TOOLBAR_HOME => Some(ToolGroup::Home),
         address::TOOLBAR_FOCUS => Some(ToolGroup::Focus),
@@ -11426,7 +11426,7 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
     let view_reset = local(view_reset_rect());
     if showing(ToolGroup::Zoom) {
         children.push(box_at(
-            "lab.reset.view",
+            address::RESET_VIEW,
             view_reset,
             ink.raised,
             Some(ink.outline),
@@ -11442,7 +11442,7 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
                 FONT_SMALL,
                 ink.text,
             ),
-            Silence::name_of("lab.reset.view"),
+            Silence::name_of(address::RESET_VIEW),
         ));
         // ★★ R1688 — the pill's trailing seat: frame the whole graph.
         let fit = local(fit_rect());
@@ -13358,7 +13358,7 @@ fn launch_gate_panel(state: &LabState, ink: Ink, rect: Rect) -> Vec<Scene> {
     for (scope, seat) in reset_seats(state) {
         let seat = local(seat);
         children.push(box_at(
-            &format!("lab.reset.{}", scope.wire()),
+            &address::reset(scope.wire()),
             seat,
             ink.raised,
             Some(ink.outline),
@@ -13436,7 +13436,7 @@ fn scenario_strip(state: &LabState, theme: &Theme, ink: Ink) -> Vec<Scene> {
         )
     };
     // ★ SIBLINGS in the canvas's own space, which is how every other overlay
-    // here is built (`lab.gate` and its lines, `lab.reset.*`, `lab.hint`). A
+    // here is built (`lab.gate` and its lines, the reset seats, `lab.hint`). A
     // nested band would have to know whether this framework resolves an
     // absolute child against its parent or against the pane, and the three
     // overlays that were here first have already answered that question by
@@ -18678,9 +18678,16 @@ fn spec_json() -> serde_json::Value {
         // list, because the conditional ones are the reason a backward check
         // must accept a tag that is not always there — and R1664 is what
         // happens when a family reaches the paint tree and not this table.
+        // ★★★★★ R2116 — and WHERE each is painted. Until this round a walk that
+        // wanted to press one had the scope word and nothing else, so all four
+        // of them composed the address themselves from a prefix they spelled —
+        // twenty-two sites of a composition this screen already performs. The
+        // row now carries the address the paint used, so the two cannot be two
+        // spellings.
         "resets": ResetScope::ALL.iter().map(|scope| serde_json::json!({
             "scope": scope.wire(),
             "gated": scope.gated(),
+            "tag": address::reset(scope.wire()),
         })).collect::<Vec<_>>(),
         // ★★ R1677 — what the screen can be asked to DO, beside what it has.
         // Published for the same reason every other row here is: a demo that
@@ -28942,7 +28949,7 @@ fn gate_access(state: &LabState) -> Vec<AccessNode> {
     // against, so a scope that gains an affordance gains a voice with it.
     for (scope, _) in reset_seats(state) {
         nodes.push(
-            AccessNode::new(format!("lab.reset.{}", scope.wire()), AriaRole::Button)
+            AccessNode::new(address::reset(scope.wire()), AriaRole::Button)
                 .with_name(format!("reset the {}", scope.wire())),
         );
     }

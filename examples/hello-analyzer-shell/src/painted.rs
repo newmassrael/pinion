@@ -16117,6 +16117,136 @@ fn a_colour_under_the_floor_is_taken_and_reported(
 }
 
 #[test]
+fn r2116_every_mark_the_mounted_lab_paints_is_declared_or_owed() {
+    use hello_node_lab::address as lab;
+
+    /// Which declared reader recovers `tag`, or `None`.
+    ///
+    /// ★★ TWO KINDS OF ARM, and the difference is worth reading rather than
+    /// smoothing over. Four families have an INVERSE — the address is handed
+    /// back the key it was made from — and those arms prove the address is
+    /// well formed as well as in the right family. The rest have only a
+    /// declared PREFIX, because their keys are a card's name, a document's
+    /// definition or a form row's path, and a screen that could parse those
+    /// back would be claiming to know what the document holds. Those arms
+    /// claim membership and not structure, which is weaker and is said here
+    /// rather than left for a later round to discover.
+    fn reader_of(tag: &str) -> Option<&'static str> {
+        // The four with inverses.
+        if tag == lab::TOOLBAR || lab::toolbar_word(tag).is_some() {
+            return Some("toolbar");
+        }
+        if tag == lab::INSPECTOR || lab::inspector_word(tag).is_some() {
+            return Some("inspector");
+        }
+        if lab::reset_word(tag).is_some() {
+            return Some("reset");
+        }
+        if lab::pin_of(tag).is_some() {
+            return Some("pin");
+        }
+        // The prefixed rest, each from the const the screen declares.
+        if tag == lab::PALETTE || tag.starts_with(lab::PALETTE_SEAT) {
+            return Some("palette");
+        }
+        if tag == lab::FORM || tag.starts_with(lab::FORM_STEM) {
+            return Some("form");
+        }
+        if tag.starts_with(&lab::card("")) {
+            return Some("node");
+        }
+        if tag.starts_with(&lab::frame("")) {
+            return Some("frame");
+        }
+        if lab::card_of_way_in(tag).is_some() {
+            return Some("inside");
+        }
+        None
+    }
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        state
+            .go("lab")
+            .unwrap_or_else(|why| panic!("the node lab section is open and refused: {why:?}"));
+        let (shot, _) = painted_at((WIN_W, WIN_H));
+
+        let mut by_reader: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
+        let mut owed: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        let mut orphans: Vec<&str> = Vec::new();
+        for tag in shot.family(lab::NAMESPACE) {
+            if let Some(reader) = reader_of(tag) {
+                *by_reader.entry(reader).or_default() += 1;
+                continue;
+            }
+            let stem: String = tag.split('.').take(2).collect::<Vec<_>>().join(".");
+            if lab::UNADDRESSED_FAMILIES.contains(&stem.as_str()) {
+                *owed.entry(stem).or_default() += 1;
+            } else {
+                orphans.push(tag);
+            }
+        }
+
+        assert!(
+            orphans.is_empty(),
+            "★★★★★ {} mark(s) the mounted lab paints in its own namespace are at \
+             addresses no declared reader recovers AND no declared remainder \
+             owns: {orphans:?}. Either the screen grew a region nothing \
+             declares — which is the hole every per-family gate in this campaign \
+             was blind to — or a declaration drifted from what the painter \
+             composes.",
+            orphans.len()
+        );
+        let claimed: usize = by_reader.values().sum();
+        assert!(
+            claimed > 0,
+            "★ the mounted lab paints NOTHING a declared reader recovers, so the \
+             emptiness above is about a screen that is not there"
+        );
+        // ★★ Floors per reader, for the regions this ASSEMBLY has. Which they
+        // are is measured here rather than assumed: four of the five reset
+        // seats are painted only once their scope has something to put back, so
+        // `reset` legitimately claims one mark at boot and not five.
+        for region in [
+            "form",
+            "frame",
+            "inspector",
+            "node",
+            "palette",
+            "pin",
+            "reset",
+            "toolbar",
+        ] {
+            assert!(
+                by_reader.get(region).copied().unwrap_or(0) > 0,
+                "★★ no painted mark was claimed by the `{region}` reader — with \
+                 the claims ORed, a reader describing nothing makes the zero \
+                 orphans above mean less than it reads. Counted: {by_reader:?}"
+            );
+        }
+        // ⚠⚠ THE OTHER DIRECTION — that no name in the remainder owns nothing —
+        // is NOT asserted here, and the reason is measured rather than assumed.
+        // This gate sees ONE state: the screen the shell opens with. A family
+        // the screen paints only after a gesture is absent from this snapshot
+        // legitimately, so "this assembly does not paint it" cannot distinguish
+        // a struck-out entry from a family that simply has not been revealed.
+        // Exactness is the CRATE gate's, over the whole state sweep
+        // (`r2116_every_family_this_screen_paints_is_declared_or_owed`), and
+        // that split is what stops this gate from either passing vacuously or
+        // demanding a mark that correct behaviour does not produce.
+        let owed_total: usize = owed.values().sum();
+        println!(
+            "[r2116] {} mark(s) under `{}`: {claimed} recovered {by_reader:?}, \
+             {owed_total} owed {owed:?}",
+            claimed + owed_total,
+            lab::NAMESPACE
+        );
+    });
+}
+
+#[test]
 fn r1875_no_run_in_the_decode_tree_sits_in_a_box_too_short_for_its_face() {
     /// The pane whose content this gate judges, as it appears in a run's path.
     ///

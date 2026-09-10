@@ -1108,9 +1108,9 @@ fn declared_tags(state: &LabState) -> Vec<String> {
     // has something to put back, so this is not "the family may or may not be
     // there": at any moment the specification names precisely the buttons that
     // must exist, and the backward check names any other as invented.
-    want.push("lab.reset.view".to_owned());
+    want.push(super::address::RESET_VIEW.to_owned());
     for scope in super::changed_scopes(state) {
-        want.push(format!("lab.reset.{}", scope.wire()));
+        want.push(super::address::reset(scope.wire()));
     }
     // ★★★ R1688 — the toast, demanded exactly when the screen has said
     // something. Conditional for the same reason the four gated resets are: a
@@ -1275,11 +1275,17 @@ fn must_answer(tag: &str) -> Option<String> {
         // taught the hit test exactly that), so a card under it legitimately
         // answers the row — and this gate's grant is *sound only when the paint
         // puts that answer at this point*, which it could not check because
-        // nothing mapped `lab.reset.nodes` to `reset:nodes`. The hole was there
-        // before this round; it took a canvas small enough to put a card under
-        // the panel to show it. Adding the prefix also PROBES those seats, so
-        // this makes the gate stricter rather than granting an exception.
-        ("lab.reset.", "reset"),
+        // nothing mapped a scope's seat to its `reset:` verb. The hole was
+        // there before this round; it took a canvas small enough to put a card
+        // under the panel to show it. Adding the prefix also PROBES those
+        // seats, so this makes the gate stricter rather than granting an
+        // exception.
+        // ⚠ R2116 — the seat address is NAMED and not spelled here, and the
+        // sentence above no longer spells one either: this file is inside the
+        // population `r2116_a_reset_seat_address_is_typed_in_one_place` reads,
+        // and that gate's needle is the bare stem, so an example in prose is a
+        // speller like any other.
+        (super::address::RESET_SEAT, "reset"),
     ] {
         if let Some(rest) = tag.strip_prefix(prefix) {
             return Some(format!("{verb}:{rest}"));
@@ -1369,7 +1375,7 @@ fn must_answer(tag: &str) -> Option<String> {
         // captioned `home`, which is the hole R1681.3 wrote down: an affordance
         // that is painted and not demanded is one this whole module passes over
         // while nobody can press it.
-        "lab.reset.view" => Some("reset:view".into()),
+        super::address::RESET_VIEW => Some("reset:view".into()),
         super::address::TOOLBAR_FIT => Some("fit".into()),
         super::address::TOOLBAR_GATE => Some("problem".into()),
         super::address::TOOLBAR_CONFIG => Some("config".into()),
@@ -1461,7 +1467,50 @@ fn is_conditional_reset(tag: &str) -> bool {
     super::ResetScope::ALL
         .into_iter()
         .filter(|scope| scope.gated())
-        .any(|scope| tag == format!("lab.reset.{}", scope.wire()))
+        .any(|scope| tag == super::address::reset(scope.wire()))
+}
+
+/// ★★★★★ R2116 — which declared reader of `address.rs` recovers `tag`, or
+/// `None` when nothing here addresses it.
+///
+/// ★★ TWO KINDS OF ARM, and the difference is worth reading rather than
+/// smoothing over. Four families have an INVERSE — the address is handed back
+/// the key it was made from — so those arms prove the address is well formed as
+/// well as in the right family. The rest have only a declared PREFIX, because
+/// their keys are a card's name, a definition the document holds or a form
+/// row's path, and a reader that parsed those back would be claiming to know
+/// what the document contains. Those arms claim membership and not structure,
+/// which is weaker and is said here rather than left for a later round to find.
+fn declared_reader_of(tag: &str) -> Option<&'static str> {
+    use super::address as lab;
+    if tag == lab::TOOLBAR || lab::toolbar_word(tag).is_some() {
+        return Some("toolbar");
+    }
+    if tag == lab::INSPECTOR || lab::inspector_word(tag).is_some() {
+        return Some("inspector");
+    }
+    if lab::reset_word(tag).is_some() {
+        return Some("reset");
+    }
+    if lab::pin_of(tag).is_some() {
+        return Some("pin");
+    }
+    if tag == lab::PALETTE || tag.starts_with(lab::PALETTE_SEAT) {
+        return Some("palette");
+    }
+    if tag == lab::FORM || tag.starts_with(lab::FORM_STEM) {
+        return Some("form");
+    }
+    if tag.starts_with(&lab::card("")) {
+        return Some("node");
+    }
+    if tag.starts_with(&lab::frame("")) {
+        return Some("frame");
+    }
+    if lab::card_of_way_in(tag).is_some() {
+        return Some("inside");
+    }
+    None
 }
 
 /// Whether a tag names something drawn INSIDE the canvas viewport, as opposed
@@ -2530,6 +2579,105 @@ use pinion_core::test_fixtures::screen_ink::{
 /// news is WHY, and the two reasons this pin has moved are both recorded here:
 /// eight runs left the screen (R1952), and four came into the sweep (R2074).
 const SHORT_BOX_BUDGET: usize = 71;
+
+/// ★★★★★ R2116 — **every family this screen paints, in every state it is swept
+/// through, is either recovered by a declared reader or named as still owed.**
+///
+/// The gate the seventeen instalments of this campaign could not be. Each of
+/// them asked *does any module re-spell a family the declaration HOLDS*, and
+/// that question has a floor built into it: a family the declaration does not
+/// hold is invisible to it. So this screen could grow a region tomorrow, spell
+/// it in five modules, and nothing would say a word — which is exactly what
+/// happened seventeen times over, one family at a time.
+///
+/// `hello-packet-view` closed that floor at R2115 by reaching zero and
+/// asserting it. This screen is four times the size and its remainder is
+/// FAMILIES rather than sites, so the remainder is declared
+/// ([`crate::address::UNADDRESSED_FAMILIES`]) and this gate holds it in both
+/// directions: a family that is neither recovered nor owed fails, and a name in
+/// the remainder that nothing owes fails too. The second half is what keeps the
+/// list from becoming the hand-written thing it is standing in for — a family
+/// declared next round and not struck out here is a failure, not a stale line.
+///
+/// ⚠⚠ THE STATE AXIS IS WHY THIS LIVES HERE AND NOT ONLY IN THE SHELL. The
+/// assembled gate next door sees the screen the shell OPENS with, and this
+/// round measured what that costs: a counterfactual that moved the reset seats
+/// into a family nothing declares was NOT caught there, because four of the
+/// five seats are painted only once their scope has something to put back and
+/// the opening screen has nothing. A single snapshot cannot see a family that
+/// only a gesture reveals. [`STATES`] is the axis that can.
+#[test]
+fn r2116_every_family_this_screen_paints_is_declared_or_owed() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let mut by_reader: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut owed: BTreeMap<String, usize> = BTreeMap::new();
+        let mut orphans: Vec<String> = Vec::new();
+        let mut states = 0usize;
+        for (when, mutate) in STATES {
+            mutate(&state);
+            states += 1;
+            for tag in painted(&state).tags.keys() {
+                if !tag.starts_with(super::address::NAMESPACE) {
+                    continue;
+                }
+                if let Some(reader) = declared_reader_of(tag) {
+                    *by_reader.entry(reader).or_default() += 1;
+                    continue;
+                }
+                let stem: String = tag.split('.').take(2).collect::<Vec<_>>().join(".");
+                if super::address::UNADDRESSED_FAMILIES.contains(&stem.as_str()) {
+                    *owed.entry(stem).or_default() += 1;
+                } else {
+                    orphans.push(format!("{when}: {tag}"));
+                }
+            }
+        }
+        assert_eq!(
+            states,
+            STATES.len(),
+            "★ the sweep did not reach every state, so the emptiness below is \
+             about the states it skipped"
+        );
+        orphans.sort_unstable();
+        orphans.dedup();
+        assert!(
+            orphans.is_empty(),
+            "★★★★★ this screen paints {} mark(s) in its own namespace that no \
+             declared reader recovers and no declared remainder owns: \
+             {orphans:#?}. Either a region grew with nothing declaring it — the \
+             hole every per-family gate in this campaign was blind to — or a \
+             declaration drifted from what the painter composes.",
+            orphans.len()
+        );
+        let claiming_nothing: Vec<&&str> = super::address::UNADDRESSED_FAMILIES
+            .iter()
+            .filter(|stem| !owed.contains_key(**stem))
+            .collect();
+        assert!(
+            claiming_nothing.is_empty(),
+            "★★★★★ `address::UNADDRESSED_FAMILIES` names {claiming_nothing:?}, which this \
+             screen paints under no unaddressed name in any swept state. Either \
+             the family was declared and the entry was not struck out, or the \
+             screen stopped painting it — both leave the remainder claiming work \
+             that is not there, and a remainder that cannot shrink is prose."
+        );
+        let claimed: usize = by_reader.values().sum();
+        let owed_total: usize = owed.values().sum();
+        assert!(
+            claimed > 0 && owed_total > 0,
+            "★ {claimed} recovered and {owed_total} owed — with both sides \
+             ORed, an empty population makes the two assertions above describe \
+             nothing"
+        );
+        println!(
+            "[r2116] over {states} state(s): {claimed} mark(s) recovered \
+             {by_reader:?}, {owed_total} owed {owed:?}"
+        );
+    });
+}
 
 /// The one sweep, over every state.
 #[test]
@@ -4529,19 +4677,19 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     // BECAUSE it did. A driver that found its tag missing would panic here
     // rather than pass quietly, which is the point.
     ("reset the node set", |state, shot| {
-        press_tag(state, shot, "lab.reset.nodes");
+        press_tag(state, shot, super::address::RESET_NODES);
     }),
     ("reset the layout", |state, shot| {
-        press_tag(state, shot, "lab.reset.layout");
+        press_tag(state, shot, super::address::RESET_LAYOUT);
     }),
     ("reset the fields", |state, shot| {
-        press_tag(state, shot, "lab.reset.fields");
+        press_tag(state, shot, super::address::RESET_FIELDS);
     }),
     ("reset the links", |state, shot| {
-        press_tag(state, shot, "lab.reset.links");
+        press_tag(state, shot, super::address::RESET_LINKS);
     }),
     ("reset the view", |state, shot| {
-        press_tag(state, shot, "lab.reset.view");
+        press_tag(state, shot, super::address::RESET_VIEW);
     }),
     // ★★ R1687 — what leaves the screen, from the two seats the reference puts
     // side by side. Both are unconditional: a graph always has a plan, even an
@@ -5776,7 +5924,7 @@ fn r1679_a_reset_affordance_is_painted_exactly_when_it_would_do_something() {
                 let state = use_lab_state();
                 mutate(&state);
                 let shot = painted(&state);
-                let tag = format!("lab.reset.{}", scope.wire());
+                let tag = super::address::reset(scope.wire());
                 let is_painted = shot.tags.contains_key(&tag);
 
                 let reads = scope_witness(*scope);

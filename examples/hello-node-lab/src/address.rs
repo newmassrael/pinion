@@ -940,3 +940,150 @@ pub fn pin(card: &str, word: &str) -> String {
 pub fn pin_of(tag: &str) -> Option<(&str, &str)> {
     tag.strip_prefix(PIN)?.split_once('.')
 }
+
+// ─── the reset affordances ──────────────────────────────────────────────────
+//
+// ★★★★★ R2116 — the five "put it back" seats, and the first family this
+// campaign has met whose KEY VOCABULARY IS A TYPE.
+//
+// Measured at entry: **22 sites across four walks** and **20 in this crate's
+// four modules**, none in the shell — 42 in all.
+//
+// ⚠ Every arrangement before this drew its keys from a roster written beside
+// the addresses (a seat list) or from an open vocabulary parsed back out of the
+// tag (a field path, a layer id, a row number). This family's keys are
+// [`crate::ResetScope::WIRE_NAMES`], which is itself derived from that enum's
+// arms — so the roster below is not the vocabulary's source, it is a SECOND
+// statement of it, and the gate's job is to hold the two equal. That is a
+// stronger property than the earlier families have: a scope added to the enum
+// and not addressed here fails, and an address here for a scope the enum does
+// not have fails too.
+//
+// ⚠⚠ There is NO mark at the bare `lab.reset`. The five seats are drawn in two
+// different places — four on the floating gate panel, one in the toolbar's zoom
+// cluster — so nothing contains them and there is no container to address. That
+// is why this family has a seat prefix and no root const, unlike the bar and
+// the two panels above.
+
+/// The prefix every reset affordance hangs off.
+///
+/// ★ Carried WITH its separator, for [`PIN`]'s reason: every reader of this
+/// family either composes onto it or strips it off, and there is no mark at the
+/// bare stem to want the other form for.
+pub const RESET_SEAT: &str = "lab.reset.";
+
+/// Put back which cards exist.
+pub const RESET_NODES: &str = "lab.reset.nodes";
+
+/// Put back where the cards sit, and which host each starts on.
+pub const RESET_LAYOUT: &str = "lab.reset.layout";
+
+/// Put back every form's values and rows.
+pub const RESET_FIELDS: &str = "lab.reset.fields";
+
+/// Put back the authored links.
+pub const RESET_LINKS: &str = "lab.reset.links";
+
+/// Put back pan and zoom.
+///
+/// ⚠ The one seat that is NOT on the gate panel: it sits in the toolbar's zoom
+/// cluster and is drawn unconditionally, because pan and zoom always have a
+/// home to go to. A reader classifying this address by *where it is painted*
+/// would put it with the bar; it is addressed here, with the other four,
+/// because what it does is what names it. `ResetScope::gated` is the fact, and
+/// this comment is not a second copy of it — [`crate::ResetScope`] holds it.
+pub const RESET_VIEW: &str = "lab.reset.view";
+
+/// ★★★★★ R2116 — every scope's word beside its address.
+///
+/// The whole family: this prefix carries nothing parametric, because the
+/// vocabulary is closed by the type it comes from. The gate holds this roster
+/// against [`crate::ResetScope::WIRE_NAMES`] in BOTH directions.
+pub const RESET_SEATS: &[(&str, &str)] = &[
+    ("nodes", RESET_NODES),
+    ("layout", RESET_LAYOUT),
+    ("fields", RESET_FIELDS),
+    ("links", RESET_LINKS),
+    ("view", RESET_VIEW),
+];
+
+/// The address of the reset seat for the scope called `word`.
+#[must_use]
+pub fn reset(word: &str) -> String {
+    format!("{RESET_SEAT}{word}")
+}
+
+/// The scope word an address names, or `None` when the tag is not one of them.
+///
+/// ★ [`reset`]'s inverse. Exact equality against the roster rather than a
+/// prefix strip, so a tag that merely *begins* like one of these — a caption or
+/// a descendant a future round hangs underneath a seat — is not read as the
+/// seat itself.
+#[must_use]
+pub fn reset_word(tag: &str) -> Option<&'static str> {
+    RESET_SEATS
+        .iter()
+        .find(|(_, seat)| *seat == tag)
+        .map(|(word, _)| *word)
+}
+
+// ─── what this module does NOT declare yet ──────────────────────────────────
+
+/// ★★★★★ R2116 — **the families this screen paints that nothing here
+/// addresses**, named so that a gate can tell them from a family nobody thought
+/// of.
+///
+/// Every address gate this campaign has written asks *does any reader re-spell
+/// a family the declaration HOLDS*, and that question has a floor built into it:
+/// a family the declaration does not hold is invisible to it. Seventeen
+/// instalments each closed one family and left that floor exactly where it was,
+/// so this screen could grow an eighteenth region tomorrow, spell it in five
+/// modules, and nothing would say a word.
+///
+/// `hello-packet-view` closed that floor by reaching zero and asserting it
+/// (R2115). This screen cannot: it is four times the size and the remainder is
+/// families, not sites. So the remainder is DECLARED instead — and the gate
+/// that reads it asserts it in **both** directions:
+///
+/// * every family the assembled screen paints is either recovered by a reader
+///   above or named here — so a NEW undeclared family fails on the day it is
+///   painted, which is what the seventeen instalments could not do;
+/// * every name here is still unaddressed — so a round that declares one and
+///   forgets to strike it out fails too, which is what stops this list becoming
+///   the hand-written thing it is standing in for.
+///
+/// ⚠ These are STEMS, two segments, not addresses. Nothing composes onto them
+/// and no reader takes them apart; they exist to be counted and struck out. The
+/// day this slice is empty, the gate that reads it becomes
+/// `r2115_no_module_but_the_declaration_spells_this_screens_namespace` — the
+/// same assertion screen B already carries — and this const goes with it.
+/// ⚠⚠ THE POPULATION IS THE SCREEN'S OWN SWEEP, not the assembly's. Four of
+/// these — the application bar, the rail, the toast and the fault panel — are
+/// painted by the STANDALONE binary and not by the screen mounted as a page,
+/// because the shell draws its own bar and its own rail. So a reader who
+/// measured this list against the shell would find four names owning nothing
+/// and conclude the list had rotted. That is why exactness is asserted by
+/// `r2116_every_family_this_screen_paints_is_declared_or_owed` in this crate,
+/// over `STATES`, and the assembled gate next door only refuses a family that
+/// is in neither place.
+pub const UNADDRESSED_FAMILIES: &[&str] = &[
+    "lab.appbar",
+    "lab.canvas",
+    "lab.crumb",
+    "lab.faults",
+    "lab.gate",
+    "lab.hint",
+    "lab.link",
+    "lab.observed",
+    "lab.rail",
+    "lab.toast",
+];
+
+/// ★★★★★ R2116 — the namespace every address of this screen begins with, and
+/// the needle a gate over the whole screen uses.
+///
+/// Declared rather than spelled because a gate that spells its own needle is
+/// this debt one level up (R2053). The trailing separator is part of it: a
+/// reader classifying a snapshot by family compares against this, and `lab`
+/// alone would also claim a screen called `labsomething`.
+pub const NAMESPACE: &str = "lab.";

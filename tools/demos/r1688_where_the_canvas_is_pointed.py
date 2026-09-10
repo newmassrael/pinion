@@ -57,6 +57,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     address_prefix,
     assert_eq,
+    reset_seats,
     run_demo,
     toolbar_seats,
 )
@@ -172,6 +173,12 @@ def body() -> None:
         # wrong letter in any of them looks for a mark that is not there, which
         # reads as the screen not painting the seat rather than as a typo.
         seat = toolbar_seats(spec)
+        # ★★★★★ R2116 — the view reset sits IN the zoom pill but is not a bar
+        # seat: it is addressed with the other four resets, because what a
+        # control does is what names it and where it is drawn is not. So it
+        # comes from the reset roster and this walk stops spelling it — eight
+        # sites, the most of any walk in that family.
+        reset_seat = reset_seats(spec)
         rows = {row["name"]: row for row in spec["operations"]}
         for name, verb in (
             ("fit the graph to the view", "fit"),
@@ -201,12 +208,12 @@ def body() -> None:
             painted[tag]
             for tag in (
                 seat["zoom.out"],
-                "lab.reset.view",
+                reset_seat["view"],
                 seat["zoom.in"],
                 seat["fit"],
             )
         ]
-        for tag in (seat["fit"], "lab.reset.view", seat["gate"]):
+        for tag in (seat["fit"], reset_seat["view"], seat["gate"]):
             assert tag in painted, f"{tag} is painted"
         for n in range(len(pill) - 1):
             assert pill[n][0] + pill[n][2] <= pill[n + 1][0], (
@@ -218,11 +225,11 @@ def body() -> None:
                 pill[n + 1][1] + pill[n + 1][3] // 2,
                 "and on one row",
             )
-        assert inside(painted[seat["zoom"]], painted["lab.reset.view"]), (
+        assert inside(painted[seat["zoom"]], painted[reset_seat["view"]]), (
             "★★ the read-out is the view reset's own caption — the reference "
             "makes the percentage the button that puts the view back, and this "
             f"screen had a number that could not be pressed: {painted[seat['zoom']]} "
-            f"in {painted['lab.reset.view']}"
+            f"in {painted[reset_seat['view']]}"
         )
         assert not overlaps(painted[seat["gate"]], painted[seat["zoom.out"]]), (
             "the launch chip is in the other cluster"
@@ -235,7 +242,7 @@ def body() -> None:
         for tag, want in (
             (seat["fit"], "fit"),
             (seat["gate"], "problem"),
-            ("lab.reset.view", "reset:view"),
+            (reset_seat["view"], "reset:view"),
         ):
             box = painted[tag]
             for dx, dy in (
@@ -443,14 +450,13 @@ def body() -> None:
             assert_eq(nodes[tag]["role"], "button", f"{tag} announces as a button")
             assert_eq(nodes[tag]["name"], name, f"{tag} says what it does")
         reading = f"{q(tf, 'zoom')}%"
-        assert reading in nodes["lab.reset.view"]["name"], (
+        said = nodes[reset_seat["view"]]["name"]
+        assert reading in said, (
             "★★ the read-out's accessible name CONTAINS its visible one: a "
             f"button labelled {reading} whose name was only 'reset the view' is "
-            f"the label-in-name failure — {nodes['lab.reset.view']['name']!r}"
+            f"the label-in-name failure — {said!r}"
         )
-        assert "reset" in nodes["lab.reset.view"]["name"], (
-            "and still says what pressing it does"
-        )
+        assert "reset" in said, "and still says what pressing it does"
         assert nodes[seat["gate"]]["name"].startswith("gate"), nodes[seat["gate"]][
             "name"
         ]

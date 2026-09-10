@@ -5260,6 +5260,45 @@ def inspector_tag(tf, word: str, *, ext: str = "/external") -> str:
     return inspector_seats(screen_spec(tf, ext))[word]
 
 
+def reset_seats(spec: Any) -> dict:
+    """Every reset seat's address, keyed by the scope word the screen declares
+    it under — from a specification a caller has ALREADY read.
+
+    ★★★★★ R2116 — [`toolbar_seats`]'s pair of doors, for the same reason: a walk
+    holding the specification should not pay a round trip per seat, and a walk
+    without one should not fetch it by hand.
+
+    ⚠ The row this reads has carried the scope word and whether the seat is
+    CONDITIONAL since R1678, and nothing else. So a walk was handed the word and
+    then composed the address from a prefix it spelled — which is why this
+    family, alone among the screen's, still had twenty-two spelled sites after
+    the wire had been publishing its census for four hundred rounds. **A table
+    that publishes a key without publishing what the key addresses invites every
+    reader to compose it.**
+    """
+    return {row["scope"]: row["tag"] for row in spec["resets"]}
+
+
+def reset_tag(tf, scope: str, *, ext: str = "/external") -> str:
+    """The address the reset seat for `scope` is painted under.
+
+    ★★★★★ R2116 — the walks' half of the reset family's address declaration.
+
+    Takes the SCOPE WORD, which is what the screen declares and the wire
+    publishes, so the address a walk presses and the address the paint used are
+    one spelling by construction. A scope the screen does not address is a
+    `KeyError` naming it.
+
+    ⚠ Four of the five seats are painted only while their scope has something to
+    put back, so the address existing and the mark existing are separate facts
+    here in a way they are not for a bar seat. This answers the first; whether
+    the seat is currently painted is what `spec["resets"][…]["gated"]` says a
+    walk has to arrange, and `r1678_a_screen_puts_itself_back` is the walk that
+    does.
+    """
+    return reset_seats(screen_spec(tf, ext))[scope]
+
+
 def palette_root(tf, *, ext: str = "/external") -> str:
     """The tag the node palette ITSELF is painted under — the pane, not a seat.
 

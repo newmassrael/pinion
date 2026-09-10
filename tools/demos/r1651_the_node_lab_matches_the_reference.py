@@ -385,7 +385,10 @@ def body() -> None:
         # here, so a scope that changed its mind about being conditional moves
         # this check with it.
         for reset in spec["resets"]:
-            tag = f"lab.reset.{reset['scope']}"
+            # ★★★★★ R2116 — the address comes off the row now. It was composed
+            # here from a prefix this file spelled, which is the shape that
+            # makes a typo read as *the screen did not paint it*.
+            tag = reset["tag"]
             if not reset["gated"] and tag not in painted:
                 missing.append(tag)
         for node in spec["nodes"]:
@@ -610,7 +613,7 @@ def body() -> None:
         # exactly when their scope has something to put back and the screen
         # this demo drives has just opened.
         for reset in spec["resets"]:
-            declared.add(f"lab.reset.{reset['scope']}")
+            declared.add(reset["tag"])
         # ★★★★★ R1857 — the fault-injection panel, composed from the SHAPE the
         # specification publishes and the two derivations the panel's own slots
         # answer. Neither half alone is a declaration: R1853 published the
@@ -673,8 +676,9 @@ def body() -> None:
             # ★★ R1688 — 12, not 11: the zoom pill gained `lab.toolbar.fit`, the
             # reference's own trailing seat. It gained one member and LOST none,
             # because the seat this round removed (`home`, the separate view
-            # reset) kept its tag — the read-out is that control now, so
-            # `lab.reset.view` is the box and `lab.toolbar.zoom` its caption.
+            # reset) kept its tag — the read-out is that control now, so the
+            # view reset's own seat is the box and `lab.toolbar.zoom` its
+            # caption.
             # ★★ R1689 — 15, not 12: the file pill, which the reference groups
             # between the launch-script button and the run button —
             # `lab.toolbar.{save,open,clear}`. Three at once and none lost, so
