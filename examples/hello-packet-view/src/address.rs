@@ -3,9 +3,15 @@
 //!
 //! R2109 opened this module for the filter bar; R2111 gave it the message
 //! grid, which is the largest family of the capture viewer and the largest this
-//! address campaign has converted; R2112 gave it the decode tree. The two later
-//! families have their own entries further down, under *the message grid* and
-//! *the decode tree*.
+//! address campaign has converted; R2112 gave it the decode tree and R2113 the
+//! byte grid. Each has its own entry further down.
+//!
+//! ★★★★★ The two KEY SHAPES this campaign has met now sit side by side here, and
+//! the contrast is worth reading before adding a fourth: the decode tree keys on
+//! an OPEN VOCABULARY (a field path, a layer identifier) and had to write every
+//! refusal by hand, while the byte grid keys on NUMBERS and gets those refusals
+//! from `parse()`. Which shape a family has is decided by its key, not by its
+//! size.
 //!
 //! # What was missing
 //!
@@ -625,6 +631,198 @@ pub fn tree_derived(path: &str) -> String {
 #[must_use]
 pub fn tree_derived_path(tag: &str) -> Option<&str> {
     non_empty(tag.strip_prefix(TREE_DERIVED_SEAT)?)
+}
+
+// ─── the byte grid ──────────────────────────────────────────────────────────
+//
+// ★★★★★ R2113 — the capture viewer's third pane, and the family that makes the
+// campaign's two key shapes sit side by side in one module.
+//
+// Measured at entry: **39 sites in this crate's five modules**, 6 across four
+// walks and 2 in the shell that mounts this screen as a page — 47 in all.
+//
+// ⚠ Every key here is a NUMBER, so `parse()` writes the refusals R2112 had to
+// write by hand one pane over: a tail that is not a number, a family's own stem,
+// and another family's prefix all fall out as `None` without an inverse saying
+// so. The decode tree's [`non_empty`] has no counterpart in this section, and
+// that absence is the point rather than an omission — **which shape a family has
+// is decided by its key's vocabulary, and this module now holds one of each.**
+//
+// ⚠⚠ TWO PAIRS OF FAMILIES SHARE A KEY SPACE, which is what a reader here has
+// to get right:
+//
+// * `cell.<byte>` and `lit.<byte>` are both keyed by the byte's index — one is
+//   the digit pair a reader sees, the other the highlight painted behind it.
+// * `offset.<row>` and `row.<row>` are both keyed by the row's index — one is
+//   the hex offset painted at the left, the other the accessibility row.
+//
+// They are told apart by the word before the key and by nothing else, so each
+// inverse strips its own whole prefix.
+//
+// ⚠⚠⚠ **`row` PAINTS NOTHING**, and that is a fact a gate has to be told rather
+// than discover. A byte row *is* its eight cells and the offset beside them; the
+// row is what a reader descends through in the accessibility tree, and it is
+// anchored there by the members it composes. So the integrated gate below floors
+// the readers that appear in the PAINT and checks this one against the
+// accessibility tree instead — see
+// `r2113_every_mark_the_mounted_byte_grid_paints_has_an_address_a_reader_recovers`.
+//
+// ★ Two of this family's seven addresses were ALREADY composed in one place
+// before this round — `bytes_offset_tag` and `bytes_row_tag`, each written in
+// the round that happened to need it. That is R2110's finding a third time:
+// declaring a corner whenever a round needs one leaves a declared CORNER, not a
+// declared screen, and the two corners could not be checked against the five
+// spellings that hung off the same stem.
+
+/// ★★★★★ R2113 — the tag the **byte grid itself** is painted under.
+///
+/// The grid, not one of its seats, and carried WITHOUT the separator for
+/// [`FILTER`]'s reason: [`BYTES_SEAT`] is the form a reader composes onto.
+pub const BYTES: &str = "pv.bytes";
+
+/// [`BYTES`] with the separator every member of this family hangs off.
+pub const BYTES_SEAT: &str = "pv.bytes.";
+
+/// The scrolling body the byte rows are laid out inside.
+pub const BYTES_BODY: &str = "pv.bytes.body";
+
+/// The run in the head strip that names this pane.
+pub const BYTES_TITLE: &str = "pv.bytes.title";
+
+/// The pane's readout: which decode row is open and which bytes it was read
+/// from.
+///
+/// A seat rather than a decoration: the grid declares this run as its
+/// description, so what it says is part of what the grid announces.
+pub const BYTES_SPAN: &str = "pv.bytes.span";
+
+/// ★★★★★ R2113 — every FIXED word this grid addresses, beside its address.
+///
+/// The roster a reader classifies by and the wire publishes. The cells, the
+/// highlights, the offsets and the accessibility rows are NOT here: their
+/// populations are the frame's.
+pub const BYTES_SEATS: &[(&str, &str)] = &[
+    ("body", BYTES_BODY),
+    ("title", BYTES_TITLE),
+    ("span", BYTES_SPAN),
+];
+
+/// The address of the fixed seat `word`.
+#[must_use]
+pub fn bytes(word: &str) -> String {
+    format!("{BYTES_SEAT}{word}")
+}
+
+/// The fixed word an address names, or `None` when the tag is not one of them.
+///
+/// ★ [`bytes`]'s inverse. Exact equality against the roster, for
+/// [`tree_word`]'s reason.
+#[must_use]
+pub fn bytes_word(tag: &str) -> Option<&'static str> {
+    BYTES_SEATS
+        .iter()
+        .find(|(_, seat)| *seat == tag)
+        .map(|(word, _)| *word)
+}
+
+/// The prefix every BYTE CELL is painted under.
+pub const BYTES_CELL_SEAT: &str = "pv.bytes.cell.";
+
+/// [`BYTES_CELL_SEAT`] with the population's placeholder.
+pub const BYTES_CELL_TEMPLATE: &str = "pv.bytes.cell.{}";
+
+/// The address of the cell showing the byte at `index`.
+#[must_use]
+pub fn bytes_cell(index: usize) -> String {
+    format!("{BYTES_CELL_SEAT}{index}")
+}
+
+/// The byte a cell's address names, or `None` when the tag is not a cell.
+///
+/// ★★★★★ [`bytes_cell`]'s inverse, and the hit router's — a press on a cell
+/// selects the field that byte belongs to. `parse()` is what refuses the stem,
+/// a non-numeric tail and the three sibling prefixes; the decode tree next door
+/// had to write all three refusals by hand because its keys are paths.
+#[must_use]
+pub fn bytes_cell_index(tag: &str) -> Option<usize> {
+    tag.strip_prefix(BYTES_CELL_SEAT)?.parse().ok()
+}
+
+/// The prefix every LIT highlight is painted under.
+pub const BYTES_LIT_SEAT: &str = "pv.bytes.lit.";
+
+/// [`BYTES_LIT_SEAT`] with the population's placeholder.
+pub const BYTES_LIT_TEMPLATE: &str = "pv.bytes.lit.{}";
+
+/// The address of the highlight behind the byte at `index`.
+#[must_use]
+pub fn bytes_lit(index: usize) -> String {
+    format!("{BYTES_LIT_SEAT}{index}")
+}
+
+/// The byte a highlight's address names, or `None` when the tag is not one.
+///
+/// ⚠ Shares its key space with [`bytes_cell_index`]: both are keyed by the byte,
+/// and a reader that stripped only [`BYTES_SEAT`] would answer for either. The
+/// judge reads the lit set back through this, so a prefix that drifted would
+/// make the pane look as though it lit nothing.
+#[must_use]
+pub fn bytes_lit_index(tag: &str) -> Option<usize> {
+    tag.strip_prefix(BYTES_LIT_SEAT)?.parse().ok()
+}
+
+/// The prefix every ROW OFFSET is painted under.
+pub const BYTES_OFFSET_SEAT: &str = "pv.bytes.offset.";
+
+/// [`BYTES_OFFSET_SEAT`] with the population's placeholder.
+pub const BYTES_OFFSET_TEMPLATE: &str = "pv.bytes.offset.{}";
+
+/// The address of the hex offset painted at the left of `row`.
+///
+/// ★ The offset is that row's HEADER, which is why it carries a tag of its own
+/// rather than being part of the row: a grid whose rows had no header would be
+/// less locatable than the floor this project measures against.
+#[must_use]
+pub fn bytes_offset(row: usize) -> String {
+    format!("{BYTES_OFFSET_SEAT}{row}")
+}
+
+/// The row an offset's address names, or `None` when the tag is not one.
+#[must_use]
+pub fn bytes_offset_row(tag: &str) -> Option<usize> {
+    tag.strip_prefix(BYTES_OFFSET_SEAT)?.parse().ok()
+}
+
+/// The prefix every ACCESSIBILITY ROW of the grid is addressed under.
+pub const BYTES_ROW_SEAT: &str = "pv.bytes.row.";
+
+/// [`BYTES_ROW_SEAT`] with the population's placeholder.
+pub const BYTES_ROW_TEMPLATE: &str = "pv.bytes.row.{}";
+
+/// The address of the accessibility row at `row`.
+///
+/// ★★★★★ **NOTHING PAINTS THIS.** A byte row *is* the eight cells and the offset
+/// beside them — there is no rectangle of its own — and the row exists so a
+/// reader can descend through it. It is anchored in the census by the members it
+/// composes, which is an exemption the census checks for itself rather than one
+/// this screen declares.
+///
+/// ⚠ Said here because the fact is invisible from the address: every other
+/// member of this family is a mark, and a gate that counted painted marks and
+/// floored all five readers would be red for a reason that is correct behaviour.
+#[must_use]
+pub fn bytes_row(row: usize) -> String {
+    format!("{BYTES_ROW_SEAT}{row}")
+}
+
+/// The row an accessibility row's address names, or `None` when the tag is not
+/// one.
+///
+/// ⚠ Shares its key space with [`bytes_offset_row`] — one row index, two
+/// addresses, told apart by the word before it.
+#[must_use]
+pub fn bytes_row_index(tag: &str) -> Option<usize> {
+    tag.strip_prefix(BYTES_ROW_SEAT)?.parse().ok()
 }
 
 /// `tail` unless it is empty.

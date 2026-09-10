@@ -863,7 +863,7 @@ fn use_view_state() -> Rc<ViewState> {
     let map = use_byte_map("packet_view.map", || decode(spec::OPENING_ROW));
     let list_scroll = pinion_core::widgets::scroll::use_scroll_state(address::LIST_BODY);
     let tree_scroll = pinion_core::widgets::scroll::use_scroll_state(address::TREE_BODY);
-    let bytes_scroll = pinion_core::widgets::scroll::use_scroll_state("pv.bytes.body");
+    let bytes_scroll = pinion_core::widgets::scroll::use_scroll_state(address::BYTES_BODY);
     // R1707 — the query field's own buffer, resolved out here for the same
     // reason as the four above. The first draft called the hook inside the
     // factory and every test in this example failed identically, which is the
@@ -1449,9 +1449,7 @@ impl Hit {
         {
             return Self::Message(row);
         }
-        if let Some(b) = tag
-            .strip_prefix("pv.bytes.cell.")
-            .and_then(|b| b.parse::<usize>().ok())
+        if let Some(b) = address::bytes_cell_index(tag)
             && b < state.frame_bytes().len()
         {
             return Self::Byte(b);
@@ -1976,16 +1974,16 @@ fn pane_cursor(state: &Rc<ViewState>, stop: &str) -> Option<Roving> {
                 .collect(),
             address::tree_field(&state.field.get()),
         ),
-        "pv.bytes" => (
+        address::BYTES => (
             // Both axes, because the grid wraps: a byte's neighbour to the
             // right is the next byte and the one below is sixteen further on,
             // and both are steps along the SAME linear buffer. `Both` is the
             // arm ARIA leaves undefined rather than calling horizontal.
             RovingSpec::new(Axis::Both).with_activation(Activation::Follows),
             (0..state.frame_bytes().len())
-                .map(|b| Member::new(format!("pv.bytes.cell.{b}")))
+                .map(|b| Member::new(address::bytes_cell(b)))
                 .collect(),
-            format!("pv.bytes.cell.{}", state.byte.get()),
+            address::bytes_cell(state.byte.get()),
         ),
         // ★★★★★ R2061 — the column-heading row, whose members are the seven
         // headings the description register already describes.
@@ -2079,7 +2077,7 @@ fn seat_pane_cursor(state: &Rc<ViewState>, stop: &str, roving: &Roving) {
                 select_field(state, &path.clone());
             }
         }
-        "pv.bytes" => select_byte(state, index),
+        address::BYTES => select_byte(state, index),
         // ★★★★★ R2061 — walking the heading row moves the CURSOR and reorders
         // nothing, which is what its `Explicit` policy promises. What a reader
         // is told is the column they arrived at; the sentence the description
@@ -3226,15 +3224,15 @@ fn bytes_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     let selected = state.field.get();
     let mut children = vec![
         tagged_label(
-            "pv.bytes.title",
+            address::BYTES_TITLE,
             spec::PANES[2].title,
             Rect::new(PAD, 6, 80, 12),
             FONT_SMALL,
             ink.text_3,
         )
-        .silenced(Silence::name_of("pv.bytes")),
+        .silenced(Silence::name_of(address::BYTES)),
         tagged_label(
-            "pv.bytes.span",
+            address::BYTES_SPAN,
             lit.map_or_else(
                 || format!("{selected} · {}", spec::NO_BYTES),
                 |sel| {
@@ -3258,7 +3256,7 @@ fn bytes_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
         // the floor — while the same pane painted by hand there answers a single
         // node with no children at all.
         children.push(tagged_label(
-            &bytes_offset_tag(row),
+            &address::bytes_offset(row),
             format!("{:04x}", row * spec::BYTES_PER_ROW),
             Rect::new(PAD, y + 3, 34, 12),
             FONT_MONO,
@@ -3273,7 +3271,7 @@ fn bytes_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
         if inside {
             children.push(
                 box_at(
-                    &format!("pv.bytes.lit.{byte}"),
+                    &address::bytes_lit(byte),
                     Rect::new(cell.x - 1, cell.y + 1, cell.w + 2, cell.h - 2),
                     ink.lit,
                     Some(ink.accent),
@@ -3286,7 +3284,7 @@ fn bytes_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
             );
         }
         children.push(tagged_label(
-            &format!("pv.bytes.cell.{byte}"),
+            &address::bytes_cell(byte),
             format!("{value:02x}"),
             Rect::new(cell.x, cell.y + 3, cell.w, 12),
             FONT_MONO,
@@ -3301,7 +3299,7 @@ fn bytes_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     }
     // And one for the byte grid, so the three composites are three stops.
     panel(
-        "pv.bytes",
+        address::BYTES,
         rect,
         ink.surface,
         Some(ink.outline),
@@ -3321,26 +3319,15 @@ fn bytes_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     .with_focusable(true)
 }
 
-/// The tag one row of the byte grid addresses its offset by.
-///
-/// Named here for the same reason [`address::list_cell`] is: the paint and
-/// [`spec::VOICES`] both produce this spelling, and a second convention would
-/// make the census compare two things.
-#[must_use]
-fn bytes_offset_tag(row: usize) -> String {
-    format!("pv.bytes.offset.{row}")
-}
-
-/// The tag one row of the byte grid is announced under.
-///
-/// Nothing paints this: a byte row is the eight cells and the offset beside
-/// them, and the row is what a reader descends *through*. It is anchored in the
-/// census by the members it composes, which is the exemption the census can
-/// check for itself rather than one a screen declares.
-#[must_use]
-fn bytes_row_tag(row: usize) -> String {
-    format!("pv.bytes.row.{row}")
-}
+// ⚠ R2113 — `bytes_offset_tag` and `bytes_row_tag` stood here, each written in
+// the round that happened to need it, and the round that declared this family
+// DELETED them rather than pointing them at the declaration. Two composers in
+// this file and five spellings hanging off the same stem elsewhere is R2110's
+// finding a third time: a declared CORNER is not a declared screen, and a corner
+// nothing can be checked against is what this debt is. The pair now lives with
+// its five siblings and its inverses as `address::bytes_offset` /
+// `address::bytes_row` — and the fact that the ROW paints nothing, which used to
+// be recorded only in the doc here, is recorded beside the address it is about.
 
 /// The strip's totals sentence, in one place because it has two readers.
 ///
@@ -4266,6 +4253,34 @@ fn tree_addresses_json() -> serde_json::Value {
     })
 }
 
+/// ★★★★★ R2113 — **the byte grid: its own tag, its three fixed seats, and the
+/// prefix each of its four parametric families hangs off.**
+///
+/// Measured at entry, 39 sites in this crate, 6 across four walks and 2 in the
+/// shell that mounts this screen as a page.
+///
+/// ⚠ Four prefixes rather than three, and two PAIRS of them share a key space:
+/// `cell` and `lit` are both keyed by the byte, `offset` and `row` by the row.
+/// A walk composes from `sources` and `BYTES_PER_ROW` on this same document, so
+/// it spells neither prefix nor separator.
+///
+/// ⚠⚠ `row` is published even though **nothing paints it** — it is the grid's
+/// accessibility row, anchored by the members it composes. A walk asking the
+/// accessibility tree needs the address; a walk reading the paint will never
+/// find one, and that is correct rather than a gap.
+fn bytes_addresses_json() -> serde_json::Value {
+    serde_json::json!({
+        "tag": address::BYTES,
+        "seats": address::BYTES_SEATS.iter().map(|(word, tag)| serde_json::json!({
+            "word": word, "tag": tag,
+        })).collect::<Vec<_>>(),
+        "cell": address::BYTES_CELL_SEAT,
+        "lit": address::BYTES_LIT_SEAT,
+        "offset": address::BYTES_OFFSET_SEAT,
+        "row": address::BYTES_ROW_SEAT,
+    })
+}
+
 /// The whole specification, as the wire sees it — so the demo reads the table
 /// from the running application rather than keeping a second copy of it.
 fn spec_json() -> serde_json::Value {
@@ -4324,6 +4339,7 @@ fn spec_json() -> serde_json::Value {
         "filter_addresses": filter_addresses_json(),
         "list_addresses": list_addresses_json(),
         "tree_addresses": tree_addresses_json(),
+        "bytes_addresses": bytes_addresses_json(),
         // ★★★ R1707 — what this screen tells a person the mouse and keyboard
         // do. Published rather than painted: the sibling screen prints a hint
         // strip because the reference's node canvas does, and the reference's
@@ -4664,7 +4680,7 @@ const PROJECTED_STOPS: [&str; 4] = [
     address::LIST,
     address::LIST_HEADER,
     address::TREE,
-    "pv.bytes",
+    address::BYTES,
 ];
 
 /// The application bar: what capture is open, how fast it is arriving, and the
@@ -5049,19 +5065,19 @@ fn bytes_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     let layout = hex_layout();
     let lit = state.lit_selection();
     let per_row = spec::BYTES_PER_ROW;
-    let mut grid = AccessNode::new("pv.bytes", AriaRole::Grid)
-        .with_name_from_tag("pv.bytes.title")
+    let mut grid = AccessNode::new(address::BYTES, AriaRole::Grid)
+        .with_name_from_tag(address::BYTES_TITLE)
         // The readout beside the title says which bytes the open field covers;
         // it is the grid's description rather than a member of it, because a
         // `grid` owns rows and nothing else.
-        .with_described_by("pv.bytes.span")
+        .with_described_by(address::BYTES_SPAN)
         .with_row_count(u32::try_from(layout.rows()).unwrap_or(u32::MAX))
         .with_column_count(u32::try_from(per_row).unwrap_or(u32::MAX) + 1);
-    let mut nodes = vec![AccessNode::new("pv.bytes.span", AriaRole::Status)];
+    let mut nodes = vec![AccessNode::new(address::BYTES_SPAN, AriaRole::Status)];
     for r in 0..layout.rows() {
-        let row_tag = bytes_row_tag(r);
+        let row_tag = address::bytes_row(r);
         grid = grid.with_child(row_tag.clone());
-        let offset = bytes_offset_tag(r);
+        let offset = address::bytes_offset(r);
         let mut row = AccessNode::new(row_tag, AriaRole::Row)
             .with_row(r)
             .with_child(offset.clone());
@@ -5075,7 +5091,7 @@ fn bytes_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
             let Some(value) = buffer.get(byte) else {
                 break;
             };
-            let tag = format!("pv.bytes.cell.{byte}");
+            let tag = address::bytes_cell(byte);
             row = row.with_child(tag.clone());
             nodes.push(
                 AccessNode::new(tag, AriaRole::GridCell)

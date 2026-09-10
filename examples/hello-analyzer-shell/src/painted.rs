@@ -10001,6 +10001,134 @@ fn r2112_every_mark_the_mounted_decode_tree_paints_has_an_address_a_reader_recov
     });
 }
 
+/// ★★★★★ R2113 — **every mark the mounted byte grid paints is at an address the
+/// screen's declaration can RECOVER, and the one member that paints NOTHING is
+/// checked where it does live.**
+///
+/// [`r2112_every_mark_the_mounted_decode_tree_paints_has_an_address_a_reader_recovers`]'s
+/// claim, one pane further right — and the family that forced the claim to grow a
+/// second half.
+///
+/// The byte grid has five declared readers: three fixed seats, the cells, the
+/// highlights, the row offsets, and the accessibility rows. **The last of those
+/// paints nothing.** A byte row *is* its eight cells and the offset beside them;
+/// it exists so a reader can descend through it, and it is anchored by the
+/// members it composes. So flooring all five against the PAINT would demand a
+/// mark that correct behaviour never produces.
+///
+/// ⇒ the gate is two claims, not one:
+///
+/// * every painted mark under the family is recovered by one of the four readers
+///   that appear in the paint, and each of those four is floored (R2108);
+/// * the fifth is driven against the ACCESSIBILITY TREE, where it does live, and
+///   floored there.
+///
+/// ⚠ Written as two claims rather than one relaxed claim on purpose. "Four of
+/// five readers are floored" invites the next round to wonder which one was
+/// forgotten; naming the second population says the fifth was not skipped, it
+/// was asked somewhere else.
+#[test]
+fn r2113_every_mark_the_mounted_byte_grid_paints_has_an_address_a_reader_recovers() {
+    use hello_packet_view::address as grid;
+    use pinion_a11y::WidgetA11y;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        state
+            .go("packets")
+            .unwrap_or_else(|why| panic!("the capture section is open and refused: {why:?}"));
+        let (shot, _) = painted_at((WIN_W, WIN_H));
+
+        assert!(
+            shot.rect(grid::BYTES).is_some(),
+            "the mounted capture section paints no `{}` — the byte grid itself is \
+             missing, and every count below would be about something else",
+            grid::BYTES
+        );
+
+        let painted = shot.family(grid::BYTES_SEAT);
+        let mut seats = 0usize;
+        let mut cells = 0usize;
+        let mut lit = 0usize;
+        let mut offsets = 0usize;
+        let mut orphans: Vec<&str> = Vec::new();
+        for tag in painted {
+            if grid::bytes_word(tag).is_some() {
+                seats += 1;
+            } else if grid::bytes_cell_index(tag).is_some() {
+                cells += 1;
+            } else if grid::bytes_lit_index(tag).is_some() {
+                lit += 1;
+            } else if grid::bytes_offset_row(tag).is_some() {
+                offsets += 1;
+            } else if grid::bytes_row_index(tag).is_some() {
+                panic!(
+                    "★★★★★ `{tag}` is an accessibility ROW and something PAINTED it. \
+                     The declaration says a byte row is its cells and its offset \
+                     and has no rectangle of its own; if that changed, this gate's \
+                     two-population split is the thing to revisit"
+                );
+            } else {
+                orphans.push(tag);
+            }
+        }
+        assert!(
+            orphans.is_empty(),
+            "★★★★★ {} mark(s) under `{}` are at addresses no declared reader \
+             recovers — painted, and findable by nothing: {orphans:?}",
+            orphans.len(),
+            grid::BYTES_SEAT
+        );
+        for (what, count) in [
+            ("fixed seats", seats),
+            ("byte cells", cells),
+            ("lit highlights", lit),
+            ("row offsets", offsets),
+        ] {
+            assert!(
+                count > 0,
+                "★★ no painted mark was claimed as one of the grid's {what} — \
+                 with the claims ORed, a reader describing nothing makes the zero \
+                 above mean less than it reads \
+                 (seats {seats}, cells {cells}, lit {lit}, offsets {offsets})"
+            );
+        }
+
+        // ★★★★★ THE SECOND POPULATION. The accessibility row is the one member
+        // of this family that is not a mark, so it is asked for where it lives.
+        // ⚠ `ScreenState` is a change DETECTOR (a position and a revision), not
+        // the screen — the tree that comes back is whatever section is open,
+        // which the `go` above made the capture one. The floor below is what
+        // checks that reading rather than leaving it as an assumption.
+        let announced = super::AnalyzerShellView::access_node(&ScreenState::default(), None);
+        assert!(
+            !announced.is_empty(),
+            "★ the shell announces no accessibility node at all, so the row count \
+             below would be zero for a reason that has nothing to do with the \
+             byte grid"
+        );
+        let rows = announced
+            .iter()
+            .filter(|node| grid::bytes_row_index(&node.tag).is_some())
+            .count();
+        assert!(
+            rows > 0,
+            "★★★★★ the byte grid announces no accessibility row — the member that \
+             paints nothing is also absent from the tree it exists in, which \
+             means it is absent entirely rather than merely unpainted \
+             ({} node(s) announced)",
+            announced.len()
+        );
+        println!(
+            "[r2113] {} painted mark(s) under `{}`: {seats} seat(s), {cells} cell(s), \
+             {lit} highlight(s), {offsets} offset(s), 0 orphan(s); {rows} announced row(s)",
+            seats + cells + lit + offsets,
+            grid::BYTES_SEAT
+        );
+    });
+}
+
 /// ★★★★★ R1874 — **the node palette's body has NO box too short for its face**,
 /// and the gate is zero rather than a share of the lab screen's ratchet.
 ///

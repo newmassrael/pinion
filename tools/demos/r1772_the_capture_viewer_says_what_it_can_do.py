@@ -66,6 +66,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    bytes_tag,
     list_tag,
     resize_and_settle,
     run_demo,
@@ -251,13 +252,13 @@ def section_e(app: RpcSubprocess) -> None:
     # can scroll this pane at some size this screen is laid out for*, which is
     # the same shape the in-process gate's driver uses and for the same reason.
     moved = []
-    # ★★★★★ R2111, R2112 — the message grid's and the decode tree's scrolling
-    # bodies are seats their screens declare, taken by word. The byte pane is a
-    # family this campaign has not reached and still says its own tag.
+    # ★★★★★ R2111, R2112, R2113 — all three panes' scrolling bodies are seats
+    # their screen declares, taken by word. This loop spelled one address per
+    # round for three rounds and now spells none.
     for pane, tag in (
         ("list", list_tag(app, "body", ext=EXT)),
         ("tree", tree_tag(app, "body", ext=EXT)),
-        ("bytes", "pv.bytes.body"),
+        ("bytes", bytes_tag(app, "body", ext=EXT)),
     ):
         for size in ((1180, 520), (1440, 900), (2494, 1531)):
             resize_and_settle(app, size)

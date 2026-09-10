@@ -53,10 +53,10 @@ pub const PANES: &[PaneSpec] = &[
         body: Some(crate::address::TREE_BODY),
     },
     PaneSpec {
-        tag: "pv.bytes",
+        tag: crate::address::BYTES,
         title: "Bytes",
         width: 318,
-        body: Some("pv.bytes.body"),
+        body: Some(crate::address::BYTES_BODY),
     },
 ];
 
@@ -424,8 +424,8 @@ impl ColumnSpec {
 /// rather than one gate's opinion:
 ///
 /// * `r1663_every_painted_mark_is_inside_the_pane_its_address_names` — the byte
-///   pane was painted **outside the window** (`pv.bytes.body` at x=1204 w=316,
-///   in a 1440-wide window);
+///   pane was painted **outside the window** (its scrolling body at x=1204
+///   w=316, in a 1440-wide window);
 /// * `r1672_every_painted_mark_is_inside_the_box_that_owns_it` — the screen
 ///   overhung its own root to the right;
 /// * `r1747_the_capture_viewer_reproduces_its_specification_or_says_why_not` —
@@ -2115,22 +2115,22 @@ pub const VOICES: &[VoiceSpec] = &[
     },
     // The byte grid.
     VoiceSpec {
-        tag: "pv.bytes",
+        tag: crate::address::BYTES,
         role: "grid",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "pv.bytes.span",
+        tag: crate::address::BYTES_SPAN,
         role: "status",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "pv.bytes.offset.{}",
+        tag: crate::address::BYTES_OFFSET_TEMPLATE,
         role: "rowheader",
         population: Population::ByteRows,
     },
     VoiceSpec {
-        tag: "pv.bytes.cell.{}",
+        tag: crate::address::BYTES_CELL_TEMPLATE,
         role: "gridcell",
         population: Population::Bytes,
     },
@@ -2169,7 +2169,7 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     // The scrolling bodies. What a reader lands on is what is inside them.
     (crate::address::LIST_BODY, Population::One, "layout"),
     (crate::address::TREE_BODY, Population::One, "layout"),
-    ("pv.bytes.body", Population::One, "layout"),
+    (crate::address::BYTES_BODY, Population::One, "layout"),
     // ★ R1707 — the query text inside the query box. The framework's text-field
     // painter tags the run separately from the box so a caret can be placed in
     // it; a reader is told the box's value once, by the box, and a second stop
@@ -2181,7 +2181,7 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     ),
     // Titles painted inside the pane they name.
     (crate::address::TREE_TITLE, Population::One, "name_of"),
-    ("pv.bytes.title", Population::One, "name_of"),
+    (crate::address::BYTES_TITLE, Population::One, "name_of"),
     ("pv.reassembly.title", Population::One, "name_of"),
     // Selection bands. The row and the item announce that they are selected;
     // the ink behind them is how a sighted reader is told the same thing.
@@ -2221,7 +2221,11 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
         "part_of",
     ),
     // The highlight behind a byte the open field was read from.
-    ("pv.bytes.lit.{}", Population::LitBytes, "decorative"),
+    (
+        crate::address::BYTES_LIT_TEMPLATE,
+        Population::LitBytes,
+        "decorative",
+    ),
 ];
 
 // ── The reference screen, as a pin written by another hand (R1747) ──────────

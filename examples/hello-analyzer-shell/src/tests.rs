@@ -6224,18 +6224,16 @@ fn r2011_the_capture_section_prints_the_address_it_lights() {
         let mut words: Vec<String> = Vec::new();
         scene.for_each_node(&mut |visit| {
             if let Some(tag) = visit.node.tag()
-                && let Some(rest) = tag.strip_prefix("pv.bytes.lit.")
-                && let Ok(byte) = rest.parse::<usize>()
+                && let Some(byte) = hello_packet_view::address::bytes_lit_index(tag)
             {
                 lit.push(byte);
             }
             if let pinion_core::Scene::Text(text) = visit.node {
                 words.push(text.content.clone());
-                if let Some(rest) = text
+                if let Some(byte) = text
                     .tag
                     .as_deref()
-                    .and_then(|tag| tag.strip_prefix("pv.bytes.cell."))
-                    && let Ok(byte) = rest.parse::<usize>()
+                    .and_then(hello_packet_view::address::bytes_cell_index)
                 {
                     cells.insert(byte, text.content.clone());
                 }

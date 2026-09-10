@@ -56,6 +56,8 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     access_node_by_tag,
     assert_eq,
+    bytes_cell_address,
+    bytes_offset_address,
     list_cell_address,
     list_head_address,
     list_row_address,
@@ -140,6 +142,12 @@ def body() -> None:
         tree_addresses = spec["tree_addresses"]
         tree_tag_ = tree_addresses["tag"]
         field_at = tree_addresses["field"]
+        # ★★★★★ R2113 — and the byte grid's. Its four families key on numbers,
+        # so the populations are `sources` and `bytes_per_row` on this same
+        # document and only the prefixes are read here.
+        bytes_addresses = spec["bytes_addresses"]
+        cell_byte_at = bytes_addresses["cell"]
+        offset_at = bytes_addresses["offset"]
         ok("the specification declares what owes a voice", len(voices) > 0)
         ok("the specification declares what owes a silence", len(silences) > 0)
         print(
@@ -349,11 +357,11 @@ def body() -> None:
             "F: it says how many rows of bytes it has",
         )
         for r in range((byte_len + per_row - 1) // per_row):
-            head = tree[f"pv.bytes.offset.{r}"]
+            head = tree[bytes_offset_address(offset_at, r)]
             assert_eq(head["role"], "rowheader", f"F: row {r} is headed by its offset")
             assert_eq(head["name"], f"{r * per_row:04x}", f"F: row {r}'s offset")
         for b in range(byte_len):
-            cell = tree[f"pv.bytes.cell.{b}"]
+            cell = tree[bytes_cell_address(cell_byte_at, b)]
             assert_eq(cell["role"], "gridcell", f"F: byte {b}")
             assert_eq(cell["row_index"], b // per_row + 1, f"F: byte {b} row")
         CHECKS.extend(["byte grid", "row headers", "byte cells"])

@@ -364,7 +364,7 @@ fn r1663_every_declared_element_of_the_screen_is_painted() {
             "pv.reassembly".into(),
             "pv.reassembly.title".into(),
             "pv.reassembly.counts".into(),
-            "pv.bytes.span".into(),
+            crate::address::BYTES_SPAN.into(),
         ];
         // The panes and their scrolling bodies come from the specification's
         // own table rather than from this list.
@@ -519,7 +519,7 @@ fn r1663_every_painted_tag_belongs_to_a_declared_family() {
         "pv.context",
         super::address::LIST,
         super::address::TREE,
-        "pv.bytes",
+        super::address::BYTES,
         "pv.reassembly",
     ];
     // ★★★★★ R1857 — the population is the SCREEN, not the part of it above the
@@ -712,7 +712,7 @@ fn r1663_every_painted_control_answers_at_the_centre_of_its_own_rectangle() {
                 what: "byte cells",
                 source: Expectation::Painter,
                 members: (0..spec::SOURCES[0].1)
-                    .map(|byte| (format!("pv.bytes.cell.{byte}"), Hit::Byte(byte)))
+                    .map(|byte| (crate::address::bytes_cell(byte), Hit::Byte(byte)))
                     .collect(),
                 least: 1,
             },
@@ -776,7 +776,7 @@ fn r1663_every_painted_mark_is_inside_the_pane_its_address_names() {
         let panes: BTreeMap<&str, Rect> = [
             (crate::address::LIST, list_rect()),
             (crate::address::TREE, tree_rect()),
-            ("pv.bytes", bytes_rect()),
+            (crate::address::BYTES, bytes_rect()),
         ]
         .into_iter()
         .collect();
@@ -926,8 +926,7 @@ fn r1663_the_bytes_drawn_lit_are_the_bytes_the_map_names() {
         let painted: BTreeSet<usize> = shot
             .tags
             .keys()
-            .filter_map(|t| t.strip_prefix("pv.bytes.lit."))
-            .filter_map(|n| n.parse().ok())
+            .filter_map(|t| crate::address::bytes_lit_index(t))
             .collect();
         let wanted: BTreeSet<usize> = match map.selection_for(&field) {
             Ok((source, sel)) if source == SourceId::new(0) => (sel.start()..sel.end()).collect(),
@@ -946,7 +945,7 @@ fn r1663_the_bytes_drawn_lit_are_the_bytes_the_map_names() {
             let (px, py) = centre(
                 *shot
                     .tags
-                    .get(&format!("pv.bytes.cell.{byte}"))
+                    .get(&crate::address::bytes_cell(*byte))
                     .expect("a lit byte is a painted byte"),
             );
             super::move_cursor(state, px, py);
@@ -2312,7 +2311,7 @@ fn r1774_the_sweep_reaches_both_sides_of_every_clamp() {
             ),
             (
                 // ★★★★★ The OFFSET label, which is what a byte row paints.
-                // The first draft asked for `pv.bytes.row.{n}` and the census
+                // The first draft asked for the ROW's address and the census
                 // reported the family as clamped on every single frame — 0 of
                 // N built, always. The cause was the observable for the third
                 // time in this round: that tag is an ANNOUNCEMENT, and the
@@ -2327,7 +2326,7 @@ fn r1774_the_sweep_reaches_both_sides_of_every_clamp() {
                 // conventions for one address.
                 "bytes: offsets",
                 (0..state.frame_bytes().len().div_ceil(spec::BYTES_PER_ROW))
-                    .map(super::bytes_offset_tag)
+                    .map(crate::address::bytes_offset)
                     .collect(),
                 true,
             ),

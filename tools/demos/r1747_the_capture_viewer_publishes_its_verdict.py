@@ -99,6 +99,9 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     address_prefix,
     assert_eq,
+    bytes_lit_at,
+    bytes_lit_prefix,
+    bytes_tag,
     filter_seats,
     list_head_prefix,
     resize_and_settle,
@@ -136,14 +139,16 @@ STEMS = {
 
 #: The three regions the `selection` relation is painted across.
 #:
-#: ★★★★★ R2112 — `field` is absent here on purpose, for `filter_bar`'s reason:
+#: ★★★★★ R2112 — `field` was taken out of this table, for `filter_bar`'s reason:
 #: the band behind the open row is a seat the decode tree DECLARES, and this
-#: table is module-level and cannot query anything. Section E resolves it off the
-#: mounted screen and joins it to the two that still spell themselves.
-RELATION = {
-    "span": "pv.bytes.span",
-    "lit": "pv.bytes.lit.",
-}
+#: table is module-level and cannot query anything.
+#:
+#: ★★★★★ R2113 — and the other two followed, so the table is EMPTY and kept only
+#: as the place this decision is recorded. Every one of the relation's three
+#: regions is now resolved off the mounted screen in section E. A dict that
+#: exists to say *nothing lives here any more* is worth more than a deleted name
+#: the next reader has to re-derive.
+RELATION: dict[str, str] = {}
 
 CHECKS: list[str] = []
 PARTS_COMPARED = 0
@@ -606,6 +611,11 @@ def section_e(app: RpcSubprocess) -> None:
     # The band behind the open row, off the same declaration — see `RELATION`.
     open_band = tree_tag(app, "selected", ext=mounted)
     field_at = tree_field_prefix(app, ext=mounted)
+    # ★★★★★ R2113 — and the relation's other two regions, off the byte grid's
+    # own declaration. `RELATION` is empty now: all three come from the mounted
+    # screen rather than from this file.
+    span_tag = bytes_tag(app, "span", ext=mounted)
+    lit_at = bytes_lit_prefix(app, ext=mounted)
     pin = packets_spec()
     missing: list[str] = []
     compared = 0
@@ -625,16 +635,20 @@ def section_e(app: RpcSubprocess) -> None:
         f"painted in the assembled application -- missing: {missing or 'none'}",
         not missing and compared > 0,
     )
+    # ★★★★★ R2113 — the byte a highlight names, recovered by the screen's own
+    # inverse rather than by splitting at the last dot. The old read took
+    # whatever followed the final separator, which answers for any tag at all
+    # under any family; `bytes_lit_at` refuses a tail that is not a number.
     lit = sorted(
-        int(t.rsplit(".", 1)[1])
+        byte
         for t in rects
-        if t.startswith(RELATION["lit"])
+        if (byte := bytes_lit_at(t, lit_at)) is not None
     )
     ok(
         f"E: ★ and the {related} part(s) of the RELATION are painted across "
         f"three regions rather than under one stem, so they are checked here "
         f"rather than silently skipped -- {len(lit)} byte(s) lit",
-        open_band in rects and RELATION["span"] in rects and lit,
+        open_band in rects and span_tag in rects and lit,
     )
 
     # ★★ The relation itself, from the PAINT on both sides. The tree draws a
@@ -649,7 +663,7 @@ def section_e(app: RpcSubprocess) -> None:
         and r[1] >= band[1]
         and r[1] + r[3] <= band[1] + band[3]
     )
-    said = text_of_tag(app, RELATION["span"])
+    said = text_of_tag(app, span_tag)
     ok(
         f"E: ★★ the byte pane's readout names the row the tree drew open "
         f"({said!r} for `{open_row}`) -- two panes, one fact, compared where a "

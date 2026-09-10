@@ -5797,6 +5797,117 @@ def tree_derived(tf, path: str, *, ext: str = "/external") -> str:
     return tree_derived_address(tree_derived_prefix(tf, ext=ext), path)
 
 
+# ★★★★★ R2113 — **what this family deliberately does NOT have a door for, and
+# why that is written down rather than left as a gap.**
+#
+# The first draft of this section had fourteen helpers — the full symmetry the
+# `list_*` and `tree_*` families carry. Counted at the close, FIVE of them were
+# called by nothing: not by a walk, not by another helper here. That is R2104's
+# measured rule (`toolbar_prefix`, built and deleted in one round) and R2110's
+# restatement of it: **a helper with no consumer is the rotting thing this debt
+# produces.** Rust refuses one at compile time; Python does not, so the count has
+# to be taken by hand — and this family made it easy to get wrong, because
+# `pv.bytes` has only six walk sites to serve.
+#
+# SIX were deleted in the end, not five: removing a one-shot door orphans the
+# prefix door and the pure composer it called, so the count has to be RE-TAKEN
+# after each removal rather than read once. `bytes_lit_address` became an orphan
+# only because `bytes_lit` had just stopped existing.
+#
+# Named so the next reader does not read the absence as an oversight:
+# `bytes_root` (no walk asks for the grid's own tag — the pane roster already
+# answers *where are the three panes*), `bytes_lit` and `bytes_row_address`
+# (one-shot doors nothing reached for), `bytes_lit_address` (orphaned by the
+# first of those), `bytes_offset_prefix` and `bytes_row_prefix` (prefix doors
+# whose walks read the wire key directly, as `r1693` does for the message grid).
+#
+# ⚠⚠ ONE FACT travelled with those deletions and is kept here because a walk
+# author needs it: **nothing paints the accessibility row.** A byte row IS its
+# cells and the offset beside them; a walk looking for `…row.<n>` in a paint
+# snapshot will never find one, and that is the screen being right rather than a
+# mark going missing. Ask the accessibility tree. The address itself is on the
+# wire under `bytes_addresses.row` for whoever needs it first.
+#
+# ⚠ The measurement, so a later round can repeat it rather than re-deriving it:
+# count calls in `tools/demos/*.py` AND inside this file, because a one-shot door
+# calling its own prefix door is a real consumer. Counting only the walks
+# reported eight orphans where there are five.
+#
+# ⇒ Build one when a walk needs it. The declaration in `address.rs` is what is
+# complete; this file is what is *reached for*.
+
+
+def bytes_seats(spec: Any) -> dict:
+    """Every FIXED seat of the byte grid, keyed by the word the screen declares
+    it under — from a specification a caller has ALREADY read.
+
+    ⚠ FIXED only: the scrolling body, the pane's title run, and the readout that
+    says which decode row is open. The cells, the highlights, the row offsets and
+    the accessibility rows expand over the frame.
+    """
+    return {row["word"]: row["tag"] for row in spec["bytes_addresses"]["seats"]}
+
+
+def bytes_tag(tf, word: str, *, ext: str = "/external") -> str:
+    """The address the byte grid's seat called `word` is painted under.
+
+    A word the grid does not address is a `KeyError` naming it.
+    """
+    return bytes_seats(screen_spec(tf, ext))[word]
+
+
+def bytes_cell_prefix(tf, *, ext: str = "/external") -> str:
+    """The prefix every BYTE CELL is painted under."""
+    return screen_spec(tf, ext)["bytes_addresses"]["cell"]
+
+
+def bytes_cell_address(prefix: str, index) -> str:
+    """The address of the cell showing byte `index`, composed onto a prefix the
+    caller already holds.
+
+    ★ R2109.1's rule: the published prefix CARRIES its separator, so a walk
+    gluing its own on asks for an address nothing carries — and an empty answer
+    looks exactly like a screen that did not paint the cell. PURE, so a walk
+    checking a whole frame pays one query rather than one per byte.
+    """
+    return f"{prefix}{index}"
+
+
+def bytes_cell(tf, index, *, ext: str = "/external") -> str:
+    """The address of the byte grid's cell for byte `index`."""
+    return bytes_cell_address(bytes_cell_prefix(tf, ext=ext), index)
+
+
+def bytes_lit_prefix(tf, *, ext: str = "/external") -> str:
+    """The prefix every LIT highlight is painted under.
+
+    ⚠ Shares its key space with the cells — both are keyed by the byte — so a
+    walk classifying a snapshot must compare against the right prefix rather than
+    against the family stem.
+    """
+    return screen_spec(tf, ext)["bytes_addresses"]["lit"]
+
+
+def bytes_lit_at(tag: str, prefix: str):
+    """The byte a highlight's address names, or `None` when the tag is not one.
+
+    ★ The half a walk reading the paint back actually needs: which bytes did the
+    screen light. `None` for a tail that is not a number is the honest answer —
+    accepting one would group marks that are not highlights.
+    """
+    if not tag.startswith(prefix):
+        return None
+    rest = tag[len(prefix) :]
+    return int(rest) if rest.isdigit() else None
+
+
+def bytes_offset_address(prefix: str, row) -> str:
+    """The address of the hex offset painted at the left of `row`, composed onto
+    a prefix the caller already holds.
+    """
+    return f"{prefix}{row}"
+
+
 def pin_prefix(tf, *, ext: str = "/external") -> str:
     """The prefix every pin of every card on the node graph is painted under.
 

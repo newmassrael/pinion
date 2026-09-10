@@ -89,7 +89,7 @@ nodegroups.wire	1
 origin.l3	1
 profile.series	2
 pv.appbar	2
-pv.bytes	6
+pv.bytes	0
 pv.context	4
 pv.filter	0
 pv.list	0

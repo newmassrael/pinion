@@ -40,6 +40,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     assert_router_press_moves,
+    bytes_cell,
     filter_saved,
     list_row,
     run_demo,
@@ -343,7 +344,7 @@ def body() -> None:
             ),
             (
                 f"a byte cell owned by `{q(app, MAP, f'owner.0.{byte_index}')}`",
-                f"pv.bytes.cell.{byte_index}",
+                bytes_cell(app, byte_index, ext=f"/{VIEW}/external"),
                 lambda: q(app, VIEW, "selected_field"),
             ),
             (

@@ -89,9 +89,9 @@ const STRIP: &str = "pv.reassembly.";
 /// The band the tree draws behind the row a reader has open.
 const OPEN_ROW: &str = crate::address::TREE_SELECTED;
 /// The byte pane's readout: which row is open and which bytes it was read from.
-const SPAN: &str = "pv.bytes.span";
+const SPAN: &str = crate::address::BYTES_SPAN;
 /// Where one lit byte is addressed.
-const LIT: &str = "pv.bytes.lit.";
+const LIT: &str = crate::address::BYTES_LIT_SEAT;
 // ⚠ R2112 — there was a `DERIVED` prefix here, and the round that declared this
 // family deleted it rather than pointing it at the declaration. Its one reader
 // composed `{DERIVED}{path}` by hand, which is the composition the declaration

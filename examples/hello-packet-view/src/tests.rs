@@ -1237,7 +1237,7 @@ fn press_key(focused: Option<&str>, chord: &str) -> bool {
 const PANE_CURSORS: [(&str, &str); 3] = [
     (address::LIST, "ArrowDown"),
     (address::TREE, "ArrowDown"),
-    ("pv.bytes", "ArrowRight"),
+    (address::BYTES, "ArrowRight"),
 ];
 
 /// ★★★★★ R1698 — **each pane's arrows move that pane's cursor, and nobody
@@ -1277,7 +1277,7 @@ fn r1698_each_panes_arrows_move_that_panes_cursor() {
                 // The byte grid's cursor is the selected field's first byte, so
                 // moving the tree legitimately moves it. Every other pair is
                 // independent.
-                if stop == address::TREE && other == "pv.bytes" {
+                if stop == address::TREE && other == address::BYTES {
                     continue;
                 }
                 assert_eq!(
@@ -3244,6 +3244,239 @@ fn r2112_the_wire_publishes_the_trees_declaration() {
     assert_eq!(
         pane["body"].as_str(),
         Some(address::TREE_BODY),
+        "★★ the pane table's scrolling body is not the declared seat"
+    );
+}
+
+/// ★★★★★ R2113 — **every byte-grid address is what its declaration derives, and
+/// each of its five readers refuses the other four's tags.**
+///
+/// The byte grid is where this campaign's two KEY SHAPES meet in one module: its
+/// four parametric families key on NUMBERS, so `parse()` writes the refusals the
+/// decode tree next door had to write by hand. That is a claim about behaviour,
+/// not a comfort — so the refusals are driven here exactly as the tree's are,
+/// and the fact that nothing had to be written for them is what the passing
+/// assertions mean.
+///
+/// ⚠ TWO PAIRS share a key space: `cell`/`lit` are both the byte, `offset`/`row`
+/// both the row. Each pair is told apart by the word before the key and by
+/// nothing else, so a reader that stripped only the family stem would answer for
+/// either — which is the shape R1829 found on the message grid.
+#[test]
+fn r2113_every_bytes_address_is_derived() {
+    assert_eq!(
+        address::BYTES_SEAT,
+        format!("{}{}", address::BYTES, address::SEPARATOR)
+    );
+    for (word, tag) in address::BYTES_SEATS {
+        assert_eq!(
+            &address::bytes(word),
+            tag,
+            "★ the declared address for `{word}` is not what `bytes()` derives"
+        );
+        assert_eq!(
+            address::bytes_word(tag),
+            Some(*word),
+            "★ `{tag}` does not round-trip back to its word"
+        );
+    }
+    assert_eq!(
+        address::bytes_word(address::BYTES),
+        None,
+        "★★ the grid's own tag is not one of its seats"
+    );
+    // ★★ Each parametric family hangs off the grid's stem and ends in the
+    // separator, and its template is that prefix with the placeholder. Checked
+    // structurally rather than against a re-typed string.
+    for (prefix, template) in [
+        (address::BYTES_CELL_SEAT, address::BYTES_CELL_TEMPLATE),
+        (address::BYTES_LIT_SEAT, address::BYTES_LIT_TEMPLATE),
+        (address::BYTES_OFFSET_SEAT, address::BYTES_OFFSET_TEMPLATE),
+        (address::BYTES_ROW_SEAT, address::BYTES_ROW_TEMPLATE),
+    ] {
+        assert!(
+            prefix.starts_with(address::BYTES_SEAT) && prefix.ends_with(address::SEPARATOR),
+            "★ `{prefix}` is not a family of this grid's stem"
+        );
+        assert_eq!(
+            template,
+            format!("{prefix}{{}}"),
+            "★ `{template}` is not `{prefix}` with the population's placeholder"
+        );
+    }
+    bytes_family_round_trips();
+    bytes_readers_refuse_each_other();
+}
+
+/// The four keyed families' round trips, each against the population the
+/// specification enumerates it over.
+///
+/// ★ The pairing is the assertion: the specification names a family by a
+/// template and expands it by key, while the painter composes an address. A
+/// template that drifted would point the accessibility census at addresses
+/// nothing paints while the screen went on painting the right ones.
+fn bytes_family_round_trips() {
+    let bytes = spec::Population::Bytes.members();
+    assert!(
+        !bytes.is_empty(),
+        "★ the frame has no bytes, so every claim below describes nothing"
+    );
+    for key in &bytes {
+        let n: usize = key.parse().expect("a byte key is its index");
+        assert_eq!(address::bytes_cell_index(&address::bytes_cell(n)), Some(n));
+        assert_eq!(
+            address::BYTES_CELL_TEMPLATE.replace("{}", key),
+            address::bytes_cell(n),
+            "★ the specification's cell template and the painter's composer \
+             disagree at byte {n}"
+        );
+    }
+    let lit = spec::Population::LitBytes.members();
+    assert!(
+        !lit.is_empty(),
+        "★ the opening field lights no byte, so the highlight family below \
+         describes nothing"
+    );
+    for key in &lit {
+        let n: usize = key.parse().expect("a lit key is its byte index");
+        assert_eq!(address::bytes_lit_index(&address::bytes_lit(n)), Some(n));
+        assert_eq!(
+            address::BYTES_LIT_TEMPLATE.replace("{}", key),
+            address::bytes_lit(n),
+            "★ the specification's highlight template and the painter's composer \
+             disagree at byte {n}"
+        );
+    }
+    let rows = spec::Population::ByteRows.members();
+    assert!(!rows.is_empty(), "★ the grid has no rows");
+    for key in &rows {
+        let r: usize = key.parse().expect("a row key is its index");
+        assert_eq!(
+            address::bytes_offset_row(&address::bytes_offset(r)),
+            Some(r)
+        );
+        assert_eq!(
+            address::BYTES_OFFSET_TEMPLATE.replace("{}", key),
+            address::bytes_offset(r),
+            "★ the specification's offset template and the painter's composer \
+             disagree at row {r}"
+        );
+        // ★★★★★ The row has NO specification entry of its own, because nothing
+        // paints it — it is anchored by the members it composes. So its template
+        // is driven against its own composer rather than against a voice row,
+        // and this is the one family here whose absence from `VOICES` is a fact
+        // rather than an oversight.
+        assert_eq!(address::bytes_row_index(&address::bytes_row(r)), Some(r));
+        assert_eq!(
+            address::BYTES_ROW_TEMPLATE.replace("{}", key),
+            address::bytes_row(r),
+            "★ the row template and its composer disagree at row {r}"
+        );
+    }
+}
+
+/// ★★★★★ What each inverse REFUSES — and here, unlike the decode tree, `parse()`
+/// is what refuses. The assertions are the same; what is different is that
+/// nothing in `address.rs` had to be written to make them pass.
+fn bytes_readers_refuse_each_other() {
+    let cell = address::bytes_cell(3);
+    let lit = address::bytes_lit(3);
+    let offset = address::bytes_offset(1);
+    let row = address::bytes_row(1);
+    // The two pairs that share a key space. A reader stripping only the family
+    // stem would answer for either member of a pair.
+    assert_eq!(address::bytes_cell_index(&lit), None);
+    assert_eq!(address::bytes_lit_index(&cell), None);
+    assert_eq!(address::bytes_offset_row(&row), None);
+    assert_eq!(address::bytes_row_index(&offset), None);
+    // And across the pairs.
+    assert_eq!(address::bytes_cell_index(&offset), None);
+    assert_eq!(address::bytes_row_index(&cell), None);
+    for tag in [&cell, &lit, &offset, &row] {
+        assert_eq!(
+            address::bytes_word(tag),
+            None,
+            "★★ `{tag}` reads back as a FIXED seat — the roster is being matched \
+             as a prefix rather than as an equality"
+        );
+    }
+    // A family's own stem is not a member of it, and here `parse()` is what says
+    // so: an empty tail is not a number. The decode tree needed `non_empty` for
+    // exactly this, because its keys are paths.
+    for stem in [
+        address::BYTES_CELL_SEAT,
+        address::BYTES_LIT_SEAT,
+        address::BYTES_OFFSET_SEAT,
+        address::BYTES_ROW_SEAT,
+    ] {
+        assert_eq!(
+            (
+                address::bytes_cell_index(stem),
+                address::bytes_lit_index(stem),
+                address::bytes_offset_row(stem),
+                address::bytes_row_index(stem)
+            ),
+            (None, None, None, None),
+            "★★★★★ `{stem}` is a family's stem and not a member of it"
+        );
+    }
+    assert_eq!(
+        address::bytes_cell_index(address::BYTES),
+        None,
+        "★★ the grid's own tag is not a cell"
+    );
+    assert_eq!(
+        address::bytes_cell_index(&format!("{}ff", address::BYTES_CELL_SEAT)),
+        None,
+        "★★ a non-numeric tail is not a byte index — this screen addresses bytes \
+         by their decimal position, and accepting hex here would make the router \
+         answer for a mark that is never painted"
+    );
+}
+
+/// ★★★★★ R2113 — **the wire carries the byte grid's declaration, and the two
+/// surfaces that name the grid agree.**
+#[test]
+fn r2113_the_wire_publishes_the_byte_grids_declaration() {
+    let wire = super::spec_json();
+    let published = &wire["bytes_addresses"];
+    assert_eq!(published["tag"].as_str(), Some(address::BYTES));
+    assert_eq!(published["cell"].as_str(), Some(address::BYTES_CELL_SEAT));
+    assert_eq!(published["lit"].as_str(), Some(address::BYTES_LIT_SEAT));
+    assert_eq!(
+        published["offset"].as_str(),
+        Some(address::BYTES_OFFSET_SEAT)
+    );
+    assert_eq!(published["row"].as_str(), Some(address::BYTES_ROW_SEAT));
+    let seats: Vec<(String, String)> = published["seats"]
+        .as_array()
+        .expect("the wire publishes the grid's seats as a list")
+        .iter()
+        .map(|row| {
+            (
+                row["word"].as_str().unwrap_or_default().to_owned(),
+                row["tag"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    let declared: Vec<(String, String)> = address::BYTES_SEATS
+        .iter()
+        .map(|(word, tag)| ((*word).to_owned(), (*tag).to_owned()))
+        .collect();
+    assert_eq!(
+        seats, declared,
+        "★★★★★ the seats the wire publishes and the ones `address::BYTES_SEATS` \
+         declares are not the same list, in the same order"
+    );
+    let pane = &wire["panes"][2];
+    assert_eq!(
+        pane["tag"].as_str(),
+        published["tag"].as_str(),
+        "★★ the pane table and the address table name different grids"
+    );
+    assert_eq!(
+        pane["body"].as_str(),
+        Some(address::BYTES_BODY),
         "★★ the pane table's scrolling body is not the declared seat"
     );
 }
