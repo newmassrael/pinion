@@ -176,7 +176,11 @@ const STATES: &[SweptState] = &[
     ("with the launch gate closed by a bad value", |state| {
         let router = state.node_of("R-01").expect("the opening graph has it");
         state.selection.set(Selection::one(router));
-        super::set_and_sync(state, "transport.link.tx.batch_size", "70000");
+        // ★★★★★ R2120 — the row and the value are the derivation's, not this
+        // line's. A bad value has to be bad, and "70000" was a claim about
+        // where the ceiling is made in a file that has no way to check it.
+        let bounded = crate::settings::bounded_row();
+        super::set_and_sync(state, bounded.key, &bounded.over);
     }),
     // ★★★★★ R1774 — enough bad values to OVERFLOW the launch panel, which is
     // the state this sweep did not have. `gate_shown` keeps what fits and says
@@ -4812,12 +4816,9 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     // of the stepper, where the value's text is — opens the one field over it,
     // and what is typed is stored as typed and reported on its row.
     ("validate", |state, shot| {
-        press_tag(
-            state,
-            shot,
-            &super::address::form_control("transport.link.tx.batch_size"),
-        );
-        type_into(state, "70000");
+        let bounded = crate::settings::bounded_row();
+        press_tag(state, shot, &super::address::form_control(bounded.key));
+        type_into(state, &bounded.over);
         press_tag(state, &painted(state), crate::address::INSPECTOR_RENAME);
     }),
     ("author a link", |state, shot| {
@@ -6471,11 +6472,13 @@ fn r1684_leaving_the_field_applies_what_is_in_it() {
                 .and_then(|form| form.field(key).map(|f| f.value().into_owned()))
                 .unwrap_or_default()
         };
+        // ★ R2120 — ANOTHER row, named by what it is rather than by its path.
+        // What this needs is a second row of the opening card; the bounded one
+        // is the row the rest of this file already drives.
+        let other = crate::settings::bounded_row().key;
         press_centre(&super::address::form_control("id"));
         state.buffer.set_text("typed-and-left".to_owned());
-        press_centre(&super::address::form_control(
-            "transport.link.tx.batch_size",
-        ));
+        press_centre(&super::address::form_control(other));
         assert_eq!(
             row_value("id"),
             "typed-and-left",
@@ -6485,7 +6488,7 @@ fn r1684_leaving_the_field_applies_what_is_in_it() {
         );
         assert_eq!(
             state.editing.get().map(|what| what.wire()).as_deref(),
-            Some("value:transport.link.tx.batch_size"),
+            Some(format!("value:{other}").as_str()),
             "and the field moved to the row that was pressed"
         );
 
@@ -7307,13 +7310,16 @@ fn r1690_reach_follows_the_palette_and_not_the_screen() {
         let before = run_under(&painted(&state), crate::address::INSPECTOR_REACH_TEXT);
 
         // Take a row out through the affordance a person presses.
-        press_centre_of(
-            &state,
-            &super::address::form_part("remove", "transport.link.tx.batch_size"),
-        );
+        //
+        // ⚠ R2120 — the path is the derivation's here for a sharper reason
+        // than elsewhere in this file: the assertion below is a NEGATIVE, so a
+        // path that stopped existing would satisfy it rather than fail it. A
+        // spelled key is a silent pass exactly where it is spelled beside
+        // `is_none`.
+        let removed = crate::settings::bounded_row().key;
+        press_centre_of(&state, &super::address::form_part("remove", removed));
         assert!(
-            super::selected_form(&state)
-                .is_some_and(|form| form.field("transport.link.tx.batch_size").is_none()),
+            super::selected_form(&state).is_some_and(|form| form.field(removed).is_none()),
             "the row really left the screen",
         );
         assert_eq!(
@@ -7709,8 +7715,11 @@ fn r1691_a_rows_control_announces_the_kind_its_shape_is() {
         // are decided per shape and where a fallback would otherwise let a
         // wrong one pass unseen: a named node satisfies the census whatever it
         // calls itself.
-        let step_up = super::address::form_part("step", "transport.link.tx.batch_size.up");
-        let step_down = super::address::form_part("step", "transport.link.tx.batch_size.down");
+        // ★ R2120 — the stepper is the whole-number row's affordance, so the
+        // row it hangs off is asked for rather than named.
+        let stepped = crate::settings::bounded_row().key;
+        let step_up = super::address::form_part("step", &format!("{stepped}.up"));
+        let step_down = super::address::form_part("step", &format!("{stepped}.down"));
         let item_first = super::address::form_part("item", "listen.endpoints.0");
         let item_add = super::address::form_part("item", "listen.endpoints.add");
         let want_part = [

@@ -195,6 +195,13 @@ def body() -> None:
         # a wrong letter written here looks for a mark that is not there, which
         # reads as the screen not painting it.
         parts = spec["form_parts"]
+        # ★★★★★ R2120 — the row with a CEILING, and the values either side of
+        # it, from the screen rather than spelled here. This walk drove
+        # `transport.link.tx.batch_size=70000`: a configuration path it could
+        # not check and a number that claimed to be past a bound declared
+        # somewhere else entirely. Both come from the option surface now, and
+        # `allowed` is the sentence the refusal itself renders.
+        bounded = spec["bounded"]
         # ★★★★★ R2103 — and the prefixes the CANVAS's two families are addressed
         # under, recovered from the rosters the screen publishes rather than
         # spelled. `address_prefix` takes a member's own key off the end of the
@@ -1118,9 +1125,15 @@ def body() -> None:
         # ── (F) The document is derived from those rows, and reads back ─────
         document = json.loads(q(tf, "document"))
         assert "refused" not in document, document
+        # ★ R2120 — the nesting is WALKED from the dotted key rather than
+        # subscripted with its segments spelled out, which is the claim this
+        # assertion is making: the key is the path.
+        nested = document
+        for segment in bounded["key"].split("."):
+            nested = nested[segment]
         assert_eq(
-            document["transport"]["link"]["tx"]["batch_size"],
-            65535,
+            nested,
+            int(bounded["at"]),
             "★ the dotted key IS the path and the declared type IS the type — a "
             "form and a settings file mapped by hand are mapped twice",
         )
@@ -1168,29 +1181,30 @@ def body() -> None:
 
         # A value that would fail at start-up closes it, and the refusal names
         # what would be accepted rather than saying 'invalid'.
-        inv(tf, "set_field", "transport.link.tx.batch_size=70000")
+        inv(tf, "set_field", f"{bounded['key']}={bounded['over']}")
         verdict = json.loads(q(tf, "verdict"))
         assert not verdict["may_launch"], verdict
         assert_eq(verdict["blocking"], 1)
         why = refused(tf, "run", True)
         assert "gate is closed" in why, why
         painted = tags(paint(tf))
-        assert f"{parts['defect']}transport.link.tx.batch_size" in painted, (
+        marked = f"{parts['defect']}{bounded['key']}"
+        assert marked in painted, (
             "★ and the defect is painted ON the row it is about, not only in a "
             "list at the bottom"
         )
         assert not any(
-            t.startswith(parts["defect"]) and "batch_size" not in t for t in painted
+            t.startswith(parts["defect"]) and t != marked for t in painted
         ), "and on no other row"
         document = json.loads(q(tf, "document"))
         assert "refused" in document, (
             "★ and no document is emitted — a file the tool called fine that "
             f"fails at start-up is the failure this prevents: {document}"
         )
-        assert "0..=65535" in document["refused"], document
+        assert bounded["allowed"] in document["refused"], document
         print(f"[G] out of range closes it and names the range: {document['refused']!r}")
 
-        inv(tf, "set_field", "transport.link.tx.batch_size=65535")
+        inv(tf, "set_field", f"{bounded['key']}={bounded['at']}")
         assert json.loads(q(tf, "verdict"))["may_launch"], "and repairing it reopens"
 
         # ── (H) Paint and gesture read ONE geometry, both directions ────────

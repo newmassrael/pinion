@@ -5079,6 +5079,29 @@ def form_part_prefixes(tf, *, ext: str = "/external") -> dict:
     return screen_spec(tf, ext)["form_parts"]
 
 
+def bounded_row(tf, *, ext: str = "/external") -> dict:
+    """The settings row with a numeric CEILING, and the values either side of it.
+
+    ★★★★★ R2120 — the walks' half of a declaration that is not an address at
+    all. Driving *a value the target refuses* takes two facts, and a walk that
+    spells them holds neither: the configuration path (the target's vocabulary,
+    not the screen's) and a value past the bound (which the option surface
+    declares and no walk can see). Four walks spelled both, and five sites
+    carried the same number typed out beside prose calling it `OVER`.
+
+    Keys: `key`, `floor`, `ceiling`, `at` (what the row opens holding, inside
+    the bounds), `over` (one past the ceiling) and `allowed` — the range as the
+    REFUSAL renders it, so a walk asserting the refusal names the range does
+    not re-render it. `control` is the address that row's control is painted
+    under, for the reason [`form_part_tag`] exists.
+
+    ⚠ Goes through [`screen_spec`] for the reason [`form_part_prefixes`] does:
+    two screens publish `spec` in two spellings and that difference belongs to
+    one place.
+    """
+    return screen_spec(tf, ext)["bounded"]
+
+
 def form_part_tag(tf, part: str, key: str, *, ext: str = "/external") -> str:
     """The address one part of one form row is painted under — the SCREEN's.
 

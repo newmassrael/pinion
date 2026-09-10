@@ -81,7 +81,7 @@
 use std::sync::OnceLock;
 
 use crate::graph::Role;
-use pinion_core::widgets::config_form::FieldType;
+use pinion_core::widgets::config_form::{ConfigDefect, FieldType};
 use pinion_core::widgets::config_schema::{
     ConfigSchema, Reach, SchemaLeaf, StringCensus, SurfaceDrift,
 };
@@ -349,6 +349,124 @@ pub fn shape_or_free(path: &str) -> FieldType {
     shape_of(path).unwrap_or(FieldType::Text)
 }
 
+/// ★★★★★ R2120 — **the one row the opening card gives a numeric CEILING**, and
+/// the two values either side of it.
+///
+/// # What this replaces
+///
+/// One configuration path was spelled at **thirty-one sites across nine
+/// files** — the specification's field table and its operation argument, the
+/// form this screen builds, the shape table below, sixteen readers in this
+/// crate's own gates and eight walks — and beside more than half of them stood
+/// a second, independent statement of the ceiling: the literal a walk typed to
+/// go past it. Neither number was ever derived from the other, so a re-read of
+/// the target that moved the bound would have left every one of those readers
+/// naming a value that is no longer *over* anything, each of them still
+/// calling it `OVER` in its own prose.
+///
+/// # ⚠ This is not a painted address, and that is the finding
+///
+/// `tools/painted_addresses.py` counts the family because a configuration path
+/// and a painted address are spelled the same way — two lowercase segments and
+/// a dot. They are not the same thing. A painted address is this screen's to
+/// compose (`crate::address`); this path is **the target's**, declared in
+/// `docs/analyzer-config-surface.json` and read by [`sourced_paths`]. What
+/// this screen owns is therefore not the address but the CHOICE of which
+/// sourced path it opens a bounded row on, and that choice is a fact about the
+/// reference screen — so it is made in `crate::spec::FIELDS` and *derived*
+/// here rather than declared twice.
+///
+/// # ⚠⚠ Three of those spellings are authorities, and they stay
+///
+/// `crate::spec::FIELDS` is what the reference declares, `form_for` is what
+/// this screen builds, and [`refinements`] is the shape the surface holds at
+/// that path — **three independent statements that gates compare against each
+/// other**. Collapsing them into one declaration would not repay a debt; it
+/// would delete the comparison. This family's floor is therefore not zero, and
+/// this paragraph is the reason rather than an omission somebody should later
+/// tidy away.
+///
+/// # ★ The derivation checks itself
+///
+/// [`BoundedRow::over`] is not `ceiling + 1` written out and hoped for: the
+/// shape is asked to encode it and the refusal it produces is where
+/// [`BoundedRow::allowed`] comes from. So a bound that stopped refusing that
+/// value stops this from building a [`BoundedRow`] at all, and the sentence a
+/// defect renders has exactly one author.
+pub struct BoundedRow {
+    /// The configuration path the row is keyed at.
+    pub key: &'static str,
+    /// Smallest value the surface accepts there.
+    pub floor: i64,
+    /// Largest value the surface accepts there.
+    pub ceiling: i64,
+    /// What the row holds when the screen opens, which is inside the bounds.
+    pub at: &'static str,
+    /// One past [`Self::ceiling`] — a value the form holds and no document can
+    /// carry.
+    pub over: String,
+    /// The bounds as the refusal renders them, taken FROM the refusal.
+    pub allowed: String,
+}
+
+/// [`BoundedRow`], derived once.
+///
+/// # Panics
+///
+/// If the opening card has no bounded row, or more than one. Both are
+/// questions for a person rather than states the running screen can reach:
+/// with none, every reader that drives *a value the target refuses* has
+/// nothing to drive and would quietly assert about a screen that cannot
+/// produce the defect; with two, WHICH ONE is a choice this cannot make on
+/// anybody's behalf.
+pub fn bounded_row() -> &'static BoundedRow {
+    static ROW: OnceLock<BoundedRow> = OnceLock::new();
+    ROW.get_or_init(|| {
+        let bounded: Vec<(&'static crate::spec::FieldSpec, i64, i64)> = crate::spec::FIELDS
+            .iter()
+            .filter(|field| field.aside.is_none())
+            .filter_map(|field| match shape_of(field.key) {
+                Some(FieldType::Integer { min, max }) => Some((field, min, max)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            bounded.len(),
+            1,
+            "the opening card declares {} row(s) with a numeric ceiling and \
+             every reader of this screen drives THE bounded one: {:?}",
+            bounded.len(),
+            bounded.iter().map(|(f, _, _)| f.key).collect::<Vec<_>>(),
+        );
+        let (field, floor, ceiling) = bounded[0];
+        let shape = shape_of(field.key).expect("the row was found by its shape");
+        assert!(
+            shape.encode(field.key, field.value).is_ok(),
+            "{} opens holding {}, which its own shape refuses — the screen \
+             would open with a defect on it",
+            field.key,
+            field.value,
+        );
+        let over = (ceiling + 1).to_string();
+        let allowed = match shape.encode(field.key, &over) {
+            Err(ConfigDefect::OutOfRange { allowed, .. }) => allowed,
+            other => panic!(
+                "{over} is one past {}'s ceiling and the shape did not refuse \
+                 it as out of range: {other:?}",
+                field.key,
+            ),
+        };
+        BoundedRow {
+            key: field.key,
+            floor,
+            ceiling,
+            at: field.value,
+            over,
+            allowed,
+        }
+    })
+}
+
 /// **How much of the surface a catalogue reaches.**
 ///
 /// The catalogue is the union over every role's opening form and its offered
@@ -446,6 +564,48 @@ pub fn sourced_surface() -> &'static [SourcedLeaf] {
     })
 }
 
+/// ★★★★★ R2120 — the names the pin declares are **not configuration**.
+///
+/// The other half of [`sourced_paths`], and it exists because a row this screen
+/// shows can legitimately be neither: the reference's inspector carries one row
+/// saying WHERE a node runs, which the launcher acts on and no configuration
+/// document ever holds. Such a row has to be exempt from *is this a path the
+/// target takes* — and an exemption a screen grants itself is not one. The pin
+/// names them, so the exemption is the target's to give.
+///
+/// ⚠ These are NAMES rather than paths, and the pin says why: the reference's
+/// split is per row, so one word can be an infrastructure row here and a
+/// leaf of a configuration path elsewhere. `not_config.$also_a_path` is where
+/// that overlap is declared, and `r1842_the_pin_declares_which_names_are_both`
+/// is what refuses an undeclared one.
+///
+/// # Panics
+///
+/// If the pin does not parse, does not carry that list, or carries an empty
+/// one. All three are defects in the pin rather than states the running screen
+/// can reach — and the empty case is the one worth naming, because an
+/// exemption list that exempts nothing would read as agreement with every
+/// census that consults it.
+pub fn not_config_names() -> &'static [String] {
+    static NAMES: OnceLock<Vec<String>> = OnceLock::new();
+    NAMES.get_or_init(|| {
+        let doc: serde_json::Value =
+            serde_json::from_str(SURFACE_JSON).expect("docs/analyzer-config-surface.json parses");
+        let out: Vec<String> = doc["not_config"]["names"]
+            .as_array()
+            .expect("the pin lists the names it holds not to be configuration")
+            .iter()
+            .map(|name| name.as_str().expect("a name").to_owned())
+            .collect();
+        assert!(
+            !out.is_empty(),
+            "an empty not-configuration list would exempt nothing and read as \
+             agreement"
+        );
+        out
+    })
+}
+
 /// The sourced surface's paths alone, sorted — what [`drift`] compares against.
 ///
 /// Derived from [`sourced_surface`] rather than parsed a second time: two
@@ -482,6 +642,81 @@ pub fn drift() -> SurfaceDrift<'static> {
 mod tests {
     use super::{address, endpoint, ident, plain_path, refinements, schema, shape_of, strings};
     use pinion_core::widgets::config_form::FieldType;
+
+    /// ★★★★★ R2120 — **every row the reference declares is keyed at a path the
+    /// TARGET declares**, and the bounded one is the row every reader drives.
+    ///
+    /// The gate this file was missing. [`schema`](super::schema) already
+    /// refuses a *refinement* keyed at an unsourced path, so the shape table
+    /// cannot invent one; nothing said the same about
+    /// [`FIELDS`](crate::spec::FIELDS), which is the table that decides what
+    /// the screen SHOWS. A row keyed at a path the surface does not declare is
+    /// not a loud failure — [`shape_or_free`](super::shape_or_free) answers
+    /// free text for it, so the row keeps painting, keeps taking values and
+    /// simply stops being checked against anything.
+    ///
+    /// ⚠ The aside row is exempt BY ITS OWN COLUMN rather than by name: `aside`
+    /// means *this row is not configuration*, and the pin records the same fact
+    /// on the other side (`not_config`). Naming it here would be a third
+    /// statement of it.
+    #[test]
+    fn r2120_every_configuration_row_is_keyed_at_a_sourced_path() {
+        let sourced = super::sourced_paths();
+        let mut checked = 0;
+        for field in crate::spec::FIELDS {
+            if field.aside.is_some() {
+                continue;
+            }
+            assert!(
+                sourced.iter().any(|path| path == field.key),
+                "the specification opens a row at `{}`, which the target's own \
+                 option surface does not declare. Nothing refuses such a row — \
+                 it widens to free text and every meter keeps counting it",
+                field.key,
+            );
+            checked += 1;
+        }
+        assert!(
+            checked >= 5,
+            "{checked} configuration row(s) were checked, and a specification \
+             whose rows are all asides would pass this vacuously",
+        );
+    }
+
+    /// ★★★★★ R2120 — the bounded row is derived, and the two constants a table
+    /// forced to be `&'static str` still spells are held against it.
+    ///
+    /// [`crate::spec::VALIDATE_ARG`] is the one place left where the path and
+    /// the value past its ceiling are written out, because a `const` table
+    /// cannot call a derivation. This is what stops that from being a claim
+    /// nobody checks — the same arrangement `address::FORM_CONTROL_TEMPLATE`
+    /// has, and for the same reason.
+    #[test]
+    fn r2120_the_validate_argument_is_the_bounded_rows_own() {
+        let row = super::bounded_row();
+        assert_eq!(
+            crate::spec::VALIDATE_ARG,
+            format!("{}={}", row.key, row.over),
+            "the operation table drives a row and a value the derivation does \
+             not produce",
+        );
+        assert_eq!(
+            row.allowed,
+            format!("{}..={}", row.floor, row.ceiling),
+            "the refusal renders the bounds the row reports",
+        );
+        assert!(
+            row.at.parse::<i64>().is_ok_and(|at| at <= row.ceiling),
+            "the row opens at {} and its ceiling is {}",
+            row.at,
+            row.ceiling,
+        );
+        assert_eq!(
+            row.over.parse::<i64>().ok(),
+            Some(row.ceiling + 1),
+            "one past the ceiling, and not two",
+        );
+    }
 
     /// The surface is a document, and it is big enough to be one.
     ///

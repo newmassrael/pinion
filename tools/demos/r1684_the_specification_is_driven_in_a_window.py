@@ -47,6 +47,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    bounded_row,
     card_tag,
     form_part_tag,
     frame_tag,
@@ -332,8 +333,14 @@ GESTURES = {
     # field's ceiling, correctly, so the only way past it is to type — which is
     # why this row read `gesture: false` until the form's rows learned to be
     # typed into.
+    # ★★★★★ R2120 — the row and the value are the SCREEN's now. This spelled a
+    # configuration path and a number it believed was past that path's ceiling;
+    # the ceiling is declared in the option surface and the walk had no way to
+    # read it, so the number was a claim rather than a derivation.
     "validate": lambda tf: type_into(
-        tf, control_tag(tf, "transport.link.tx.batch_size"), "70000"
+        tf,
+        bounded_row(tf)["control"],
+        bounded_row(tf)["over"],
     ),
     # a link's life
     "author a link": lambda tf: drag_onto(
@@ -493,7 +500,12 @@ def body() -> None:
     # over the path this round built. Kept in one process because they are one
     # session: open a row, type, apply, see the value.
     with screen(False) as tf:
-        row = "transport.link.tx.batch_size"
+        # ★★★★★ R2120 — the row with a ceiling, and the value past it, from the
+        # screen. Both were spelled here, and the second was the one nothing
+        # could check: `70000` is only *over* anything while the option surface
+        # says so, and this walk had no way to ask.
+        bounded = bounded_row(tf)
+        row, over = bounded["key"], bounded["over"]
         held = {f["key"]: f for f in json.loads(q(tf, "form"))}
         assert row in held, "the opening card has the row this drives"
         was = held[row]["value"]
@@ -509,10 +521,10 @@ def body() -> None:
         )
         assert_eq(editing["text"], was, "seeded with the value that is there")
 
-        type_keys(tf, "70000")
+        type_keys(tf, over)
         assert_eq(
             json.loads(q(tf, "editing"))["text"],
-            "70000",
+            over,
             "★★ the keystrokes reached the buffer through the shell's own key "
             "path, which is the half no in-process gate can drive",
         )
@@ -526,7 +538,7 @@ def body() -> None:
         press(tf, apply_seat(tf))
         assert_eq(
             {f["key"]: f["value"] for f in json.loads(q(tf, "form"))}[row],
-            "70000",
+            over,
             "★ applied, and the value is the one that was typed",
         )
         assert_eq(json.loads(q(tf, "editing"))["target"], None, "the field shut behind it")
@@ -616,14 +628,20 @@ def body() -> None:
         # row any more. The claim is unchanged — the middle of a control with
         # its own affordances is not dead space — and the stepper pair sits at
         # the trailing edge, so the middle is exactly what is being pressed.
-        ROW_WITH_PARTS = "transport.link.tx.batch_size"
+        #
+        # ★★★★★ R2120 — and it is `row` rather than a second spelling of it: the
+        # whole-number row is the one the screen publishes as bounded, and this
+        # section wanting "the row with affordances inside its control" is
+        # wanting exactly that row.
+        ROW_WITH_PARTS = row
         # ⚠ R1850 — read the row HERE rather than from `held`. R1842 repointed
         # this section at the whole-number row without noticing that an EARLIER
-        # section of this same demo types `70000` into it and applies, so the
-        # stale snapshot said `65535` while the row held `70000` and the
-        # "changing nothing" assertion below failed on a change this demo had
-        # made itself. The claim is about what Escape does to the value that is
-        # there NOW; anything else is comparing two moments.
+        # section of this same demo types the over-ceiling value into it and
+        # applies, so the stale snapshot said what the row opened with while the
+        # row held what was typed, and the "changing nothing" assertion below
+        # failed on a change this demo had made itself. The claim is about what
+        # Escape does to the value that is there NOW; anything else is
+        # comparing two moments.
         before_escape = {
             f["key"]: f["value"] for f in json.loads(q(tf, "form"))
         }[ROW_WITH_PARTS]

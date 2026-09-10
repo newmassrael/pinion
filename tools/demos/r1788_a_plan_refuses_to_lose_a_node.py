@@ -243,7 +243,11 @@ def body() -> None:
         # ── (F) a row no document can carry reaches both renderings ──
         banner("F — `uncarried` on the wire, in the document and in the script")
         spec = json.loads(q(tf, "spec"))
-        key, over = "transport.link.tx.batch_size", "70000"
+        # ★★★★★ R2120 — the row with a ceiling and the value past it, from the
+        # screen. Spelled here until this round, and the value was the half
+        # nothing could check: the ceiling lives in the option surface and this
+        # walk had no way to read it.
+        key, over = spec["bounded"]["key"], spec["bounded"]["over"]
         tf.invoke(f"{EXT}/select", spec["selected_node"])
         tf.invoke(f"{EXT}/set_field", f"{key}={over}")
         lossy = export(tf)

@@ -1,5 +1,13 @@
 // R1412 §5.49 — example bindings tolerate looser doc-markdown lints.
 #![allow(clippy::doc_markdown)]
+// ★★★★★ R2120 — the published specification table is one `serde_json::json!`
+// object four hundred lines deep, and adding one key to it reached the default
+// macro recursion limit. The sibling shell hit this first (R1902) and its note
+// is the one worth repeating: the compiler names whichever nested block
+// happens to expand last, so the finger points at an innocent block and moving
+// blocks around only moves the finger. A published table that cannot grow is a
+// surface that quietly stops recording the screen.
+#![recursion_limit = "256"]
 
 //! `hello-node-lab` — R1651 §5.21 §5.51 §2 #7 — the analysis-tool **node graph
 //! lab**, assembled as one application against a written-down specification of
@@ -84,6 +92,18 @@ pub use persist::STORAGE_CACHE_KEY;
 /// repository counts by the dozen.
 pub use scenario::ROW_WORDS;
 mod settings;
+/// ★★★★★ R2120 — the option surface's own vocabulary, published for the reason
+/// [`ROW_WORDS`] is: the ASSEMBLED tool's gate has to know whether a row the
+/// mounted inspector paints is keyed at a path **the target declares**, and
+/// the only alternative is for the shell to carry a second copy of that
+/// surface.
+///
+/// ⚠ Narrow on purpose. What leaves this crate is the QUESTION (`is this a
+/// path the target takes`) and the one derived row every reader drives, not
+/// the schema — a consumer that could reach the schema could type a row at a
+/// shape the surface does not hold, which is the defect `settings` exists to
+/// refuse.
+pub use settings::{BoundedRow, bounded_row, not_config_names, sourced_paths};
 mod spec;
 
 use std::cell::{Cell, RefCell};
@@ -4474,6 +4494,30 @@ fn free_listen_port(state: &LabState) -> u32 {
     port
 }
 
+/// ★★★★★ R2120 — **one row of an opening form, keyed once.**
+///
+/// The path is spelled here and the shape is looked up with it, so a row
+/// cannot be keyed at one path and typed at another. Before this every row in
+/// [`form_for`] wrote its path twice on adjacent lines; the reach meter's
+/// `mistyped` and `unknown` columns would have caught the disagreement, so
+/// what this removes is the POSSIBILITY rather than a live defect — which is
+/// the honest version of the claim and the reason it is worth one function.
+///
+/// ⚠ The path itself stays spelled here. This screen's construction of a row
+/// and the reference's declaration of it ([`spec::FIELDS`]) are two
+/// independent statements that
+/// `tools/demos/r1651_the_node_lab_matches_the_reference.py` compares; taking
+/// the key from the specification would make that comparison ask the subject
+/// for the answer.
+fn row(
+    key: &'static str,
+    ty: &'static str,
+    applies: Applies,
+    value: impl Into<String>,
+) -> ConfigField {
+    ConfigField::new(key, ty, applies, value).with_shape(settings::shape_or_free(key))
+}
+
 /// The configuration form a node of that role opens with.
 ///
 /// The five rows the reference shows on its selected node are the specification
@@ -4490,11 +4534,14 @@ fn form_for(id: &str, role: Role, fresh_at_port: Option<u32>) -> ConfigForm {
     // what the target accepts, made in the one place that has no way to check
     // it. `settings::shape_or_free` reads the declaration instead, and the
     // reach meter's `mistyped` column is what fails if anybody goes back.
-    let shape = settings::shape_or_free;
+    // ★★★★★ R2120 — and the KEY is composed once per row rather than twice.
+    // Every row below used to spell its path on the row and again as the
+    // argument to the shape lookup, on adjacent lines — one fact, two
+    // statements, and the reach meter is the only thing that would have
+    // noticed them disagreeing. `row` is where the pair is made.
     let mut fields = vec![
-        ConfigField::new("id", "id", Applies::Restart, opening_id(id)).with_shape(shape("id")),
-        ConfigField::new("listen.endpoints", "address[]", Applies::Restart, &listen)
-            .with_shape(shape("listen.endpoints")),
+        row("id", "id", Applies::Restart, opening_id(id)),
+        row("listen.endpoints", "address[]", Applies::Restart, &listen),
         // ★★★★★ R1716 — `connect.endpoints` is NOT here any more, and its
         // absence is the round's screen change. It used to open holding an
         // address written beside this line, and measured before the change,
@@ -4509,9 +4556,8 @@ fn form_for(id: &str, role: Role, fresh_at_port: Option<u32>) -> ConfigForm {
         // is not a leaf, so what this screen exported was refused by the thing
         // it configures. A router grants both, everything else reads only —
         // which is what the one row said, now said in the target's own shape.
-        ConfigField::new("admin.permissions.read", "bool", Applies::Restart, "true")
-            .with_shape(shape("admin.permissions.read")),
-        ConfigField::new(
+        row("admin.permissions.read", "bool", Applies::Restart, "true"),
+        row(
             "admin.permissions.write",
             "bool",
             Applies::Restart,
@@ -4520,27 +4566,22 @@ fn form_for(id: &str, role: Role, fresh_at_port: Option<u32>) -> ConfigForm {
             } else {
                 "false"
             },
-        )
-        .with_shape(shape("admin.permissions.write")),
-        ConfigField::new(
+        ),
+        row(
             "transport.link.tx.batch_size",
             "int",
             Applies::Restart,
             "65535",
-        )
-        .with_shape(shape("transport.link.tx.batch_size")),
+        ),
     ];
     // The two peers the reference draws with a warning dot have discovery on.
     if matches!(id, "P-01" | "P-02") {
-        fields.push(
-            ConfigField::new(
-                "discovery.multicast.enabled",
-                "bool",
-                Applies::Restart,
-                "true",
-            )
-            .with_shape(shape("discovery.multicast.enabled")),
-        );
+        fields.push(row(
+            "discovery.multicast.enabled",
+            "bool",
+            Applies::Restart,
+            "true",
+        ));
     }
     let addable = spec::ADDABLE
         .iter()
@@ -18269,6 +18310,26 @@ fn fields_wire() -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// ★★★★★ R2120 — the bounded row, with the address its control is painted
+/// under.
+///
+/// The `control` column is here for the same reason `fields[].control` is: a
+/// walk is Python and cannot call [`address::form_control`], so without it
+/// every walk that presses this row composes the address itself and a wrong
+/// letter reads as the screen not painting the row.
+fn bounded_wire() -> serde_json::Value {
+    let row = settings::bounded_row();
+    serde_json::json!({
+        "key": row.key,
+        "floor": row.floor,
+        "ceiling": row.ceiling,
+        "at": row.at,
+        "over": row.over,
+        "allowed": row.allowed,
+        "control": address::form_control(row.key),
+    })
+}
+
 /// ★★★★★ R2104 — every seat of the canvas toolbar, beside the address it is
 /// painted under.
 ///
@@ -18755,6 +18816,17 @@ fn spec_json() -> serde_json::Value {
         // the local gate does, so the two cannot come to disagree about which
         // population a voice family stands over.
         "fields": fields_wire(),
+        // ★★★★★ R2120 — **the one row with a ceiling, and the values either
+        // side of it**, derived from the specification's own field table and
+        // the option surface's declared bounds.
+        //
+        // A walk that wanted to drive *a value the target refuses* used to
+        // spell the configuration path AND a number it believed was past the
+        // bound — two facts neither of which it could check, and the second of
+        // which this screen never published at all. Measured at R2120: eight
+        // walk sites, five of them carrying that number, and nothing anywhere
+        // deriving it from the bound the surface declares.
+        "bounded": bounded_wire(),
         // ★★★★★ R2053 — **the prefix each part of a form row is addressed
         // under**, derived from the one place that composes them.
         //

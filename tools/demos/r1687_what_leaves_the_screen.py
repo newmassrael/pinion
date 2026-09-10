@@ -60,6 +60,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    bounded_row,
     press_painted_tag,
     run_demo,
     toolbar_seats,
@@ -89,9 +90,13 @@ SEATS = {
     "script": "produce the launch script",
 }
 
-# The row whose ceiling the specification's own `validate` argument names. One
-# past it is a value the form holds and no document can carry.
-OVER = ("transport.link.tx.batch_size", "70000")
+# ★★★★★ R2120 — the row whose ceiling the specification's own `validate`
+# argument names, and one past it: a value the form holds and no document can
+# carry. Both were written out here, and the second was the half nothing could
+# check — `70000` is past a bound this walk had no way to read, so a re-read of
+# the target that moved the ceiling would have left this constant still called
+# `OVER` and no longer over anything. Asked at boot instead
+# (`rpc_verify.bounded_row`).
 
 
 def q(tf, path):
@@ -323,7 +328,8 @@ def body() -> None:
         tf.invoke(f"{EXT}/disable", victim)  # back on — it is a toggle
 
         # ── (H) what could not be expressed is carried as NEWS ──────
-        key, over = OVER
+        bounded = bounded_row(tf, ext=EXT)
+        key, over = bounded["key"], bounded["over"]
         tf.invoke(f"{EXT}/select", spec["selected_node"])
         tf.invoke(f"{EXT}/set_field", f"{key}={over}")
         said = tf.invoke(f"{EXT}/export", "")
@@ -348,7 +354,11 @@ def body() -> None:
         # whole reason `compose` exists: before it, one bad value cost the file.
         entry = plan["nodes"][spec["selected_node"]]
         assert entry, f"the node still has a configuration: {entry}"
-        assert "batch_size" not in json.dumps(entry), (
+        # ★ R2120 — the LEAF of the refused row's path, taken off the key
+        # rather than typed. A word written here is one that goes on matching
+        # whatever the row becomes, and this assertion is a NEGATIVE: a leaf
+        # the document never had satisfies it.
+        assert bounded["key"].rsplit(".", 1)[-1] not in json.dumps(entry), (
             f"★ and the refused row is not silently in it: {entry}"
         )
         assert "1 not expressed" in said, f"★★ the toast says so: {said}"

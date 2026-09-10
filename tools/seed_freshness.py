@@ -36,10 +36,37 @@ prose commanded, nobody executed, and the class recurred exactly as predicted.
 
 # The rule
 
-Every round git knows about must have a land block, EXCEPT the newest — the
-round in flight legitimately pushes before it closes, which is the same
+The NEWEST land block must be current: at most one round behind git, and the one
+is the round in flight, which legitimately pushes before it closes — the same
 exemption `changelog_rounds.py` gives the ledger. A SEED that is AHEAD of git is
 not a fault: writing the land block before the commit is the recommended order.
+
+# 🟥🟥🟥 ★★★★★ What this gate CANNOT see, measured rather than reasoned (R2120)
+
+This section used to read *"every round git knows about must have a land block,
+except the newest"*, which is not what the code below does and — the part that
+matters — **not what the file it guards should do**. Measured at R2120 over the
+window from the oldest land block present (R1859) to git's newest: 260 rounds,
+of which **190 carry no land block at all.** That is not rot.
+`docs/SEED_PROMPT.md`'s own rule is to carry the LAST round and delete the rest,
+and R1787 deleted 828 lines executing it; a folded block keeps its heading only
+while the fold chain is still pointing at it.
+
+⇒ a gate written to that sentence would have been **red on the day it was
+written**, which this repository has already recorded twice as how a gate comes
+to be one nobody turns on. So the PROSE is what was repaired, not the
+derivation — worth saying in that order, because the reflex on finding a
+docstring and an implementation disagreeing is to believe the docstring.
+
+⚠ **The hole this genuinely leaves, named rather than hidden**: because only the
+newest block is compared, a round that closes with NO land block becomes
+invisible the moment the round after it writes one. R2108 did exactly that;
+**R2119 did it again**, and this check was green throughout — `1 behind` reads
+the same whether the round in flight is unwritten or the round before it never
+was. The defence is unchanged and it is not this gate: a round's own close
+writes its land block. What WOULD close it is a gate over the PUSHED RANGE — a
+round whose changelog entry a push adds must carry a land block in the same
+push — which is buildable and is not this.
 
 Usage:
     python3 tools/seed_freshness.py --check     # the gate (pre-push)

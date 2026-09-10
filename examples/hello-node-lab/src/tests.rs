@@ -817,9 +817,13 @@ fn r1718_every_gate_finding_is_said_distinctly_and_never_names_its_card() {
     let said = [
         (
             "Value",
+            // ★★★★★ R2120 — the key AND the bounds are the derivation's. The
+            // bounds were spelled here as `0..=65535`, which is a third
+            // statement of a range the option surface declares once and the
+            // refusal renders once.
             super::Finding::Value(ConfigDefect::OutOfRange {
-                key: "transport.link.tx.batch_size".to_owned(),
-                allowed: "0..=65535".to_owned(),
+                key: crate::settings::bounded_row().key.to_owned(),
+                allowed: crate::settings::bounded_row().allowed.clone(),
             })
             .sentence(),
         ),
@@ -2720,12 +2724,13 @@ fn r1651_a_value_that_would_fail_at_start_up_closes_the_gate() {
         let state = state();
         let node = state.node_of(spec::SELECTED_NODE).expect("selected");
         assert!(state.verdict().may_launch(), "it opens to begin with");
+        let bounded = crate::settings::bounded_row();
         state
             .forms
             .borrow_mut()
             .get_mut(&state.address_of(node))
             .expect("a form")
-            .set("transport.link.tx.batch_size", "70000")
+            .set(bounded.key, &bounded.over)
             .expect("held");
         let verdict = state.verdict();
         assert!(!verdict.may_launch(), "and a value out of range closes it");
@@ -4876,12 +4881,13 @@ fn r1687_a_value_that_cannot_be_expressed_is_carried_as_news() {
         let node = state
             .node_of(spec::SELECTED_NODE)
             .expect("the card is there");
+        let bounded = crate::settings::bounded_row();
         {
             let mut forms = state.forms.borrow_mut();
             let form = forms
                 .get_mut(&state.address_of(node))
                 .expect("the card has a form");
-            form.set("transport.link.tx.batch_size", "70000")
+            form.set(bounded.key, &bounded.over)
                 .expect("the row is there");
         }
 
@@ -4889,7 +4895,7 @@ fn r1687_a_value_that_cannot_be_expressed_is_carried_as_news() {
         let uncarried = plan.uncarried();
         assert_eq!(uncarried.len(), 1, "one row, named");
         assert_eq!(uncarried[0].0, spec::SELECTED_NODE);
-        assert_eq!(uncarried[0].1.key, "transport.link.tx.batch_size");
+        assert_eq!(uncarried[0].1.key, bounded.key);
 
         // ★ The rest of that node's configuration still ships. A refusal that
         // took the other rows with it would make one bad value cost the file.
@@ -4907,12 +4913,17 @@ fn r1687_a_value_that_cannot_be_expressed_is_carried_as_news() {
             "the node still has a configuration: {}",
             entry.config.document
         );
+        // 🟥🟥🟥 ★★★★★ R2120 — **the path spelled in a SECOND syntax**, which
+        // the address census cannot see at all: a JSON pointer separates with
+        // `/` where a configuration key separates with `.`, so
+        // `tools/painted_addresses.py` counted this file's eight dotted
+        // spellings and not this one. And it is the spelling where being wrong
+        // is worst: the assertion is a NEGATIVE, so a pointer at a path the
+        // document never had passes it. Derived from the key, one separator
+        // swap, in the one place that knows both forms.
+        let pointer = format!("/{}", bounded.key.replace('.', "/"));
         assert!(
-            entry
-                .config
-                .document
-                .pointer("/transport/link/tx/batch_size")
-                .is_none(),
+            entry.config.document.pointer(&pointer).is_none(),
             "and the refused row is not silently in it"
         );
 
@@ -9751,8 +9762,11 @@ fn r2071_a_card_folded_into_a_definition_takes_its_facts_with_it() {
         let one = pair[0];
         let root_tree = state.here();
         // Three facts about this card, one per table, all distinguishable.
-        super::set_value(&state, one, "transport.link.tx.batch_size", "4096")
-            .expect("an int row takes an int");
+        // ★ R2120 — an int row, asked for rather than named, and a value
+        // inside its bounds worked out from them.
+        let bounded = crate::settings::bounded_row();
+        let inside = (bounded.ceiling / 16).to_string();
+        super::set_value(&state, one, bounded.key, &inside).expect("an int row takes an int");
         state.raise(one);
         let form_was = state
             .forms
@@ -9814,11 +9828,9 @@ fn r2071_a_card_folded_into_a_definition_takes_its_facts_with_it() {
         );
         // The derived read, which is what a person actually sees.
         assert_eq!(
-            shown_rows(&state, one).and_then(|rows| rows
-                .iter()
-                .find(|(k, _)| k == "transport.link.tx.batch_size")
-                .cloned()),
-            Some(("transport.link.tx.batch_size".to_owned(), "4096".to_owned())),
+            shown_rows(&state, one)
+                .and_then(|rows| rows.iter().find(|(k, _)| k == bounded.key).cloned()),
+            Some((bounded.key.to_owned(), inside.clone())),
             "★★★★★ and the inspector inside shows the value that was typed \
              outside"
         );
@@ -9843,8 +9855,10 @@ fn r2071_unfolding_a_part_gives_its_cards_back_their_settings() {
 
         let pair: Vec<NodeId> = state.cards().into_iter().take(2).collect();
         let one = pair[0];
-        super::set_value(&state, one, "transport.link.tx.batch_size", "4096")
-            .expect("an int row takes an int");
+        // ★ R2120 — an int row, asked for rather than named.
+        let bounded = crate::settings::bounded_row();
+        let inside = (bounded.ceiling / 16).to_string();
+        super::set_value(&state, one, bounded.key, &inside).expect("an int row takes an int");
         state
             .selection
             .set(pinion_core::selection::Selection::group(pair));
@@ -9868,12 +9882,12 @@ fn r2071_unfolding_a_part_gives_its_cards_back_their_settings() {
             .filter_map(|node| {
                 shown_rows(&state, *node)?
                     .into_iter()
-                    .find(|(k, _)| k == "transport.link.tx.batch_size")
+                    .find(|(k, _)| k == bounded.key)
                     .map(|(_, v)| v)
             })
             .collect();
         assert!(
-            batch.contains(&"4096".to_owned()),
+            batch.contains(&inside),
             "★★★★★ one of the cards that came back is the copy of the card that \
              was edited, and it carries what was typed into it — {batch:?}"
         );

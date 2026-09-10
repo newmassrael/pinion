@@ -1017,6 +1017,24 @@ pub const RAIL_SPEC_JSON: &str = include_str!("../../../docs/analyzer-rail-spec.
 /// keeps only its own rows and its own driver.
 pub use pinion_core::operation::Operation as OperationSpec;
 
+/// ★★★★★ R2120 — the argument the `validate` row drives: the bounded row's
+/// path, at one value past its ceiling.
+///
+/// **A declaration held against a derivation**, which is the shape this
+/// repository already uses for every specification constant a table forces to
+/// be `&'static str` (`address::FORM_CONTROL_TEMPLATE` and its siblings). A
+/// `const` cannot call [`crate::settings::bounded_row`], so
+/// `r2120_the_validate_argument_is_the_bounded_rows_own` re-derives it and
+/// fails the build when the two stop agreeing.
+///
+/// ⚠ It said `…=70000` from R1684 until R2120. Nothing was wrong with that
+/// number except that nothing produced it: the ceiling is declared once, in
+/// the option surface, and `70000` was a second, independent claim about where
+/// it is. One past the ceiling is the value the reference's own text describes
+/// — *a value the form holds and no document can carry* — and that is now what
+/// this is, whatever the ceiling becomes.
+pub const VALIDATE_ARG: &str = "transport.link.tx.batch_size=65536";
+
 /// The thirty operations, in the reference's own order.
 ///
 /// The order is kept because it groups the way the tool does — the node's life,
@@ -1349,7 +1367,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
     // into answers this row without anything here being aimed at it.
     OperationSpec {
         name: "validate",
-        verb: Some(("set_field", "transport.link.tx.batch_size=70000")),
+        verb: Some(("set_field", VALIDATE_ARG)),
         gesture: true,
         witness: "verdict",
         needs: None,

@@ -16443,6 +16443,145 @@ fn r2118_a_press_through_the_host_moves_the_picked_wires_chrome() {
     });
 }
 
+/// ★★★★★ R2120 — **every settings row the ASSEMBLED lab paints is keyed at a
+/// path the target's own option surface declares, and exactly one of them has
+/// a ceiling.**
+///
+/// # Why this is not the same claim as the screen's own gate
+///
+/// The node lab's crate checks its specification table against the sourced
+/// surface. What that cannot see is the PAGE: the shell mounts the lab inside
+/// a board, and what a person configures is whatever this assembly puts in
+/// front of them. *The specification names sourced paths* and *the rows this
+/// page paints are keyed at them* are two facts, and only the second is about
+/// the tool a person actually has.
+///
+/// # ★★ What being wrong looks like, and why nothing shouts
+///
+/// A row keyed at a path the surface does not declare is not a failure
+/// anywhere. `settings::shape_or_free` answers free text for such a path — the
+/// only honest thing to say about a string nothing knows the shape of — so the
+/// row paints, takes values, exports them, and is simply never checked against
+/// anything again. The tool goes on saying it can configure the thing while
+/// what it writes is a document the target refuses.
+///
+/// # ⚠ The address is recovered, not composed
+///
+/// `form_control_key` is the inverse the screen already declares, so this asks
+/// the PAINT what rows are there rather than asking the specification and
+/// looking for them. A gate that composed the addresses it then found would be
+/// checking that the page paints what this test asked it to paint.
+///
+/// # ⚠⚠ Two floors, not one
+///
+/// The row census and the bounded row are asserted separately: ORed together,
+/// a page painting no rows at all would satisfy "no unsourced row" and the
+/// bounded assertion would be the only thing left saying anything (R2108's
+/// denominator lesson, and R2113's split).
+#[test]
+fn r2120_every_row_the_mounted_lab_paints_is_keyed_at_a_path_the_target_declares() {
+    use hello_node_lab::address as lab;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        state
+            .go("lab")
+            .unwrap_or_else(|why| panic!("the node lab section is open and refused: {why:?}"));
+        let (shot, _) = painted_at((WIN_W, WIN_H));
+
+        let sourced = hello_node_lab::sourced_paths();
+        let not_config = hello_node_lab::not_config_names();
+        // ★★★★★ The rows this page declares to be about something OTHER than
+        // configuration, read off the SAME snapshot. The reference's inspector
+        // carries one — where a node runs, which the launcher acts on and no
+        // document holds — and it cannot be held to *is this a path the target
+        // takes*.
+        //
+        // ⚠⚠ TWO-SIDED, and that is the whole design of this exemption: the
+        // page saying "aside" is not enough, because then any row could escape
+        // the census by claiming to be one. The pin has to agree the name is
+        // not configuration. A row that is aside here and a path there fails,
+        // and so does a row that is neither.
+        let aside: Vec<&str> = shot
+            .family(&lab::form_part_prefix("aside"))
+            .into_iter()
+            .filter_map(|tag| lab::form_part_key("aside", tag))
+            .collect();
+        let mut keyed: Vec<&str> = Vec::new();
+        let mut exempt: Vec<&str> = Vec::new();
+        let mut unsourced: Vec<&str> = Vec::new();
+        for tag in shot.family(&lab::form_control_prefix()) {
+            let Some(key) = lab::form_control_key(tag) else {
+                continue;
+            };
+            if sourced.iter().any(|path| path == key) {
+                keyed.push(key);
+            } else if aside.contains(&key) && not_config.iter().any(|name| name == key) {
+                exempt.push(key);
+            } else {
+                unsourced.push(key);
+            }
+        }
+        assert!(
+            unsourced.is_empty(),
+            "★★★★★ the assembled tool paints {} settings row(s) keyed at \
+             path(s) the target's own option surface does not declare and \
+             which this page does not put aside as something else: \
+             {unsourced:?}. Nothing refuses such a row — it widens to free \
+             text, keeps taking values, and exports a document the target \
+             will not start on",
+            unsourced.len()
+        );
+        assert!(
+            !keyed.is_empty(),
+            "★★★★★ the mounted lab paints NO settings row at all, so the \
+             emptiness above is a statement about a screen that is not there"
+        );
+
+        // ★★ And the row every reader of this screen drives is one of them,
+        // at the address the screen composes for it. A second floor rather
+        // than a clause of the first — see this test's header.
+        let bounded = hello_node_lab::bounded_row();
+        assert!(
+            keyed.contains(&bounded.key),
+            "★★★★★ the page paints no row for the one path with a ceiling \
+             ({}), and that is the row the specification's own `validate` \
+             operation drives: {keyed:?}",
+            bounded.key
+        );
+        assert!(
+            shot.rect(&lab::form_control(bounded.key)).is_some(),
+            "★★★★★ the bounded row's control is not painted at the address \
+             this screen composes for it — the mount kept the row and lost \
+             its address"
+        );
+        assert!(
+            bounded
+                .over
+                .parse::<i64>()
+                .is_ok_and(|v| v > bounded.ceiling),
+            "the value the walks drive is past the ceiling this page's own \
+             surface declares: {} vs {}",
+            bounded.over,
+            bounded.ceiling
+        );
+        println!(
+            "[r2120] the mounted lab paints {} settings row(s) keyed in the \
+             target's surface of {} path(s), plus {} the page puts aside and \
+             the pin agrees is not configuration {exempt:?}; the bounded one \
+             is {} ({}..={}, over at {})",
+            keyed.len(),
+            sourced.len(),
+            exempt.len(),
+            bounded.key,
+            bounded.floor,
+            bounded.ceiling,
+            bounded.over,
+        );
+    });
+}
+
 #[test]
 fn r1875_no_run_in_the_decode_tree_sits_in_a_box_too_short_for_its_face() {
     /// The pane whose content this gate judges, as it appears in a run's path.
