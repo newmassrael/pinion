@@ -75,6 +75,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     call,
     run_demo,
+    shell_palette_entry,
 )
 
 SHELL = "hello-analyzer-shell"
@@ -166,7 +167,7 @@ def section_a(app: RpcSubprocess) -> None:
 def section_b(app: RpcSubprocess, kind: str) -> tuple[float, float]:
     banner("B — over the board, the answer names the action AND the cell")
     rects = abs_rects_of(app.snapshot(source="paint"))
-    row = rects[f"shell.palette.{kind}"]
+    row = rects[shell_palette_entry(app, kind)]
     canvas = rects["shell.canvas"]
     aim = (canvas[0] + canvas[2] * 0.55, canvas[1] + canvas[3] * 0.45)
 
@@ -205,7 +206,7 @@ def section_b(app: RpcSubprocess, kind: str) -> tuple[float, float]:
 def section_c(app: RpcSubprocess, kind: str, aim: tuple[float, float]) -> None:
     banner("C — off the board, `refused` is a different answer from `nowhere`")
     rects = abs_rects_of(app.snapshot(source="paint"))
-    row = rects[f"shell.palette.{kind}"]
+    row = rects[shell_palette_entry(app, kind)]
     app.drag(from_at=aim, to_at=centre(row), phase="move")
     app.tick_ms(16)
     now = standing(app)
@@ -240,7 +241,7 @@ def section_c(app: RpcSubprocess, kind: str, aim: tuple[float, float]) -> None:
 def section_d(app: RpcSubprocess, kind: str) -> None:
     banner("D — the release commits the cell the standing named")
     rects = abs_rects_of(app.snapshot(source="paint"))
-    row = rects[f"shell.palette.{kind}"]
+    row = rects[shell_palette_entry(app, kind)]
     canvas = rects["shell.canvas"]
     before = set(tiles(app))
     aim = (canvas[0] + canvas[2] * 0.55, canvas[1] + canvas[3] * 0.45)
@@ -269,7 +270,7 @@ def section_d(app: RpcSubprocess, kind: str) -> None:
 def section_e(app: RpcSubprocess, kind: str) -> None:
     banner("E — a refused release places nothing")
     rects = abs_rects_of(app.snapshot(source="paint"))
-    row = rects[f"shell.palette.{kind}"]
+    row = rects[shell_palette_entry(app, kind)]
     canvas = rects["shell.canvas"]
     before = tiles(app)
     aim = (canvas[0] + canvas[2] * 0.55, canvas[1] + canvas[3] * 0.45)
@@ -315,7 +316,7 @@ def section_e(app: RpcSubprocess, kind: str) -> None:
 def section_f(app: RpcSubprocess, kind: str) -> None:
     banner("F — and the palette's click still adds")
     before = set(tiles(app))
-    app.click(path=f"shell.palette.{kind}")
+    app.click(path=shell_palette_entry(app, kind))
     app.tick_ms(16)
     fresh = sorted(set(tiles(app)) - before)
     assert_eq(
@@ -354,7 +355,7 @@ def section_g(app: RpcSubprocess, spec: dict, kind: str) -> None:
     )
 
     rects = abs_rects_of(app.snapshot(source="paint"))
-    row = rects[f"shell.palette.{kind}"]
+    row = rects[shell_palette_entry(app, kind)]
     canvas = rects["shell.canvas"]
     aim = (canvas[0] + canvas[2] * 0.55, canvas[1] + canvas[3] * 0.45)
 

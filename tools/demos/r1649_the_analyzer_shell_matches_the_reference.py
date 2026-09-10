@@ -72,6 +72,12 @@ from rpc_verify import (  # noqa: E402
     find_by_tag,
     resize_and_settle,
     run_demo,
+    shell_palette_entry,
+    shell_palette_entry_address,
+    shell_palette_entry_prefix,
+    shell_palette_root,
+    shell_palette_section_prefix,
+    shell_palette_tag,
     texts_of,
     walk_nodes,
 )
@@ -322,7 +328,7 @@ def body() -> None:
         # And placing one from the PALETTE, which is the gesture that matters.
         # ★ The ordinal keeps climbing past the id just closed — they are not
         # reused, which is what makes an id a name rather than a slot number.
-        click(tf, at(tf, "shell.palette.keymap"))
+        click(tf, at(tf, shell_palette_entry(tf, "keymap")))
         assert_eq(q(tf, "placed_count"), next_id + 2, "B: ★ the palette places a card")
         assert q(tf, "cards").endswith(f"keymap#{next_id + 2}"), (
             f"B: by kind: {q(tf, 'cards')}"
@@ -386,9 +392,14 @@ def body() -> None:
         # floor this is measured against has a bool on four surfaces and one
         # accessibility bit with no slot for a reason.
         inert = {row["tag"]: row for row in tf.request("scene/disabled", {}).result["disabled"]}
+        # ★★★★★ R2110 — the prefix is asked for ONCE and every row composed onto
+        # it through the harness, so the separator lives in one place and this
+        # walk spells no address of a family the screen declares.
+        entry_prefix = shell_palette_entry_prefix(tf)
         for kind, booking in RESERVED.items():
-            row = inert.get(f"shell.palette.{kind}")
-            assert row is not None, f"B2: shell.palette.{kind} is reserved and reported live"
+            tag = shell_palette_entry_address(entry_prefix, kind)
+            row = inert.get(tag)
+            assert row is not None, f"B2: {tag} is reserved and reported live"
             assert_eq(row["reason"], "reserved", f"B2: {kind} is inert as a reservation")
             assert_eq(row["detail"], booking, f"B2: {kind} reports its booking on the wire")
             assert_eq(row["recourse"], "await_release", f"B2: {kind} derives its recourse")
@@ -396,7 +407,9 @@ def body() -> None:
         # four and had said four since R1668, so neither `latency` nor `health`
         # was ever checked for being live: the loop passed by not looking.
         for kind in set(opening_kinds()):
-            assert f"shell.palette.{kind}" not in inert, f"B2: {kind} is placeable and live"
+            assert shell_palette_entry_address(entry_prefix, kind) not in inert, (
+                f"B2: {kind} is placeable and live"
+            )
         # ★ R1728 — requirement 18, not 14. The reference names the requirement
         # in the seat's own tooltip, and 14 is not among the six it defers.
         #
@@ -533,15 +546,16 @@ def body() -> None:
         big = (2494, 1531)
         resize_and_settle(tf, big)
         grown = abs_rects_of(paint(tf))
-        palette = grown["shell.palette"]
+        palette = grown[shell_palette_root(tf)]
         assert palette[0] + palette[2] == big[0], (
             f"B3: the palette's right edge is {palette[0] + palette[2]} in a "
             f"{big[0]}px window — the PAINT did not follow the resize"
         )
         # And every control the paint moved answers for itself where it landed.
         misses = []
+        grown_prefix = shell_palette_entry_prefix(tf)
         for kind in CATALOGUE:
-            tag = f"shell.palette.{kind}"
+            tag = shell_palette_entry_address(grown_prefix, kind)
             x, y, w, h = grown[tag]
             got = inv(tf, "point", f"{x + w // 2},{y + h // 2}")
             if got != tag:
@@ -895,6 +909,12 @@ def body() -> None:
             for node in tf.request("scene/voice").result["nodes"]
             if node.get("voice") == "silent"
         }
+        # ★★★★★ R2110 — the palette's own three addresses in this population,
+        # asked for rather than spelled: the family prefix it admits by, the
+        # heading prefix it excludes by, and the two counts it excludes by name.
+        palette_prefix = shell_palette_entry_prefix(tf)
+        section_prefix = shell_palette_section_prefix(tf)
+        readouts = (shell_palette_tag(tf, "placed"), shell_palette_tag(tf, "reserved"))
         controls = [
             (tag, rect)
             for tag, rect in tagged
@@ -907,11 +927,11 @@ def body() -> None:
             # addressable so a reader can walk into a group and hear how many
             # seats are placed and reserved. They are ANNOUNCED readouts, so the
             # derivation above does not reach them and the exclusion is by name.
-            and not tag.startswith("shell.palette.section.")
-            and tag not in ("shell.palette.placed", "shell.palette.reserved")
+            and not tag.startswith(section_prefix)
+            and tag not in readouts
             and (
                 tag.startswith(
-                    ("shell.appbar.", "shell.subbar.", seat_tag, "shell.palette.")
+                    ("shell.appbar.", "shell.subbar.", seat_tag, palette_prefix)
                 )
                 or any(tag.endswith(f".{word}") for word in words)
             )

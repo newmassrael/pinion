@@ -63,6 +63,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     run_demo,
+    shell_palette_entry,
 )
 
 SHELL = "hello-analyzer-shell"
@@ -153,7 +154,7 @@ def section_a(app: RpcSubprocess) -> Home:
 
 def off_the_board(app: RpcSubprocess) -> tuple[float, float]:
     """A point inside the application and outside the board: the palette."""
-    return centre(rects(app)[f"shell.palette.{CARD.split('#')[0]}"])
+    return centre(rects(app)[shell_palette_entry(app, CARD.split("#")[0])])
 
 
 def section_b(app: RpcSubprocess, home: Home) -> None:

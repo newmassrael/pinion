@@ -1117,7 +1117,7 @@ pub const FOCUS_RING: &[StopSpec] = &[
         ),
     },
     StopSpec {
-        tag: "shell.palette",
+        tag: crate::address::PALETTE,
         holds: "the widget catalogue the board is populated from",
         at: Where::At("dashboard"),
         // ★★ A catalogue read top to bottom, and it STOPS at its ends: the
@@ -1140,7 +1140,7 @@ pub const FOCUS_RING: &[StopSpec] = &[
     // have made "the last entry" mean something other than what a reader feels,
     // which is the distinction `Roving` exists to keep.
     StopSpec {
-        tag: "shell.palette.head.fold",
+        tag: crate::address::PALETTE_HEAD_FOLD,
         holds: "the control that puts the palette away",
         at: Where::At("dashboard"),
         // One button: nothing to move between.
@@ -3315,7 +3315,7 @@ pub const LOCKED: &[(&str, Population, Where)] = &[
         Where::Chrome,
     ),
     (
-        "shell.palette.{}",
+        crate::address::PALETTE_ENTRY_TEMPLATE,
         Population::Reserved,
         Where::At("dashboard"),
     ),
@@ -3796,7 +3796,7 @@ pub const VOICES: &[VoiceSpec] = &[
     },
     // --- the palette ----------------------------------------------------
     VoiceSpec {
-        tag: "shell.palette",
+        tag: crate::address::PALETTE,
         role: "list",
         population: Population::One,
         at: Where::At("dashboard"),
@@ -3805,31 +3805,31 @@ pub const VOICES: &[VoiceSpec] = &[
     // is declared: a region this screen paints and announces without a
     // declaration is a client told something the window does not do.
     VoiceSpec {
-        tag: "shell.palette.head.fold",
+        tag: crate::address::PALETTE_HEAD_FOLD,
         role: "button",
         population: Population::One,
         at: Where::At("dashboard"),
     },
     VoiceSpec {
-        tag: "shell.palette.section.{}",
+        tag: crate::address::PALETTE_SECTION_TEMPLATE,
         role: "group",
         population: Population::Sections,
         at: Where::At("dashboard"),
     },
     VoiceSpec {
-        tag: "shell.palette.{}",
+        tag: crate::address::PALETTE_ENTRY_TEMPLATE,
         role: "listitem",
         population: Population::Catalogue,
         at: Where::At("dashboard"),
     },
     VoiceSpec {
-        tag: "shell.palette.placed",
+        tag: crate::address::PALETTE_PLACED,
         role: "status",
         population: Population::One,
         at: Where::At("dashboard"),
     },
     VoiceSpec {
-        tag: "shell.palette.reserved",
+        tag: crate::address::PALETTE_RESERVED,
         role: "status",
         population: Population::One,
         at: Where::At("dashboard"),
@@ -4052,13 +4052,13 @@ pub const SILENCES: &[(&str, Population, &str, Where)] = &[
         Where::At("dashboard"),
     ),
     (
-        "shell.palette.head.title",
+        crate::address::PALETTE_HEAD_TITLE,
         Population::One,
         "name_of",
         Where::At("dashboard"),
     ),
     (
-        "shell.palette.head.hint",
+        crate::address::PALETTE_HEAD_HINT,
         Population::One,
         "part_of",
         Where::At("dashboard"),
@@ -4148,25 +4148,25 @@ pub const SILENCES: &[(&str, Population, &str, Where)] = &[
     // carry no tag at all (`part_tag_of`), so a family over the whole
     // catalogue would demand nine regions that are not painted.
     (
-        "shell.palette.part.swatch.{}",
+        crate::address::PALETTE_PART_SWATCH_TEMPLATE,
         Population::Placeable,
         "decorative",
         Where::At("dashboard"),
     ),
     (
-        "shell.palette.part.name.{}",
+        crate::address::PALETTE_PART_NAME_TEMPLATE,
         Population::Placeable,
         "name_of",
         Where::At("dashboard"),
     ),
     (
-        "shell.palette.part.gist.{}",
+        crate::address::PALETTE_PART_GIST_TEMPLATE,
         Population::Placeable,
         "part_of",
         Where::At("dashboard"),
     ),
     (
-        "shell.palette.part.verb.{}",
+        crate::address::PALETTE_PART_VERB_TEMPLATE,
         Population::Placeable,
         "part_of",
         Where::At("dashboard"),

@@ -79,6 +79,8 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     run_demo,
     settle_saying,
+    shell_palette_entry_prefix,
+    shell_palette_root,
 )
 
 EXAMPLE = "hello-analyzer-shell"
@@ -162,7 +164,8 @@ def body() -> None:
         # affordances. Asserting the halves separately also says WHICH one moved
         # when one does, which the single total could not.
         others = [r for r in locked if not r["tag"].startswith(seat_tag)]
-        palette_locked = [r for r in others if r["tag"].startswith("shell.palette.")]
+        palette_prefix = shell_palette_entry_prefix(app)
+        palette_locked = [r for r in others if r["tag"].startswith(palette_prefix)]
         assert_eq(
             len(palette_locked),
             spec["reserved_count"],
@@ -237,7 +240,9 @@ def body() -> None:
         assert_eq(rects["shell.appbar"][3], metrics["app_bar_h"], "B: app bar height")
         assert_eq(rects["shell.subbar"][3], metrics["sub_bar_h"], "B: layout bar height")
         assert_eq(rects["shell.rail"][2], metrics["rail_w"], "B: rail width")
-        assert_eq(rects["shell.palette"][2], metrics["palette_w"], "B: palette width")
+        assert_eq(
+            rects[shell_palette_root(app)][2], metrics["palette_w"], "B: palette width"
+        )
 
         # ── (C) every painted region is classified, and the split is the
         #        specification's ─────────────────────────────────────────────
@@ -416,11 +421,12 @@ def body() -> None:
         # entries and counts every locked one in its set — dropping them would
         # make the tree say four while the panel shows thirteen and its own
         # footer says nine are reserved.
-        palette = access["shell.palette"]
+        palette = access[shell_palette_root(app)]
         assert_eq(palette["size_of_set"], 13, "E: the palette declares thirteen entries")
-        seats = [
-            access[f"shell.palette.{kind}"] for kind in catalogue
-        ]
+        # ★★★★★ R2110 — each row's own address, off the roster this loop is
+        # already walking. The catalogue publishes it beside the kind, so the
+        # address asserted here and the address the paint used are one spelling.
+        seats = [access[entry["tag"]] for entry in catalogue.values()]
         assert_eq(
             sorted(seat["position_in_set"] for seat in seats),
             list(range(1, 14)),
@@ -439,7 +445,7 @@ def body() -> None:
         # ★ …and the four that are NOT locked carry no reason. A reason
         # everywhere would pass every check above and mean nothing.
         for kind, entry in catalogue.items():
-            node = access[f"shell.palette.{kind}"]
+            node = access[entry["tag"]]
             if entry["tier"] == "placeable":
                 ok(
                     f"E: {kind} is offered, and states no reason",

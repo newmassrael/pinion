@@ -82,6 +82,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     filter_tag,
     run_demo,
+    shell_palette_entry,
 )
 
 EXT = "/external"
@@ -188,7 +189,7 @@ def make_done(tf, example: str) -> None:
     elif example == "hello-packet-view":
         tf.invoke(f"{EXT}/select_message", 2)
     else:
-        press_tag(tf, "shell.palette.decode")
+        press_tag(tf, shell_palette_entry(tf, "decode"))
 
 
 def make_refused(tf, example: str) -> str:
@@ -216,7 +217,7 @@ def make_refused(tf, example: str) -> str:
         # Enter is what says where the query got to. R1707's own note.
         tf.key(path=box, name="Enter")
         return said(tf)["clause"]
-    press_tag(tf, "shell.palette.overlay")
+    press_tag(tf, shell_palette_entry(tf, "overlay"))
     return said(tf)["clause"]
 
 

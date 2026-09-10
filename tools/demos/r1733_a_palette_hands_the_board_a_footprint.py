@@ -81,6 +81,8 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     run_demo,
+    shell_palette_entry,
+    shell_palette_part,
 )
 
 SHELL = "hello-analyzer-shell"
@@ -174,11 +176,16 @@ def section_a(app: RpcSubprocess, spec: dict, kind: str) -> None:
     )
 
     rects = abs_rects_of(app.snapshot(source="paint"))
+    # ★★★★★ R2110 — a part's address is asked for by its WORD and the row's
+    # kind. The composition is word-then-kind, so a walk holding a single
+    # prefix would be holding the ORDER as well as the separator; the harness
+    # is handed both and this file neither.
     for part in spec["palette_row"]["canon"]:
-        tag = f"shell.palette.part.{part['key']}.{kind}"
+        tag = shell_palette_part(app, part["key"], kind)
         ok(f"A: the palette row paints its {part['key']}", tag in rects)
     lefts = [
-        rects[f"shell.palette.part.{p['key']}.{kind}"][0] for p in spec["palette_row"]["canon"]
+        rects[shell_palette_part(app, p["key"], kind)][0]
+        for p in spec["palette_row"]["canon"]
     ]
     ok("A: ★ and they run left to right in the specified order", lefts == sorted(lefts))
 
@@ -193,7 +200,7 @@ def section_a(app: RpcSubprocess, spec: dict, kind: str) -> None:
         )
 
     # Pick the row up and hold it over the middle of the board.
-    row = rects[f"shell.palette.{kind}"]
+    row = rects[shell_palette_entry(app, kind)]
     board = rects["shell.canvas"] if "shell.canvas" in rects else None
     target = centre(board) if board else (600.0, 500.0)
     app.drag(from_at=centre(row), to_at=target, phase="begin")
@@ -226,7 +233,7 @@ def section_a(app: RpcSubprocess, spec: dict, kind: str) -> None:
 def section_b(app: RpcSubprocess, kind: str) -> None:
     banner("B — ★★★★★ the cell the preview drew is the cell the release placed")
     rects = abs_rects_of(app.snapshot(source="paint"))
-    row = rects[f"shell.palette.{kind}"]
+    row = rects[shell_palette_entry(app, kind)]
     before = set(tiles(app))
     bottom = rows(app)
 
@@ -284,7 +291,7 @@ def section_c(app: RpcSubprocess, kind: str) -> None:
     banner("C — ★★★★★ the click still adds at the bottom")
     bottom = rows(app)
     before = set(tiles(app))
-    app.click(path=f"shell.palette.{kind}")
+    app.click(path=shell_palette_entry(app, kind))
     app.tick(16)
     after = tiles(app)
     fresh = sorted(set(after) - before)
@@ -312,7 +319,7 @@ def section_c(app: RpcSubprocess, kind: str) -> None:
 def section_d(app: RpcSubprocess, kind: str) -> None:
     banner("D — a carry let go off the board places nothing at all")
     rects = abs_rects_of(app.snapshot(source="paint"))
-    row = rects[f"shell.palette.{kind}"]
+    row = rects[shell_palette_entry(app, kind)]
     canvas = rects["shell.canvas"]
     bottom = rows(app)
     before = set(tiles(app))
@@ -410,7 +417,7 @@ def section_f(app: RpcSubprocess, kind: str) -> None:
         return
     with driver as hand:
         rects = abs_rects_of(app.snapshot(source="paint"))
-        row = rects[f"shell.palette.{kind}"]
+        row = rects[shell_palette_entry(app, kind)]
         canvas = rects["shell.canvas"]
         before = set(tiles(app))
 

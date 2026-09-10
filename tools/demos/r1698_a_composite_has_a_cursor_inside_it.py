@@ -45,6 +45,7 @@ from rpc_verify import (  # noqa: E402
     filter_seats,
     run_demo,
     screen_spec,
+    shell_palette_root,
 )
 
 EXT = "/external"
@@ -202,10 +203,11 @@ def dashboard(app: RpcSubprocess) -> None:
     print(f"[demo] dashboard: {len(walked)} stop(s), {checked} with a roster")
 
     banner("C — the roster is what the arrows reach, not the container's children")
-    app.request("focus/set", {"tag": "shell.palette"})
+    palette_tag = shell_palette_root(app)
+    app.request("focus/set", {"tag": palette_tag})
     app.tick(16)
     nodes, _ = tree(app)
-    palette = nodes["shell.palette"]
+    palette = nodes[palette_tag]
     nav = palette["navigation"]
     assert_eq(
         len(nav["members"]),

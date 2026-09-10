@@ -70,14 +70,19 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     isolated_storage_dir,
     run_demo,
+    shell_palette_root,
+    shell_palette_tag,
 )
 
 SHELL = "hello-analyzer-shell"
 EXT = "/external"
 #: The key the shell writes its session under.
 KEY = "analyzer_shell.arrangements"
-#: The palette's own tag, which is its key inside that blob.
-PALETTE = "shell.palette"
+#: ★★★★★ R2110 — the palette's own tag IS its key inside that blob, so this
+#: walk asks the running screen for it rather than spelling it. The last
+#: section reads a file with no process alive to ask, so the key it uses is
+#: carried out of the run that wrote it — which is also the truer statement of
+#: what that section is about: the key a PREVIOUS run stored under.
 
 CHECKS: list[str] = []
 
@@ -117,8 +122,8 @@ def settle(app: RpcSubprocess) -> None:
 def body() -> None:
     with isolated_storage_dir("pinion-analyzer-shell-r1908-") as root:
         _first_run(root)
-        _second_run(root)
-        _refused_session(root)
+        key = _second_run(root)
+        _refused_session(root, key)
     print(f"\n{len(CHECKS)} check(s) held.")
 
 
@@ -151,7 +156,7 @@ def _first_run(root: Path) -> None:
             "every boot, so closing the application undid the gesture",
             stored is not None,
         )
-        kept = (stored or {}).get("chrome", {}).get(PALETTE)
+        kept = (stored or {}).get("chrome", {}).get(shell_palette_root(app))
         ok(
             f"B: ** stored under the panel's own tag, folded — {kept}",
             kept is not None and kept["folded"] is True,
@@ -170,7 +175,7 @@ def _first_run(root: Path) -> None:
         )
 
 
-def _second_run(root: Path) -> None:
+def _second_run(root: Path) -> str:
     banner("C — a SECOND PROCESS opens with the palette still away")
     with RpcSubprocess(SHELL, boot_grace=1.5) as app:
         at = placement(app)
@@ -195,22 +200,24 @@ def _second_run(root: Path) -> None:
         ok(
             "C: * and the screen actually painted the folded form — the strip "
             "is what a reader has to grab to bring it back",
-            "shell.palette.strip" in json.dumps(drawn),
+            shell_palette_tag(app, "strip") in json.dumps(drawn),
         )
 
         banner("E — bringing it back is written too")
         app.invoke(f"{EXT}/palette", "unfold")
         settle(app)
-        kept = (blob(root) or {}).get("chrome", {}).get(PALETTE)
+        key = shell_palette_root(app)
+        kept = (blob(root) or {}).get("chrome", {}).get(key)
         ok(
             f"E: ***** unfolding is stored as well — {kept}. Storing only the "
             "fold would leave a person who restores the panel finding it away "
             "again tomorrow, which is the same defect in the other direction",
             kept is not None and kept["folded"] is False,
         )
+        return key
 
 
-def _refused_session(root: Path) -> None:
+def _refused_session(root: Path, key: str) -> None:
     banner("F — a session this build cannot honour is replaced, and explained")
     # An edge the palette is not on. Measured at R1908: this panel is
     # `allowed: []` and `Resize::Fixed`, so no width and no fold is refusable —
@@ -224,7 +231,7 @@ def _refused_session(root: Path) -> None:
     # different event, and the walk caught the difference. A fixture invented
     # beside a serialiser agrees with whatever the author imagined it does.
     stored = blob(root) or {}
-    kept = stored.get("chrome", {}).get(PALETTE)
+    kept = stored.get("chrome", {}).get(key)
     ok(
         f"F: the previous run wrote a placement to edit — {kept}",
         kept is not None and "edge" in kept,

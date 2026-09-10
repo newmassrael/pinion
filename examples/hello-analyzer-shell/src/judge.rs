@@ -11,12 +11,14 @@
 //! noticing about an instruction.
 //!
 //! Measured before this module existed, standing on this page and asking the
-//! running application where its own rectangles are:
+//! running application where its own rectangles are — by surface rather than by
+//! address, because R2110 gave the third of these a declaring site and a
+//! transcript that spelled it would be the copy that goes stale:
 //!
 //! ```text
-//! shell.canvas    1096x802 at (52, 98)     <- the page region a screen gets
-//! shell.subbar    1096x46  at (52, 52)     <- the section's layout bar, ABOVE it
-//! shell.palette    292x848 at (1148, 52)   <- the section's palette, BESIDE it
+//! the page region a screen gets    1096x802 at (52, 98)
+//! the section's layout bar         1096x46  at (52, 52)     <- ABOVE it
+//! the section's palette             292x848 at (1148, 52)   <- BESIDE it
 //! ```
 //!
 //! A screen judges what it paints, and a host paints a section's chrome outside
@@ -68,19 +70,11 @@ use pinion_core::conformance::{
 use pinion_core::painted::PaintedRegions;
 use pinion_screen::{SectionJudge, Showing};
 
-use crate::{PALETTE_HEAD, VIEW_TAG, spec};
+use crate::address::{PALETTE_HEAD, PALETTE_SEAT, PALETTE_SECTION};
+use crate::{VIEW_TAG, spec};
 
 /// Where the layout bar's parts are addressed.
 const LAYOUT_BAR: &str = "shell.subbar.";
-/// Where the palette's group headings are addressed.
-const PALETTE_GROUPS: &str = "shell.palette.section.";
-/// Where the palette's entries and its two counts are addressed.
-///
-/// The stem the entries share with nothing else: a heading is addressed one
-/// level deeper (`section.`), and a row's own parts one level deeper again
-/// (`part.`), so both are excluded by the shape of their names rather than by a
-/// list this file would have to keep.
-const PALETTE: &str = "shell.palette.";
 /// Where a placed card is addressed.
 const BOARD: &str = "card.";
 
@@ -119,8 +113,12 @@ pub fn built(regions: &PaintedRegions, surface: &str, showing: Showing) -> Built
         "layout_bar" => Built::Standing(parts_titled(regions, LAYOUT_BAR, &title_in("layout_bar"))),
         // ★ Read, not titled — see the module header.
         "palette_head" => Built::Standing(parts_as_read(regions, PALETTE_HEAD)),
-        "palette_groups" => Built::Standing(parts_as_read(regions, PALETTE_GROUPS)),
-        "palette" => Built::Standing(parts_titled(regions, PALETTE, &title_in("palette"))),
+        "palette_groups" => Built::Standing(parts_as_read(regions, PALETTE_SECTION)),
+        // ★ The stem the entries share with nothing else: a heading is
+        // addressed one level deeper and a row's own parts one level deeper
+        // again, so both are excluded by the shape of their names rather than
+        // by a list this file would have to keep.
+        "palette" => Built::Standing(parts_titled(regions, PALETTE_SEAT, &title_in("palette"))),
         "board" => Built::Standing(board(regions)),
         other => panic!("no dashboard surface named {other}"),
     }

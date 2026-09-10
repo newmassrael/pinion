@@ -70,12 +70,27 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     access_node_by_tag,
     run_demo,
+    shell_palette_root,
+    shell_palette_tag,
 )
 
 SHELL = "hello-analyzer-shell"
 EXT = "/external"
-FOLD = "shell.palette.head.fold"
-STRIP = "shell.palette.strip"
+
+
+# ★★★★★ R2110 — the two addresses this walk drives were module constants, and
+# a constant is a spelling: a wrong letter here does not fail loudly, it asks
+# for a mark that is not there and reads as *the screen did not paint the
+# control*. They are asked for by WORD now, once per section, off the panel's
+# published seat roster.
+def fold_tag(app: RpcSubprocess) -> str:
+    """The address of the control that puts the palette away."""
+    return shell_palette_tag(app, "head.fold")
+
+
+def strip_tag(app: RpcSubprocess) -> str:
+    """The address of the strip that stands where the panel was."""
+    return shell_palette_tag(app, "strip")
 
 CHECKS: list[str] = []
 
@@ -137,7 +152,7 @@ def section_a(app: RpcSubprocess) -> dict:
         said["foldable"] is True and said["strip_w"] > 0,
     )
     shot = rects(app)
-    panel = shot["shell.palette"]
+    panel = shot[shell_palette_root(app)]
     ok(
         f"A: ★ it is painted at the width the specification gives it — {panel}",
         panel[2] == said["opens"]["extent"],
@@ -148,19 +163,20 @@ def section_a(app: RpcSubprocess) -> dict:
 def section_b(app: RpcSubprocess, rest: dict) -> None:
     banner("B — the canon's control is on screen, and it puts the panel away")
     shot = rects(app)
-    ok(f"B: ★★ the fold control is painted — {shot.get(FOLD)}", FOLD in shot)
+    fold, strip = fold_tag(app), strip_tag(app)
+    ok(f"B: ★★ the fold control is painted — {shot.get(fold)}", fold in shot)
     ok(
         "B: ★ inside the panel's own header band, which is where the canon "
-        f"renders it — control {shot[FOLD]}, panel {rest['panel']}",
-        shot[FOLD][0] >= rest["panel"][0]
-        and shot[FOLD][0] + shot[FOLD][2] <= rest["panel"][0] + rest["panel"][2],
+        f"renders it — control {shot[fold]}, panel {rest['panel']}",
+        shot[fold][0] >= rest["panel"][0]
+        and shot[fold][0] + shot[fold][2] <= rest["panel"][0] + rest["panel"][2],
     )
     ok(
         "B: ★ and a reader who never sees the drawing is told what it does",
-        (access_node_by_tag(access(app), FOLD) or {}).get("name") is not None,
+        (access_node_by_tag(access(app), fold) or {}).get("name") is not None,
     )
 
-    app.click(centre(shot[FOLD]))
+    app.click(centre(shot[fold]))
     settle(app)
 
     said = palette(app)
@@ -172,20 +188,20 @@ def section_b(app: RpcSubprocess, rest: dict) -> None:
     )
     after = rects(app)
     ok(
-        f"B: ★★★★★ what is left is a STRIP, not a hole — {after.get(STRIP)}",
-        STRIP in after and after[STRIP][2] == said["strip_w"],
+        f"B: ★★★★★ what is left is a STRIP, not a hole — {after.get(strip)}",
+        strip in after and after[strip][2] == said["strip_w"],
     )
     ok(
         "B: ★ and the catalogue is gone from the paint entirely, so the strip "
         "is the only way back rather than merely the visible one",
-        "shell.palette" not in after,
+        shell_palette_root(app) not in after,
     )
 
 
 def section_c(app: RpcSubprocess, rest: dict) -> None:
     banner("C — the canvas grows by exactly what the panel gave up")
     shot = rects(app)
-    canvas, strip = shot["shell.canvas"], shot[STRIP]
+    canvas, strip = shot["shell.canvas"], shot[strip_tag(app)]
     said = palette(app)
     given_up = said["opens"]["extent"] - said["strip_w"]
     ok(
@@ -212,18 +228,18 @@ def section_d(app: RpcSubprocess) -> None:
     tree = access(app)
     ok(
         "D: ★★★★★ the strip is announced, with what pressing it does",
-        (access_node_by_tag(tree, STRIP) or {}).get("value") is not None,
+        (access_node_by_tag(tree, strip_tag(app)) or {}).get("value") is not None,
     )
     ok(
         "D: ★★ and the catalogue is NOT — a reader told about thirteen rows "
         "that are not on screen is a reader sent looking for them",
-        access_node_by_tag(tree, "shell.palette") is None,
+        access_node_by_tag(tree, shell_palette_root(app)) is None,
     )
 
 
 def section_e(app: RpcSubprocess, rest: dict) -> None:
     banner("E — the strip brings it back, and so does the add button")
-    app.click(centre(rects(app)[STRIP]))
+    app.click(centre(rects(app)[strip_tag(app)]))
     settle(app)
     said = palette(app)
     ok(f"E: ★★★★★ the strip opened it again — {said['at']!r}", said["at"]["folded"] is False)

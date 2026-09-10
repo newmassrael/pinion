@@ -52,6 +52,7 @@ from rpc_verify import (  # noqa: E402
     filter_seats,
     run_demo,
     screen_spec,
+    shell_palette_root,
 )
 
 EXT = "/external"
@@ -204,18 +205,19 @@ def dashboard(app: RpcSubprocess) -> None:
         app.tick_ms(16)
 
     banner("D — a booked seat REFUSES rather than doing nothing quietly")
-    app.request("focus/set", {"tag": "shell.palette"})
+    palette_tag = shell_palette_root(app)
+    app.request("focus/set", {"tag": palette_tag})
     app.tick_ms(16)
     nodes, _ = tree(app)
-    booked = [m for m in nodes["shell.palette"]["navigation"]["members"] if not m["enabled"]]
+    booked = [m for m in nodes[palette_tag]["navigation"]["members"] if not m["enabled"]]
     ok("D: the palette has booked entries", len(booked) > 0)
-    app.key(path="shell.palette", name="Home")
+    app.key(path=palette_tag, name="Home")
     app.tick_ms(16)
     while cursor(app) != booked[0]["tag"]:
-        app.key(path="shell.palette", name="ArrowDown")
+        app.key(path=palette_tag, name="ArrowDown")
         app.tick_ms(16)
     before = app.query(f"{EXT}/toast")
-    app.key(path="shell.palette", name="Enter")
+    app.key(path=palette_tag, name="Enter")
     app.tick_ms(16)
     assert_eq(
         app.query(f"{EXT}/toast") != before,

@@ -1036,7 +1036,7 @@ struct StoredArrangements {
 /// by a person reading both — the reason this file stores named JSON at all
 /// rather than the opaque byte string the floor toolkit round-trips a docked
 /// arrangement through.
-const PALETTE_STORE_KEY: &str = "shell.palette";
+const PALETTE_STORE_KEY: &str = address::PALETTE;
 
 /// What this host can do with a detached card.
 ///
@@ -1708,7 +1708,7 @@ fn screen_roster() -> ScreenRoster {
     // below exists to surface.
     .painting(
         "dashboard",
-        &["shell.subbar", "shell.palette", "card", "match.spark"],
+        &["shell.subbar", address::PALETTE, "card", "match.spark"],
     )
     .expect("`dashboard` is open, has no screen, and claims nothing a guest paints")
     .painting("settings", &["shell.settings"])
@@ -2169,11 +2169,11 @@ impl ShellState {
                 .iter()
                 .map(|chip| Member::new(chip.tag()))
                 .collect(),
-            "shell.palette" => spec::CATALOGUE
+            address::PALETTE => spec::CATALOGUE
                 .iter()
                 .map(|def| {
                     Member::maybe(
-                        format!("shell.palette.{}", def.kind),
+                        address::palette_entry(def.kind),
                         def.tier == spec::Tier::Placeable,
                     )
                 })
@@ -3859,7 +3859,10 @@ impl Hit {
         {
             return Self::Rail(seat.key);
         }
-        if let Some(kind) = tag.strip_prefix("shell.palette.")
+        // ★★★★★ R2110 — the address's own inverse, for the reason the rail's
+        // above it is: a prefix typed here is the SECOND speller, and its
+        // mismatch is silent in the direction where the press lands on nothing.
+        if let Some(kind) = address::palette_entry_kind(tag)
             && let Some(def) = spec::CATALOGUE.iter().find(|def| def.kind == kind)
         {
             return Self::Palette(def.kind);
@@ -4296,13 +4299,13 @@ fn hit_word(hit: &Hit) -> String {
             valued.option_tag(valued.options().get(*n).map_or("", String::as_str))
         }),
         Hit::Theme(n) => format!("shell.settings.theme.{n}"),
-        Hit::Palette(kind) => format!("shell.palette.{kind}"),
+        Hit::Palette(kind) => address::palette_entry(kind),
         Hit::Grip(id) => format!("card.{id}.grip"),
         Hit::Affordance(id, affordance) => format!("card.{id}.{}", affordance.wire()),
         Hit::Stepper(id, verb) => format!("card.{id}.{verb}"),
         Hit::Remedy(id) => format!("card.{id}.remedy"),
-        Hit::PaletteFold => format!("{PALETTE_HEAD}fold"),
-        Hit::PaletteStrip => "shell.palette.strip".to_owned(),
+        Hit::PaletteFold => address::PALETTE_HEAD_FOLD.to_owned(),
+        Hit::PaletteStrip => address::PALETTE_STRIP.to_owned(),
         // ★ R1900 — the tab names the OCCUPANT it selects, not the cell it is
         // drawn in. The cell's name is whichever occupant is in front, so a tag
         // built from it would change under a person's finger every time they
@@ -11162,6 +11165,10 @@ fn palette_groups_json() -> Vec<serde_json::Value> {
                 "title": title,
                 "tiers": tiers,
                 "heading": spec::section_heading(key, title),
+                // ★★★★★ R2110 — and the address this heading is painted under,
+                // beside the row a reader already asks for. A second copy of
+                // the prefix in the walk is what this round is repaying.
+                "tag": crate::address::palette_section(key),
             })
         })
         .collect()
@@ -13186,6 +13193,10 @@ fn catalogue_json() -> serde_json::Value {
                     "section": w.section,
                     "tier": tier_word(w.tier),
                     "reserved_for": w.reserved_for,
+                    // ★★★★★ R2110 — the address this row is painted under. The
+                    // walks read the catalogue already; before this they read
+                    // the kind and spelled the address themselves.
+                    "tag": address::palette_entry(w.kind),
                 })
             })
             .collect(),
@@ -13387,6 +13398,31 @@ fn spec_json() -> serde_json::Value {
         // onto the canvas — and an agent that can only read the catalogue
         // learns the kinds and not that there are two ways to place one.
         "palette": { "title": spec::PALETTE_TITLE, "hint": spec::PALETTE_HINT },
+        // ★★★★★ R2110 — **the addresses this panel paints under**, derived from
+        // the one place that declares them.
+        //
+        // A walk is Python and cannot call `address::palette`, so before this
+        // every walk that drove the panel re-typed the string — measured at
+        // entry, 33 sites across nine walks beside 91 in this crate. The panel's
+        // own tag, its seven fixed seats by word, and the three PARAMETRIC
+        // families as prefixes.
+        //
+        // ⚠ `palette_addresses`, not `palette`: this document already publishes
+        // a `palette` — what the panel SAYS — and a second meaning under one key
+        // is the shape this tree keeps paying for. `palette_placement` was named
+        // the same way, for the same reason, one round-family earlier.
+        //
+        // ⚠⚠ The panel is a `tag` BESIDE the seats rather than their first row,
+        // and that is forced by the recovery rather than chosen: a roster's
+        // prefix is recovered by taking a row's own key off the end of its
+        // address, and the panel's address is the prefix WITHOUT the separator.
+        //
+        // ⚠⚠⚠ `parts` is a MAP from a part's word to that part's prefix, and
+        // not one prefix a reader appends two things to. The composition is
+        // word-then-kind, so a single prefix would leave the walk holding the
+        // order — which is R2109.1's defect exactly: what a walk is handed for
+        // a member is a composer, never a stem it glues onto.
+        "palette_addresses": palette_addresses_json(),
         // ★★ R1733 — the board gesture's written specification, published.
         //
         // §2 #7: an agent driving this screen needs to know what a carry puts
@@ -13445,6 +13481,31 @@ fn spec_json() -> serde_json::Value {
                 "at": where_word(*at),
             }))
         }).collect::<Vec<_>>(),
+    })
+}
+
+/// ★★★★★ R2110 — the addresses the palette panel paints under — see the note
+/// on the key in [`spec_json`].
+///
+/// Its own function for the reason its neighbours have one: that builder is at
+/// its line budget, and the bound is paid with structure here as everywhere.
+fn palette_addresses_json() -> serde_json::Value {
+    serde_json::json!({
+        "tag": address::PALETTE,
+        "seats": address::PALETTE_SEATS.iter().map(|(word, tag)| serde_json::json!({
+            "word": word, "tag": tag,
+        })).collect::<Vec<_>>(),
+        "entry": address::PALETTE_SEAT,
+        "section": address::PALETTE_SECTION,
+        "parts": address::PALETTE_PART_TEMPLATES
+            .iter()
+            .map(|(word, _)| {
+                (
+                    (*word).to_owned(),
+                    serde_json::Value::String(address::palette_part_prefix(word)),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>(),
     })
 }
 
@@ -13561,11 +13622,8 @@ const fn tier_word(tier: spec::Tier) -> &'static str {
 /// ★★★★★ R1733 — the tag one PART of a palette row is addressed by, when the
 /// row is one a widget can be picked up from.
 ///
-/// Family first — `part.<what>.<kind>` — because the kind is the address and
-/// the part is what is drawn of it, which is the convention
-/// `painted_surface_of` reads. The row itself keeps `shell.palette.<kind>`, so
-/// the row's own tag and its parts' cannot be confused for each other by a
-/// dot count.
+/// The composition is [`address::palette_part`]'s — see it for why the part
+/// word comes before the kind.
 ///
 /// ★★ [`None`] for a RESERVED row, and both halves of that are deliberate:
 ///
@@ -13580,33 +13638,8 @@ const fn tier_word(tier: spec::Tier) -> &'static str {
 ///   region stating a reason that reaches no reader is a defect this tree
 ///   already gates for. It caught this on the first run: thirty-six of them.
 fn part_tag_of(part: &str, def: &'static spec::WidgetSpec) -> Option<String> {
-    (def.tier == spec::Tier::Placeable).then(|| part_tag(part, def.kind))
+    (def.tier == spec::Tier::Placeable).then(|| address::palette_part(part, def.kind))
 }
-
-/// The tag one part of a palette row is addressed by, unconditionally — the
-/// spelling, for a caller that has already decided the row has parts.
-pub(crate) fn part_tag(part: &str, kind: &str) -> String {
-    format!("{PALETTE_PART}{part}.{kind}")
-}
-
-/// The stem every palette-row part is tagged under.
-pub(crate) const PALETTE_PART: &str = "shell.palette.part.";
-
-/// The stem the palette panel's own heading is tagged under.
-///
-/// Its own stem rather than a suffix of the panel's, because
-/// [`PaintedRegions::parts_under`](pinion_core::painted::PaintedRegions::parts_under)
-/// takes the tags whose remainder holds no further dot — so the heading sits
-/// beside the entries in one flat family unless it is given a stem of its own,
-/// and a specification of the catalogue would then have to name two lines that
-/// are not catalogue entries.
-pub(crate) const PALETTE_HEAD: &str = "shell.palette.head.";
-
-/// What the panel calls itself.
-pub(crate) const PALETTE_HEAD_TITLE: &str = "shell.palette.head.title";
-
-/// The one line under it saying how a widget gets onto the board.
-pub(crate) const PALETTE_HEAD_HINT: &str = "shell.palette.head.hint";
 
 /// One palette row: the swatch, the name, the one line, and what the row offers
 /// -- the verb for a placeable entry, the booking for a reserved one.
@@ -13643,7 +13676,7 @@ fn palette_row(
     // the line and the seat are folded into its announcement. A painted,
     // addressable region nobody decided anything about is `unvoiced`, and the
     // demo harness's census counted sixteen of them on this row's first run.
-    let row_tag = format!("shell.palette.{}", def.kind);
+    let row_tag = address::palette_entry(def.kind);
     let part = |what: &str, text: &str, at: Rect, px: u32, fg: Color| -> Scene {
         match part_tag_of(what, def) {
             Some(tag) => {
@@ -13728,7 +13761,7 @@ fn palette_row(
             ),
             trailing,
         ])
-        .with_tag(format!("shell.palette.{}", def.kind))
+        .with_tag(address::palette_entry(def.kind))
         .with_style(
             BoxStyle::filled(palette.raised)
                 .with_corner_radius(10)
@@ -13862,11 +13895,11 @@ fn palette_strip_scene(palette: Palette) -> Scene {
                         .map(|n| dot(0, n * 8, 4, palette.muted))
                         .collect::<Vec<_>>(),
                 )
-                .with_tag("shell.palette.strip.grip")
+                .with_tag(address::PALETTE_STRIP_GRIP)
                 .with_layout(absolute(Rect::new(panel.w / 2 - 2, mid - 12, 4, 20))),
             ),
         ])
-        .with_tag("shell.palette.strip")
+        .with_tag(address::PALETTE_STRIP)
         .with_style(BoxStyle::filled(palette.raised).with_border(Border::new(palette.outline, 1)))
         .with_layout(absolute(panel).with_focusable(true)),
     )
@@ -13881,11 +13914,11 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
     // ★★★★★ R1761 — the panel's own heading, ADDRESSABLE. It was two loose
     // labels, so the two lines a reader reads first were the two lines nothing
     // could ask about: measured over the wire before this round, the paint under
-    // `shell.palette.` held thirteen entries and two counts and neither of
+    // the panel's stem held thirteen entries and two counts and neither of
     // these. A specification cannot fix words that have no address.
     let mut children = vec![
         cell(
-            PALETTE_HEAD_TITLE.to_owned(),
+            address::PALETTE_HEAD_TITLE.to_owned(),
             spec::PALETTE_TITLE,
             palette_head_title_rect(),
             FONT_TITLE,
@@ -13895,7 +13928,7 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
         // ★ R1761 — these words ARE the panel's accessible name, so saying them
         // again would be one fact in two voices. Addressable for the
         // specification, silent for the reader.
-        .silenced(Silence::name_of("shell.palette")),
+        .silenced(Silence::name_of(address::PALETTE)),
         // ★★★★★ R1903 — the control that puts it away, at the rectangle
         // `Hit::at` asks the same function for.
         //
@@ -13914,7 +13947,7 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
                 box_content(palette_fold_rect()),
                 palette.muted,
             ))
-            .with_tag(format!("{PALETTE_HEAD}fold"))
+            .with_tag(address::PALETTE_HEAD_FOLD)
             .with_style(
                 BoxStyle::filled(palette.raised)
                     .with_corner_radius(7)
@@ -13923,7 +13956,7 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
             .with_layout(absolute(palette_fold_rect()).with_focusable(true)),
         ),
         cell(
-            PALETTE_HEAD_HINT.to_owned(),
+            address::PALETTE_HEAD_HINT.to_owned(),
             spec::PALETTE_HINT,
             Rect::new(16, 42, 250, 16),
             FONT_SMALL,
@@ -13932,14 +13965,14 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
         )
         // And the line under it is the panel's own description, which the list
         // announces as its value.
-        .silenced(Silence::part_of("shell.palette")),
+        .silenced(Silence::part_of(address::PALETTE)),
     ];
     for row in palette_rows() {
         match row.def {
             // The heading is the group a reader descends through, so it is
             // addressable rather than loose ink between the entries.
             None => children.push(cell(
-                format!("shell.palette.section.{}", row.section),
+                address::palette_section(row.section),
                 &row.title,
                 row.rect,
                 FONT_TINY,
@@ -13959,7 +13992,7 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
     // at the design height and by a whole row once the panel moved.
     let foot = palette_foot_rect();
     children.push(cell(
-        "shell.palette.placed".to_owned(),
+        address::PALETTE_PLACED.to_owned(),
         &format!(
             "{} placed of {}",
             state.placed().len(),
@@ -13971,7 +14004,7 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
         TextOverflow::Ellipsis,
     ));
     children.push(cell(
-        "shell.palette.reserved".to_owned(),
+        address::PALETTE_RESERVED.to_owned(),
         &format!("{} reserved", spec::reserved_count()),
         pinion_core::containment::line_rect_in(foot, panel.w.saturating_sub(110), 94, FONT_SMALL),
         FONT_SMALL,
@@ -13981,11 +14014,11 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
     keyboard_stop(
         Scene::Container(
             ContainerNode::new(children)
-                .with_tag("shell.palette")
+                .with_tag(address::PALETTE)
                 .with_style(BoxStyle::filled(palette.panel))
                 .with_layout(absolute(panel)),
         ),
-        "shell.palette",
+        address::PALETTE,
         &state.at(),
     )
 }
@@ -14467,8 +14500,8 @@ fn view(_state: ScreenState, frame: Frame) -> Scene {
                     //
                     // R1734 declared what the board accepts and nothing could
                     // route to it: the fallback resolution names the deepest
-                    // painted tag, and there is no `External` behind
-                    // `shell.canvas` or `shell.palette.<kind>` to ask. This is
+                    // painted tag, and there is no `External` behind the canvas
+                    // or behind a catalogue entry to ask. This is
                     // the opt-in the dock panels have had since R1080, said by
                     // the one node that IS the surface — which is also why the
                     // declaration can only be `DropRegion::Surface`: the point
@@ -14882,13 +14915,13 @@ impl WidgetA11y for AnalyzerShellView {
         if dashboard {
             // ★ R1903 — the child is whichever of the two the panel currently
             // IS, read from the same placement the paint reads. A tree naming
-            // `shell.palette` while the screen draws a strip would be the
+            // the panel while the screen draws a strip would be the
             // announce-what-is-not-painted class this tree already has a name
             // for.
             root = root.with_child(if palette_placement().folded {
-                "shell.palette.strip"
+                address::PALETTE_STRIP
             } else {
-                "shell.palette"
+                address::PALETTE
             });
         }
         // ★ R1867 — the status band's slot has two occupants and the tree
@@ -16302,12 +16335,12 @@ fn palette_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     // back is the thing that is announced.
     if palette_placement().folded {
         return vec![
-            AccessNode::new("shell.palette.strip", AriaRole::Button)
+            AccessNode::new(address::PALETTE_STRIP, AriaRole::Button)
                 .with_name(format!("{}, put away", spec::PALETTE_TITLE))
                 .with_value(AccessValue::Text("open the palette".to_owned())),
         ];
     }
-    let mut list = AccessNode::new("shell.palette", AriaRole::List)
+    let mut list = AccessNode::new(address::PALETTE, AriaRole::List)
         .with_name(spec::PALETTE_TITLE)
         // ★ R1761 — and the line the panel paints under that name, which is
         // how a widget gets onto the board. It was on screen and in no
@@ -16317,14 +16350,14 @@ fn palette_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
         .with_size_of_set(u32::try_from(spec::CATALOGUE.len()).unwrap_or(u32::MAX));
     let mut nodes = Vec::new();
     for (key, title) in spec::SECTIONS {
-        let section_tag = format!("shell.palette.section.{key}");
+        let section_tag = address::palette_section(key);
         list = list.with_child(section_tag.clone());
         let mut section = AccessNode::new(section_tag, AriaRole::Group).with_name(*title);
         for (n, def) in spec::CATALOGUE.iter().enumerate() {
             if def.section != *key {
                 continue;
             }
-            let tag = format!("shell.palette.{}", def.kind);
+            let tag = address::palette_entry(def.kind);
             section = section.with_child(tag.clone());
             nodes.push(
                 AccessNode::new(tag, AriaRole::ListItem)
@@ -16336,12 +16369,12 @@ fn palette_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
         nodes.push(section);
     }
     list = with_cursor_declared(
-        list.with_child("shell.palette.placed")
-            .with_child("shell.palette.reserved"),
+        list.with_child(address::PALETTE_PLACED)
+            .with_child(address::PALETTE_RESERVED),
         state,
     );
     nodes.push(
-        AccessNode::new("shell.palette.placed", AriaRole::Status)
+        AccessNode::new(address::PALETTE_PLACED, AriaRole::Status)
             .with_name("Placed")
             .with_value(AccessValue::Text(format!(
                 "{} of {}",
@@ -16350,7 +16383,7 @@ fn palette_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
             ))),
     );
     nodes.push(
-        AccessNode::new("shell.palette.reserved", AriaRole::Status)
+        AccessNode::new(address::PALETTE_RESERVED, AriaRole::Status)
             .with_name("Reserved")
             .with_value(AccessValue::Text(spec::reserved_count().to_string())),
     );
@@ -16361,7 +16394,7 @@ fn palette_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     // A sibling of the list rather than a child of it, because the catalogue's
     // roving cursor enumerates the thirteen entries and this is not one of them.
     nodes.push(
-        AccessNode::new(format!("{PALETTE_HEAD}fold"), AriaRole::Button)
+        AccessNode::new(address::PALETTE_HEAD_FOLD, AriaRole::Button)
             .with_name(format!("Put {} away", spec::PALETTE_TITLE)),
     );
     nodes.insert(0, list);

@@ -1519,7 +1519,7 @@ fn the_locked_table_is_derived_from_the_tier_and_the_reservation() {
         .collect();
     assert_eq!(
         tags.iter()
-            .filter(|t| t.starts_with("shell.palette."))
+            .filter(|t| t.starts_with(crate::address::PALETTE_SEAT))
             .count(),
         spec::reserved_count(),
     );
@@ -1609,7 +1609,7 @@ fn a_locked_seat_is_announced_named_and_keeps_its_place_in_the_set() {
     let tree = announced();
     for (n, entry) in spec::CATALOGUE.iter().enumerate() {
         let node = tree
-            .get(&format!("shell.palette.{}", entry.kind))
+            .get(&crate::address::palette_entry(entry.kind))
             .unwrap_or_else(|| panic!("{} is not announced", entry.kind));
         assert_eq!(node.role, pinion_a11y::AriaRole::ListItem);
         assert_eq!(node.name.as_deref(), Some(entry.label));
@@ -1621,7 +1621,7 @@ fn a_locked_seat_is_announced_named_and_keeps_its_place_in_the_set() {
         );
         assert_eq!(node.size_of_set, Some(13));
     }
-    let list = &tree["shell.palette"];
+    let list = &tree[crate::address::PALETTE];
     assert_eq!(
         list.size_of_set,
         Some(u32::try_from(spec::CATALOGUE.len()).unwrap()),
@@ -2344,7 +2344,7 @@ fn r1698_the_tree_publishes_the_cursor_and_the_roster_it_walks() {
 
         // ★ The palette is where children and roster differ, so it is asserted
         // explicitly rather than only in the loop.
-        let palette = by_tag["shell.palette"];
+        let palette = by_tag[crate::address::PALETTE];
         let nav = palette
             .navigation
             .as_ref()
@@ -3446,7 +3446,7 @@ fn r1726_the_cursor_carries_the_name_of_what_it_holds() {
         );
         // ★ Above the BOARD and everything on it — not last in the window,
         // which the palette owns. The first draft asserted last-in-the-scene
-        // and failed against `shell.palette.reserved`, which is a true fact
+        // and failed against the palette's reserved count, which is a true fact
         // about a different plane: this chip's place is the pointer's within
         // the page, and the page is not the whole window.
         let carried = tags
@@ -7291,11 +7291,11 @@ fn r1903_a_folded_palette_announces_its_way_back_and_not_its_rows() {
             .map(|n| n.tag)
             .collect();
         assert!(
-            open.iter().any(|t| t == "shell.palette"),
+            open.iter().any(|t| t == crate::address::PALETTE),
             "open, the catalogue is announced: {open:?}"
         );
         assert!(
-            open.iter().any(|t| t == "shell.palette.head.fold"),
+            open.iter().any(|t| t == crate::address::PALETTE_HEAD_FOLD),
             "and so is the control that puts it away: {open:?}"
         );
 
@@ -7306,7 +7306,7 @@ fn r1903_a_folded_palette_announces_its_way_back_and_not_its_rows() {
             .collect();
         assert_eq!(
             shut,
-            vec!["shell.palette.strip".to_owned()],
+            vec![crate::address::PALETTE_STRIP.to_owned()],
             "folded, the strip is the whole announcement"
         );
         super::ShellOracle::place_palette(&state, "unfold").expect("unfolding is never refused");
@@ -9442,6 +9442,225 @@ fn r2105_the_shell_does_not_spell_the_labs_addresses() {
     );
 }
 
+/// ★★★★★ R2110 — **a palette address is typed in ONE place, and this counts.**
+///
+/// The thirteenth instalment, and the largest family this campaign has
+/// converted: measured at entry, **91 sites in this crate's five modules** and
+/// 33 across nine walks. `main.rs` held four consts of its own — the part stem,
+/// the head stem and the head's two words — which is R2106's finding said again
+/// a screen over: a declared CORNER is not a declared screen, and those four
+/// could not be checked against the three PARAMETRIC families hanging off the
+/// same stem.
+///
+/// ⚠ The needle is assembled rather than written, for
+/// [`r2051_a_rail_seat_address_is_typed_in_one_place`]'s reason: this file is
+/// one of the sources it reads, and assembling puts it in the population on the
+/// same terms as the rest instead of excusing it by name.
+///
+/// ⚠⚠ The needle is the panel's tag WITHOUT its separator, so a comment or a
+/// transcript that merely mentions the panel is a site too. Two doc comments
+/// were: the judge's measured rectangle transcript, and this crate's note on
+/// where a drop target's fallback resolution lands. Both now name the surface
+/// instead — a prose copy of an address is the copy that goes stale, which is
+/// the whole of what this debt is.
+#[test]
+fn r2110_a_palette_address_is_typed_in_one_place() {
+    const NEEDLE: &str = concat!("shell.", "palette");
+    let spellers: Vec<(&str, usize)> = shell_sources()
+        .iter()
+        .map(|(name, body)| (*name, body.matches(NEEDLE).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ a palette address is declared in `address.rs` and derived \
+         everywhere else; these file(s) spell it themselves"
+    );
+    // The declaration's forms agree, so a specification table taking a
+    // `&'static str` cannot drift from the runtime derivation.
+    assert_eq!(
+        crate::address::PALETTE_SEAT,
+        format!("{}.", crate::address::PALETTE)
+    );
+    assert_eq!(
+        crate::address::PALETTE_ENTRY_TEMPLATE,
+        crate::address::palette_entry("{}")
+    );
+    assert_eq!(
+        crate::address::PALETTE_SECTION_TEMPLATE,
+        crate::address::palette_section("{}")
+    );
+    // ★ The three deeper stems all hang off the panel's, so a family that
+    // wandered out of it would be caught here rather than by a query that
+    // silently answers nothing.
+    for stem in [
+        crate::address::PALETTE_HEAD,
+        crate::address::PALETTE_SECTION,
+        crate::address::PALETTE_PART,
+    ] {
+        assert!(
+            stem.starts_with(crate::address::PALETTE_SEAT) && stem.ends_with('.'),
+            "★ {stem} is not a family under the panel's own stem"
+        );
+    }
+    // ★★ Every fixed seat and the roster's inverse are one pair.
+    for (word, tag) in crate::address::PALETTE_SEATS {
+        assert_eq!(
+            *tag,
+            format!("{}{word}", crate::address::PALETTE_SEAT),
+            "★ {word} composes"
+        );
+        assert_eq!(
+            crate::address::palette_word(tag),
+            Some(*word),
+            "★ {word} does not round-trip"
+        );
+    }
+    // ★★★★★ And the reader that makes this family legible: every fixed seat,
+    // every heading and every row part begins with the same stem, so an inverse
+    // that only stripped it would answer `Some` for all of them.
+    for (_, tag) in crate::address::PALETTE_SEATS {
+        assert_eq!(
+            crate::address::palette_entry_kind(tag),
+            None,
+            "★ {tag} is a fixed seat, not a catalogue entry"
+        );
+    }
+    for def in spec::CATALOGUE {
+        let tag = crate::address::palette_entry(def.kind);
+        assert_eq!(
+            crate::address::palette_entry_kind(&tag),
+            Some(def.kind),
+            "★ {} does not round-trip",
+            def.kind
+        );
+    }
+    for (key, _) in spec::SECTIONS {
+        let tag = crate::address::palette_section(key);
+        assert_eq!(
+            crate::address::palette_entry_kind(&tag),
+            None,
+            "★ a heading is not a catalogue entry"
+        );
+    }
+    assert_eq!(
+        crate::address::palette_entry_kind(crate::address::PALETTE),
+        None,
+        "★ the panel's own tag is not one of its entries"
+    );
+    palette_part_templates_are_the_references_own();
+    palette_addresses_reach_the_wire();
+}
+
+/// ★★★★★ R2110 — the four part templates are `address.rs`'s ONE second copy of
+/// something, and the something is the behaviour reference's own list of what a
+/// palette row carries.
+///
+/// A `const` cannot read a file, so the copy is held against the document here
+/// — declared, checked, and unable to drift silently.
+///
+/// ⚠ Its own function because the gate above passed the hundred-line bound, and
+/// the bound is paid with STRUCTURE here as everywhere.
+fn palette_part_templates_are_the_references_own() {
+    let canon: Vec<String> = spec::board_document()
+        .canon("palette_row")
+        .expect("the board specification declares a palette row")
+        .parts()
+        .iter()
+        .map(|part| part.key.to_string())
+        .collect();
+    let declared: Vec<String> = crate::address::PALETTE_PART_TEMPLATES
+        .iter()
+        .map(|(word, _)| (*word).to_owned())
+        .collect();
+    assert_eq!(
+        declared, canon,
+        "★★★★★ the part templates and the specification's parts are two copies \
+         of one roster and they disagree"
+    );
+    for (word, template) in crate::address::PALETTE_PART_TEMPLATES {
+        assert_eq!(*template, crate::address::palette_part(word, "{}"));
+        assert_eq!(
+            crate::address::palette_part_prefix(word),
+            template.trim_end_matches("{}"),
+            "★ the {word} prefix and its template are one composition"
+        );
+    }
+}
+
+/// ★★★★ R2110 — the WIRE carries the declaration itself.
+///
+/// This is the half the walks stand on — they are Python and cannot call any of
+/// the declaration — and a prefix that stopped agreeing here would hand nine
+/// walks an address matching no mark, which reads to every one of them as *the
+/// screen did not paint it*.
+fn palette_addresses_reach_the_wire() {
+    let wire = super::spec_json();
+    let published = &wire["palette_addresses"];
+    assert_eq!(published["tag"].as_str(), Some(crate::address::PALETTE));
+    assert_eq!(
+        published["entry"].as_str(),
+        Some(crate::address::PALETTE_SEAT),
+        "★★★★★ the entry prefix a walk composes onto CARRIES its separator; \
+         publishing the panel's bare tag would hand every walk an address with \
+         no separator in it"
+    );
+    assert_eq!(
+        published["section"].as_str(),
+        Some(crate::address::PALETTE_SECTION)
+    );
+    let seats: Vec<(String, String)> = published["seats"]
+        .as_array()
+        .expect("the wire publishes the panel's fixed seats as a list")
+        .iter()
+        .map(|row| {
+            (
+                row["word"].as_str().unwrap_or_default().to_owned(),
+                row["tag"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    let declared_seats: Vec<(String, String)> = crate::address::PALETTE_SEATS
+        .iter()
+        .map(|(word, tag)| ((*word).to_owned(), (*tag).to_owned()))
+        .collect();
+    assert_eq!(
+        seats, declared_seats,
+        "★★★★★ the seats the wire publishes and the ones `PALETTE_SEATS` \
+         declares are not the same list, in the same order"
+    );
+    for (word, _) in crate::address::PALETTE_PART_TEMPLATES {
+        assert_eq!(
+            published["parts"][*word].as_str().map(str::to_owned),
+            Some(crate::address::palette_part_prefix(word)),
+            "★ the wire's {word} prefix is not the one the painter composes"
+        );
+    }
+    // ★★ And the two rosters that already cross the wire carry each row's own
+    // address, which is what a walk iterating them is handed.
+    for (row, def) in wire["catalogue"]
+        .as_array()
+        .expect("the wire publishes the catalogue")
+        .iter()
+        .zip(spec::CATALOGUE)
+    {
+        assert_eq!(
+            row["tag"].as_str().map(str::to_owned),
+            Some(crate::address::palette_entry(def.kind)),
+            "★ the catalogue row for {} does not carry its address",
+            def.kind
+        );
+    }
+    for (row, (key, _)) in super::palette_groups_json().iter().zip(spec::SECTIONS) {
+        assert_eq!(
+            row["tag"].as_str().map(str::to_owned),
+            Some(crate::address::palette_section(key)),
+            "★ the section row for {key} does not carry its address"
+        );
+    }
+}
+
 /// ★★★★★ R2051 — **a rail seat's address is typed in ONE place, and this
 /// counts.**
 ///
@@ -9491,7 +9710,7 @@ fn r2051_a_rail_seat_address_is_typed_in_one_place() {
         );
     }
     assert_eq!(
-        crate::address::rail_seat_key("shell.palette.filter"),
+        crate::address::rail_seat_key(crate::address::PALETTE_HEAD_FOLD),
         None,
         "★ a tag of another family is not a rail seat"
     );

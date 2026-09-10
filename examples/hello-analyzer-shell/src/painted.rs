@@ -722,7 +722,7 @@ fn r1668_every_declared_element_of_the_screen_is_painted() {
             "shell.subbar.edit".into(),
             "shell.subbar.add".into(),
             "shell.rail".into(),
-            "shell.palette".into(),
+            crate::address::PALETTE.into(),
         ];
         // The rail's seats and the palette's rows come from the specification's
         // own tables rather than from that list.
@@ -730,7 +730,7 @@ fn r1668_every_declared_element_of_the_screen_is_painted() {
             wanted.push(crate::address::rail_seat(seat.key));
         }
         for entry in spec::CATALOGUE {
-            wanted.push(format!("shell.palette.{}", entry.kind));
+            wanted.push(crate::address::palette_entry(entry.kind));
         }
         // And the cards the board is showing. A maximised board shows exactly
         // one -- stated here rather than skipped, because "the other three are
@@ -1240,7 +1240,7 @@ fn r1671_the_screen_fills_the_window_it_was_given() {
         for pane in [
             "shell.appbar",
             "shell.rail",
-            "shell.palette",
+            crate::address::PALETTE,
             "shell.subbar",
             super::STATUS_BAND,
         ] {
@@ -1277,15 +1277,15 @@ fn r1668_the_screen_invents_no_seat_and_states_the_counts_it_specifies() {
         // where an invention hides.
         let declared: BTreeSet<String> = spec::CATALOGUE
             .iter()
-            .map(|w| format!("shell.palette.{}", w.kind))
+            .map(|w| crate::address::palette_entry(w.kind))
             .chain(
                 spec::SECTIONS
                     .iter()
-                    .map(|(key, _)| format!("shell.palette.section.{key}")),
+                    .map(|(key, _)| crate::address::palette_section(key)),
             )
             .chain([
-                "shell.palette.placed".to_owned(),
-                "shell.palette.reserved".to_owned(),
+                crate::address::PALETTE_PLACED.to_owned(),
+                crate::address::PALETTE_RESERVED.to_owned(),
             ])
             // ★ R1761 — and the panel's own heading, which this backward check
             // is what found: both lines were loose ink until the dashboard's
@@ -1300,7 +1300,7 @@ fn r1668_the_screen_invents_no_seat_and_states_the_counts_it_specifies() {
                     .expect("the dashboard specification declares the panel's heading")
                     .parts()
                     .iter()
-                    .map(|part| format!("{}{}", super::PALETTE_HEAD, part.key))
+                    .map(|part| format!("{}{}", crate::address::PALETTE_HEAD, part.key))
                     .collect::<Vec<_>>(),
             )
             // ★ R1733 — and every PART of every row a widget can be picked up
@@ -1320,18 +1320,18 @@ fn r1668_the_screen_invents_no_seat_and_states_the_counts_it_specifies() {
                         spec::CATALOGUE
                             .iter()
                             .filter(|w| w.tier == spec::Tier::Placeable)
-                            .map(move |w| super::part_tag(part.key.as_ref(), w.kind))
+                            .map(move |w| crate::address::palette_part(part.key.as_ref(), w.kind))
                     }),
             )
             .collect();
-        for tag in shot.family("shell.palette.") {
+        for tag in shot.family(crate::address::PALETTE_SEAT) {
             assert!(
                 declared.contains(tag),
                 "{case}: the palette paints {tag:?}, which the specification does not declare",
             );
         }
         assert_eq!(
-            shot.family("shell.palette.").len(),
+            shot.family(crate::address::PALETTE_SEAT).len(),
             declared.len(),
             "{case}: the palette paints a different number of regions than the \
              catalogue, its sections and its two counts come to",
@@ -1358,7 +1358,7 @@ fn r1668_the_screen_invents_no_seat_and_states_the_counts_it_specifies() {
         let footer: Vec<&str> = shot
             .runs
             .iter()
-            .filter(|(_, _, owner)| owner.as_deref() == Some("shell.palette"))
+            .filter(|(_, _, owner)| owner.as_deref() == Some(crate::address::PALETTE))
             .map(|(text, ..)| text.as_str())
             .collect();
         let placed_line = format!(
@@ -1400,7 +1400,7 @@ fn r1668_every_painted_control_answers_for_itself() {
             probes.push(crate::address::rail_seat(seat.key));
         }
         for entry in spec::CATALOGUE {
-            probes.push(format!("shell.palette.{}", entry.kind));
+            probes.push(crate::address::palette_entry(entry.kind));
         }
         for tag in [
             "shell.subbar.edit",
@@ -1703,7 +1703,7 @@ fn r1952_every_letter_the_screen_paints_is_one_this_trees_face_can_draw() {
 fn r1668_every_mark_lies_inside_the_pane_its_address_names() {
     sweep(|_, shot, _, case| {
         for (stem, pane) in [
-            ("shell.palette.", "shell.palette"),
+            (crate::address::PALETTE_SEAT, crate::address::PALETTE),
             (crate::address::RAIL, "shell.rail"),
         ] {
             let Some(bounds) = shot.rect(pane) else {
@@ -2954,7 +2954,7 @@ fn r1668_no_two_rows_of_one_card_are_painted_over_each_other() {
 fn r1668_every_reserved_seat_is_declared_with_the_booking_it_states() {
     sweep(|_, shot, _, case| {
         for entry in spec::CATALOGUE {
-            let tag = format!("shell.palette.{}", entry.kind);
+            let tag = crate::address::palette_entry(entry.kind);
             if shot.rect(&tag).is_none() {
                 continue;
             }
@@ -3032,19 +3032,21 @@ fn r1668_every_reserved_seat_is_declared_with_the_booking_it_states() {
 #[test]
 fn r1668_the_screen_paints_exactly_the_reserved_seats_it_specifies() {
     sweep(|_, shot, _, case| {
-        // ★ R1733 — a ROW, by the shape of its name: `shell.palette.<kind>`,
-        // with nothing further under it. Its parts are addressed
-        // `shell.palette.part.<what>.<kind>` and the disabled cascade reaches
-        // them too, so counting everything under the stem counted a reserved
-        // row five times. A shape rather than a list of exclusions, so an
-        // invented row is still caught — which is what this check is for.
+        // ★ R1733 — a ROW, by the shape of its name: the panel's stem and a
+        // kind, with nothing further under it. A row's parts are addressed one
+        // level deeper and the disabled cascade reaches them too, so counting
+        // everything under the stem counted a reserved row five times. A shape
+        // rather than a list of exclusions, so an invented row is still caught
+        // — which is what this check is for.
+        //
+        // ★★★★★ R2110 — and the shape is the DECLARATION's now, not this
+        // file's: `palette_entry_kind` is what says which tags under the stem
+        // are catalogue rows, and it refuses the fixed seats as well as the
+        // deeper families.
         let inert_rows: Vec<&String> = shot
             .inert
             .keys()
-            .filter(|t| {
-                t.strip_prefix("shell.palette.")
-                    .is_some_and(|rest| !rest.contains('.'))
-            })
+            .filter(|t| crate::address::palette_entry_kind(t.as_str()).is_some())
             .collect();
         assert_eq!(
             inert_rows.len(),
@@ -4228,7 +4230,7 @@ type OperationGesture = (&'static str, fn(&std::rc::Rc<ShellState>, &Painted));
 
 const OPERATION_GESTURES: &[OperationGesture] = &[
     ("place a widget on the board", |state, shot| {
-        press_tag(state, shot, "shell.palette.packet");
+        press_tag(state, shot, &crate::address::palette_entry("packet"));
     }),
     ("move a card on the board", |state, shot| {
         // Grab the first card by its header grip and carry it right, far enough
@@ -4913,7 +4915,7 @@ fn r1819_every_gesture_this_screen_advertises_does_something() {
                         drag_tag(&state, &shot, "float.packet#0.resize", (60, 40));
                     }
                     "drag a palette entry to the board" => {
-                        press_tag(&state, &shot, "shell.palette.packet");
+                        press_tag(&state, &shot, &crate::address::palette_entry("packet"));
                     }
                     // ★★★★★ R1898 — the board's edge, both ways. The second
                     // needs a panel on the canvas to grab and gets one from the
@@ -5434,7 +5436,7 @@ fn declared_drop_parts() -> Vec<pinion_core::conformance::Part> {
 /// the cursor path — so a green here is a claim about the screen rather than
 /// about a test-only door.
 fn carry_to_middle(state: &std::rc::Rc<ShellState>, shot: &Painted, kind: &str) -> (u32, u32) {
-    let (px, py) = aim(shot, &format!("shell.palette.{kind}"));
+    let (px, py) = aim(shot, &crate::address::palette_entry(kind));
     ShellOracle::move_cursor(state, px, py);
     ShellOracle::press(state);
     let (mx, my) = board_middle();
@@ -5491,7 +5493,7 @@ fn router_standings(
     pinion_core::drop_target::DropStanding,
     pinion_core::drop_target::DropStanding,
 ) {
-    let row = aim(shot, &format!("shell.palette.{kind}"));
+    let row = aim(shot, &crate::address::palette_entry(kind));
     let mut drag = hand_on(scene);
     drag.cursor(row);
     drag.press();
@@ -5578,7 +5580,7 @@ fn r1733_every_specified_board_surface_is_the_one_the_paint_draws() {
                 ),
                 "palette_row" => pinion_core::test_fixtures::surface::painted_surface_of(
                     &scene,
-                    super::PALETTE_PART,
+                    crate::address::PALETTE_PART,
                     kind,
                     &board_title("palette_row"),
                 ),
@@ -5679,7 +5681,7 @@ fn r1733_a_carry_lands_where_its_preview_said_it_would() {
         // a release now. Driven screen-first this asserted a path real input no
         // longer takes, and it would have stayed green while the gesture a
         // person makes did nothing.
-        let row = aim(shot, &format!("shell.palette.{kind}"));
+        let row = aim(shot, &crate::address::palette_entry(kind));
         let mut drag = hand_on(painted_at(case.size).1);
         drag.cursor(row);
         drag.press();
@@ -5779,7 +5781,7 @@ fn r1733_a_click_on_a_palette_row_still_adds_at_the_bottom() {
         let board = state.board.get();
         let bottom = board.rows();
         let before = board.tiles().len();
-        press_tag(state, shot, &format!("shell.palette.{kind}"));
+        press_tag(state, shot, &crate::address::palette_entry(kind));
         let board = state.board.get();
         assert_eq!(
             board.tiles().len(),
@@ -5818,7 +5820,7 @@ fn r1735_a_fresh_carry_is_not_the_shells_to_commit() {
     let mut checked = 0;
     sweep(|state, shot, _, case| {
         let before = state.board.get().tiles().len();
-        let row = aim(shot, &format!("shell.palette.{kind}"));
+        let row = aim(shot, &crate::address::palette_entry(kind));
         let mut drag = hand_on(painted_at(case.size).1);
         drag.cursor(row);
         drag.press();
@@ -5881,7 +5883,7 @@ fn r1733_a_carry_let_go_off_the_board_is_not_a_placement() {
             .iter()
             .map(|t| t.id.as_str().to_owned())
             .collect();
-        let row = aim(shot, &format!("shell.palette.{kind}"));
+        let row = aim(shot, &crate::address::palette_entry(kind));
         let mut drag = hand_on(painted_at(case.size).1);
         drag.cursor(row);
         drag.press();
@@ -5997,7 +5999,7 @@ fn r1733_a_carry_reaches_the_rows_below_what_is_placed() {
     sweep(|state, shot, _, case| {
         cases += 1;
         let rows = state.board.get().rows();
-        let (px, py) = aim(shot, &format!("shell.palette.{kind}"));
+        let (px, py) = aim(shot, &crate::address::palette_entry(kind));
         ShellOracle::move_cursor(state, px, py);
         ShellOracle::press(state);
         let canvas = super::canvas_rect();
@@ -8433,7 +8435,7 @@ fn r1864_the_palette_catalogue_clears_its_own_footer() {
             // The panel really is on the frame at this height, so the two
             // clauses above are about something a reader can see.
             assert!(
-                shot.rect("shell.palette").is_some(),
+                shot.rect(crate::address::PALETTE).is_some(),
                 "at a {h}px window the palette is not painted, so this check \
                  passed by asking about nothing",
             );
@@ -10358,7 +10360,7 @@ const CANON_GESTURES: &[(&str, CanonReach, CanonDrive)] = &[
         |_state| {
             let kind = first_placeable();
             let shot = painted();
-            let row = aim(&shot, &format!("shell.palette.{kind}"));
+            let row = aim(&shot, &crate::address::palette_entry(kind));
             let mut drag = hand_on(painted_at((WIN_W, WIN_H)).1);
             drag.cursor(row);
             drag.press();

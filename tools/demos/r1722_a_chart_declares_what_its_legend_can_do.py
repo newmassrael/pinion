@@ -90,6 +90,8 @@ from rpc_verify import (  # noqa: E402
     find_by_tag,
     node_center,
     run_demo,
+    shell_palette_entry_address,
+    shell_palette_entry_prefix,
 )
 
 EXAMPLE = "hello-chart-legends"
@@ -191,8 +193,11 @@ def the_dashboards_chart_seats_are_still_booked() -> None:
     }
     with RpcSubprocess("hello-analyzer-shell", boot_grace=1.5) as tf:
         inert = {row["tag"]: row for row in tf.request("scene/disabled", {}).result["disabled"]}
+        # ★★★★★ R2110 — one query for the prefix, every row composed through the
+        # harness onto it. The separator lives in one place.
+        entry = shell_palette_entry_prefix(tf)
         for kind, booking in booked.items():
-            row = inert.get(f"shell.palette.{kind}")
+            row = inert.get(shell_palette_entry_address(entry, kind))
             assert row is not None, f"(I) the {kind} seat is still reported inert"
             assert_eq(row["reason"], "reserved", f"(I) {kind} is inert as a RESERVATION")
             assert_eq(
@@ -202,13 +207,13 @@ def the_dashboards_chart_seats_are_still_booked() -> None:
             )
             assert_eq(row["recourse"], "await_release", f"(I) {kind}'s recourse is unchanged")
         for kind in ("packet", "decode", "keymap", "filter"):
-            assert f"shell.palette.{kind}" not in inert, (
+            assert shell_palette_entry_address(entry, kind) not in inert, (
                 f"(I) {kind} is placeable and this round did not touch it"
             )
         # ★ R1797 — and the seat that moved is checked on the OTHER side rather
         # than dropped from the table. A seat that vanished from both lists
         # would leave this demo passing while saying nothing about it.
-        assert "shell.palette.latency" not in inert, (
+        assert shell_palette_entry_address(entry, "latency") not in inert, (
             "(I) ★ latency is placeable since R1797 — a release decision the "
             "reader made, not a capability landing"
         )

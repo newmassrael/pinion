@@ -5355,6 +5355,126 @@ def palette_verb(tf, verb: str, held: Any, *, ext: str = "/external") -> str:
     return f'{screen_spec(tf, ext)["palette_addresses"]["verb"]}{verb}.{held}'
 
 
+def shell_palette_root(tf, *, ext: str = "/external") -> str:
+    """The tag the analysis shell's WIDGET PALETTE panel itself is painted
+    under.
+
+    ★★★★★ R2110 — the thirteenth family of the address campaign and the largest
+    one: **33 sites across nine walks**, beside 91 in the shell's own crate.
+
+    ⚠ `shell_palette_*` and not `palette_*`, which is taken by the node lab's
+    definitions register. They are two panels on two screens, each correctly
+    called a palette, and their published blocks answer to the same key on their
+    own documents — so a helper named for one of them, taking a `tf`, would
+    answer plausibly for the other. That is the very defect this campaign
+    repays, one level up, so the two sets of doors are named apart.
+    """
+    return screen_spec(tf, ext)["palette_addresses"]["tag"]
+
+
+def shell_palette_seats(spec: Any) -> dict:
+    """Every FIXED seat of the palette panel, keyed by the word the screen
+    declares it under — from a specification a caller has ALREADY read.
+
+    ★★★★★ R2110 — [`toolbar_seats`]'s pair of doors, for the same reason.
+
+    ⚠ FIXED only, and here that is seven of the panel's marks: its heading's
+    three, its two counts, and the strip it becomes when it is put away with the
+    grip on it. The catalogue rows, the group headings and a row's four parts
+    expand over populations the screen publishes elsewhere, so each is reached
+    through its own composer below.
+    """
+    return {row["word"]: row["tag"] for row in spec["palette_addresses"]["seats"]}
+
+
+def shell_palette_tag(tf, word: str, *, ext: str = "/external") -> str:
+    """The address the palette's fixed seat called `word` is painted under.
+
+    Takes the seat's WORD, which is what the screen declares and the wire
+    publishes, so the address a walk reads and the address the paint used are
+    one spelling by construction. A word the panel does not address is a
+    `KeyError` naming it.
+    """
+    return shell_palette_seats(screen_spec(tf, ext))[word]
+
+
+def shell_palette_entry_prefix(tf, *, ext: str = "/external") -> str:
+    """The prefix every CATALOGUE ROW of the palette is painted under.
+
+    ★★ It is the panel's own tag plus the separator, so everything the panel
+    paints begins with it — the fixed seats, the group headings and a row's
+    parts included. Use it to classify a family; use
+    [`shell_palette_entry_address`] for one row, and read the row's own `tag`
+    out of `spec["catalogue"]` when walking the roster.
+    """
+    return screen_spec(tf, ext)["palette_addresses"]["entry"]
+
+
+def shell_palette_entry_address(prefix: str, kind: str) -> str:
+    """The address of the catalogue row for `kind`, composed onto a prefix the
+    caller already holds.
+
+    ★★★★★ R2110 — [`filter_saved_address`]'s shape one family over, and the
+    rule R2109.1 paid for: **a walk that composes a member address itself is
+    this debt wearing the shape of a fix.** The prefix the screen publishes
+    CARRIES its separator, so a reader that glues its own on asks for an address
+    nothing carries — and an empty answer looks exactly like a screen that did
+    not paint the row. The separator lives in one place, and for a caller
+    holding a prefix this is that place.
+
+    ⚠ PURE, so a walk that classifies a whole catalogue pays one query for the
+    prefix rather than one per row.
+    """
+    return f"{prefix}{kind}"
+
+
+def shell_palette_entry(tf, kind: str, *, ext: str = "/external") -> str:
+    """The address of the palette's catalogue row for `kind`."""
+    return shell_palette_entry_address(shell_palette_entry_prefix(tf, ext=ext), kind)
+
+
+def shell_palette_section_prefix(tf, *, ext: str = "/external") -> str:
+    """The prefix every GROUP HEADING of the palette is painted under.
+
+    ⚠ A prefix and not a roster because the roster is published where a reader
+    already asks for it: `spec["sections"]` carries each group's own `tag`. This
+    is for a walk classifying a snapshot, or asserting about a group it has just
+    named.
+    """
+    return screen_spec(tf, ext)["palette_addresses"]["section"]
+
+
+def shell_palette_section_address(prefix: str, key: str) -> str:
+    """The address of the group heading for `key`, composed onto a prefix the
+    caller already holds — see [`shell_palette_entry_address`]."""
+    return f"{prefix}{key}"
+
+
+def shell_palette_part_prefixes(spec: Any) -> dict:
+    """The prefix each PART of a palette row is painted under, keyed by the
+    part's word — from a specification a caller has ALREADY read.
+
+    ★★★★★ R2110 — a MAP and not one prefix, because this family is parametric
+    in two axes: the part's word and the row's kind, composed word first. A
+    single prefix would leave the walk holding the ORDER, which is the same
+    defect as leaving it holding the separator.
+
+    The words are the behaviour reference's own — what one palette row carries —
+    so a walk names a part and is handed the prefix the paint used.
+    """
+    return dict(spec["palette_addresses"]["parts"])
+
+
+def shell_palette_part(tf, word: str, kind: str, *, ext: str = "/external") -> str:
+    """The address of the `word` part of the palette's catalogue row for
+    `kind`.
+
+    A part the reference's row does not carry is a `KeyError` naming it.
+    """
+    prefix = shell_palette_part_prefixes(screen_spec(tf, ext))[word]
+    return f"{prefix}{kind}"
+
+
 def filter_root(tf, *, ext: str = "/external") -> str:
     """The tag the capture viewer's FILTER BAR itself is painted under.
 

@@ -75,7 +75,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from analyzer_spec import DOCS, unjudged_sections  # noqa: E402
-from rpc_verify import RpcSubprocess, assert_eq, run_demo  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    RpcSubprocess,
+    assert_eq,
+    run_demo,
+    shell_palette_root,
+)
 
 SHELL = "hello-analyzer-shell"
 EXT = "/external"
@@ -90,16 +95,23 @@ PIN = "analyzer-dashboard-spec.json"
 #: The rectangle a mounted screen would have been granted at this destination.
 PAGE_REGION = "shell.canvas"
 
-#: Where each judged surface is painted, so B can ask whether a screen at this
-#: destination could have reached it. Read from the paint, not declared here:
-#: the tag is the stem the judge reads that surface's parts under.
-SURFACE_TAG = {
-    "layout_bar": "shell.subbar",
-    "palette_head": "shell.palette",
-    "palette_groups": "shell.palette",
-    "palette": "shell.palette",
-    "board": "shell.canvas",
-}
+def surface_tags(app: RpcSubprocess) -> dict:
+    """Where each judged surface is painted, so B can ask whether a screen at
+    this destination could have reached it.
+
+    ★★★★★ R2110 — a function, and the palette's three rows ASKED FOR rather
+    than spelled. This was a module constant, and a constant is a spelling: a
+    wrong letter here does not fail loudly, it asks `scene/bbox` about a mark
+    that is not there — which reads as *the section did not paint the surface*.
+    """
+    palette = shell_palette_root(app)
+    return {
+        "layout_bar": "shell.subbar",
+        "palette_head": palette,
+        "palette_groups": palette,
+        "palette": palette,
+        "board": "shell.canvas",
+    }
 
 CHECKS: list[str] = []
 PARTS_COMPARED = 0
@@ -178,13 +190,14 @@ def section_b(app: RpcSubprocess) -> None:
     region = bbox(app, PAGE_REGION)
     said = report(app)
     surfaces = row_of(said, SEAT)["conformance"]["surfaces"]
+    homes_of = surface_tags(app)
     ok(
         "B: every surface of the verdict has a painted home to ask about",
-        set(surfaces) == set(SURFACE_TAG),
+        set(surfaces) == set(homes_of),
     )
     outside = []
     for surface in sorted(surfaces):
-        where = bbox(app, SURFACE_TAG[surface])
+        where = bbox(app, homes_of[surface])
         if not inside(region, where):
             outside.append((surface, where))
         print(
@@ -207,7 +220,7 @@ def section_b(app: RpcSubprocess) -> None:
     # surfaces are painted inside one panel, and adding that panel's area up
     # three times would be a number about this loop rather than about the
     # screen.
-    homes = {SURFACE_TAG[surface]: where for surface, where in outside}
+    homes = {homes_of[surface]: where for surface, where in outside}
     lost = sum(where["w"] * where["h"] for where in homes.values())
     print(
         f"  [unreachable] {len(outside)} surface(s) in {len(homes)} rectangle(s), "
