@@ -83,17 +83,20 @@ const HEADERS: &str = crate::address::LIST_HEAD_SEAT;
 /// Where a decode row is addressed — a layer by its own path, and the rows
 /// under it by a path beneath that, which is what makes the layer headings
 /// findable by the shape of a name rather than by a list.
-const FIELDS: &str = "pv.tree.field.";
+const FIELDS: &str = crate::address::TREE_FIELD_SEAT;
 /// Where the reassembly strip's parts are addressed.
 const STRIP: &str = "pv.reassembly.";
 /// The band the tree draws behind the row a reader has open.
-const OPEN_ROW: &str = "pv.tree.selected";
+const OPEN_ROW: &str = crate::address::TREE_SELECTED;
 /// The byte pane's readout: which row is open and which bytes it was read from.
 const SPAN: &str = "pv.bytes.span";
 /// Where one lit byte is addressed.
 const LIT: &str = "pv.bytes.lit.";
-/// Where the mark saying a row's value was worked out rather than read is.
-const DERIVED: &str = "pv.tree.derived.";
+// ⚠ R2112 — there was a `DERIVED` prefix here, and the round that declared this
+// family deleted it rather than pointing it at the declaration. Its one reader
+// composed `{DERIVED}{path}` by hand, which is the composition the declaration
+// now owns (`address::tree_derived`); a local alias for a prefix nobody strips
+// is the rotting thing this debt produces (R2104, R2110).
 
 /// How much of `docs/analyzer-packets-spec.json` this build is showing.
 ///
@@ -214,9 +217,11 @@ fn selection(regions: &PaintedRegions) -> Built {
     // for — and never "no bytes are lit", which would swallow a highlight
     // scrolled out of the pane.
     if said.is_some_and(|said| said.ends_with(spec::NO_BYTES)) {
-        let derived = open
-            .as_deref()
-            .is_some_and(|path| regions.rect_of(&format!("{DERIVED}{path}")).is_some());
+        let derived = open.as_deref().is_some_and(|path| {
+            regions
+                .rect_of(&crate::address::tree_derived(path))
+                .is_some()
+        });
         return Built::away(if derived {
             "the open decode row holds a value the decoder worked out rather than read \
              -- the tree draws its derived mark on it -- so the byte pane shows none of \
@@ -280,7 +285,7 @@ fn open_row(regions: &PaintedRegions) -> Option<String> {
     let band = regions.rect_of(OPEN_ROW)?;
     regions
         .marks()
-        .filter_map(|(tag, rect)| tag.strip_prefix(FIELDS).map(|path| (path, rect)))
+        .filter_map(|(tag, rect)| crate::address::tree_field_path(tag).map(|path| (path, rect)))
         .find(|(_, rect)| within(*rect, band))
         .map(|(path, _)| path.to_owned())
 }

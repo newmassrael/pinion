@@ -105,6 +105,12 @@ from rpc_verify import (  # noqa: E402
     run_demo,
     screen_spec,
     text_of_tag,
+    tree_derived_address,
+    tree_field,
+    tree_field_address,
+    tree_field_prefix,
+    tree_layer_address,
+    tree_tag,
     without_extent,
 )
 
@@ -121,17 +127,20 @@ SEAT = "packets"
 #: the mounted capture viewer in section E rather than written down, because
 #: this table is module-level and cannot query anything.
 #: ★★★★★ R2111 — and `list_columns` joined it, for the same reason and by the
-#: same route. The three that remain are families this campaign has not reached
-#: and still say their own stem.
+#: same route; R2112 took `decode_layers` the same way. The two that remain are
+#: families this campaign has not reached and still say their own stem.
 STEMS = {
     "context": "pv.context.",
-    "decode_layers": "pv.tree.field.",
     "reassembly": "pv.reassembly.",
 }
 
 #: The three regions the `selection` relation is painted across.
+#:
+#: ★★★★★ R2112 — `field` is absent here on purpose, for `filter_bar`'s reason:
+#: the band behind the open row is a seat the decode tree DECLARES, and this
+#: table is module-level and cannot query anything. Section E resolves it off the
+#: mounted screen and joins it to the two that still spell themselves.
 RELATION = {
-    "field": "pv.tree.selected",
     "span": "pv.bytes.span",
     "lit": "pv.bytes.lit.",
 }
@@ -439,6 +448,13 @@ def section_d(app: RpcSubprocess) -> str:
     published = app.query(f"/{tag}{EXT}/spec")
     headings = {layer["id"] for layer in published["layers"]}
     marked = abs_rects_of(app.snapshot(source="paint"))
+    # ★★★★★ R2112 — the decode tree's three prefixes, off the MOUNTED screen's
+    # own declaration. Every press below used to spell one; a walk's copy of an
+    # address cannot be checked against the paint, and one wrong letter makes the
+    # press land on nothing — which reads here as *the screen did not respond*.
+    field_at = published["tree_addresses"]["field"]
+    layer_at = published["tree_addresses"]["layer"]
+    derived_at = published["tree_addresses"]["derived"]
 
     # ★★★★★ R1815 CLOSED THE GAP THIS CHECK WAS WRITTEN TO RECORD, and flipping
     # it is what the debt named as the completion signal.
@@ -449,15 +465,15 @@ def section_d(app: RpcSubprocess) -> str:
     # behaviour reference binds selection to EVERY row of its decode tree and
     # has no fold, so that was a reproduction gap rather than a quirk.
     #
-    # R1815 moved the fold onto the chevron that draws it (`pv.tree.layer.{id}`,
-    # a tag painted since R1693 that no arm in `Hit::of_tag` had ever matched)
+    # R1815 moved the fold onto the chevron that draws it (a tag painted since
+    # R1693 that no arm in `Hit::of_tag` had ever matched)
     # and left the row selecting, as the canon does. Both halves are asserted
     # here, because a press that opened the row while ALSO folding it would
     # satisfy either half alone.
     heading = sorted(headings)[0]
     before = app.query(f"/{tag}{EXT}/selected_field")
     folded_before = app.query(f"/{tag}{EXT}/folded")
-    press_tag(app, f"pv.tree.field.{heading}")
+    press_tag(app, tree_field_address(field_at, heading))
     after = app.query(f"/{tag}{EXT}/selected_field")
     folded_after = app.query(f"/{tag}{EXT}/folded")
     print(
@@ -479,17 +495,17 @@ def section_d(app: RpcSubprocess) -> str:
     # ★ And the fold still exists -- it answers to the chevron now. Our own
     # second-pass addition, kept: what the canon lacks and we have is not
     # removed, it is moved onto the affordance that draws it.
-    press_tag(app, f"pv.tree.layer.{heading}")
+    press_tag(app, tree_layer_address(layer_at, heading))
     ok(
         "D: and the chevron folds that layer, without moving the selection",
         app.query(f"/{tag}{EXT}/folded") != folded_before
         and app.query(f"/{tag}{EXT}/selected_field") == heading,
     )
-    press_tag(app, f"pv.tree.layer.{heading}")  # and unfold it again
-    press_tag(app, f"pv.tree.field.{before}")  # put the selection back
+    press_tag(app, tree_layer_address(layer_at, heading))  # and unfold it again
+    press_tag(app, tree_field_address(field_at, before))  # put the selection back
 
     fields = [f for f in app.query(f"/{tag}{EXT}/visible_fields") if f not in headings]
-    worked_out = [f for f in fields if f"pv.tree.derived.{f}" in marked]
+    worked_out = [f for f in fields if tree_derived_address(derived_at, f) in marked]
     print(f"  [tree] {len(fields)} openable row(s); the tree marks {worked_out} as worked out")
     ok(
         f"D: the tree marks {len(worked_out)} row(s) as holding a value the "
@@ -497,7 +513,7 @@ def section_d(app: RpcSubprocess) -> str:
         len(worked_out) >= 1,
     )
 
-    press_tag(app, f"pv.tree.field.{worked_out[0]}")
+    press_tag(app, tree_field_address(field_at, worked_out[0]))
     derived = selection()
     ok(
         f"D: ★★★ pressing `{worked_out[0]}` takes the relation away with the "
@@ -516,7 +532,7 @@ def section_d(app: RpcSubprocess) -> str:
     for path in fields:
         if path in worked_out:
             continue
-        press_tag(app, f"pv.tree.field.{path}")
+        press_tag(app, tree_field_address(field_at, path))
         if selection()["standing"] is False:
             elsewhere = path
             break
@@ -539,7 +555,7 @@ def section_d(app: RpcSubprocess) -> str:
 
     # And back: away is a state, not a latch.
     readable = next(f for f in fields if f not in worked_out and f != elsewhere)
-    press_tag(app, f"pv.tree.field.{readable}")
+    press_tag(app, tree_field_address(field_at, readable))
     back = selection()
     ok(
         f"D: ★★ pressing `{readable}` brings it back -- away is a state the "
@@ -584,7 +600,12 @@ def section_e(app: RpcSubprocess) -> None:
         # screen. Published as a prefix already, so it is taken rather than
         # recovered: the grid's column population is the capture's.
         list_columns=list_head_prefix(app, ext=mounted),
+        # ★★★★★ R2112 — and the decode tree's row prefix, the same way.
+        decode_layers=tree_field_prefix(app, ext=mounted),
     )
+    # The band behind the open row, off the same declaration — see `RELATION`.
+    open_band = tree_tag(app, "selected", ext=mounted)
+    field_at = tree_field_prefix(app, ext=mounted)
     pin = packets_spec()
     missing: list[str] = []
     compared = 0
@@ -613,18 +634,18 @@ def section_e(app: RpcSubprocess) -> None:
         f"E: ★ and the {related} part(s) of the RELATION are painted across "
         f"three regions rather than under one stem, so they are checked here "
         f"rather than silently skipped -- {len(lit)} byte(s) lit",
-        RELATION["field"] in rects and RELATION["span"] in rects and lit,
+        open_band in rects and RELATION["span"] in rects and lit,
     )
 
     # ★★ The relation itself, from the PAINT on both sides. The tree draws a
     # band behind the row a reader has open and the band carries no name, so
     # which row it is behind is the row whose own mark lies within it -- the
     # same reading the screen's own verdict makes, done independently here.
-    band = rects[RELATION["field"]]
+    band = rects[open_band]
     open_row = next(
-        t[len("pv.tree.field.") :]
+        t[len(field_at) :]
         for t, r in sorted(rects.items())
-        if t.startswith("pv.tree.field.")
+        if t.startswith(field_at)
         and r[1] >= band[1]
         and r[1] + r[3] <= band[1] + band[3]
     )
@@ -738,7 +759,10 @@ def section_f(app: RpcSubprocess, derived: str) -> None:
         # its parts ARE. So the pair is driven apart on purpose and then back
         # together, which is what makes "one build, two placements" a
         # measurement instead of a coincidence.
-        press_tag(alone, f"pv.tree.field.{derived}")
+        # ★★★★★ R2112 — each process is asked for its OWN declaration. They are
+        # the same build, so the two prefixes agree; asking twice is what makes
+        # that a fact this walk observes rather than one it assumes.
+        press_tag(alone, tree_field(alone, derived, ext=EXT))
         parted = alone.query(f"{EXT}/conformance")
         ok(
             "F: ★★★★★ driven somewhere the host has not been, the standalone "
@@ -747,7 +771,7 @@ def section_f(app: RpcSubprocess, derived: str) -> None:
             without_extent(parted) != without_extent(own)
             and parted["surfaces"]["selection"]["standing"] is False,
         )
-        press_tag(app, f"pv.tree.field.{derived}")
+        press_tag(app, tree_field(app, derived, ext=f"/{here['tag']}{EXT}"))
         # ★ R1770 — apart from the size each was read at; the two are in
         # different windows and that difference is asserted separately above.
         assert_eq(

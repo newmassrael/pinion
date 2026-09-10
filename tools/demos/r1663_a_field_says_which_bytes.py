@@ -43,6 +43,8 @@ from rpc_verify import (  # noqa: E402
     filter_saved,
     list_row,
     run_demo,
+    tree_field,
+    tree_layer,
 )
 
 EXAMPLE = "hello-packet-view"
@@ -336,7 +338,7 @@ def body() -> None:
             ),
             (
                 "a decode row",
-                f"pv.tree.field.{row_field}",
+                tree_field(app, row_field, ext=f"/{VIEW}/external"),
                 lambda: q(app, VIEW, "selected_field"),
             ),
             (
@@ -349,7 +351,11 @@ def body() -> None:
                 filter_saved(app, 1, ext=f"/{VIEW}/external"),
                 lambda: q(app, VIEW, "saved"),
             ),
-            ("a layer chevron", "pv.tree.layer.l1", lambda: q(app, VIEW, "folded")),
+            (
+                "a layer chevron",
+                tree_layer(app, layers[1]["id"], ext=f"/{VIEW}/external"),
+                lambda: q(app, VIEW, "folded"),
+            ),
         ]
         for what, tag, read in targets:
             moved = assert_router_press_moves(app, tag, read, f"I: {what}")

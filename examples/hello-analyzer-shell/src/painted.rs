@@ -9907,6 +9907,100 @@ fn r2111_every_mark_the_mounted_grid_paints_has_an_address_a_reader_recovers() {
     });
 }
 
+/// ★★★★★ R2112 — **every mark the mounted decode tree paints is at an address
+/// the screen's declaration can RECOVER.**
+///
+/// [`r2111_every_mark_the_mounted_grid_paints_has_an_address_a_reader_recovers`]'s
+/// claim, one pane to the right, and the family where it is hardest to make: the
+/// grid's three parametric prefixes key on NUMBERS, so each inverse inherited a
+/// refusal from `parse()`. The decode tree keys on a field path and a layer
+/// identifier — an open vocabulary — so every refusal here had to be written,
+/// and this gate is what says the writing is enough.
+///
+/// The tree's family is reached by four declared readers — a fixed seat, a
+/// decode row, a fold chevron, a derived badge — and a mark under the family
+/// that none of them claims is a mark whose address exists only in the painter.
+///
+/// ⚠ Each reader's population is asserted NON-EMPTY, R2108's denominator rule:
+/// with the four claims ORed, a family whose members had all become fields would
+/// pass while three readers described nothing.
+///
+/// ⚠⚠ The tree's own tag is checked apart from the family, because the family
+/// stem carries the separator and the tree's address does not.
+#[test]
+fn r2112_every_mark_the_mounted_decode_tree_paints_has_an_address_a_reader_recovers() {
+    use hello_packet_view::address as tree;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        state
+            .go("packets")
+            .unwrap_or_else(|why| panic!("the capture section is open and refused: {why:?}"));
+        let (shot, _) = painted_at((WIN_W, WIN_H));
+
+        assert!(
+            shot.rect(tree::TREE).is_some(),
+            "the mounted capture section paints no `{}` — the decode tree itself \
+             is missing, and every count below would be about something else",
+            tree::TREE
+        );
+
+        let painted = shot.family(tree::TREE_SEAT);
+        let mut seats = 0usize;
+        let mut fields = 0usize;
+        let mut chevrons = 0usize;
+        let mut badges = 0usize;
+        let mut orphans: Vec<&str> = Vec::new();
+        for tag in painted {
+            if tree::tree_word(tag).is_some() {
+                seats += 1;
+            } else if tree::tree_field_path(tag).is_some() {
+                fields += 1;
+            } else if tree::tree_layer_id(tag).is_some() {
+                chevrons += 1;
+            } else if tree::tree_derived_path(tag).is_some() {
+                badges += 1;
+            } else {
+                orphans.push(tag);
+            }
+        }
+        assert!(
+            orphans.is_empty(),
+            "★★★★★ {} mark(s) under `{}` are at addresses no declared reader \
+             recovers — painted, and findable by nothing: {orphans:?}",
+            orphans.len(),
+            tree::TREE_SEAT
+        );
+        for (what, count) in [
+            ("fixed seats", seats),
+            ("decode rows", fields),
+            ("fold chevrons", chevrons),
+            ("derived badges", badges),
+        ] {
+            assert!(
+                count > 0,
+                "★★ no painted mark was claimed as one of the tree's {what} — \
+                 with the four claims ORed, a reader describing nothing makes \
+                 the zero above mean less than it reads \
+                 (seats {seats}, rows {fields}, chevrons {chevrons}, \
+                 badges {badges})"
+            );
+        }
+        // ★★★★★ The DENOMINATOR, printed on every run rather than recovered by
+        // breaking the gate on purpose. A zero-orphan claim is only as good as
+        // the population it was made over, and R2111 had to fail its own gate to
+        // learn what that population was. `cargo test -p hello-analyzer-shell
+        // r2112 -- --nocapture` asks.
+        println!(
+            "[r2112] {} mark(s) under `{}`: {seats} seat(s), {fields} row(s), \
+             {chevrons} chevron(s), {badges} badge(s), 0 orphan(s)",
+            seats + fields + chevrons + badges,
+            tree::TREE_SEAT
+        );
+    });
+}
+
 /// ★★★★★ R1874 — **the node palette's body has NO box too short for its face**,
 /// and the gate is zero rather than a share of the lab screen's ratchet.
 ///
@@ -10086,7 +10180,7 @@ fn r1877_no_run_of_the_log_details_pane_sits_in_a_box_too_short_for_its_face() {
 ///
 /// ⚠ The card's own segment carries an index (`card.decode#0`), so the family
 /// is a PREFIX on a path segment rather than an equality — a shape R1875's
-/// `pv.tree.body` did not need and this one does.
+/// decode-tree body did not need and this one does.
 ///
 /// # ⚠ What this family deliberately EXCLUDES, and why it is said rather than
 /// silently arranged
@@ -10378,8 +10472,8 @@ fn r1880_no_run_of_the_app_bar_sits_in_a_box_too_short_for_its_face() {
 /// ratchet.
 ///
 /// The third destination of the short-box campaign, on the site the census
-/// DERIVED: `pv.tree.body/*` was the largest single site in the whole
-/// application once R1874 had repaid the node palette.
+/// DERIVED: everything under the decode tree's scrolling body was the largest
+/// single site in the whole application once R1874 had repaid the node palette.
 ///
 /// ⚠ **The family is a PATH, not a tag** — R1874's rule, and the reason it is
 /// worth restating: a census SITE is not a PANE. The census folds by address,
@@ -15602,7 +15696,13 @@ fn a_colour_under_the_floor_is_taken_and_reported(
 #[test]
 fn r1875_no_run_in_the_decode_tree_sits_in_a_box_too_short_for_its_face() {
     /// The pane whose content this gate judges, as it appears in a run's path.
-    const PANE: &str = "pv.tree.body";
+    ///
+    /// ★★★★★ R2112 — taken from the screen's own declaration rather than typed
+    /// here, for the reason [`r1872_no_run_in_the_message_list_sits_in_a_box_too_short_for_its_face`]
+    /// records one pane over: a gate asserting a population is non-empty, whose
+    /// population is named by a second copy of the screen's address, passes by
+    /// describing nothing the day the screen renames it.
+    const PANE: &str = hello_packet_view::address::TREE_BODY;
 
     let owner = Owner::new();
     owner.run(|| {

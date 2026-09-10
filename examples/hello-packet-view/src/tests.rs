@@ -628,7 +628,8 @@ fn r2011_the_stand_in_decode_places_rows_where_the_described_one_does() {
 /// ★★★★★ A layer heading OPENS when it is pressed, and the two channels agree.
 ///
 /// R1747 measured the defect by driving the running screen: pressing the middle
-/// of `pv.tree.field.l0` flipped `folded` and left `selected_field` alone, while
+/// of the first layer's own decode row flipped `folded` and left
+/// `selected_field` alone, while
 /// `invoke select_field "l0"` on the same row opened it and lit twelve bytes. A
 /// screen whose pointer and whose wire disagree about what one row does is one
 /// this tree has closed under several names on its sibling screens.
@@ -650,7 +651,7 @@ fn r1815_a_layer_heading_opens_by_tag_and_folds_by_its_chevron() {
         assert!(
             super::act_on_hit(
                 state,
-                super::Hit::of_tag(state, &format!("pv.tree.field.{layer}"))
+                super::Hit::of_tag(state, &address::tree_field(layer))
             ),
             "the layer row must answer a press"
         );
@@ -688,7 +689,7 @@ fn r1815_a_layer_heading_opens_by_tag_and_folds_by_its_chevron() {
         assert!(
             super::act_on_hit(
                 state,
-                super::Hit::of_tag(state, &format!("pv.tree.layer.{layer}"))
+                super::Hit::of_tag(state, &address::tree_layer(layer))
             ),
             "the chevron must answer a press — it had a tag and no arm until R1815"
         );
@@ -720,12 +721,12 @@ fn r1815_the_arrows_expand_and_collapse_what_the_item_announces() {
         assert!(!state.folded.get()[0], "it starts open");
 
         assert!(
-            super::key_at(state, Some("pv.tree"), "ArrowLeft"),
+            super::key_at(state, Some(address::TREE), "ArrowLeft"),
             "ArrowLeft on an open layer collapses it"
         );
         assert!(state.folded.get()[0]);
         assert!(
-            super::key_at(state, Some("pv.tree"), "ArrowRight"),
+            super::key_at(state, Some(address::TREE), "ArrowRight"),
             "ArrowRight on a collapsed layer expands it"
         );
         assert!(!state.folded.get()[0]);
@@ -737,15 +738,15 @@ fn r1815_the_arrows_expand_and_collapse_what_the_item_announces() {
         // IS the selection: an arrow moves it and `seat_pane_cursor` calls
         // `select_field`. There is nothing left for `Enter` to activate, so the
         // roving consumes no such chord, and the fallback arm asks
-        // `Hit::of_tag` about the focused stop — which is the PANE tag
-        // `pv.tree`, never the row's — and gets `Hit::None`.
+        // `Hit::of_tag` about the focused stop — which is the PANE's own tag,
+        // never the row's — and gets `Hit::None`.
         //
         // ⇒ the keyboard could already SELECT a layer heading, by walking onto
         // it. What no key could do was FOLD one, which is why the arrows are the
         // repair and why the pointer was the channel that was broken.
         select_field(state, layer);
         assert!(
-            !super::key_at(state, Some("pv.tree"), "Enter"),
+            !super::key_at(state, Some(address::TREE), "Enter"),
             "a `Follows` tree has nothing for Enter to activate, so it reports \
              that it did nothing rather than pretending"
         );
@@ -753,13 +754,13 @@ fn r1815_the_arrows_expand_and_collapse_what_the_item_announces() {
 
         // A chord that would only navigate falls through rather than pretending.
         assert!(
-            !super::key_at(state, Some("pv.tree"), "ArrowRight"),
+            !super::key_at(state, Some(address::TREE), "ArrowRight"),
             "ArrowRight on an ALREADY open layer is the ARIA move-to-first-child \
              case, which is not built — it must report that it did nothing"
         );
         select_field(state, "l1.sn");
         assert!(
-            !super::key_at(state, Some("pv.tree"), "ArrowLeft"),
+            !super::key_at(state, Some(address::TREE), "ArrowLeft"),
             "and a leaf row has nothing to collapse"
         );
     });
@@ -1235,7 +1236,7 @@ fn press_key(focused: Option<&str>, chord: &str) -> bool {
 /// The three panes that own a keyboard cursor, and the key that advances each.
 const PANE_CURSORS: [(&str, &str); 3] = [
     (address::LIST, "ArrowDown"),
-    ("pv.tree", "ArrowDown"),
+    (address::TREE, "ArrowDown"),
     ("pv.bytes", "ArrowRight"),
 ];
 
@@ -1276,7 +1277,7 @@ fn r1698_each_panes_arrows_move_that_panes_cursor() {
                 // The byte grid's cursor is the selected field's first byte, so
                 // moving the tree legitimately moves it. Every other pair is
                 // independent.
-                if stop == "pv.tree" && other == "pv.bytes" {
+                if stop == address::TREE && other == "pv.bytes" {
                     continue;
                 }
                 assert_eq!(
@@ -3016,6 +3017,233 @@ fn r2111_the_wire_publishes_the_grids_declaration() {
     assert_eq!(
         pane["body"].as_str(),
         Some(address::LIST_BODY),
+        "★★ the pane table's scrolling body is not the declared seat"
+    );
+}
+
+/// ★★★★★ R2112 — **every decode-tree address is what its declaration derives,
+/// and each of its four readers refuses the other three's tags.**
+///
+/// The tree is the first family this campaign has converted whose parametric
+/// keys are an OPEN VOCABULARY: the grid next door keys on numbers, so each of
+/// its inverses inherited a refusal from `parse()` without having to state one.
+/// Here a field path and a layer identifier are whatever the decode says, so
+/// every refusal is written — and this is where the writing is checked.
+#[test]
+fn r2112_every_tree_address_is_derived() {
+    // The two forms of the stem agree, so a reader composing on the separator
+    // form cannot drift from one classifying by the bare one.
+    assert_eq!(
+        address::TREE_SEAT,
+        format!("{}{}", address::TREE, address::SEPARATOR)
+    );
+    // ★ Every declared fixed seat IS the derivation of its word, and the round
+    // trip is what catches a roster carrying one tag under two words.
+    for (word, tag) in address::TREE_SEATS {
+        assert_eq!(
+            &address::tree(word),
+            tag,
+            "★ the declared address for `{word}` is not what `tree()` derives"
+        );
+        assert_eq!(
+            address::tree_word(tag),
+            Some(*word),
+            "★ `{tag}` does not round-trip back to its word"
+        );
+    }
+    assert_eq!(
+        address::tree_word(address::TREE),
+        None,
+        "★★ the tree's own tag is not one of its seats"
+    );
+    // ★★ Each parametric family hangs off the tree's stem and ends in the
+    // separator, and its template is that prefix with the placeholder. Checked
+    // structurally rather than against a re-typed string, so the assertion does
+    // not become the second spelling it exists to prevent.
+    for (prefix, template) in [
+        (address::TREE_FIELD_SEAT, address::TREE_FIELD_TEMPLATE),
+        (address::TREE_LAYER_SEAT, address::TREE_LAYER_TEMPLATE),
+        (address::TREE_DERIVED_SEAT, address::TREE_DERIVED_TEMPLATE),
+    ] {
+        assert!(
+            prefix.starts_with(address::TREE_SEAT) && prefix.ends_with(address::SEPARATOR),
+            "★ `{prefix}` is not a family of this tree's stem"
+        );
+        assert_eq!(
+            template,
+            format!("{prefix}{{}}"),
+            "★ `{template}` is not `{prefix}` with the population's placeholder"
+        );
+    }
+    tree_family_round_trips();
+    tree_readers_refuse_each_other();
+}
+
+/// The three keyed families' round trips, each against the population the
+/// specification enumerates it over.
+///
+/// ★★★★★ The pairing is the assertion. The specification names a family by a
+/// template and expands it by key, while the painter composes an address; before
+/// this round those were two spellings with nothing between them, and a template
+/// that drifted would point the accessibility census at addresses nothing paints
+/// while the screen went on painting the right ones.
+fn tree_family_round_trips() {
+    for path in spec::Population::Fields.members() {
+        let tag = address::tree_field(&path);
+        assert_eq!(
+            address::tree_field_path(&tag),
+            Some(path.as_str()),
+            "★ `{tag}` does not round-trip back to its field path"
+        );
+        assert_eq!(
+            address::TREE_FIELD_TEMPLATE.replace("{}", &path),
+            tag,
+            "★ the specification's field template and the painter's composer \
+             disagree at `{path}`"
+        );
+    }
+    for id in spec::Population::Layers.members() {
+        let tag = address::tree_layer(&id);
+        assert_eq!(address::tree_layer_id(&tag), Some(id.as_str()));
+        assert_eq!(
+            address::TREE_LAYER_TEMPLATE.replace("{}", &id),
+            tag,
+            "★ the specification's chevron template and the painter's composer \
+             disagree at layer `{id}`"
+        );
+    }
+    let derived = spec::Population::Derived.members();
+    assert!(
+        !derived.is_empty(),
+        "★ no field is derived, so every claim this function makes about the \
+         badge family describes nothing"
+    );
+    for path in derived {
+        let tag = address::tree_derived(&path);
+        assert_eq!(address::tree_derived_path(&tag), Some(path.as_str()));
+        assert_eq!(
+            address::TREE_DERIVED_TEMPLATE.replace("{}", &path),
+            tag,
+            "★ the specification's badge template and the painter's composer \
+             disagree at `{path}`"
+        );
+    }
+}
+
+/// ★★★★★ What each inverse REFUSES — the half that had to be written here
+/// because no `parse()` writes it for this family.
+///
+/// A layer identifier is also a field path (`l1` names the heading row and the
+/// chevron drawn on it), so these readers answer about the same layer from two
+/// different marks and are told apart by the word in the address and by nothing
+/// else. A reader that stripped only the stem would read a chevron as a field
+/// whose path began `layer.`, and a press on the fold would select a row.
+fn tree_readers_refuse_each_other() {
+    let layer = spec::LAYERS[0].0;
+    let field = address::tree_field(layer);
+    let chevron = address::tree_layer(layer);
+    let badge = address::tree_derived(layer);
+    assert_eq!(address::tree_field_path(&chevron), None);
+    assert_eq!(address::tree_field_path(&badge), None);
+    assert_eq!(address::tree_layer_id(&field), None);
+    assert_eq!(address::tree_layer_id(&badge), None);
+    assert_eq!(address::tree_derived_path(&field), None);
+    assert_eq!(address::tree_derived_path(&chevron), None);
+    for tag in [&field, &chevron, &badge] {
+        assert_eq!(
+            address::tree_word(tag),
+            None,
+            "★★ `{tag}` reads back as a FIXED seat — the roster is being matched \
+             as a prefix rather than as an equality"
+        );
+    }
+    assert_eq!(
+        address::tree_field_path(address::TREE),
+        None,
+        "★★ the tree's own tag is not a decode row"
+    );
+    // ★★★★★ The stem is not a member of its own family. An inverse answering
+    // `Some("")` here would let the integrated gate count a family's own stem as
+    // a nameless member and report the family fully claimed.
+    for stem in [
+        address::TREE_FIELD_SEAT,
+        address::TREE_LAYER_SEAT,
+        address::TREE_DERIVED_SEAT,
+    ] {
+        assert_eq!(
+            (
+                address::tree_field_path(stem),
+                address::tree_layer_id(stem),
+                address::tree_derived_path(stem)
+            ),
+            (None, None, None),
+            "★★★★★ `{stem}` is a family's stem and not a member of it"
+        );
+    }
+    // ★★★ A field path is HIERARCHICAL, so a heading's address is a prefix of
+    // its children's. The whole tail is the path: `…field.l1.sn` is one field,
+    // not the field `l1` with something after it.
+    let child = address::tree_field("l1.sn");
+    assert_eq!(
+        address::tree_field_path(&child),
+        Some("l1.sn"),
+        "★★★ a nested field path was cut at the separator — the address of a \
+         layer heading is a PREFIX of its children's, and splitting here would \
+         make every nested row read back as its parent"
+    );
+}
+
+/// ★★★★★ R2112 — **the wire carries the tree's declaration, and the two
+/// surfaces that name the tree agree.**
+///
+/// This is the half the walks stand on: they are Python and cannot call any of
+/// the above, so a prefix that stopped agreeing here would hand four walks an
+/// address matching no mark — which reads to every one of them as *the screen
+/// did not paint it*.
+#[test]
+fn r2112_the_wire_publishes_the_trees_declaration() {
+    let wire = super::spec_json();
+    let published = &wire["tree_addresses"];
+    assert_eq!(published["tag"].as_str(), Some(address::TREE));
+    assert_eq!(published["field"].as_str(), Some(address::TREE_FIELD_SEAT));
+    assert_eq!(published["layer"].as_str(), Some(address::TREE_LAYER_SEAT));
+    assert_eq!(
+        published["derived"].as_str(),
+        Some(address::TREE_DERIVED_SEAT)
+    );
+    let seats: Vec<(String, String)> = published["seats"]
+        .as_array()
+        .expect("the wire publishes the tree's seats as a list")
+        .iter()
+        .map(|row| {
+            (
+                row["word"].as_str().unwrap_or_default().to_owned(),
+                row["tag"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    let declared: Vec<(String, String)> = address::TREE_SEATS
+        .iter()
+        .map(|(word, tag)| ((*word).to_owned(), (*tag).to_owned()))
+        .collect();
+    assert_eq!(
+        seats, declared,
+        "★★★★★ the seats the wire publishes and the ones `address::TREE_SEATS` \
+         declares are not the same list, in the same order"
+    );
+    // ⚠ `panes` has named the tree and its scrolling body since R1662, so the
+    // tree is on the wire TWICE. Both derive from one declaration, and this
+    // asserts they are equal rather than leaving a reader to notice they happen
+    // to agree.
+    let pane = &wire["panes"][1];
+    assert_eq!(
+        pane["tag"].as_str(),
+        published["tag"].as_str(),
+        "★★ the pane table and the address table name different trees"
+    );
+    assert_eq!(
+        pane["body"].as_str(),
+        Some(address::TREE_BODY),
         "★★ the pane table's scrolling body is not the declared seat"
     );
 }

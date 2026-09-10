@@ -862,7 +862,7 @@ fn use_view_state() -> Rc<ViewState> {
     // itself and a factory that calls another `use_*` hook does exactly that.
     let map = use_byte_map("packet_view.map", || decode(spec::OPENING_ROW));
     let list_scroll = pinion_core::widgets::scroll::use_scroll_state(address::LIST_BODY);
-    let tree_scroll = pinion_core::widgets::scroll::use_scroll_state("pv.tree.body");
+    let tree_scroll = pinion_core::widgets::scroll::use_scroll_state(address::TREE_BODY);
     let bytes_scroll = pinion_core::widgets::scroll::use_scroll_state("pv.bytes.body");
     // R1707 — the query field's own buffer, resolved out here for the same
     // reason as the four above. The first draft called the hook inside the
@@ -1457,14 +1457,14 @@ impl Hit {
             return Self::Byte(b);
         }
         // ★★★★★ R1815 — the chevron has its own tag and now its own arm. It has
-        // carried `pv.tree.layer.{id}` since R1693 and nothing here matched it,
+        // carried its own address since R1693 and nothing here matched it,
         // so the tag was addressable in the paint and inert to every press.
-        if let Some(id) = tag.strip_prefix("pv.tree.layer.")
+        if let Some(id) = address::tree_layer_id(tag)
             && let Some(layer) = spec::LAYERS.iter().position(|(lid, _)| *lid == id)
         {
             return Self::Layer(layer);
         }
-        if let Some(path) = tag.strip_prefix("pv.tree.field.")
+        if let Some(path) = address::tree_field_path(tag)
             && state.map.map().field(path).is_some()
         {
             // ★ A layer heading falls here too, and that is the repair: the row
@@ -1968,13 +1968,13 @@ fn pane_cursor(state: &Rc<ViewState>, stop: &str) -> Option<Roving> {
             // a cursor pointing at a row that is not in its own roster.
             address::list_row(state.cursor_row()),
         ),
-        "pv.tree" => (
+        address::TREE => (
             RovingSpec::new(Axis::Vertical).with_activation(Activation::Follows),
             visible_fields(state)
                 .iter()
-                .map(|(path, ..)| Member::new(format!("pv.tree.field.{path}")))
+                .map(|(path, ..)| Member::new(address::tree_field(path)))
                 .collect(),
-            format!("pv.tree.field.{}", state.field.get()),
+            address::tree_field(&state.field.get()),
         ),
         "pv.bytes" => (
             // Both axes, because the grid wraps: a byte's neighbour to the
@@ -2074,7 +2074,7 @@ fn seat_pane_cursor(state: &Rc<ViewState>, stop: &str, roving: &Roving) {
                 )));
             }
         }
-        "pv.tree" => {
+        address::TREE => {
             if let Some((path, ..)) = visible_fields(state).get(index) {
                 select_field(state, &path.clone());
             }
@@ -2224,7 +2224,7 @@ fn key_at(state: &Rc<ViewState>, focused: Option<&str>, chord: &str) -> bool {
         // they need a cursor that can address a parent, and they are not built
         // — a chord that would only navigate returns `false` and falls through
         // rather than silently doing nothing.
-        "ArrowRight" | "ArrowLeft" if focused == Some("pv.tree") => {
+        "ArrowRight" | "ArrowLeft" if focused == Some(address::TREE) => {
             let path = state.field.get();
             spec::LAYERS
                 .iter()
@@ -2623,7 +2623,7 @@ fn descriptions() -> Descriptions {
     }
     for (key, title) in spec::LAYERS {
         described.describe(
-            format!("pv.tree.layer.{key}"),
+            address::tree_layer(key),
             format!("{title} - press to fold this layer away"),
         );
     }
@@ -3096,7 +3096,7 @@ fn tree_row_paint(
     let mut children = Vec::new();
     if path == selected {
         children.push(
-            box_at("pv.tree.selected", row, ink.lit, Some(ink.accent), 0).silenced(
+            box_at(address::TREE_SELECTED, row, ink.lit, Some(ink.accent), 0).silenced(
                 Silence::decorative("the band behind the open field; the item says it is selected"),
             ),
         );
@@ -3105,7 +3105,7 @@ fn tree_row_paint(
     if let Some(index) = layer {
         children.push(
             tagged_label(
-                &format!("pv.tree.layer.{}", spec::LAYERS[index].0),
+                &address::tree_layer(spec::LAYERS[index].0),
                 if folded.get(index).copied().unwrap_or(false) {
                     ">"
                 } else {
@@ -3119,7 +3119,7 @@ fn tree_row_paint(
             // a word for, and the item carries it as `aria-expanded` —
             // announcing the glyph too would read a punctuation mark aloud
             // beside the thing it already said.
-            .silenced(Silence::part_of(format!("pv.tree.field.{path}"))),
+            .silenced(Silence::part_of(address::tree_field(path))),
         );
     }
     // ★★★★★ R1875 — the field's name, the badge beside it and the value are
@@ -3129,7 +3129,7 @@ fn tree_row_paint(
     // the row, so they share its centre by construction and a face change moves
     // every one of them.
     children.push(tagged_label(
-        &format!("pv.tree.field.{path}"),
+        &address::tree_field(path),
         name.clone(),
         run_band(row, indent + 6, 128),
         FONT_SMALL,
@@ -3150,7 +3150,7 @@ fn tree_row_paint(
         right = right.saturating_sub(width);
         children.push(
             tagged_label(
-                &format!("pv.tree.derived.{path}"),
+                &address::tree_derived(path),
                 "derived",
                 run_band(row, right, width),
                 FONT_SMALL,
@@ -3159,7 +3159,7 @@ fn tree_row_paint(
             // The badge says this value came from no bytes. That is a fact about
             // the field, announced with it rather than as a separate stop that
             // says only "derived".
-            .silenced(Silence::part_of(format!("pv.tree.field.{path}"))),
+            .silenced(Silence::part_of(address::tree_field(path))),
         );
     }
     children.push(label(
@@ -3180,7 +3180,7 @@ fn tree_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     let selected = state.field.get();
     let mut children = vec![
         tagged_label(
-            "pv.tree.title",
+            address::TREE_TITLE,
             format!("{}  ·  L0 -> L3", spec::PANES[1].title),
             // ★ R1875 — the head strip is the seat, the same way the message
             // list's headings take `list_head_seat`. `y = 6, h = 12` centred at
@@ -3189,14 +3189,14 @@ fn tree_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
             FONT_SMALL,
             ink.text_3,
         )
-        .silenced(Silence::name_of("pv.tree")),
+        .silenced(Silence::name_of(address::TREE)),
     ];
     for (n, field) in visible_fields(state).into_iter().enumerate() {
         children.extend(tree_row_paint(state, n, &field, selected.as_str(), ink));
     }
     // One stop for the tree, like the grid beside it.
     panel(
-        "pv.tree",
+        address::TREE,
         rect,
         ink.surface,
         Some(ink.outline),
@@ -4173,6 +4173,99 @@ fn violations_json() -> serde_json::Value {
     )
 }
 
+/// ★★★★★ R2109 — **the filter bar: its own tag, every fixed seat's, and the
+/// prefix its saved chips hang off.**
+///
+/// A walk is Python and cannot call [`address::filter`], so before that round
+/// every walk that drove the bar re-typed the address — measured at entry, 34
+/// sites across seven walks beside 38 in this crate.
+///
+/// ⚠ The bar is a `tag` BESIDE the seats rather than their first row, and that
+/// is forced by the recovery rather than chosen: a roster's prefix is recovered
+/// by taking a row's own key off the end of its address, and the bar's address
+/// is the prefix WITHOUT the separator — a row for it would hand every later
+/// reader a prefix that runs the bar's own tag straight into a seat's word, with
+/// no dot between them.
+///
+/// ⚠⚠ `saved` appears twice on purpose: once as a fixed seat (the chip row's
+/// container, which is a mark and a Tab stop) and once as the prefix its members
+/// hang off. They are two different questions about one word, and a reader that
+/// had only the seat would compose a member address by guessing where the dot
+/// goes.
+fn filter_addresses_json() -> serde_json::Value {
+    serde_json::json!({
+        "tag": address::FILTER,
+        "seats": address::FILTER_SEATS.iter().map(|(word, tag)| serde_json::json!({
+            "word": word, "tag": tag,
+        })).collect::<Vec<_>>(),
+        "saved": address::FILTER_SAVED_SEAT,
+    })
+}
+
+/// ★★★★★ R2111 — **the message grid: its own tag, its three fixed seats, and
+/// the prefix each of its three parametric families hangs off.**
+///
+/// The largest family of this screen and the largest this address campaign has
+/// converted: measured at entry, 78 sites in this crate, 32 across ten walks and
+/// one in the shell that mounts this screen as a page.
+///
+/// ⚠ The grid's tag is published HERE as well as in `panes`, and that is
+/// deliberate rather than a leftover. `panes` answers *where are the three panes
+/// and how wide*; this answers *what is the message grid's family called*. Both
+/// derive from [`address::LIST`], so they cannot drift — and the gate asserts the
+/// two surfaces are equal rather than leaving a reader to notice they happen to
+/// agree.
+///
+/// ⚠⚠ The three prefixes are prefixes and not rosters because their populations
+/// are the CAPTURE's: a walk reads `rows` and `columns` from this same document
+/// and composes. The separator lives in the prefix and the cell's JOIN is
+/// published beside it, so a walk spells neither — R2109.1 is the round that
+/// learned a walk gluing its own separator is this debt wearing the shape of a
+/// fix.
+///
+/// ⚠⚠⚠ The row ANNOTATIONS are absent on purpose: no walk addresses one, and a
+/// published surface with no reader is the rotting thing this debt produces
+/// (R2104 measured it and deleted the helper it had just built).
+fn list_addresses_json() -> serde_json::Value {
+    serde_json::json!({
+        "tag": address::LIST,
+        "seats": address::LIST_SEATS.iter().map(|(word, tag)| serde_json::json!({
+            "word": word, "tag": tag,
+        })).collect::<Vec<_>>(),
+        "head": address::LIST_HEAD_SEAT,
+        "row": address::LIST_ROW_SEAT,
+        "cell": address::LIST_CELL_SEAT,
+        "cell_join": address::LIST_CELL_JOIN,
+    })
+}
+
+/// ★★★★★ R2112 — **the decode tree: its own tag, its three fixed seats, and the
+/// prefix each of its three parametric families hangs off.**
+///
+/// Measured at entry, 56 sites in this crate, 19 across four walks and three in
+/// the shell that mounts this screen as a page.
+///
+/// ⚠ The three prefixes key on an OPEN VOCABULARY — a field's path and a
+/// layer's identifier — where the grid's three keyed on numbers. A walk reads
+/// the populations from `fields` and `layers` on this same document and
+/// composes, so it spells neither the prefix nor the separator.
+///
+/// ⚠⚠ `derived` is published even though its population is a SUBSET the wire
+/// does not enumerate — a field is derived when its `encodes` is false, which
+/// `fields` above already says. So a walk can derive the roster; it could not
+/// derive the prefix.
+fn tree_addresses_json() -> serde_json::Value {
+    serde_json::json!({
+        "tag": address::TREE,
+        "seats": address::TREE_SEATS.iter().map(|(word, tag)| serde_json::json!({
+            "word": word, "tag": tag,
+        })).collect::<Vec<_>>(),
+        "field": address::TREE_FIELD_SEAT,
+        "layer": address::TREE_LAYER_SEAT,
+        "derived": address::TREE_DERIVED_SEAT,
+    })
+}
+
 /// The whole specification, as the wire sees it — so the demo reads the table
 /// from the running application rather than keeping a second copy of it.
 fn spec_json() -> serde_json::Value {
@@ -4222,67 +4315,15 @@ fn spec_json() -> serde_json::Value {
         "saved_filters": spec::SAVED_FILTERS.iter().map(|f| serde_json::json!({
             "name": f.name, "query": f.query,
         })).collect::<Vec<_>>(),
-        // ★★★★★ R2109 — **the filter bar: its own tag, every fixed seat's, and
-        // the prefix its saved chips hang off.**
-        //
-        // A walk is Python and cannot call `address::filter`, so before this
-        // every walk that drove the bar re-typed the address — measured at
-        // entry, 34 sites across seven walks beside 38 in this crate.
-        //
-        // ⚠ The bar is a `tag` BESIDE the seats rather than their first row,
-        // and that is forced by the recovery rather than chosen: a roster's
-        // prefix is recovered by taking a row's own key off the end of its
-        // address, and the bar's address is the prefix WITHOUT the separator —
-        // a row for it would hand every later reader a prefix that runs the
-        // bar's own tag straight into a seat's word, with no dot between them.
-        //
-        // ⚠⚠ `saved` appears twice on purpose: once as a fixed seat (the chip
-        // row's container, which is a mark and a Tab stop) and once as `saved`,
-        // the prefix its members hang off. They are two different questions
-        // about one word, and a reader that had only the seat would compose a
-        // member address by guessing where the dot goes.
-        "filter_addresses": serde_json::json!({
-            "tag": address::FILTER,
-            "seats": address::FILTER_SEATS.iter().map(|(word, tag)| serde_json::json!({
-                "word": word, "tag": tag,
-            })).collect::<Vec<_>>(),
-            "saved": address::FILTER_SAVED_SEAT,
-        }),
-        // ★★★★★ R2111 — **the message grid: its own tag, its three fixed seats,
-        // and the prefix each of its three parametric families hangs off.**
-        //
-        // The largest family of this screen and the largest this address
-        // campaign has converted: measured at entry, 78 sites in this crate, 32
-        // across ten walks and one in the shell that mounts this screen as a
-        // page.
-        //
-        // ⚠ The grid's tag is published HERE as well as in `panes`, and that is
-        // deliberate rather than a leftover. `panes` answers *where are the
-        // three panes and how wide*; this answers *what is the message grid's
-        // family called*. Both derive from `address::LIST`, so they cannot
-        // drift — and the gate asserts the two surfaces are equal rather than
-        // leaving a reader to notice they happen to agree.
-        //
-        // ⚠⚠ The three prefixes are prefixes and not rosters because their
-        // populations are the CAPTURE's: a walk reads `rows` and `columns` from
-        // this same document and composes. The separator lives in the prefix and
-        // the cell's JOIN lives in the harness, so a walk spells neither — R2109.1
-        // is the round that learned a walk gluing its own separator is this debt
-        // wearing the shape of a fix.
-        //
-        // ⚠⚠⚠ The row ANNOTATIONS are absent on purpose: no walk addresses one,
-        // and a published surface with no reader is the rotting thing this debt
-        // produces (R2104 measured it and deleted the helper it had just built).
-        "list_addresses": serde_json::json!({
-            "tag": address::LIST,
-            "seats": address::LIST_SEATS.iter().map(|(word, tag)| serde_json::json!({
-                "word": word, "tag": tag,
-            })).collect::<Vec<_>>(),
-            "head": address::LIST_HEAD_SEAT,
-            "row": address::LIST_ROW_SEAT,
-            "cell": address::LIST_CELL_SEAT,
-            "cell_join": address::LIST_CELL_JOIN,
-        }),
+        // ★★★★★ R2109/R2111/R2112 — the three families whose addresses this
+        // screen DECLARES, each published so a walk is handed the address the
+        // paint used rather than spelling a second copy of it. One function per
+        // family: each carries its own family's reasoning, and lifting them out
+        // of this document is what kept `spec_json` inside the workspace's
+        // hundred-line bound when the third arrived.
+        "filter_addresses": filter_addresses_json(),
+        "list_addresses": list_addresses_json(),
+        "tree_addresses": tree_addresses_json(),
         // ★★★ R1707 — what this screen tells a person the mouse and keyboard
         // do. Published rather than painted: the sibling screen prints a hint
         // strip because the reference's node canvas does, and the reference's
@@ -4619,7 +4660,12 @@ impl WidgetA11y for PacketView {
 ///
 /// In PAINT ORDER, which is Tab order (§5.39 enumerates depth-first over the
 /// scene), so the two ring censuses can compare against it as a sequence.
-const PROJECTED_STOPS: [&str; 4] = [address::LIST, address::LIST_HEADER, "pv.tree", "pv.bytes"];
+const PROJECTED_STOPS: [&str; 4] = [
+    address::LIST,
+    address::LIST_HEADER,
+    address::TREE,
+    "pv.bytes",
+];
 
 /// The application bar: what capture is open, how fast it is arriving, and the
 /// running commentary.
@@ -4932,14 +4978,14 @@ fn tree_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     let selected = state.field.get();
     let folded = state.folded.get();
     let visible = visible_fields(state);
-    let mut tree = AccessNode::new("pv.tree", AriaRole::Tree)
+    let mut tree = AccessNode::new(address::TREE, AriaRole::Tree)
         // The pane paints its own title and that run declares itself this
         // node's name, so the redirect is true rather than merely well formed.
-        .with_name_from_tag("pv.tree.title")
+        .with_name_from_tag(address::TREE_TITLE)
         .with_size_of_set(u32::try_from(visible.len()).unwrap_or(u32::MAX));
     let mut nodes = Vec::new();
     for (n, (path, name, value, depth)) in visible.iter().enumerate() {
-        let tag = format!("pv.tree.field.{path}");
+        let tag = address::tree_field(path);
         tree = tree.with_child(tag.clone());
         let (position, siblings) = sibling_place(&visible, n);
         let mut item = AccessNode::new(tag, AriaRole::TreeItem)

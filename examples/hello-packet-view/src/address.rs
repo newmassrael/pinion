@@ -3,8 +3,9 @@
 //!
 //! R2109 opened this module for the filter bar; R2111 gave it the message
 //! grid, which is the largest family of the capture viewer and the largest this
-//! address campaign has converted. The grid's own entry is further down, under
-//! *the message grid*.
+//! address campaign has converted; R2112 gave it the decode tree. The two later
+//! families have their own entries further down, under *the message grid* and
+//! *the decode tree*.
 //!
 //! # What was missing
 //!
@@ -432,4 +433,206 @@ pub fn list_row_annotation_of(tag: &str) -> Option<(usize, &'static str)> {
         .find(|(word, _)| *word == tail)
         .map(|(word, _)| *word)?;
     Some((index.parse().ok()?, word))
+}
+
+// ─── the decode tree ────────────────────────────────────────────────────────
+//
+// ★★★★★ R2112 — the capture viewer's second pane, and the first family this
+// campaign has converted whose parametric keys are an OPEN VOCABULARY.
+//
+// Measured at entry: **56 sites in this crate's five modules**, 19 across four
+// walks and three in the shell that mounts this screen as a page — 78 in all,
+// with nothing declaring any of them.
+//
+// ⚠ What is new here, said rather than left to be found. Every parametric
+// family this campaign has converted so far keyed on a NUMBER, and `parse()`
+// was doing quiet work in each inverse: it refused a tail that was not this
+// screen's. The decode tree keys on a field PATH and a layer identifier, so
+// there is no such refusal to inherit, and each inverse has to say for itself
+// what it will not answer for:
+//
+// * an EMPTY tail. `pv.tree.field.` is the family's stem and not a member of
+//   it, and an inverse that answered `Some("")` would let a reader classify the
+//   stem itself as a field with no name.
+// * the OTHER two prefixes. The three hang off one stem and are told apart by
+//   one word, so a reader that stripped only [`TREE_SEAT`] and took the rest
+//   would read a chevron as a field whose path began `layer.`.
+//
+// ⚠⚠ And a field path is HIERARCHICAL — `l0` is a layer heading and `l0.link`
+// is a field under it — so a field's own address is a PREFIX of its children's.
+// That is why the whole tail is the path and nothing here splits on the
+// separator: `pv.tree.field.l0.link` names one field, not a field `l0` with
+// something after it. [`list_row_annotation_of`] one family over splits for
+// exactly the opposite reason, and the two must not be made to look alike.
+
+/// ★★★★★ R2112 — the tag the **decode tree itself** is painted under.
+///
+/// The tree, not one of its seats, and carried WITHOUT the separator for
+/// [`FILTER`]'s reason: [`TREE_SEAT`] is the form a reader composes onto.
+pub const TREE: &str = "pv.tree";
+
+/// [`TREE`] with the separator every member of this family hangs off.
+///
+/// The whole family's stem, which is what a reader asking *is this mark part of
+/// the decode tree* needs — the integrated gate asks exactly that, across the
+/// tree's seats, rows, chevrons and badges at once.
+pub const TREE_SEAT: &str = "pv.tree.";
+
+/// The scrolling body the decode rows are laid out inside.
+///
+/// A seat rather than the tree itself: the viewport clips, and what a reader
+/// lands on is what is inside it.
+pub const TREE_BODY: &str = "pv.tree.body";
+
+/// The run in the head strip that names this pane.
+///
+/// Declared as the tree's NAME rather than as a stop of its own: the pane's
+/// accessible name redirects here, so the title a sighted reader sees and the
+/// name an agent is told are one run.
+pub const TREE_TITLE: &str = "pv.tree.title";
+
+/// The band painted behind the field a reader has open.
+///
+/// Decorative: the item itself announces that it is selected, and this is how a
+/// sighted reader is told the same fact.
+pub const TREE_SELECTED: &str = "pv.tree.selected";
+
+/// ★★★★★ R2112 — every FIXED word this tree addresses, beside its address.
+///
+/// The roster a reader classifies by and the wire publishes. The fields, the
+/// chevrons and the derived badges are NOT here: their populations are the
+/// decode's, so each is published as a prefix and a member's key is appended.
+pub const TREE_SEATS: &[(&str, &str)] = &[
+    ("body", TREE_BODY),
+    ("title", TREE_TITLE),
+    ("selected", TREE_SELECTED),
+];
+
+/// The address of the fixed seat `word`.
+///
+/// ⚠ Composed rather than looked up, for [`filter`]'s reason. Its readers are
+/// the gate — which drives every const above through it, so the three are
+/// shadows of one rule rather than three spellings — and [`tree_word`], which
+/// is the direction where *what this tree addresses* is a closed question.
+#[must_use]
+pub fn tree(word: &str) -> String {
+    format!("{TREE_SEAT}{word}")
+}
+
+/// The fixed word an address names, or `None` when the tag is not one of them.
+///
+/// ★ [`tree`]'s inverse, and the classifier the integrated gate reaches for
+/// first. Exact equality against the roster rather than a prefix strip, which
+/// is what keeps `pv.tree.field.l0` from reading as a seat called `field.l0`.
+///
+/// ⚠ The tree's own tag answers `None` — container and content, [`list_word`]'s
+/// argument verbatim.
+#[must_use]
+pub fn tree_word(tag: &str) -> Option<&'static str> {
+    TREE_SEATS
+        .iter()
+        .find(|(_, seat)| *seat == tag)
+        .map(|(word, _)| *word)
+}
+
+/// The prefix every DECODE FIELD's row is painted under.
+pub const TREE_FIELD_SEAT: &str = "pv.tree.field.";
+
+/// [`TREE_FIELD_SEAT`] with the population's placeholder, for a specification
+/// table whose rows must be `&'static str`.
+pub const TREE_FIELD_TEMPLATE: &str = "pv.tree.field.{}";
+
+/// The address of the decode row for the field at `path`.
+///
+/// ⚠ `path` is the field's identity in the decode, which is hierarchical: a
+/// layer heading is `l1` and a field under it is `l1.sn`. The address of the
+/// heading is therefore a prefix of its children's, and a reader wanting *this
+/// field and no other* compares whole addresses rather than prefixes.
+#[must_use]
+pub fn tree_field(path: &str) -> String {
+    format!("{TREE_FIELD_SEAT}{path}")
+}
+
+/// The field path an address names, or `None` when the tag is not a decode row.
+///
+/// ★★★★★ [`tree_field`]'s inverse, and the hit router's: a press on a decode
+/// row selects that field. The whole tail is the path — see the note at the top
+/// of this section for why nothing here splits on the separator.
+///
+/// ⚠ An empty tail is `None`. `pv.tree.field.` is this family's stem, not a
+/// member of it, and answering `Some("")` would let a classifier count the stem
+/// as a nameless field.
+#[must_use]
+pub fn tree_field_path(tag: &str) -> Option<&str> {
+    non_empty(tag.strip_prefix(TREE_FIELD_SEAT)?)
+}
+
+/// The prefix every FOLD CHEVRON is painted under.
+pub const TREE_LAYER_SEAT: &str = "pv.tree.layer.";
+
+/// [`TREE_LAYER_SEAT`] with the population's placeholder.
+pub const TREE_LAYER_TEMPLATE: &str = "pv.tree.layer.{}";
+
+/// The address of the fold chevron for the layer called `id`.
+#[must_use]
+pub fn tree_layer(id: &str) -> String {
+    format!("{TREE_LAYER_SEAT}{id}")
+}
+
+/// The layer an address names, or `None` when the tag is not a chevron.
+///
+/// ★★★★★ [`tree_layer`]'s inverse, and the one R1815 is a monument to: the
+/// chevron carried this address from R1693 and no arm of the hit router matched
+/// it, so the mark was addressable in the paint and inert to every press for
+/// 122 rounds. With the prefix declared once, an arm that stopped matching is a
+/// test failure rather than a control that silently does nothing.
+///
+/// ⚠ A layer's identifier is ALSO a field path — `l1` names the heading row and
+/// the chevron drawn on it — so these two inverses answer about the same layer
+/// from two different marks. They are told apart by the word in the address and
+/// by nothing else, which is why each strips its own whole prefix.
+#[must_use]
+pub fn tree_layer_id(tag: &str) -> Option<&str> {
+    non_empty(tag.strip_prefix(TREE_LAYER_SEAT)?)
+}
+
+/// The prefix every DERIVED badge is painted under.
+pub const TREE_DERIVED_SEAT: &str = "pv.tree.derived.";
+
+/// [`TREE_DERIVED_SEAT`] with the population's placeholder.
+pub const TREE_DERIVED_TEMPLATE: &str = "pv.tree.derived.{}";
+
+/// The address of the derived badge on the row for `path`.
+///
+/// The badge says the value beside it came from no bytes. Its population is the
+/// fields the decode computes rather than reads, which is a subset of the
+/// fields — so this composes on the same key as [`tree_field`] and the two
+/// addresses differ only in their word.
+#[must_use]
+pub fn tree_derived(path: &str) -> String {
+    format!("{TREE_DERIVED_SEAT}{path}")
+}
+
+/// The field a derived badge's address names, or `None` when the tag is not a
+/// badge.
+///
+/// ★★★★★ [`tree_derived`]'s inverse, and the reader that makes it earn its
+/// place is the INTEGRATED gate: with the tree mounted as a page of the
+/// application, every painted mark under this family has to be one some declared
+/// reader can recover, and the badge is the only member no other reader claims.
+/// Without this, the claim that a mark's address is findable would have a hole
+/// exactly where the family's third axis is.
+#[must_use]
+pub fn tree_derived_path(tag: &str) -> Option<&str> {
+    non_empty(tag.strip_prefix(TREE_DERIVED_SEAT)?)
+}
+
+/// `tail` unless it is empty.
+///
+/// ★ Shared by the three inverses above rather than written into each, because
+/// *the stem is not a member of its own family* is one rule and three copies of
+/// it is this module's own defect one level down. A `const fn` cannot do this,
+/// so it is a plain one; the gate drives all three doors through it.
+fn non_empty(tail: &str) -> Option<&str> {
+    (!tail.is_empty()).then_some(tail)
 }

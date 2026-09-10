@@ -47,10 +47,10 @@ pub const PANES: &[PaneSpec] = &[
         body: Some(crate::address::LIST_BODY),
     },
     PaneSpec {
-        tag: "pv.tree",
+        tag: crate::address::TREE,
         title: "Decode",
         width: 348,
-        body: Some("pv.tree.body"),
+        body: Some(crate::address::TREE_BODY),
     },
     PaneSpec {
         tag: "pv.bytes",
@@ -2101,7 +2101,7 @@ pub const VOICES: &[VoiceSpec] = &[
     },
     // The decode tree.
     VoiceSpec {
-        tag: "pv.tree",
+        tag: crate::address::TREE,
         role: "tree",
         population: Population::One,
     },
@@ -2109,7 +2109,7 @@ pub const VOICES: &[VoiceSpec] = &[
     // painted, so the gate expands this against what the screen currently
     // shows. The opening screen shows them all.
     VoiceSpec {
-        tag: "pv.tree.field.{}",
+        tag: crate::address::TREE_FIELD_TEMPLATE,
         role: "treeitem",
         population: Population::Fields,
     },
@@ -2168,7 +2168,7 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     ("pv.root", Population::One, "layout"),
     // The scrolling bodies. What a reader lands on is what is inside them.
     (crate::address::LIST_BODY, Population::One, "layout"),
-    ("pv.tree.body", Population::One, "layout"),
+    (crate::address::TREE_BODY, Population::One, "layout"),
     ("pv.bytes.body", Population::One, "layout"),
     // ★ R1707 — the query text inside the query box. The framework's text-field
     // painter tags the run separately from the box so a caret can be placed in
@@ -2180,13 +2180,13 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
         "part_of",
     ),
     // Titles painted inside the pane they name.
-    ("pv.tree.title", Population::One, "name_of"),
+    (crate::address::TREE_TITLE, Population::One, "name_of"),
     ("pv.bytes.title", Population::One, "name_of"),
     ("pv.reassembly.title", Population::One, "name_of"),
     // Selection bands. The row and the item announce that they are selected;
     // the ink behind them is how a sighted reader is told the same thing.
     (crate::address::LIST_SELECTED, Population::One, "decorative"),
-    ("pv.tree.selected", Population::One, "decorative"),
+    (crate::address::TREE_SELECTED, Population::One, "decorative"),
     // Annotations painted inside the name column, announced with that cell —
     // "out of band" as its own stop names nothing.
     (
@@ -2210,8 +2210,16 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     // The fold chevron and the derived badge, announced with the item they
     // belong to: `aria-expanded` is the state the chevron draws, and "derived"
     // is a fact about the field beside it.
-    ("pv.tree.layer.{}", Population::Layers, "part_of"),
-    ("pv.tree.derived.{}", Population::Derived, "part_of"),
+    (
+        crate::address::TREE_LAYER_TEMPLATE,
+        Population::Layers,
+        "part_of",
+    ),
+    (
+        crate::address::TREE_DERIVED_TEMPLATE,
+        Population::Derived,
+        "part_of",
+    ),
     // The highlight behind a byte the open field was read from.
     ("pv.bytes.lit.{}", Population::LitBytes, "decorative"),
 ];

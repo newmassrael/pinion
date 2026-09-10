@@ -405,7 +405,7 @@ fn r1663_every_declared_element_of_the_screen_is_painted() {
         }
         // Every decode row the screen currently shows.
         for (path, ..) in visible_fields(state) {
-            wanted.push(format!("pv.tree.field.{path}"));
+            wanted.push(crate::address::tree_field(&path));
         }
         let missing: Vec<&String> = wanted.iter().filter(|t| !shot.present(t)).collect();
         assert!(
@@ -518,7 +518,7 @@ fn r1663_every_painted_tag_belongs_to_a_declared_family() {
         super::address::FILTER,
         "pv.context",
         super::address::LIST,
-        "pv.tree",
+        super::address::TREE,
         "pv.bytes",
         "pv.reassembly",
     ];
@@ -690,7 +690,7 @@ fn r1663_every_painted_control_answers_at_the_centre_of_its_own_rectangle() {
                 source: Expectation::Canon,
                 members: visible_fields(state)
                     .into_iter()
-                    .map(|(path, ..)| (format!("pv.tree.field.{path}"), Hit::Field(path)))
+                    .map(|(path, ..)| (crate::address::tree_field(&path), Hit::Field(path)))
                     .collect(),
                 least: 1,
             },
@@ -704,7 +704,7 @@ fn r1663_every_painted_control_answers_at_the_centre_of_its_own_rectangle() {
                 members: spec::LAYERS
                     .iter()
                     .enumerate()
-                    .map(|(index, (id, _))| (format!("pv.tree.layer.{id}"), Hit::Layer(index)))
+                    .map(|(index, (id, _))| (crate::address::tree_layer(id), Hit::Layer(index)))
                     .collect(),
                 least: 1,
             },
@@ -775,7 +775,7 @@ fn r1663_every_painted_mark_is_inside_the_pane_its_address_names() {
     sweep(|_, shot, _, size, case| {
         let panes: BTreeMap<&str, Rect> = [
             (crate::address::LIST, list_rect()),
-            ("pv.tree", tree_rect()),
+            (crate::address::TREE, tree_rect()),
             ("pv.bytes", bytes_rect()),
         ]
         .into_iter()
@@ -889,7 +889,7 @@ fn r1663_no_two_rows_of_a_list_are_painted_over_each_other() {
             }
         }
         for (path, ..) in visible_fields(state) {
-            if let Some(rect) = shot.tags.get(&format!("pv.tree.field.{path}")) {
+            if let Some(rect) = shot.tags.get(&crate::address::tree_field(&path)) {
                 rows.push((format!("field {path}"), *rect));
             }
         }
@@ -1362,7 +1362,7 @@ fn r1707_every_gesture_this_screen_advertises_is_answered() {
                     }
                     "click a decode field" => {
                         let (path, ..) = visible_fields(&state)[4].clone();
-                        let rect = shot.tags[&format!("pv.tree.field.{path}")];
+                        let rect = shot.tags[&crate::address::tree_field(&path)];
                         let (px, py) = centre(rect);
                         super::move_cursor(&state, px, py);
                         press(&state);
@@ -2306,7 +2306,7 @@ fn r1774_the_sweep_reaches_both_sides_of_every_clamp() {
                 "tree: fields",
                 super::visible_fields(state)
                     .iter()
-                    .map(|(path, ..)| format!("pv.tree.field.{path}"))
+                    .map(|(path, ..)| crate::address::tree_field(path))
                     .collect(),
                 true,
             ),
@@ -2751,7 +2751,7 @@ fn r1860_each_pane_can_draw_what_it_has_to_at_its_own_floor() {
             let values: Vec<&(String, Rect, Option<String>)> = painted
                 .runs
                 .iter()
-                .filter(|(.., owner)| owner.as_deref() == Some("pv.tree.body"))
+                .filter(|(.., owner)| owner.as_deref() == Some(crate::address::TREE_BODY))
                 .filter(|(_, r, _)| !addressed.contains(&(r.x, r.y, r.w, r.h)))
                 .collect();
             // ⚠ Against the rows this size actually PAINTED, not against
@@ -2759,7 +2759,7 @@ fn r1860_each_pane_can_draw_what_it_has_to_at_its_own_floor() {
             // unpainted, and at the declared floor that is 4 of 21. Comparing
             // with the model's count would make this fail there for a reason
             // that has nothing to do with width.
-            let rows_painted = painted.family("pv.tree.field.").len();
+            let rows_painted = painted.family(crate::address::TREE_FIELD_SEAT).len();
             assert_eq!(
                 values.len(),
                 rows_painted,

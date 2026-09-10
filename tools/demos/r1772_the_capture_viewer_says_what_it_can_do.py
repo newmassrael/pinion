@@ -69,6 +69,7 @@ from rpc_verify import (  # noqa: E402
     list_tag,
     resize_and_settle,
     run_demo,
+    tree_tag,
 )
 
 VIEWER = "hello-packet-view"
@@ -250,12 +251,12 @@ def section_e(app: RpcSubprocess) -> None:
     # can scroll this pane at some size this screen is laid out for*, which is
     # the same shape the in-process gate's driver uses and for the same reason.
     moved = []
-    # ★★★★★ R2111 — the message grid's scrolling body is a seat the screen
-    # declares, taken by its word. The other two are families this campaign has
-    # not reached and still say their own tag.
+    # ★★★★★ R2111, R2112 — the message grid's and the decode tree's scrolling
+    # bodies are seats their screens declare, taken by word. The byte pane is a
+    # family this campaign has not reached and still says its own tag.
     for pane, tag in (
         ("list", list_tag(app, "body", ext=EXT)),
-        ("tree", "pv.tree.body"),
+        ("tree", tree_tag(app, "body", ext=EXT)),
         ("bytes", "pv.bytes.body"),
     ):
         for size in ((1180, 520), (1440, 900), (2494, 1531)):

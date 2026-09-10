@@ -61,6 +61,7 @@ from rpc_verify import (  # noqa: E402
     list_row_address,
     list_seats,
     run_demo,
+    tree_field_address,
     voice_rows,
 )
 
@@ -132,6 +133,13 @@ def body() -> None:
         head_at, row_at = addresses["head"], addresses["row"]
         cell_at, cell_join = addresses["cell"], addresses["cell_join"]
         seats = list_seats(spec)
+        # ★★★★★ R2112 — and the decode tree's, the same way. Its keys are an
+        # open vocabulary (a field's path, a layer's identifier) rather than
+        # indexes, so the populations come off `fields` and `layers` above and
+        # only the prefixes are read here.
+        tree_addresses = spec["tree_addresses"]
+        tree_tag_ = tree_addresses["tag"]
+        field_at = tree_addresses["field"]
         ok("the specification declares what owes a voice", len(voices) > 0)
         ok("the specification declares what owes a silence", len(silences) > 0)
         print(
@@ -304,11 +312,11 @@ def body() -> None:
 
         # ── (E) the tree ───────────────────────────────────────────────────
         banner("E — the decode is a tree of items that carry their own values")
-        decode = tree["pv.tree"]
+        decode = tree[tree_tag_]
         assert_eq(decode["role"], "tree", "E: the decode announces as a tree")
         layer_ids = [layer["id"] for layer in spec["layers"]]
         for field in fields:
-            item = tree[f"pv.tree.field.{field['path']}"]
+            item = tree[tree_field_address(field_at, field["path"])]
             assert_eq(item["role"], "treeitem", f"E: {field['path']} is an item")
             assert_eq(item["name"], field["name"], f"E: {field['path']} is named")
             # ★ THE value, on the item — the floor makes it a sibling item.
@@ -391,7 +399,7 @@ def body() -> None:
         assert_eq(folded["counts"]["stray"], 0, "G: and nothing came loose")
         tree = nodes_by_tag(app)
         assert_eq(
-            tree["pv.tree.field.l0"]["expanded"],
+            tree[tree_field_address(field_at, layer_ids[0])]["expanded"],
             False,
             "G: ★ the folded layer says it is folded",
         )

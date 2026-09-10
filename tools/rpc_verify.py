@@ -5691,6 +5691,112 @@ def list_cell_at(tag: str, prefix: str, join: str):
     return int(row), int(column)
 
 
+def tree_root(tf, *, ext: str = "/external") -> str:
+    """The tag the capture viewer's DECODE TREE itself is painted under.
+
+    ★★★★★ R2112 — published beside the seat roster rather than as its first row,
+    for [`list_root`]'s reason: the container's address is the prefix WITHOUT the
+    separator, so a row for it would hand every later reader a prefix that runs
+    the tree's own tag straight into a seat's word.
+    """
+    return screen_spec(tf, ext)["tree_addresses"]["tag"]
+
+
+def tree_seats(spec: Any) -> dict:
+    """Every FIXED seat of the decode tree, keyed by the word the screen declares
+    it under — from a specification a caller has ALREADY read.
+
+    ⚠ FIXED only: the scrolling body, the pane's title run, and the band behind
+    the open field. The decode rows, the fold chevrons and the derived badges
+    expand over the decode, so each is published as a prefix and reached through
+    its own door below.
+    """
+    return {row["word"]: row["tag"] for row in spec["tree_addresses"]["seats"]}
+
+
+def tree_tag(tf, word: str, *, ext: str = "/external") -> str:
+    """The address the decode tree's seat called `word` is painted under.
+
+    Takes the seat's WORD, which is what the screen declares and the wire
+    publishes, so the address a walk reads and the address the paint used are one
+    spelling by construction. A word the tree does not address is a `KeyError`
+    naming it.
+    """
+    return tree_seats(screen_spec(tf, ext))[word]
+
+
+def tree_field_prefix(tf, *, ext: str = "/external") -> str:
+    """The prefix every DECODE ROW of the tree is painted under.
+
+    ⚠ The key is the field's PATH, not its position: `spec["fields"]` is the
+    population and the paths in it are hierarchical (`l1` is a layer heading and
+    `l1.sn` is a field under it). So a row's address is a prefix of its
+    children's, and a walk wanting one row compares whole addresses.
+    """
+    return screen_spec(tf, ext)["tree_addresses"]["field"]
+
+
+def tree_field_address(prefix: str, path: str) -> str:
+    """The address of the decode row for `path`, composed onto a prefix the
+    caller already holds.
+
+    ★★★★★ R2109.1's rule: the prefix the screen publishes CARRIES its separator,
+    so a walk that glues its own on asks for an address nothing carries — and an
+    empty answer looks exactly like a screen that did not paint the row. PURE, so
+    a walk checking all twenty-one rows pays one query rather than twenty-one.
+    """
+    return f"{prefix}{path}"
+
+
+def tree_field(tf, path: str, *, ext: str = "/external") -> str:
+    """The address of the decode row for the field at `path`."""
+    return tree_field_address(tree_field_prefix(tf, ext=ext), path)
+
+
+def tree_layer_prefix(tf, *, ext: str = "/external") -> str:
+    """The prefix every FOLD CHEVRON of the tree is painted under.
+
+    ⚠ A layer's identifier is ALSO a field path, so the chevron and the heading
+    row it is drawn on differ only in the word before the key. `spec["layers"]`
+    is the population.
+    """
+    return screen_spec(tf, ext)["tree_addresses"]["layer"]
+
+
+def tree_layer_address(prefix: str, layer: str) -> str:
+    """The address of the fold chevron for `layer`, composed onto a prefix the
+    caller already holds.
+    """
+    return f"{prefix}{layer}"
+
+
+def tree_layer(tf, layer: str, *, ext: str = "/external") -> str:
+    """The address of the fold chevron for the layer called `layer`."""
+    return tree_layer_address(tree_layer_prefix(tf, ext=ext), layer)
+
+
+def tree_derived_prefix(tf, *, ext: str = "/external") -> str:
+    """The prefix every DERIVED badge of the tree is painted under.
+
+    ⚠ Its population is a SUBSET the wire does not enumerate on its own: a field
+    is derived when its `encodes` is false, which `spec["fields"]` already says.
+    So a walk can derive the roster; it could not derive the prefix.
+    """
+    return screen_spec(tf, ext)["tree_addresses"]["derived"]
+
+
+def tree_derived_address(prefix: str, path: str) -> str:
+    """The address of the derived badge on the row for `path`, composed onto a
+    prefix the caller already holds.
+    """
+    return f"{prefix}{path}"
+
+
+def tree_derived(tf, path: str, *, ext: str = "/external") -> str:
+    """The address of the derived badge on the decode row for `path`."""
+    return tree_derived_address(tree_derived_prefix(tf, ext=ext), path)
+
+
 def pin_prefix(tf, *, ext: str = "/external") -> str:
     """The prefix every pin of every card on the node graph is painted under.
 
