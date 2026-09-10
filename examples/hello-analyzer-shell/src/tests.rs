@@ -9721,3 +9721,97 @@ fn r2051_a_rail_seat_address_is_typed_in_one_place() {
         "★ the roster does not hold the account block"
     );
 }
+
+/// ★★★★★ R2115 — **the HOST does not spell a mounted screen's painted address
+/// either**, which is the half of this campaign's population that had no gate at
+/// all.
+///
+/// The address debt's population is three: the screen's own crate, the walks,
+/// and THE SHELL THAT MOUNTS THE SCREEN AS A PAGE. Two of them have been gated
+/// since R2054 — the crate by its own namespace gate, the walks by
+/// `tools/painted_addresses.py`. Measured at R2114, the third had nothing:
+/// R2112 moved three spellings out of this file, R2113 two and R2114 one, and
+/// no gate anywhere would have noticed a fourth appearing. Each instalment
+/// cleaned this crate by hand and left the hole open behind it.
+///
+/// ⚠ A host spelling a guest's address is the WORSE half of the defect, not the
+/// milder one. Inside the guest a wrong letter at least fails that crate's own
+/// paint gates; here the guest is a dependency, the string compiles against
+/// nothing, and the host simply looks for a mark that is not there — which reads
+/// to every reader as *the screen did not paint it*. R1852 is the round that
+/// learned a host reading a guest's internals can pass while the guest is broken.
+///
+/// ⚠⚠ ONE FORM IS ALLOWED and it is the reason this is not simply "no `pv.`":
+/// the NAMESPACE itself, with nothing after it. A host legitimately asks *what
+/// did the mounted screen paint under its own prefix* — `painted.rs` does
+/// exactly that to check nothing escapes the window — and that is a question
+/// about the family as a whole rather than a second copy of one member's
+/// address. A member address is refused; the bare namespace is not.
+#[test]
+fn r2115_this_host_spells_no_mounted_screens_painted_address() {
+    const PAINTED: &str = include_str!("painted.rs");
+    const TESTS: &str = include_str!("tests.rs");
+    const MAIN: &str = include_str!("main.rs");
+    const SPEC: &str = include_str!("spec.rs");
+    const JUDGE: &str = include_str!("judge.rs");
+
+    // The needle comes from the mounted screen's own declaration, so a screen
+    // that renamed its namespace moves this gate with it rather than leaving it
+    // matching nothing.
+    let anchor = format!("\"{}", hello_packet_view::address::NAMESPACE);
+    let sources = [
+        ("painted.rs", PAINTED),
+        ("tests.rs", TESTS),
+        ("main.rs", MAIN),
+        ("spec.rs", SPEC),
+        ("judge.rs", JUDGE),
+    ];
+    for (name, body) in sources {
+        assert!(
+            !body.is_empty(),
+            "★ `{name}` reads as empty — the `include_str!` is not reaching the \
+             file, and a gate counting over nothing is green"
+        );
+    }
+
+    let mut members: Vec<(&str, String)> = Vec::new();
+    let mut namespace_only = 0usize;
+    for (name, body) in sources {
+        for (at, _) in body.match_indices(anchor.as_str()) {
+            // What follows the opening quote, up to the closing one.
+            let literal = &body[at + 1..];
+            let Some(end) = literal.find('"') else {
+                continue;
+            };
+            let spelled = &literal[..end];
+            if spelled == hello_packet_view::address::NAMESPACE {
+                namespace_only += 1;
+            } else {
+                members.push((name, spelled.to_owned()));
+            }
+        }
+    }
+    assert!(
+        members.is_empty(),
+        "★★★★★ this host spells {} painted address(es) of a screen it MOUNTS: \
+         {members:?}. Take each from `hello_packet_view::address` — the guest \
+         declares every one of them, and a literal here compiles against nothing \
+         while reading, when it drifts, as the guest failing to paint.",
+        members.len()
+    );
+    // ⚠ The allowance has to be EXERCISED or this gate is indistinguishable
+    // from one that simply forbids the namespace outright, and the next round to
+    // need a family-wide question would delete the wrong half.
+    assert!(
+        namespace_only > 0,
+        "★★ nothing in this host asks a family-wide question about the mounted \
+         screen any more. The bare namespace is deliberately allowed above; with \
+         no site using it, that branch is untested and the gate should be \
+         simplified rather than left describing a case that does not occur"
+    );
+    println!(
+        "[r2115] host sources scanned: {}, member address(es) spelled: 0, \
+         family-wide question(s): {namespace_only}",
+        sources.len()
+    );
+}

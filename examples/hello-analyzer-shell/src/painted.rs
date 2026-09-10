@@ -10297,6 +10297,133 @@ fn every_announced_value_slugs_from_the_key_a_reader_hears(shot: &Painted) -> us
     joined
 }
 
+/// ★★★★★ R2115 — **every mark the mounted capture viewer paints ANYWHERE in its
+/// namespace is at an address one of its declared readers recovers.**
+///
+/// The assembled half of this round, and the last shape this campaign needed.
+/// R2111 through R2114 each asked the question of ONE family: *is every mark
+/// under `pv.list.` recovered, under `pv.tree.`, under `pv.bytes.`* — five gates
+/// over five prefixes. Each was complete about its own family and silent about
+/// everything else, so a mark painted under a prefix nobody had converted was
+/// outside all five.
+///
+/// This asks it once, over the NAMESPACE: every painted mark that begins with
+/// this screen's prefix is claimed by exactly one declared reader, and a mark
+/// under a family nobody declared has nowhere to be counted and fails.
+///
+/// ⚠ The denominator is PRINTED every run and floored per reader, because
+/// R2108's lesson is that a classification gate whose population happens to be
+/// empty is green while describing nothing. What the floors are asserted
+/// against is deliberately NOT a hand-written number — a family that stopped
+/// being painted would still have to be a family the screen no longer has.
+///
+/// ⚠⚠ WHICH REGIONS A MOUNTED SCREEN PAINTS IS MEASURED HERE, NOT ASSUMED. The
+/// host draws its own application bar, so whether the guest also draws one as a
+/// page is a fact about the assembly rather than about either crate; the count
+/// below reports it either way instead of this gate encoding a guess.
+#[test]
+fn r2115_every_mark_the_mounted_screen_paints_is_recovered_by_a_declared_reader() {
+    use hello_packet_view::address as pv;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        state
+            .go("packets")
+            .unwrap_or_else(|why| panic!("the capture section is open and refused: {why:?}"));
+        let (shot, _) = painted_at((WIN_W, WIN_H));
+
+        let mut by_reader: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
+        let mut orphans: Vec<&str> = Vec::new();
+        for tag in shot.family(pv::NAMESPACE) {
+            let reader = if tag == pv::ROOT {
+                "root"
+            } else if tag == pv::TIP {
+                "tip"
+            } else if tag == pv::MAP {
+                "map"
+            } else if tag == pv::APPBAR || pv::appbar_word(tag).is_some() {
+                "appbar"
+            } else if tag == pv::FILTER
+                || pv::filter_word(tag).is_some()
+                || pv::filter_saved_index(tag).is_some()
+            {
+                "filter"
+            } else if tag == pv::LIST
+                || pv::list_word(tag).is_some()
+                || pv::list_head_index(tag).is_some()
+                || pv::list_row_index(tag).is_some()
+                || pv::list_cell_at(tag).is_some()
+                || pv::list_row_annotation_of(tag).is_some()
+            {
+                "list"
+            } else if tag == pv::TREE
+                || pv::tree_word(tag).is_some()
+                || pv::tree_field_path(tag).is_some()
+                || pv::tree_layer_id(tag).is_some()
+                || pv::tree_derived_path(tag).is_some()
+            {
+                "tree"
+            } else if tag == pv::BYTES
+                || pv::bytes_word(tag).is_some()
+                || pv::bytes_cell_index(tag).is_some()
+                || pv::bytes_lit_index(tag).is_some()
+                || pv::bytes_offset_row(tag).is_some()
+            {
+                "bytes"
+            } else if tag == pv::CONTEXT
+                || pv::context_word(tag).is_some()
+                || pv::context_value_slug(tag).is_some()
+            {
+                "context"
+            } else if tag == pv::REASSEMBLY
+                || pv::reassembly_word(tag).is_some()
+                || pv::reassembly_lane_index(tag).is_some()
+            {
+                "reassembly"
+            } else {
+                orphans.push(tag);
+                continue;
+            };
+            *by_reader.entry(reader).or_default() += 1;
+        }
+
+        assert!(
+            orphans.is_empty(),
+            "★★★★★ {} mark(s) the mounted screen paints in its own namespace are \
+             at addresses NO declared reader recovers: {orphans:?}. Either the \
+             screen grew a region nothing declares, or a declaration drifted \
+             from what the painter composes — both are marks on the screen that \
+             every query looking for them answers nothing about.",
+            orphans.len()
+        );
+        let total: usize = by_reader.values().sum();
+        assert!(
+            total > 0,
+            "★ the mounted capture section paints NOTHING in its own namespace, \
+             so the emptiness above is about a screen that is not there rather \
+             than about addresses that are all recoverable"
+        );
+        // ★★ Floors per reader, but only for the regions the ASSEMBLY actually
+        // has — see the note about the host's own bar. A reader claiming zero is
+        // reported rather than asserted away, so the next round reads the shape
+        // of the assembly off this line instead of re-deriving it.
+        for region in ["filter", "list", "tree", "bytes", "context", "reassembly"] {
+            assert!(
+                by_reader.get(region).copied().unwrap_or(0) > 0,
+                "★★ no painted mark was claimed by the `{region}` reader — with \
+                 the claims ORed, a reader describing nothing makes the zero \
+                 orphans above mean less than it reads. Counted: {by_reader:?}"
+            );
+        }
+        println!(
+            "[r2115] {total} mark(s) under `{}`: {by_reader:?}",
+            pv::NAMESPACE
+        );
+    });
+}
+
 /// ★★★★★ R1874 — **the node palette's body has NO box too short for its face**,
 /// and the gate is zero rather than a share of the lab screen's ratchet.
 ///

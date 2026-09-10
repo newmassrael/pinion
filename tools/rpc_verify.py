@@ -5979,6 +5979,30 @@ def reassembly_tag(tf, word: str, *, ext: str = "/external") -> str:
     return reassembly_seats(screen_spec(tf, ext))[word]
 
 
+def appbar_seats(spec: Any) -> dict:
+    """Every FIXED seat of the capture viewer's application bar, keyed by the
+    word the screen declares it under — from a specification a caller has
+    ALREADY read.
+
+    ⚠ There is no prefix door beside this one, and that is the family's shape:
+    the bar has no parametric half. Three seats, a closed roster, nothing to
+    compose.
+    """
+    return {row["word"]: row["tag"] for row in spec["appbar_addresses"]["seats"]}
+
+
+def appbar_tag(tf, word: str, *, ext: str = "/external") -> str:
+    """The address the capture viewer's application bar seat called `word` is
+    painted under.
+
+    ★★★★★ R2115 — built because two walks reach for it. `r1719` and `r1720` each
+    hold a module-level table of *where each screen puts its speech*, and a
+    module-level table cannot query anything, so both spelled this screen's live
+    region themselves. A word the bar does not address is a `KeyError` naming it.
+    """
+    return appbar_seats(screen_spec(tf, ext))[word]
+
+
 def pin_prefix(tf, *, ext: str = "/external") -> str:
     """The prefix every pin of every card on the node graph is painted under.
 

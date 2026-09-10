@@ -2006,22 +2006,22 @@ fn picked(keep: impl Fn(&RowSpec) -> bool) -> Vec<String> {
 pub const VOICES: &[VoiceSpec] = &[
     // The application bar.
     VoiceSpec {
-        tag: "pv.appbar",
+        tag: crate::address::APPBAR,
         role: "group",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "pv.appbar.interface",
+        tag: crate::address::APPBAR_INTERFACE,
         role: "status",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "pv.appbar.rate",
+        tag: crate::address::APPBAR_RATE,
         role: "status",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "pv.appbar.said",
+        tag: crate::address::APPBAR_SAID,
         role: "status",
         population: Population::One,
     },
@@ -2180,7 +2180,7 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     // The two roots: an address for the sweep, and the receiver a press falls
     // through to. Neither is a place a reader travels.
     ("packet_view", Population::One, "layout"),
-    ("pv.root", Population::One, "layout"),
+    (crate::address::ROOT, Population::One, "layout"),
     // The scrolling bodies. What a reader lands on is what is inside them.
     (crate::address::LIST_BODY, Population::One, "layout"),
     (crate::address::TREE_BODY, Population::One, "layout"),

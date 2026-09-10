@@ -2614,8 +2614,9 @@ fn r2109_every_module_is_read() {
 /// Every address family `address.rs` DECLARES, read off its own source.
 ///
 /// ★★★★★ R2111 — DERIVED, and that is the whole difference between this and the
-/// gate it replaces. R2109 named its needle (`concat!("pv.", "filter")`), so the
-/// family this round converted needed a second gate and the family after it a
+/// gate it replaces. R2109 assembled its needle from the namespace and one
+/// family's word, so the family that round converted needed a second gate and
+/// the family after it a
 /// third: **a per-family gate is a hand-written list wearing a test's clothes**,
 /// and the member nobody adds is the member nobody checks (R2053). With the
 /// needles derived, the next family joins the gate the moment it is declared.
@@ -2639,7 +2640,19 @@ fn declared_families() -> std::collections::BTreeSet<String> {
         };
         let mut parts = literal[..end].split('.');
         if let (Some(screen), Some(family)) = (parts.next(), parts.next()) {
-            out.insert(format!("{screen}.{family}"));
+            // ★★★★★ R2115 — an EMPTY family part is the namespace itself, not a
+            // family, and admitting it is this debt one level up. The module now
+            // declares `NAMESPACE`, whose literal is the screen's prefix with
+            // nothing after it; read as a family it becomes the bare stem, and
+            // the scan below matches a bare stem against every DOC COMMENT in
+            // every module — so the gate would report eight spellers in prose
+            // that names no address at all. Measured the moment `NAMESPACE` was
+            // added. R2112 met the same shape in an address reader: answering
+            // `Some("")` for a family's own stem makes a gate claim the whole
+            // family is accounted for.
+            if !family.is_empty() {
+                out.insert(format!("{screen}.{family}"));
+            }
         }
     }
     out
@@ -2701,6 +2714,69 @@ fn r2111_no_module_but_the_declaration_spells_a_declared_family() {
         "★★★★★ an address of a declared family is declared in `address.rs` and \
          taken from there everywhere else; these (file, family, times) spell it \
          themselves: {spellers:?}"
+    );
+}
+
+/// ★★★★★ R2115 — **the needle is the NAMESPACE now**, and this is the end state
+/// the address campaign has been walking toward since R2049.
+///
+/// The gate above asks *does any module re-spell a family the declaration
+/// holds*. That question has a floor built into it: a family the declaration
+/// does NOT hold is invisible to it, so a screen could grow a seventh region
+/// tomorrow, spell it in five modules, and nothing would say a word. Every
+/// instalment closed one family and left that hole exactly where it was.
+///
+/// This asks the question that has no floor: **does any module but `address.rs`
+/// contain a literal beginning `pv.` at all.** Declared families and undeclared
+/// ones fail it alike, which is what makes it the last gate this campaign needs
+/// rather than the eighteenth of a series.
+///
+/// ⚠ It could not have been written before this round, and that is the whole
+/// reason the instalments came first: a gate that is red on the day it is
+/// written is a gate nobody turns on (`painted_addresses.py`'s own docstring
+/// records that failure). Screen B reached zero this round, so zero is now a
+/// property that HOLDS and the ratchet shape is the wrong one for it.
+///
+/// ⚠⚠ The needle is taken from [`address::NAMESPACE`] rather than spelled here,
+/// for the reason the roster above is derived: a gate that spells its own needle
+/// is this debt one level up (R2053), and this file is inside the population it
+/// scans.
+#[test]
+fn r2115_no_module_but_the_declaration_spells_this_screens_namespace() {
+    let anchor = format!("\"{}", address::NAMESPACE);
+    let sources = crate_sources();
+    // Vacuity: the declaration must itself be full of them, or the anchor is
+    // wrong and every module below is being cleared by a needle that matches
+    // nothing.
+    let declaration = sources
+        .iter()
+        .find(|(name, _)| *name == "address.rs")
+        .expect("the declaring module is in the roster");
+    let declared = declaration.1.matches(anchor.as_str()).count();
+    assert!(
+        declared >= 20,
+        "★ `address.rs` spells the namespace {declared} time(s), which is not \
+         what a module declaring six families and three lone marks looks like — \
+         the anchor is wrong and the emptiness below means nothing"
+    );
+    let mut spellers: Vec<(&str, usize)> = Vec::new();
+    for (name, body) in &sources {
+        if *name == "address.rs" {
+            continue;
+        }
+        let count = body.matches(anchor.as_str()).count();
+        if count > 0 {
+            spellers.push((name, count));
+        }
+    }
+    assert!(
+        spellers.is_empty(),
+        "★★★★★ every painted address of this screen begins `{}` and is declared \
+         in `address.rs`; these (file, times) spell one themselves: {spellers:?}. \
+         A literal here is a second copy of a composition the declaration \
+         already publishes, and one wrong letter in it paints a mark no reader \
+         can find.",
+        address::NAMESPACE
     );
 }
 

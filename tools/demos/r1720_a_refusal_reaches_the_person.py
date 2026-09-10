@@ -90,6 +90,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     absent_id,
     access_node_by_tag,
+    appbar_tag,
     assert_eq,
     assert_every_refusal_is_heard,
     run_demo,
@@ -101,11 +102,15 @@ EXT = "/external"
 #: the live region each puts speech in, a WRITE it refuses, and an ACTION whose
 #: refusal the surface itself authors. The last is needed because the two kinds
 #: of refusal are held to opposite rules — see `b_the_two_kinds_of_refusal`.
+#: ★★★★★ R2115 — the capture viewer's tag is `None` ON PURPOSE: its address is
+#: ASKED of the running screen (`appbar_tag`) in the loop below, because this
+#: table is module-level and cannot query anything. `lab.toast` is screen A's
+#: debt and is left where it is.
 SCREENS = [
     ("hello-node-lab", "lab.toast", "zoom", ("select", absent_id("card"))),
     (
         "hello-packet-view",
-        "pv.appbar.said",
+        None,
         "row_count",
         ("select_message", absent_id("row")),
     ),
@@ -355,8 +360,10 @@ def g_the_person_can_see_it(tf) -> None:
 
 
 def main() -> int:
-    for example, tag, slot, surface in SCREENS:
+    for example, declared, slot, surface in SCREENS:
         with RpcSubprocess(example) as tf:
+            # ★ R2115 — a screen that DECLARES its bar hands the address over.
+            tag = declared if declared is not None else appbar_tag(tf, "said", ext=EXT)
             a_every_published_action_is_heard(tf, example)
             b_the_two_kinds_of_refusal(tf, example, tag, surface)
             d_the_agent_learns_whether_the_person_heard(tf, example, tag)

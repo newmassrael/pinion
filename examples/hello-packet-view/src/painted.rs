@@ -353,10 +353,10 @@ fn sweep(mut check: impl FnMut(&std::rc::Rc<ViewState>, &Painted, &Scene, (u32, 
 fn r1663_every_declared_element_of_the_screen_is_painted() {
     sweep(|state, shot, _, _, case| {
         let mut wanted: Vec<String> = vec![
-            "pv.root".into(),
-            "pv.appbar".into(),
-            "pv.appbar.interface".into(),
-            "pv.appbar.rate".into(),
+            crate::address::ROOT.into(),
+            crate::address::APPBAR.into(),
+            crate::address::APPBAR_INTERFACE.into(),
+            crate::address::APPBAR_RATE.into(),
             super::address::FILTER.into(),
             super::address::FILTER_COUNT.into(),
             crate::address::CONTEXT.into(),
@@ -429,8 +429,8 @@ fn r1663_every_declared_element_of_the_screen_is_painted() {
 /// literals in two different functions, with nothing on either side that fails
 /// when they disagree.
 ///
-/// R1663 shipped this screen with them disagreeing (`packet_view` registered,
-/// `pv.root` painted). Every press anywhere in the window was dropped in
+/// R1663 shipped this screen with them disagreeing — `packet_view` registered
+/// while the root PANEL was painted. Every press anywhere in the window was dropped in
 /// silence. Eleven tests in this file passed, because each one asks the app's own
 /// `Hit::at`; the 160-assertion demo passed, because it invokes the oracle by
 /// name; the boot gate printed `deliverable=0` and let it through. The defect was
@@ -513,8 +513,8 @@ fn r1663_every_painted_tag_belongs_to_a_declared_family() {
         // spelled again: the two literals drifting apart is precisely the defect
         // that left this screen dead to a mouse for a round.
         crate::VIEW_TAG,
-        "pv.root",
-        "pv.appbar",
+        super::address::ROOT,
+        super::address::APPBAR,
         super::address::FILTER,
         super::address::CONTEXT,
         super::address::LIST,

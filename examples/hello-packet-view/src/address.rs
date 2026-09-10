@@ -4,11 +4,20 @@
 //! R2109 opened this module for the filter bar; R2111 gave it the message
 //! grid, which is the largest family of the capture viewer and the largest this
 //! address campaign has converted; R2112 gave it the decode tree, R2113 the byte
-//! grid, and R2114 the two strips that close the screen. Each has its own entry
-//! further down.
+//! grid, R2114 the two strips, and R2115 the application bar and the three lone
+//! marks that CLOSE the screen. Each has its own entry further down.
 //!
-//! ★★★★★ THREE ARRANGEMENTS sit side by side here, and the contrast is worth
-//! reading before adding a fourth, because which one a family has is decided by
+//! ★★★★★ **This module is now the only place in this crate where a literal in
+//! this screen's namespace may appear**, and that is a gate rather than a
+//! convention: `r2115_no_module_but_the_declaration_spells_this_screens_namespace`
+//! reads every module's source and refuses one. Its sibling in the shell refuses
+//! the same thing of the HOST that mounts this screen as a page. The two
+//! together are what the seventeen instalments were for — before them, each gate
+//! could only see the families already declared, so a screen could grow a new
+//! region tomorrow and spell it everywhere with nothing saying a word.
+//!
+//! ★★★★★ FOUR ARRANGEMENTS sit side by side here, and the contrast is worth
+//! reading before adding a fifth, because which one a family has is decided by
 //! its key and its shape rather than by its size:
 //!
 //! * keys that are NUMBERS — the message grid, the byte grid, the reassembly
@@ -18,9 +27,15 @@
 //!   layer identifiers. Nothing is inherited, so each inverse says for itself
 //!   that the stem is not a member and that a sibling's prefix is not its own.
 //! * keys under the SEAT PREFIX ITSELF — the session-context strip, where a
-//!   negotiated value and the strip's fixed seat are both `pv.context.<word>`.
-//!   There is no word between the stem and the key, so the seat ROSTER is the
-//!   discriminator and the two rosters have to be proven disjoint.
+//!   negotiated value and the strip's fixed seat share one prefix. There is no
+//!   word between the stem and the key, so the seat ROSTER is the discriminator
+//!   and the two rosters have to be proven disjoint.
+//! * NO KEYS AT ALL — the application bar, three fixed seats and nothing
+//!   parametric. Nothing has to be decided: there is no key vocabulary, so the
+//!   roster IS the whole declaration and the inverse is one equality. It was
+//!   left for last because it is the one arrangement that teaches nothing, and
+//!   the three lone marks below are its degenerate case — one mark each, so not
+//!   even a roster.
 //!
 //! # What was missing
 //!
@@ -1044,6 +1059,103 @@ pub fn reassembly_lane(index: usize) -> String {
 pub fn reassembly_lane_index(tag: &str) -> Option<usize> {
     tag.strip_prefix(REASSEMBLY_LANE_SEAT)?.parse().ok()
 }
+
+// ─── the application bar ────────────────────────────────────────────────────
+//
+// ★★★★★ R2115 — the band across the top, and the LAST family of this screen
+// that a reader had to spell.
+//
+// Measured at entry: **20 sites in this crate's five modules** and 2 across two
+// walks — 22 in all, and none in the shell.
+//
+// ⚠ Three fixed seats and NO parametric family, which makes this the simplest
+// arrangement the campaign has met and the reason it was left for last: there is
+// no key vocabulary to decide anything, so the roster is the whole declaration.
+
+/// ★★★★★ R2115 — the tag the **application bar itself** is painted under.
+pub const APPBAR: &str = "pv.appbar";
+
+/// [`APPBAR`] with the separator its seats hang off.
+pub const APPBAR_SEAT: &str = "pv.appbar.";
+
+/// What the bar says is being captured.
+pub const APPBAR_INTERFACE: &str = "pv.appbar.interface";
+
+/// The rate readout beside it.
+pub const APPBAR_RATE: &str = "pv.appbar.rate";
+
+/// The running commentary — a LIVE region that opens empty and fills as the
+/// screen is driven.
+///
+/// ⚠ This one is also an ANSWER address: `Announced::at` names it when a refusal
+/// has to reach a person, so a wrong letter here loses the refusal rather than a
+/// mark. Two readers, one string, and until this round neither could be compared
+/// with the other.
+pub const APPBAR_SAID: &str = "pv.appbar.said";
+
+/// ★★★★★ R2115 — every FIXED word this bar addresses, beside its address.
+///
+/// The whole family: this bar has no parametric half. The title run is NOT here
+/// because nothing tags it — it is painted as a bare label and named by the
+/// group, which is a decision `VOICES` carries rather than this roster.
+pub const APPBAR_SEATS: &[(&str, &str)] = &[
+    ("interface", APPBAR_INTERFACE),
+    ("rate", APPBAR_RATE),
+    ("said", APPBAR_SAID),
+];
+
+/// The address of the fixed seat `word`.
+#[must_use]
+pub fn appbar(word: &str) -> String {
+    format!("{APPBAR_SEAT}{word}")
+}
+
+/// The fixed word an address names, or `None` when the tag is not one of them.
+///
+/// ★ [`appbar`]'s inverse. Exact equality against the roster, for
+/// [`bytes_word`]'s reason.
+#[must_use]
+pub fn appbar_word(tag: &str) -> Option<&'static str> {
+    APPBAR_SEATS
+        .iter()
+        .find(|(_, seat)| *seat == tag)
+        .map(|(word, _)| *word)
+}
+
+// ─── the three lone marks ───────────────────────────────────────────────────
+//
+// ★★★★★ R2115 — what is left once the six families are declared: three tags
+// that are NOT families. Each is one mark with no members, so none of them gets
+// a seat roster, a template or an inverse — a family shape here would be five
+// declarations describing a set of one.
+//
+// ⚠ Two of them were ALREADY composed in one place before this round —
+// `TOOLTIP_TAG` and `MAP_TAG`, each written in the round that happened to need
+// it. That is R2110's finding a fourth time, and it is why they move here rather
+// than being left alone: a corner declared where a round needed it cannot be
+// checked against the namespace it belongs to, and the gate below is exactly
+// that check.
+
+/// The screen's root panel — an address for the sweep and the receiver a press
+/// falls through to. Not a place a reader travels, which is what `SILENCES`
+/// says about it.
+pub const ROOT: &str = "pv.root";
+
+/// The region a description is painted in.
+pub const TIP: &str = "pv.tip";
+
+/// The overview map.
+pub const MAP: &str = "pv.map";
+
+/// ★★★★★ R2115 — **the namespace this screen's every painted address begins
+/// with**, and the needle the gate uses.
+///
+/// Declared rather than spelled because the gate that keeps this module the only
+/// speller has to name the thing it forbids, and a gate spelling its own needle
+/// is the defect one level up (R2053). The trailing separator is part of it: a
+/// reader classifying a snapshot by family compares against this, and `pv` alone
+/// would also claim a screen called `pvsomething`.
+pub const NAMESPACE: &str = "pv.";
 
 /// `tail` unless it is empty.
 ///

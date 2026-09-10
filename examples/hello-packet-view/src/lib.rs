@@ -101,7 +101,7 @@ vello_renderer_impl!(HelloPacketViewRenderer, HelloPacketViewRendererError);
 const WIN_W: u32 = 1440;
 const WIN_H: u32 = 900;
 const VIEW_TAG: &str = "packet_view";
-const MAP_TAG: &str = "pv.map";
+const MAP_TAG: &str = address::MAP;
 /// R1707 — the query box: the tag the field's own external is addressed by, the
 /// tag its buffer is keyed on, and the tag it is painted under. One name.
 const QUERY_TAG: &str = address::FILTER_QUERY;
@@ -2264,13 +2264,14 @@ fn view(field: (TextFieldState, u32), _frame: Frame) -> Scene {
     children.extend(description_scene(&state, ink));
     Scene::Container(
         ContainerNode::new(vec![
-            panel("pv.root", Rect::new(0, 0, w, h), ink.bg, None, children).silenced(
+            panel(address::ROOT, Rect::new(0, 0, w, h), ink.bg, None, children).silenced(
                 Silence::layout("places the two bars, the three panes and the reassembly strip"),
             ),
         ])
         // ★ R1664 — the root carries the tag the widget is REGISTERED under, so
-        // the router has something to resolve a press to. `pv.root` above is an
-        // ADDRESS, for `scene/snapshot` and the sweep; this is the RECEIVER.
+        // the router has something to resolve a press to. The root panel above
+        // carries an ADDRESS, for `scene/snapshot` and the sweep; this is the
+        // RECEIVER.
         // They were two string literals in two functions with nothing checking
         // that either of them named anything, and the screen was dead at every
         // point in the window. `scene/pointer_reach`.externals is the read that
@@ -2280,8 +2281,8 @@ fn view(field: (TextFieldState, u32), _frame: Frame) -> Scene {
             LayoutStyle::new()
                 .with_size(Size::px(w, h))
                 // The receiver is an address for presses, not a region a reader
-                // travels to: everything it holds is `pv.root`, which says so
-                // for itself.
+                // travels to: everything it holds is the root panel, which says
+                // so for itself.
                 .with_silence(Silence::layout(
                     "the window's receiver; it holds the screen",
                 )),
@@ -2292,7 +2293,7 @@ fn view(field: (TextFieldState, u32), _frame: Frame) -> Scene {
 fn app_bar(state: &Rc<ViewState>, ink: Ink) -> Scene {
     let (w, _) = window_size();
     panel(
-        "pv.appbar",
+        address::APPBAR,
         Rect::new(0, 0, w, APP_BAR_H),
         ink.surface,
         Some(ink.outline),
@@ -2309,21 +2310,21 @@ fn app_bar(state: &Rc<ViewState>, ink: Ink) -> Scene {
                 ink.text,
             ),
             tagged_label(
-                "pv.appbar.interface",
+                address::APPBAR_INTERFACE,
                 spec::INTERFACE,
                 Rect::new(124, 20, 190, 14),
                 FONT_SMALL,
                 ink.text_2,
             ),
             tagged_label(
-                "pv.appbar.rate",
+                address::APPBAR_RATE,
                 spec::RATE,
                 Rect::new(324, 20, 120, 14),
                 FONT_SMALL,
                 ink.ok,
             ),
             tagged_label(
-                "pv.appbar.said",
+                address::APPBAR_SAID,
                 state.said_sentence(),
                 Rect::new(w.saturating_sub(360), 20, 340, 14),
                 FONT_SMALL,
@@ -2591,7 +2592,7 @@ fn context_strip(state: &Rc<ViewState>, ink: Ink) -> Scene {
 }
 
 /// The tag the description region is painted and announced under.
-const TOOLTIP_TAG: &str = "pv.tip";
+const TOOLTIP_TAG: &str = address::TIP;
 
 /// ★★★★★ R1918 — the sentences this screen's marks carry, by paint tag.
 ///
@@ -3945,7 +3946,7 @@ impl ExternalIntrospect for ViewOracle {
             return Announced::nowhere("no capture is loaded, so there is no app bar to say it in");
         };
         state.say(refused.clone());
-        Announced::at("pv.appbar.said")
+        Announced::at(address::APPBAR_SAID)
     }
 
     fn invoke(
@@ -4337,6 +4338,31 @@ fn reassembly_addresses_json() -> serde_json::Value {
     })
 }
 
+/// ★★★★★ R2115 — **the application bar: its own tag and its three fixed seats.**
+///
+/// Measured at entry, 20 sites in this crate's five modules and 2 across two
+/// walks; none in the shell.
+///
+/// ⚠ No prefix is published beside the roster, and that absence is the family's
+/// shape rather than an omission: this bar has no parametric half at all. It is
+/// the only surface here of which that is true.
+///
+/// ⚠⚠ Published because TWO WALKS need it and for no other reason. `r1719` and
+/// `r1720` each drive three screens and each kept a module-level table naming
+/// where every screen puts its speech; a table is module-level and cannot query
+/// anything, so this screen's row was a literal in both. That is R2109's
+/// `filter_bar` finding two walks over — and the rule R2104 and R2113 paid for
+/// runs the other way too: a surface no walk reaches would be the rotting thing
+/// this debt produces, which is why the three lone marks below get none.
+fn appbar_addresses_json() -> serde_json::Value {
+    serde_json::json!({
+        "tag": address::APPBAR,
+        "seats": address::APPBAR_SEATS.iter().map(|(word, tag)| serde_json::json!({
+            "word": word, "tag": tag,
+        })).collect::<Vec<_>>(),
+    })
+}
+
 /// The whole specification, as the wire sees it — so the demo reads the table
 /// from the running application rather than keeping a second copy of it.
 fn spec_json() -> serde_json::Value {
@@ -4393,16 +4419,24 @@ fn spec_json() -> serde_json::Value {
         // out of this document is what kept `spec_json` inside the workspace's
         // hundred-line bound when the third arrived.
         //
-        // ★★ R2114 takes the count to six, and the screen is NOT finished:
-        // re-measured this round, `pv.appbar` (20 sites), `pv.root` (4),
-        // `pv.tip` and `pv.map` (1 each) still spell themselves. Said here
-        // because the shape of this list invites the opposite reading.
+        // ★★ R2114 took the count to six and said the screen was NOT finished —
+        // an application bar and three lone marks still spelled themselves.
+        // R2115 closed those, so every painted address of this screen now comes
+        // from `address.rs` and a gate holds it: nothing but that module may
+        // carry a literal in this screen's namespace.
+        //
+        // ⚠ Only FOUR surfaces are published here, and that is not the same
+        // number. A family gets one when a WALK needs to compose a member's
+        // address; the bar's three seats and the three lone marks are asked for
+        // by nobody outside this crate, and a published surface with no reader
+        // is what R2104 built and deleted in one round.
         "filter_addresses": filter_addresses_json(),
         "list_addresses": list_addresses_json(),
         "tree_addresses": tree_addresses_json(),
         "bytes_addresses": bytes_addresses_json(),
         "context_addresses": context_addresses_json(),
         "reassembly_addresses": reassembly_addresses_json(),
+        "appbar_addresses": appbar_addresses_json(),
         // ★★★ R1707 — what this screen tells a person the mouse and keyboard
         // do. Published rather than painted: the sibling screen prints a hint
         // strip because the reference's node canvas does, and the reference's
@@ -4750,13 +4784,13 @@ const PROJECTED_STOPS: [&str; 4] = [
 /// running commentary.
 fn app_bar_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     vec![
-        AccessNode::new("pv.appbar", AriaRole::Group)
+        AccessNode::new(address::APPBAR, AriaRole::Group)
             .with_name("packet view")
-            .with_child("pv.appbar.interface")
-            .with_child("pv.appbar.rate")
-            .with_child("pv.appbar.said"),
-        AccessNode::new("pv.appbar.interface", AriaRole::Status),
-        AccessNode::new("pv.appbar.rate", AriaRole::Status),
+            .with_child(address::APPBAR_INTERFACE)
+            .with_child(address::APPBAR_RATE)
+            .with_child(address::APPBAR_SAID),
+        AccessNode::new(address::APPBAR_INTERFACE, AriaRole::Status),
+        AccessNode::new(address::APPBAR_RATE, AriaRole::Status),
         // ★ A live region. It opens EMPTY and fills as the screen is driven, so
         // its name is what the region is and the commentary is its value — a
         // name taken from the contents would be absent at boot, which is the
@@ -4765,7 +4799,7 @@ fn app_bar_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
         // query this screen refused to run waited for a pause a person working
         // the tool does not leave, while every count interrupted nobody — one
         // constant, right for half of what the screen says.
-        AccessNode::new("pv.appbar.said", AriaRole::Status)
+        AccessNode::new(address::APPBAR_SAID, AriaRole::Status)
             .with_name("activity")
             .with_value(AccessValue::Text(state.said_sentence()))
             .with_live(state.said.showing().map_or(AccessLive::Polite, |said| {
