@@ -259,7 +259,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             was = {r["key"]: r["on"] for r in q(app, "options")}[key]
             assert_router_press_moves(
                 app,
-                f"shell.settings.option.{key}",
+                option["tag"],
                 lambda: {r["key"]: r["on"] for r in q(app, "options")},
                 f"D: the {key} switch",
             )
@@ -274,13 +274,18 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # It read the rectangle straight out of the paint snapshot, which is a
         # claim that the control is above the fold — true until R1864 gave the
         # window a status band and the settings page's last group moved below
-        # the viewport. The demo then died `KeyError('shell.settings.theme.0')`
-        # and stayed red for two rounds, and **the screen was not wrong**:
+        # the viewport. The demo then died with a key error on the first
+        # appearance choice and stayed red for two rounds, and **the screen was
+        # not wrong**:
         # `scene/scroll_reach` reported the segments `scrollable`, `lost: 0`,
         # with the offset that shows them. A fold position is not what this
         # section is about; pressing the segment is.
-        for n, name in enumerate(spec["themes"]):
-            x, y, w, h = bring_into_view(app, f"shell.settings.theme.{n}")
+        # ★ R2119 — the choices are ASKED for, addresses and all. The loop used
+        # to spell `<page>.theme.<n>` from an index it enumerated itself, which
+        # is a second copy of the page's own composition.
+        for choice in spec["theme_choices"]:
+            name = choice["name"]
+            x, y, w, h = bring_into_view(app, choice["tag"])
             app.request(
                 "scene/click", {"button": "left", "at": {"x": x + w // 2, "y": y + h // 2}}
             )
@@ -289,7 +294,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # The two booked rows refuse, and say what they are booked under.
         tree = nodes_by_tag(app)
         for row in spec["key_rows"]:
-            node = tree[f"shell.settings.key.{row['key']}"]
+            node = tree[row["tag"]]
             un = node.get("unavailable")
             ok(f"D: {row['key']} carries its booking", isinstance(un, dict))
             assert_eq(un["kind"], "reserved", f"D: {row['key']} kind")
@@ -400,14 +405,14 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         for option in spec["options"]:
             ok(
                 f"F2: the {option['key']} switch is a stop of its own",
-                f"shell.settings.option.{option['key']}" in reached,
+                option["tag"] in reached,
             )
         # ★ NEGATIVE CONTROL — a booked affordance is NOT a stop. Without this
         # the walk above is satisfied by stamping every node focusable.
         for row in spec["key_rows"]:
             ok(
                 f"F2: ★ the booked {row['key']} button is not a stop",
-                f"shell.settings.key.{row['key']}" not in reached,
+                row["tag"] not in reached,
             )
         go(app, "dashboard")
 

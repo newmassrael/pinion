@@ -304,3 +304,341 @@ pub const PALETTE_PART_TEMPLATES: &[(&str, &str)] = &[
     ("gist", PALETTE_PART_GIST_TEMPLATE),
     ("verb", PALETTE_PART_VERB_TEMPLATE),
 ];
+
+// --- the preferences page ------------------------------------------------
+//
+// ★★★★★ R2119 §5.2 §5.11 — **the twenty-second instalment, and the campaign's
+// SIXTH arrangement: a family with eleven stems, three of them two-headed.**
+//
+// Measured at entry, before a letter moved: **100 sites across seven files** —
+// 84 in this crate's five modules and 16 across two walks — against a rail
+// whose conversion at R2051 was 28, a palette's at R2110 124, and a link's at
+// R2118 56. It is the largest family this shell has left and the head of
+// `tools/painted_addresses.py --owed`.
+//
+// # ★ Why the arrangement is new
+//
+// The five before this had ONE key vocabulary under a stem — a seat roster, an
+// open vocabulary re-parsed out of the tag, a count, an enum's arms, or (R2118)
+// two heads on one stem told apart by a classifier. This page has eleven stems
+// and its ambiguity is one level deeper: THREE of those stems each carry two
+// populations.
+//
+// * `head.` holds the page's own two words AND one heading per group;
+// * `row.` holds a row's own address AND that row's chip strip, one deeper;
+// * `option.` holds a SWITCH's address AND, one deeper, a word inside an open
+//   roster — which is a different control on a different row entirely.
+//
+// ⇒ a classifier over the whole family would be one function with eleven arms
+// answering questions no reader asks together. What each reader needs is its
+// own family's inverse *that refuses the other head*.
+//
+// # ★★★★★ THREE inverses, not eleven, and the compiler is what said so
+//
+// The first draft of this module declared an inverse per stem — eleven of them,
+// each with a refusal argued in its own doc comment. `cargo check` answered
+// with **eleven dead-code errors**: this application ROUTES a press on a
+// switch, a booked button and an appearance choice, and nothing else here ever
+// turns one of this page's addresses back into a key. The rest of the page's
+// marks are read by their family PREFIX (`judge.rs` asks the paint for a
+// surface) or composed and never parsed.
+//
+// R2110 recorded the same measurement one family over and this is it again:
+// **an inverse with no reader is not a declaration, it is a second thing to
+// drift** — it cannot be wrong in a way anyone sees, so it rots in silence
+// while reading as coverage. The three that survive are the three the router
+// calls, and [`settings_option_key`]'s refusal is the one this round's finding
+// is about.
+//
+// # ★★ Two of this family's addresses are NOT this screen's to compose
+//
+// R2050's finding, a page over: an open roster's box and the words inside it
+// are painted by `pinion_widget_paint::chooser`, from a prefix its caller
+// brings. So [`settings_roster`] and [`settings_choice`] delegate there rather
+// than spelling `.roster.` and `.option.` a second time — and the same round
+// found what that second spelling costs, because the chooser was recovering an
+// option's word by taking the LAST segment of the address and the analysis
+// tool's own capture sources are `lo · 127.0.0.1:7447`.
+//
+// # ⚠ What a walk does instead
+//
+// A walk is Python and cannot call any of this, so the page publishes its own
+// tag, its fixed seats by word, and every parametric family as a prefix, under
+// `settings_addresses` on the wire.
+
+/// ★★★★★ R2119 — the tag the preferences PAGE itself is painted under.
+///
+/// The page, not one of its seats, so it carries no separator — and it is also
+/// the prefix `pinion_widget_paint::chooser` composes this page's roster
+/// addresses from, which is why it is a `&'static str` a caller can hand over
+/// whole.
+pub const SETTINGS: &str = "shell.settings";
+
+/// [`SETTINGS`] with the separator everything under it hangs off.
+pub const SETTINGS_SEAT: &str = "shell.settings.";
+
+/// The page's own scrolling viewport.
+pub const SETTINGS_BODY: &str = "shell.settings.body";
+
+/// The strip the page closes with, which is the one place either screen says
+/// which build a reader is looking at.
+pub const SETTINGS_BUILD: &str = "shell.settings.build";
+
+/// The appearance segment as a whole — the group a reader chooses *within*.
+///
+/// ⚠ A fixed word that is ALSO a stem: the choices hang off
+/// [`SETTINGS_THEME_SEAT`]. The two are told apart by the separator, which is
+/// why this one must never be written with a trailing dot.
+pub const SETTINGS_THEME: &str = "shell.settings.theme";
+
+/// What the page calls itself.
+pub const SETTINGS_HEAD_TITLE: &str = "shell.settings.head.title";
+
+/// The sentence under that heading.
+pub const SETTINGS_HEAD_GIST: &str = "shell.settings.head.gist";
+
+/// ★★★★★ R2119 — every FIXED word this page addresses, beside its address.
+///
+/// The roster a reader classifies by and the wire publishes. The groups, the
+/// rows, the switches, the bookings, the choosers and the choices are NOT here:
+/// their populations are the specification's own tables, so each is published
+/// as a prefix and reached through its composer.
+///
+/// ⚠ `head.title` and `head.gist` carry their own separator because that is
+/// what the address says — [`PALETTE_SEATS`]'s rule, and for its reason: a word
+/// list that flattened them would be a second naming scheme.
+///
+/// ⚠⚠ `theme` is in this roster AND is a stem. That is the page's own fact,
+/// not a modelling choice: the segment is a `radiogroup` a reader is told
+/// about, and its two radios are addressed under it.
+pub const SETTINGS_SEATS: &[(&str, &str)] = &[
+    ("body", SETTINGS_BODY),
+    ("build", SETTINGS_BUILD),
+    ("theme", SETTINGS_THEME),
+    ("head.title", SETTINGS_HEAD_TITLE),
+    ("head.gist", SETTINGS_HEAD_GIST),
+];
+
+/// The prefix the page's own headings and each group's heading are painted
+/// under.
+pub const SETTINGS_HEAD: &str = "shell.settings.head.";
+
+/// [`SETTINGS_HEAD`] with the population's placeholder, for a specification
+/// table whose rows must be `&'static str`.
+pub const SETTINGS_HEAD_TEMPLATE: &str = "shell.settings.head.{}";
+
+/// The address of the heading a reader sees for the group `key`.
+///
+/// ★ Takes anything that reads as a string, for [`rail_seat`]'s reason: the
+/// rosters this is called over hold their keys differently.
+#[must_use]
+pub fn settings_head(key: impl AsRef<str>) -> String {
+    format!("{SETTINGS_HEAD}{}", key.as_ref())
+}
+
+/// The prefix every group's own region is painted under.
+pub const SETTINGS_GROUP: &str = "shell.settings.group.";
+
+/// [`SETTINGS_GROUP`] with the population's placeholder — see
+/// [`SETTINGS_HEAD_TEMPLATE`].
+pub const SETTINGS_GROUP_TEMPLATE: &str = "shell.settings.group.{}";
+
+/// The address of the region holding the group `key`.
+#[must_use]
+pub fn settings_group(key: impl AsRef<str>) -> String {
+    format!("{SETTINGS_GROUP}{}", key.as_ref())
+}
+
+/// The prefix every row's title and sentence are painted under.
+pub const SETTINGS_ROW: &str = "shell.settings.row.";
+
+/// [`SETTINGS_ROW`] with the population's placeholder — see
+/// [`SETTINGS_HEAD_TEMPLATE`].
+pub const SETTINGS_ROW_TEMPLATE: &str = "shell.settings.row.{}";
+
+/// The appearance row, as a `&'static str` for a specification table.
+pub const SETTINGS_ROW_THEME: &str = "shell.settings.row.theme";
+
+/// The payload-format row, as a `&'static str` for a specification table.
+pub const SETTINGS_ROW_PLUGINS: &str = "shell.settings.row.plugins";
+
+/// That row's chip strip, likewise.
+pub const SETTINGS_ROW_PLUGINS_CHIPS: &str = "shell.settings.row.plugins.chips";
+
+/// The address of the row `key`.
+#[must_use]
+pub fn settings_row(key: impl AsRef<str>) -> String {
+    format!("{SETTINGS_ROW}{}", key.as_ref())
+}
+
+/// The address of the chip strip on the row `key`.
+///
+/// ★ One level deeper than the row, which is what keeps `parts_under` from
+/// reading it as a row: the framework takes the tags whose remainder holds no
+/// further separator, so a chip strip addressed flat would be counted as a
+/// row the specification never declared.
+#[must_use]
+pub fn settings_row_chips(key: impl AsRef<str>) -> String {
+    format!("{SETTINGS_ROW}{}.chips", key.as_ref())
+}
+
+/// The prefix every switch — and every word of every open roster — is painted
+/// under.
+///
+/// ⚠ Two populations, one stem. See [`settings_option_key`].
+pub const SETTINGS_OPTION: &str = "shell.settings.option.";
+
+/// [`SETTINGS_OPTION`] with the population's placeholder — see
+/// [`SETTINGS_HEAD_TEMPLATE`].
+pub const SETTINGS_OPTION_TEMPLATE: &str = "shell.settings.option.{}";
+
+/// The address of the switch `key`.
+#[must_use]
+pub fn settings_option(key: impl AsRef<str>) -> String {
+    format!("{SETTINGS_OPTION}{}", key.as_ref())
+}
+
+/// The switch an address names, or `None` when it is not one.
+///
+/// ★★★★★ The refusal is the whole function. A word inside an open roster is
+/// addressed `option.<row>.<word>` — one level deeper, on a different control,
+/// on a different row — so a bare `strip_prefix` answers `Some("interface.lo ·
+/// 127.0.0.1:7447")` for it. Until R2119 nothing refused: the router's next
+/// step happened to find no switch by that name and fell through, which made
+/// the correctness a property of the CALLER's ordering rather than of the
+/// address. R2117's rule: order is a property of one call site, refusal a
+/// property of the address.
+#[must_use]
+pub fn settings_option_key(tag: &str) -> Option<&str> {
+    let key = tag.strip_prefix(SETTINGS_OPTION)?;
+    (!key.contains('.')).then_some(key)
+}
+
+/// The address of the word `word` inside the roster the row `key` opens.
+///
+/// ★★ Delegated to the painter. `pinion_widget_paint::chooser` composes this
+/// from the prefix it is painted under, and this page's prefix is [`SETTINGS`].
+#[must_use]
+pub fn settings_choice(key: &str, word: &str) -> String {
+    pinion_widget_paint::chooser::address::option(SETTINGS, key, word)
+}
+
+/// The prefix every word of the roster the row `key` opens is painted under.
+#[must_use]
+pub fn settings_choice_prefix(key: &str) -> String {
+    pinion_widget_paint::chooser::address::option_prefix(SETTINGS, key)
+}
+
+/// The prefix every booked row's button is painted under.
+pub const SETTINGS_KEY: &str = "shell.settings.key.";
+
+/// [`SETTINGS_KEY`] with the population's placeholder — see
+/// [`SETTINGS_HEAD_TEMPLATE`].
+pub const SETTINGS_KEY_TEMPLATE: &str = "shell.settings.key.{}";
+
+/// The address of the booked button on the row `key`.
+#[must_use]
+pub fn settings_key(key: impl AsRef<str>) -> String {
+    format!("{SETTINGS_KEY}{}", key.as_ref())
+}
+
+/// The booked row an address names, or `None` when it is not one.
+#[must_use]
+pub fn settings_key_row(tag: &str) -> Option<&str> {
+    tag.strip_prefix(SETTINGS_KEY)
+}
+
+/// The prefix every collapsed chooser is painted under.
+pub const SETTINGS_CHOOSE: &str = "shell.settings.choose.";
+
+/// [`SETTINGS_CHOOSE`] with the population's placeholder — see
+/// [`SETTINGS_HEAD_TEMPLATE`].
+pub const SETTINGS_CHOOSE_TEMPLATE: &str = "shell.settings.choose.{}";
+
+/// The address of the collapsed control on the value row `key`.
+#[must_use]
+pub fn settings_choose(key: impl AsRef<str>) -> String {
+    format!("{SETTINGS_CHOOSE}{}", key.as_ref())
+}
+
+/// The prefix the word a collapsed chooser is showing is painted under.
+pub const SETTINGS_SHOWN: &str = "shell.settings.shown.";
+
+/// [`SETTINGS_SHOWN`] with the population's placeholder.
+pub const SETTINGS_SHOWN_TEMPLATE: &str = "shell.settings.shown.{}";
+
+/// The address of the word the chooser on the value row `key` is showing.
+#[must_use]
+pub fn settings_shown(key: impl AsRef<str>) -> String {
+    format!("{SETTINGS_SHOWN}{}", key.as_ref())
+}
+
+/// The prefix every chooser's chevron is painted under.
+pub const SETTINGS_ARROW: &str = "shell.settings.arrow.";
+
+/// [`SETTINGS_ARROW`] with the population's placeholder.
+pub const SETTINGS_ARROW_TEMPLATE: &str = "shell.settings.arrow.{}";
+
+/// The address of the chevron on the value row `key`.
+#[must_use]
+pub fn settings_arrow(key: impl AsRef<str>) -> String {
+    format!("{SETTINGS_ARROW}{}", key.as_ref())
+}
+
+/// The address of the roster the value row `key` opens onto.
+///
+/// ★★ Delegated to the painter, for [`settings_choice`]'s reason.
+#[must_use]
+pub fn settings_roster(key: &str) -> String {
+    pinion_widget_paint::chooser::address::roster(SETTINGS, key)
+}
+
+/// The prefix every open roster's own box is painted under.
+///
+/// ⚠ Declared here rather than derived, because the painter composes a whole
+/// address and a `const` cannot format; the gate drives it against
+/// [`settings_roster`] so the two cannot drift.
+pub const SETTINGS_ROSTER: &str = "shell.settings.roster.";
+
+/// The prefix every payload-format chip is painted under.
+pub const SETTINGS_PLUGIN: &str = "shell.settings.plugin.";
+
+/// The chip for the record format.
+pub const SETTINGS_PLUGIN_RECORDS: &str = "shell.settings.plugin.records";
+
+/// The chip for the schema format.
+pub const SETTINGS_PLUGIN_SCHEMA: &str = "shell.settings.plugin.schema";
+
+/// The address of the chip for the payload format `word`.
+#[must_use]
+pub fn settings_plugin(word: impl AsRef<str>) -> String {
+    format!("{SETTINGS_PLUGIN}{}", word.as_ref())
+}
+
+/// The prefix every appearance choice is painted under.
+///
+/// ⚠ [`SETTINGS_THEME`] with a separator, and the two mean different marks —
+/// the segment as a whole, and one radio in it.
+pub const SETTINGS_THEME_SEAT: &str = "shell.settings.theme.";
+
+/// [`SETTINGS_THEME_SEAT`] with the population's placeholder.
+pub const SETTINGS_THEME_TEMPLATE: &str = "shell.settings.theme.{}";
+
+/// The address of the appearance choice at `n`.
+///
+/// ★ Indexed, not worded: the choices are the reference's own two and the
+/// screen addresses them by position, which is the vocabulary the segment's
+/// press already carries.
+#[must_use]
+pub fn settings_theme(n: usize) -> String {
+    format!("{SETTINGS_THEME_SEAT}{n}")
+}
+
+/// The appearance choice an address names, or `None` when it is not one.
+///
+/// ★★ Refuses a tail that is not a number, which is what tells this family from
+/// a fixed word under the same stem — R2118's disjointness, one page over.
+#[must_use]
+pub fn settings_theme_index(tag: &str) -> Option<usize> {
+    tag.strip_prefix(SETTINGS_THEME_SEAT)?.parse().ok()
+}

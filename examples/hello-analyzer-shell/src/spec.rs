@@ -3320,7 +3320,7 @@ pub const LOCKED: &[(&str, Population, Where)] = &[
         Where::At("dashboard"),
     ),
     (
-        "shell.settings.key.{}",
+        crate::address::SETTINGS_KEY_TEMPLATE,
         Population::KeyRows,
         Where::At("settings"),
     ),
@@ -3840,19 +3840,19 @@ pub const VOICES: &[VoiceSpec] = &[
     // held before it had a destination column: they are not on the opening
     // screen, so every census this screen has ever run was blind to them.
     VoiceSpec {
-        tag: "shell.settings.group.{}",
+        tag: crate::address::SETTINGS_GROUP_TEMPLATE,
         role: "group",
         population: Population::OptionGroups,
         at: Where::At("settings"),
     },
     VoiceSpec {
-        tag: "shell.settings.option.{}",
+        tag: crate::address::SETTINGS_OPTION_TEMPLATE,
         role: "switch",
         population: Population::Options,
         at: Where::At("settings"),
     },
     VoiceSpec {
-        tag: "shell.settings.key.{}",
+        tag: crate::address::SETTINGS_KEY_TEMPLATE,
         role: "button",
         population: Population::KeyRows,
         at: Where::At("settings"),
@@ -3863,19 +3863,19 @@ pub const VOICES: &[VoiceSpec] = &[
     // of them — the pair the floor's own collapsed control cannot publish
     // without a platform layer adding one.
     VoiceSpec {
-        tag: "shell.settings.choose.{}",
+        tag: crate::address::SETTINGS_CHOOSE_TEMPLATE,
         role: "combobox",
         population: Population::ValueRows,
         at: Where::At("settings"),
     },
     VoiceSpec {
-        tag: "shell.settings.theme",
+        tag: crate::address::SETTINGS_THEME,
         role: "radiogroup",
         population: Population::One,
         at: Where::At("settings"),
     },
     VoiceSpec {
-        tag: "shell.settings.theme.{}",
+        tag: crate::address::SETTINGS_THEME_TEMPLATE,
         role: "radio",
         population: Population::Themes,
         at: Where::At("settings"),
@@ -3891,13 +3891,13 @@ pub const VOICES: &[VoiceSpec] = &[
     // region that speaks and is published nowhere is a client reading the
     // specification and being told the window is quieter than it is.
     VoiceSpec {
-        tag: "shell.settings.build",
+        tag: crate::address::SETTINGS_BUILD,
         role: "status",
         population: Population::One,
         at: Where::At("settings"),
     },
     VoiceSpec {
-        tag: "shell.settings.row.plugins.chips",
+        tag: crate::address::SETTINGS_ROW_PLUGINS_CHIPS,
         role: "status",
         population: Population::One,
         at: Where::At("settings"),
@@ -3972,13 +3972,13 @@ pub const SILENCES: &[(&str, Population, &str, Where)] = &[
     // announcement: the word IS its value, and the arrow draws the same
     // open/closed state `expanded` carries.
     (
-        "shell.settings.shown.{}",
+        crate::address::SETTINGS_SHOWN_TEMPLATE,
         Population::ValueRows,
         "part_of",
         Where::At("settings"),
     ),
     (
-        "shell.settings.arrow.{}",
+        crate::address::SETTINGS_ARROW_TEMPLATE,
         Population::ValueRows,
         "part_of",
         Where::At("settings"),
@@ -4178,19 +4178,19 @@ pub const SILENCES: &[(&str, Population, &str, Where)] = &[
     // `dangling` — which is how the first draft of this page was caught, with
     // seven of them.
     (
-        "shell.settings.row.{}",
+        crate::address::SETTINGS_ROW_TEMPLATE,
         Population::Options,
         "part_of",
         Where::At("settings"),
     ),
     (
-        "shell.settings.row.{}",
+        crate::address::SETTINGS_ROW_TEMPLATE,
         Population::KeyRows,
         "part_of",
         Where::At("settings"),
     ),
     (
-        "shell.settings.row.theme",
+        crate::address::SETTINGS_ROW_THEME,
         Population::One,
         "part_of",
         Where::At("settings"),
@@ -4208,49 +4208,49 @@ pub const SILENCES: &[(&str, Population, &str, Where)] = &[
     // a row published with a different reason than the scene declares is the
     // `KindDiffers` arm, which is the half a comparison over tags cannot see.
     (
-        "shell.settings.body",
+        crate::address::SETTINGS_BODY,
         Population::One,
         "layout",
         Where::At("settings"),
     ),
     (
-        "shell.settings.head.title",
+        crate::address::SETTINGS_HEAD_TITLE,
         Population::One,
         "name_of",
         Where::At("settings"),
     ),
     (
-        "shell.settings.head.gist",
+        crate::address::SETTINGS_HEAD_GIST,
         Population::One,
         "part_of",
         Where::At("settings"),
     ),
     (
-        "shell.settings.head.{}",
+        crate::address::SETTINGS_HEAD_TEMPLATE,
         Population::OptionGroups,
         "name_of",
         Where::At("settings"),
     ),
     (
-        "shell.settings.plugin.records",
+        crate::address::SETTINGS_PLUGIN_RECORDS,
         Population::One,
         "part_of",
         Where::At("settings"),
     ),
     (
-        "shell.settings.plugin.schema",
+        crate::address::SETTINGS_PLUGIN_SCHEMA,
         Population::One,
         "part_of",
         Where::At("settings"),
     ),
     (
-        "shell.settings.row.{}",
+        crate::address::SETTINGS_ROW_TEMPLATE,
         Population::ValueRows,
         "part_of",
         Where::At("settings"),
     ),
     (
-        "shell.settings.row.plugins",
+        crate::address::SETTINGS_ROW_PLUGINS,
         Population::One,
         "part_of",
         Where::At("settings"),

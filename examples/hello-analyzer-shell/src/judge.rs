@@ -139,21 +139,16 @@ fn board(regions: &PaintedRegions) -> Vec<Part> {
     })
 }
 
-/// Where the preferences page's headings are addressed — the page's own, and
-/// one per group.
-const SETTINGS_HEAD: &str = "shell.settings.head.";
-/// Where each preferences row's title and sentence are addressed.
-const SETTINGS_ROWS: &str = "shell.settings.row.";
-/// Where a value row's collapsed chooser is addressed.
-const SETTINGS_CHOOSE: &str = "shell.settings.choose.";
-/// Where a switch is addressed.
-const SETTINGS_SWITCH: &str = "shell.settings.option.";
-/// Where a booked row's button is addressed.
-const SETTINGS_LOCKED: &str = "shell.settings.key.";
-/// Where an appearance choice is addressed.
-const SETTINGS_THEME: &str = "shell.settings.theme.";
-/// Where a payload format's chip is addressed.
-const SETTINGS_PLUGIN: &str = "shell.settings.plugin.";
+// ★★★★★ R2119 — the seven prefixes this file reads its surfaces by, DERIVED.
+//
+// They were seven `const`s spelling the page's own addresses, which made this
+// file one of the seven that re-typed them: a wrong letter here compiles, and
+// the surface it names then reports every part of a group as missing — which
+// reads as *the page did not paint them*.
+use crate::address::{
+    SETTINGS_CHOOSE, SETTINGS_HEAD, SETTINGS_KEY as SETTINGS_LOCKED, SETTINGS_OPTION,
+    SETTINGS_PLUGIN, SETTINGS_ROW as SETTINGS_ROWS, SETTINGS_THEME_SEAT as SETTINGS_THEME,
+};
 
 /// What answers for the preferences page, which is the other page this shell
 /// paints itself.
@@ -217,7 +212,7 @@ pub fn settings_built(regions: &PaintedRegions, surface: &str, showing: Showing)
         )),
         "switches" => Built::Standing(parts_titled(
             regions,
-            SETTINGS_SWITCH,
+            SETTINGS_OPTION,
             &settings_title_in("switches"),
         )),
         other => panic!("no preferences surface named {other}"),

@@ -688,9 +688,15 @@ pub mod address {
     }
 
     /// The address of the roster a collapsed chooser opens onto.
+    ///
+    /// ★★★★★ R2119 — **delegated, not composed.** The roster is painted by
+    /// `chooser`, which composed this same string inline; two modules of one
+    /// crate writing one address is the debt this module was opened against,
+    /// one level up. The composition lives where the paint is, and this stays
+    /// as the name a form's consumers already reach for.
     #[must_use]
     pub fn roster(prefix: &str, key: &str) -> String {
-        child(prefix, "roster", key)
+        crate::chooser::address::roster(prefix, key)
     }
 
     /// The general form: one of this painter's parts, for one row.

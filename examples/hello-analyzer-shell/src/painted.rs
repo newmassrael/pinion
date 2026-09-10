@@ -3459,7 +3459,8 @@ fn r1695_every_open_destination_is_a_place_you_arrive_at() {
                                 // pages are compared pairwise below.
                                 !tag.starts_with("shell.") && tag.as_str() != super::VIEW_TAG
                             } else {
-                                tag.starts_with("shell.settings.") || tag.starts_with("card.")
+                                tag.starts_with(crate::address::SETTINGS_SEAT)
+                                    || tag.starts_with("card.")
                             }
                         })
                         .cloned()
@@ -4020,7 +4021,7 @@ fn r1696_the_keyboard_ring_is_the_one_the_specification_declares() {
                 .chain(
                     spec::OPTIONS
                         .iter()
-                        .map(|o| format!("shell.settings.option.{}", o.key)),
+                        .map(|o| crate::address::settings_option(o.key)),
                 )
                 // ★ R1762 — and the value rows' collapsed choosers, which are
                 // the third kind of catalogue widget this page paints. From the
@@ -4029,9 +4030,9 @@ fn r1696_the_keyboard_ring_is_the_one_the_specification_declares() {
                 .chain(
                     spec::VALUE_ROWS
                         .iter()
-                        .map(|row| format!("shell.settings.choose.{}", row.key)),
+                        .map(|row| crate::address::settings_choose(row.key)),
                 )
-                .chain((0..spec::THEMES.len()).map(|n| format!("shell.settings.theme.{n}")))
+                .chain((0..spec::THEMES.len()).map(crate::address::settings_theme))
                 .collect();
             for tag in &walked {
                 assert!(
@@ -4131,7 +4132,7 @@ fn r1695_the_settings_page_declares_its_locked_affordances() {
     owner.run(|| {
         let shot = painted_at_destination("settings");
         for row in spec::KEY_ROWS {
-            let tag = format!("shell.settings.key.{}", row.key);
+            let tag = crate::address::settings_key(row.key);
             let (kind, detail, recourse) = shot
                 .inert
                 .get(&tag)
@@ -4149,7 +4150,7 @@ fn r1695_the_settings_page_declares_its_locked_affordances() {
         let inert: Vec<&String> = shot
             .inert
             .keys()
-            .filter(|t| t.starts_with("shell.settings."))
+            .filter(|t| t.starts_with(crate::address::SETTINGS_SEAT))
             .collect();
         assert_eq!(
             inert.len(),
@@ -4189,9 +4190,9 @@ fn r1695_every_settings_control_is_pressable_where_it_is_painted() {
             state.screens.pose("settings", nth);
             let shot = painted_at((WIN_W, WIN_H)).0;
             for (tag, rect) in &shot.tags {
-                if !tag.starts_with("shell.settings.option.")
-                    && !tag.starts_with("shell.settings.key.")
-                    && !tag.starts_with("shell.settings.theme.")
+                if !tag.starts_with(crate::address::SETTINGS_OPTION)
+                    && !tag.starts_with(crate::address::SETTINGS_KEY)
+                    && !tag.starts_with(crate::address::SETTINGS_THEME_SEAT)
                 {
                     continue;
                 }
@@ -6325,14 +6326,14 @@ fn r1762_an_open_roster_hangs_off_the_control_it_belongs_to() {
         let state = use_shell_state_off_disk();
         let mut shot = painted_at_destination("settings");
         for row in spec::VALUE_ROWS {
-            let tag = format!("shell.settings.choose.{}", row.key);
+            let tag = crate::address::settings_choose(row.key);
             press_tag(&state, &shot, &tag);
             shot = painted_at((WIN_W, WIN_H)).0;
             let control = shot
                 .rect(&tag)
                 .unwrap_or_else(|| panic!("the frame drew {}'s control", row.key));
             let roster = shot
-                .rect(&format!("shell.settings.roster.{}", row.key))
+                .rect(&crate::address::settings_roster(row.key))
                 .unwrap_or_else(|| panic!("pressing {}'s control opens its roster", row.key));
             assert_eq!(
                 (roster.x, roster.w),
@@ -11000,9 +11001,9 @@ const CANON_GESTURES: &[(&str, CanonReach, CanonDrive)] = &[
         |state| {
             let row = spec::VALUE_ROWS[0].key;
             let shot = painted();
-            press_tag(state, &shot, &format!("shell.settings.choose.{row}"));
+            press_tag(state, &shot, &crate::address::settings_choose(row));
             let shot = painted();
-            let stem = format!("shell.settings.option.{row}.");
+            let stem = crate::address::settings_choice_prefix(row);
             let Some(option) = shot.family(&stem).first().map(|tag| (*tag).to_owned()) else {
                 return false;
             };

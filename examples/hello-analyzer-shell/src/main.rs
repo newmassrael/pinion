@@ -327,7 +327,7 @@ const CANVAS_SCROLL: &str = "shell.canvas.body";
 /// region ending at y=900 and its build strip at y=958, so the last group's
 /// controls were painted where no press could reach them — the gate caught it
 /// as a segment that would not change the theme.
-const SETTINGS_SCROLL: &str = "shell.settings.body";
+const SETTINGS_SCROLL: &str = address::SETTINGS_BODY;
 
 /// ★ R1851 — the words `sort_alarms` takes for a column.
 ///
@@ -1711,7 +1711,7 @@ fn screen_roster() -> ScreenRoster {
         &["shell.subbar", address::PALETTE, "card", "match.spark"],
     )
     .expect("`dashboard` is open, has no screen, and claims nothing a guest paints")
-    .painting("settings", &["shell.settings"])
+    .painting("settings", &[address::SETTINGS])
     .expect("`settings` is open, has no screen, and claims nothing a guest paints")
     // ★★★★★ R1911 — **and what this host paints at EVERY destination**, which
     // is what makes "this mark belongs to nobody" an answerable question rather
@@ -3867,19 +3867,22 @@ impl Hit {
         {
             return Self::Palette(def.kind);
         }
-        if let Some(key) = tag.strip_prefix("shell.settings.option.")
+        // ★★★★★ R2119 — the address's own inverse, and it REFUSES a word
+        // inside an open roster. A bare `strip_prefix` answers `Some` for
+        // those too; nothing here noticed, because the lookup below happened
+        // to find no switch by that name — which made the correctness a
+        // property of this arm's ORDER rather than of the address.
+        if let Some(key) = address::settings_option_key(tag)
             && let Some(option) = spec::OPTIONS.iter().find(|o| o.key == key)
         {
             return Self::Option(option.key);
         }
-        if let Some(key) = tag.strip_prefix("shell.settings.key.")
+        if let Some(key) = address::settings_key_row(tag)
             && let Some(row) = spec::KEY_ROWS.iter().find(|row| row.key == key)
         {
             return Self::KeyRow(row.key);
         }
-        if let Some(n) = tag
-            .strip_prefix("shell.settings.theme.")
-            .and_then(|n| n.parse::<usize>().ok())
+        if let Some(n) = address::settings_theme_index(tag)
             && n < spec::THEMES.len()
         {
             return Self::Theme(n);
@@ -4287,8 +4290,8 @@ fn hit_word(hit: &Hit) -> String {
         Hit::Sub(chip) => chip.tag().to_string(),
         Hit::PresetItem(n) => format!("shell.preset.item.{n}"),
         Hit::Rail(name) => address::rail_seat(name),
-        Hit::Option(key) => format!("shell.settings.option.{key}"),
-        Hit::KeyRow(key) => format!("shell.settings.key.{key}"),
+        Hit::Option(key) => address::settings_option(key),
+        Hit::KeyRow(key) => address::settings_key(key),
         // ★ R2021 — both are the ROW's own tags now. They used to be built here
         // from the preferences page's spelling, which was right while every
         // roster was that page's; a card's setting is addressed by the card, so
@@ -4298,7 +4301,7 @@ fn hit_word(hit: &Hit) -> String {
         Hit::ChooseOption(key, n) => Valued::from_key(key).map_or_else(String::new, |valued| {
             valued.option_tag(valued.options().get(*n).map_or("", String::as_str))
         }),
-        Hit::Theme(n) => format!("shell.settings.theme.{n}"),
+        Hit::Theme(n) => address::settings_theme(*n),
         Hit::Palette(kind) => address::palette_entry(kind),
         Hit::Grip(id) => format!("card.{id}.grip"),
         Hit::Affordance(id, affordance) => format!("card.{id}.{}", affordance.wire()),
@@ -9397,7 +9400,7 @@ fn settings_scene(state: &ShellState, palette: Palette, region: Rect) -> Vec<Sce
     // this one did not: a reader arriving here was given four unlabelled cards.
     let mut out = vec![
         cell(
-            "shell.settings.head.title".to_owned(),
+            address::SETTINGS_HEAD_TITLE.to_owned(),
             spec::SETTINGS_HEAD.0,
             Rect::new(col.x, col.y, col.w, 24),
             FONT_TITLE,
@@ -9408,7 +9411,7 @@ fn settings_scene(state: &ShellState, palette: Palette, region: Rect) -> Vec<Sce
         // would be one fact in two voices.
         .silenced(Silence::name_of("shell.canvas")),
         cell(
-            "shell.settings.head.gist".to_owned(),
+            address::SETTINGS_HEAD_GIST.to_owned(),
             spec::SETTINGS_HEAD.1,
             Rect::new(col.x, col.y + 26, col.w, 16),
             FONT_BODY,
@@ -9422,7 +9425,7 @@ fn settings_scene(state: &ShellState, palette: Palette, region: Rect) -> Vec<Sce
     // looking at — the fact a person filing a defect is asked for first.
     let last = settings_group_rect(region, spec::OPTION_GROUPS[spec::OPTION_GROUPS.len() - 1].0);
     out.push(cell(
-        "shell.settings.build".to_owned(),
+        address::SETTINGS_BUILD.to_owned(),
         &spec::BUILD_STRIP.join(" \u{00b7} "),
         Rect::new(col.x, last.y + last.h + SET_GROUP_GAP, col.w, 16),
         FONT_SMALL,
@@ -9441,7 +9444,7 @@ fn settings_scene(state: &ShellState, palette: Palette, region: Rect) -> Vec<Sce
         // what each card is were loose ink.
         out.push(
             cell(
-                format!("shell.settings.head.{key}"),
+                address::settings_head(key),
                 heading,
                 Rect::new(col.x, card.y - SET_HEAD_H - SET_HEAD_GAP, col.w, SET_HEAD_H),
                 FONT_SMALL,
@@ -9450,7 +9453,7 @@ fn settings_scene(state: &ShellState, palette: Palette, region: Rect) -> Vec<Sce
             )
             // The heading IS the group's accessible name, so it is addressable
             // for a specification and silent for a reader.
-            .silenced(Silence::name_of(format!("shell.settings.group.{key}"))),
+            .silenced(Silence::name_of(address::settings_group(key))),
         );
         let rows = match key {
             "keys" => settings_key_rows(palette, region),
@@ -9474,7 +9477,7 @@ fn settings_scene(state: &ShellState, palette: Palette, region: Rect) -> Vec<Sce
         };
         out.push(Scene::Container(
             ContainerNode::new(rows)
-                .with_tag(format!("shell.settings.group.{key}"))
+                .with_tag(address::settings_group(key))
                 .with_style(
                     BoxStyle::filled(palette.panel)
                         .with_corner_radius(12)
@@ -9522,7 +9525,7 @@ fn settings_text(
                 palette.muted,
             ),
         ])
-        .with_tag(format!("shell.settings.row.{key}"))
+        .with_tag(address::settings_row(key))
         .with_layout(absolute(inner)),
     )
     .silenced(Silence::part_of(named))
@@ -9559,12 +9562,12 @@ fn settings_option_rows(
             option.gist,
             row,
             palette,
-            format!("shell.settings.option.{}", option.key),
+            address::settings_option(option.key),
         ));
         let seat = settings_ctrl_rect(row, 64);
         out.push(Scene::Container(
             ContainerNode::new(vec![switch::view_switch(
-                format!("shell.settings.option.{}", option.key),
+                address::settings_option(option.key),
                 ToggleState::Idle,
                 on[index],
                 &theme,
@@ -9612,8 +9615,8 @@ fn settings_value_rows(state: &ShellState, palette: Palette, region: Rect) -> Ve
         out.push(chooser::view_collapsed(
             &chooser::ChooserTags {
                 control: settings_choose_tag(value_row.key),
-                shown: format!("shell.settings.shown.{}", value_row.key),
-                arrow: format!("shell.settings.arrow.{}", value_row.key),
+                shown: address::settings_shown(value_row.key),
+                arrow: address::settings_arrow(value_row.key),
             },
             &settings_value_of(state, value_row.key),
             seat,
@@ -9644,7 +9647,7 @@ fn settings_plugin_row(palette: Palette, region: Rect) -> Vec<Scene> {
     // row: the title and the sentence take their voice from it, so a reader
     // hears the row once. Here the control is the chip seat, which is the only
     // node that can carry what the formats are.
-    let seat_tag = format!("shell.settings.row.{key}.chips");
+    let seat_tag = address::settings_row_chips(key);
     let mut out = vec![settings_text(key, title, gist, row, palette, seat_tag)];
     let mut chips = Vec::new();
     for (i, word) in spec::PLUGINS.iter().enumerate() {
@@ -9656,7 +9659,7 @@ fn settings_plugin_row(palette: Palette, region: Rect) -> Vec<Scene> {
                 FONT_SMALL,
                 palette.accent_fg,
             )])
-            .with_tag(format!("shell.settings.plugin.{word}"))
+            .with_tag(address::settings_plugin(word))
             .with_style(
                 BoxStyle::filled(palette.high)
                     .with_corner_radius(6)
@@ -9672,13 +9675,13 @@ fn settings_plugin_row(palette: Palette, region: Rect) -> Vec<Scene> {
                 // Each chip's word is in the row's announced value: the row
                 // states what the decoder applies, and a reader hearing every
                 // chip separately would hear the same sentence twice.
-                .with_silence(Silence::part_of(format!("shell.settings.row.{key}.chips"))),
+                .with_silence(Silence::part_of(address::settings_row_chips(key))),
             ),
         ));
     }
     out.push(Scene::Container(
         ContainerNode::new(chips)
-            .with_tag(format!("shell.settings.row.{key}.chips"))
+            .with_tag(address::settings_row_chips(key))
             .with_layout(absolute(Rect::new(
                 seat.x,
                 row.y + (SET_ROW_H.saturating_sub(SEG_CHIP_H + SEG_PAD * 2)) / 2,
@@ -9858,7 +9861,7 @@ impl Valued {
     /// so this is the name the rest of the file already uses for them.
     fn tag_prefix(&self) -> String {
         match self {
-            Self::Preference(_) => "shell.settings".to_owned(),
+            Self::Preference(_) => address::SETTINGS.to_owned(),
             Self::Card { card, .. } => format!("card.{card}.config"),
         }
     }
@@ -9889,7 +9892,7 @@ impl Valued {
 
 /// The tag a value row's collapsed control is addressed by.
 fn settings_choose_tag(key: &str) -> String {
-    format!("shell.settings.choose.{key}")
+    address::settings_choose(key)
 }
 
 /// ★★★★★ R1762 — the open roster, in **window** space.
@@ -9939,7 +9942,7 @@ fn settings_roster_scene(state: &ShellState, at: &str) -> Option<Scene> {
         SET_OPTION_H,
     );
     Some(chooser::view_roster(
-        "shell.settings",
+        address::SETTINGS,
         &roster,
         picker,
         &settings_value_of(state, key),
@@ -10047,7 +10050,7 @@ fn settings_key_rows(palette: Palette, region: Rect) -> Vec<Scene> {
             key_row.gist,
             row,
             palette,
-            format!("shell.settings.key.{}", key_row.key),
+            address::settings_key(key_row.key),
         ));
         let seat = settings_ctrl_rect(row, SET_CTRL_W);
         // ★★ R1695 — the framework's BUTTON, not a box with a word in it.
@@ -10062,7 +10065,7 @@ fn settings_key_rows(palette: Palette, region: Rect) -> Vec<Scene> {
                 ButtonState::Disabled,
                 0.0,
                 &ButtonColors::filled_tonal(&theme),
-                &ButtonStyle::m3_default(format!("shell.settings.key.{}", key_row.key))
+                &ButtonStyle::m3_default(address::settings_key(key_row.key))
                     .with_corner_radius(8)
                     .with_size(Size::px(seat.w, seat.h))
                     .with_label_font_size_px(FONT_BODY)
@@ -10116,7 +10119,7 @@ fn settings_theme_row(state: &ShellState, palette: Palette, region: Rect) -> Vec
                 ButtonState::Idle,
                 0.0,
                 &colors,
-                &ButtonStyle::m3_default(format!("shell.settings.theme.{n}"))
+                &ButtonStyle::m3_default(address::settings_theme(n))
                     .with_corner_radius(6)
                     .with_size(Size::px(w, SEG_CHIP_H))
                     .with_label_font_size_px(FONT_BODY),
@@ -10138,11 +10141,11 @@ fn settings_theme_row(state: &ShellState, palette: Palette, region: Rect) -> Vec
             palette,
             // The row names the pair, not either button, so it folds into the
             // group that owns them.
-            "shell.settings.group.appearance".to_owned(),
+            address::settings_group("appearance"),
         ),
         Scene::Container(
             ContainerNode::new(segs)
-                .with_tag("shell.settings.theme")
+                .with_tag(address::SETTINGS_THEME)
                 .with_style(BoxStyle::filled(palette.canvas).with_corner_radius(8))
                 .with_layout(absolute(Rect::new(
                     seat.x,
@@ -13327,27 +13330,32 @@ fn spec_json() -> serde_json::Value {
         })).collect::<Vec<_>>(),
         "rail_active": spec::RAIL_ACTIVE,
         // ★ R1695 — the Settings destination.
-        "options": spec::OPTIONS.iter().map(|o| serde_json::json!({
-            "key": o.key, "title": o.title, "gist": o.gist,
-            "group": o.group, "opens": o.opens,
-        })).collect::<Vec<_>>(),
-        "key_rows": spec::KEY_ROWS.iter().map(|r| serde_json::json!({
-            "key": r.key, "title": r.title, "gist": r.gist,
-            "verb": r.verb,
-            // ★★★★★ R2042 — the SENTENCE the seat carries, which is what the
-            // paint and the spoken refusal carry too. Publishing the raw
-            // `Option` here would make the wire and the paint two readings of
-            // one field — the class this round repaired one layer down — and a
-            // walk comparing them would have had to know the fallback.
-            "reserved_for": r.reserved_for.unwrap_or(spec::UNBOOKED),
-            // And the fact itself, so a reader can tell "booked under a
-            // requirement" from "booked under nothing" without parsing prose.
-            "booked": r.reserved_for.is_some(),
-        })).collect::<Vec<_>>(),
-        "option_groups": spec::OPTION_GROUPS.iter().map(|(key, title)| serde_json::json!({
-            "key": key, "title": title,
-        })).collect::<Vec<_>>(),
+        // ★★★★★ R2119 — each roster row carries its OWN address, which is what
+        // a walk iterating it is handed. R2109.1's rule: a member gets a
+        // composed address, never a stem it glues onto — a walk that appends
+        // is the second speller with an extra step. Each roster is its own
+        // function for the reason its neighbours are: this builder is at its
+        // line budget, and the bound is paid with structure.
+        "options": settings_switches_json(),
+        "key_rows": settings_booked_json(),
+        "option_groups": settings_groups_json(),
+        "value_rows": settings_value_rows_json(),
         "themes": spec::THEMES,
+        "theme_choices": settings_theme_choices_json(),
+        // ★★★★★ R2119 — **the addresses this page paints under**, derived from
+        // the one place that declares them.
+        //
+        // A walk is Python and cannot call `address::settings_*`, so before
+        // this every walk that drove the page re-typed the string — measured
+        // at entry, 16 sites across two walks beside 84 in this crate. The
+        // page's own tag, its five fixed seats by word, and every parametric
+        // family as a prefix.
+        //
+        // ⚠ `settings_addresses`, not `settings`: this document already
+        // publishes the page's rows and groups, and a second meaning under one
+        // key is the shape this tree keeps paying for. `palette_addresses` was
+        // named the same way, for the same reason.
+        "settings_addresses": settings_addresses_json(),
         "theme_row": { "title": spec::THEME_ROW.0, "gist": spec::THEME_ROW.1 },
         // ★★ R1696 — where the Tab key stops, in the order it stops there, and
         // WHAT each stop holds. The last column is the part a tag cannot carry:
@@ -13506,6 +13514,131 @@ fn palette_addresses_json() -> serde_json::Value {
                 )
             })
             .collect::<serde_json::Map<_, _>>(),
+    })
+}
+
+/// R2119 — the four switches, each carrying its own address and its row's.
+fn settings_switches_json() -> Vec<serde_json::Value> {
+    spec::OPTIONS
+        .iter()
+        .map(|o| {
+            serde_json::json!({
+                "key": o.key, "title": o.title, "gist": o.gist,
+                "group": o.group, "opens": o.opens,
+                "tag": address::settings_option(o.key),
+                "row": address::settings_row(o.key),
+            })
+        })
+        .collect()
+}
+
+/// R2119 — the two rows whose affordance is booked for a later release.
+fn settings_booked_json() -> Vec<serde_json::Value> {
+    spec::KEY_ROWS
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "key": r.key, "title": r.title, "gist": r.gist,
+                "verb": r.verb,
+                // ★★★★★ R2042 — the SENTENCE the seat carries, which is what
+                // the paint and the spoken refusal carry too. Publishing the
+                // raw `Option` here would make the wire and the paint two
+                // readings of one field, and a walk comparing them would have
+                // had to know the fallback.
+                "reserved_for": r.reserved_for.unwrap_or(spec::UNBOOKED),
+                // And the fact itself, so a reader can tell "booked under a
+                // requirement" from "booked under nothing" without parsing
+                // prose.
+                "booked": r.reserved_for.is_some(),
+                "tag": address::settings_key(r.key),
+                "row": address::settings_row(r.key),
+            })
+        })
+        .collect()
+}
+
+/// R2119 — the page's four groups, each with its region and its heading.
+fn settings_groups_json() -> Vec<serde_json::Value> {
+    spec::OPTION_GROUPS
+        .iter()
+        .map(|(key, title)| {
+            serde_json::json!({
+                "key": key, "title": title,
+                "tag": address::settings_group(key),
+                "head": address::settings_head(key),
+            })
+        })
+        .collect()
+}
+
+/// ★ R2119 — the two value rows, addressed.
+///
+/// One control to a reader and five marks to a driver, so each is HANDED
+/// rather than composed: the collapsed control, the word it shows, the
+/// chevron, the roster it opens and the stem the words inside that roster hang
+/// off.
+fn settings_value_rows_json() -> Vec<serde_json::Value> {
+    spec::VALUE_ROWS
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "key": r.key, "title": r.title, "gist": r.gist,
+                "row": address::settings_row(r.key),
+                "tag": address::settings_choose(r.key),
+                "shown": address::settings_shown(r.key),
+                "arrow": address::settings_arrow(r.key),
+                "roster": address::settings_roster(r.key),
+                "choices": address::settings_choice_prefix(r.key),
+            })
+        })
+        .collect()
+}
+
+/// ★ R2119 — the appearance choices, addressed.
+///
+/// `themes` beside it is the reference's own two words and stays what it is;
+/// this is where they are PAINTED, indexed the way the segment addresses them.
+fn settings_theme_choices_json() -> Vec<serde_json::Value> {
+    (0..spec::THEMES.len())
+        .map(|n| {
+            serde_json::json!({
+                "at": n, "name": spec::THEMES[n], "tag": address::settings_theme(n),
+            })
+        })
+        .collect()
+}
+
+/// ★★★★★ R2119 — the addresses the preferences page paints under — see the
+/// note on the key in [`spec_json`].
+///
+/// Its own function for the reason its neighbours have one: that builder is at
+/// its line budget, and the bound is paid with structure here as everywhere.
+///
+/// ⚠ Eleven stems, published as prefixes CARRYING their separator — a walk
+/// appending to a stem that lacked one would compose an address with no
+/// separator in it at all, which is R2104's finding and R2110's rule.
+fn settings_addresses_json() -> serde_json::Value {
+    serde_json::json!({
+        "tag": address::SETTINGS,
+        // ⚠ The page's own family prefix, BESIDE its tag rather than instead of
+        // it: R2115's host rule allows a bare namespace as a question about the
+        // family, and a walk asking *what did this page paint* needs the form
+        // that carries the separator. The tag does not, by construction.
+        "seat": address::SETTINGS_SEAT,
+        "seats": address::SETTINGS_SEATS.iter().map(|(word, tag)| serde_json::json!({
+            "word": word, "tag": tag,
+        })).collect::<Vec<_>>(),
+        "head": address::SETTINGS_HEAD,
+        "group": address::SETTINGS_GROUP,
+        "row": address::SETTINGS_ROW,
+        "option": address::SETTINGS_OPTION,
+        "key": address::SETTINGS_KEY,
+        "choose": address::SETTINGS_CHOOSE,
+        "shown": address::SETTINGS_SHOWN,
+        "arrow": address::SETTINGS_ARROW,
+        "roster": address::SETTINGS_ROSTER,
+        "plugin": address::SETTINGS_PLUGIN,
+        "theme": address::SETTINGS_THEME_SEAT,
     })
 }
 
@@ -15003,10 +15136,10 @@ impl WidgetA11y for AnalyzerShellView {
             // ★★★★★ R1867 — the host's gesture help, heard.
             //
             // `Status` because that is what this shell already calls a strip
-            // that states a fact rather than takes a press — `shell.settings
-            // .build` is the same shape and the same role — and NOT live: a
-            // sentence that has been there since the window opened has nothing
-            // to interrupt a reader about.
+            // that states a fact rather than takes a press — the preferences
+            // page's build strip is the same shape and the same role — and NOT
+            // live: a sentence that has been there since the window opened has
+            // nothing to interrupt a reader about.
             nodes.push(
                 AccessNode::new(STATUS_GESTURE, AriaRole::Status)
                     .with_name("Gestures")
@@ -15120,7 +15253,7 @@ fn page_descriptions(state: &ShellState, at: &str) -> pinion_core::describe::Des
         "settings" => {
             for row in spec::KEY_ROWS {
                 described.describe(
-                    format!("shell.settings.key.{}", row.key),
+                    address::settings_key(row.key),
                     format!(
                         "{} is not in this release - booked under {}",
                         row.verb.trim_end_matches('\u{2026}').trim(),
@@ -15130,7 +15263,7 @@ fn page_descriptions(state: &ShellState, at: &str) -> pinion_core::describe::Des
             }
             for (n, name) in spec::THEMES.iter().enumerate() {
                 described.describe(
-                    format!("shell.settings.theme.{n}"),
+                    address::settings_theme(n),
                     format!("Set the whole application to the {name} appearance"),
                 );
             }
@@ -15510,14 +15643,14 @@ fn settings_nodes(state: &Rc<ShellState>) -> (Vec<String>, Vec<AccessNode>) {
     let mut nodes = Vec::new();
     // ★ R1762 — the build strip, which the page closes with and which a reader
     // filing a defect is asked for first.
-    children.push("shell.settings.build".to_owned());
+    children.push(address::SETTINGS_BUILD.to_owned());
     nodes.push(
-        AccessNode::new("shell.settings.build", AriaRole::Status)
+        AccessNode::new(address::SETTINGS_BUILD, AriaRole::Status)
             .with_name("Build")
             .with_value(AccessValue::Text(spec::BUILD_STRIP.join(", "))),
     );
     for (key, heading) in spec::OPTION_GROUPS {
-        let tag = format!("shell.settings.group.{key}");
+        let tag = address::settings_group(key);
         children.push(tag.clone());
         let rows = match key {
             "keys" => settings_key_nodes(),
@@ -15536,7 +15669,7 @@ fn settings_nodes(state: &Rc<ShellState>) -> (Vec<String>, Vec<AccessNode>) {
                 let mut rows = settings_option_nodes(state, key);
                 rows.push(
                     AccessNode::new(
-                        format!("shell.settings.row.{}.chips", spec::PLUGIN_ROW.0),
+                        address::settings_row_chips(spec::PLUGIN_ROW.0),
                         AriaRole::Status,
                     )
                     .with_name(spec::PLUGIN_ROW.1)
@@ -15583,7 +15716,7 @@ fn settings_value_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
             .with_value(AccessValue::Text(settings_value_of(state, row.key)))
             .with_expanded(showing);
         if showing {
-            node = node.with_child(format!("shell.settings.roster.{}", row.key));
+            node = node.with_child(address::settings_roster(row.key));
         }
         nodes.push(node);
     }
@@ -15591,13 +15724,13 @@ fn settings_value_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     // open, which is the same property the paint has: a reader offered options
     // that are not on screen is offered options nobody can reach.
     if let Some((key, picker)) = open {
-        let roster_tag = format!("shell.settings.roster.{key}");
+        let roster_tag = address::settings_roster(key);
         let mut roster = AccessNode::new(&roster_tag, AriaRole::Listbox)
             .with_name(format!("{} options", settings_value_title(key)));
         let chosen = settings_value_of(state, key);
         let mut options = Vec::new();
         for (n, word) in picker.options().iter().enumerate() {
-            let tag = format!("shell.settings.option.{key}.{word}");
+            let tag = address::settings_choice(key, word);
             roster = roster.with_child(tag.clone());
             options.push(
                 AccessNode::new(tag, AriaRole::ListBoxOption)
@@ -15620,16 +15753,13 @@ fn settings_option_nodes(state: &Rc<ShellState>, group: &str) -> Vec<AccessNode>
         .enumerate()
         .filter(|(_, option)| option.group == group)
         .map(|(index, option)| {
-            AccessNode::new(
-                format!("shell.settings.option.{}", option.key),
-                AriaRole::Switch,
-            )
-            .with_name(option.title)
-            .with_value(AccessValue::Text(option.gist.to_owned()))
-            .with_state(AccessState {
-                checked: Some(on[index]),
-                ..AccessState::default()
-            })
+            AccessNode::new(address::settings_option(option.key), AriaRole::Switch)
+                .with_name(option.title)
+                .with_value(AccessValue::Text(option.gist.to_owned()))
+                .with_state(AccessState {
+                    checked: Some(on[index]),
+                    ..AccessState::default()
+                })
         })
         .collect()
 }
@@ -15639,7 +15769,7 @@ fn settings_key_nodes() -> Vec<AccessNode> {
     spec::KEY_ROWS
         .iter()
         .map(|row| {
-            AccessNode::new(format!("shell.settings.key.{}", row.key), AriaRole::Button)
+            AccessNode::new(address::settings_key(row.key), AriaRole::Button)
                 .with_name(format!("{} \u{2014} {}", row.title, row.verb))
         })
         .collect()
@@ -15656,10 +15786,10 @@ fn settings_key_nodes() -> Vec<AccessNode> {
 fn settings_theme_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     let dark = theme_word(&state.theme) == "dark";
     let mut group =
-        AccessNode::new("shell.settings.theme", AriaRole::RadioGroup).with_name(spec::THEME_ROW.0);
+        AccessNode::new(address::SETTINGS_THEME, AriaRole::RadioGroup).with_name(spec::THEME_ROW.0);
     let mut nodes = Vec::new();
     for (n, name) in spec::THEMES.iter().enumerate() {
-        let tag = format!("shell.settings.theme.{n}");
+        let tag = address::settings_theme(n);
         group = group.with_child(&tag);
         nodes.push(
             AccessNode::new(&tag, AriaRole::RadioButton)

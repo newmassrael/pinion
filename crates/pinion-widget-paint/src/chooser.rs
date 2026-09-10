@@ -48,6 +48,91 @@ use pinion_core::{
 
 use crate::config_form::{form_run_style, framed, placed};
 
+/// ★★★★★ R2119 §5.2 §5.11 — **where this control's painted addresses come
+/// from**, parametric in the prefix its caller painted it under.
+///
+/// The twenty-second instalment of an address debt, and the second time the
+/// owner of a family turned out to be the FRAMEWORK rather than the screen —
+/// R2050 found the same one row over, in `config_form`. A roster's box and its
+/// options are composed *here*, from a prefix the caller brings, so a consumer
+/// that spells `"<its own prefix>.roster.<key>"` is the second speller of a
+/// string this module writes, and a wrong letter there is silent in the worst
+/// direction: the press lands on nothing and the screen simply does not choose.
+///
+/// # ★★★★★ The inverse is the point, not a convenience
+///
+/// An option's address is `option.<key>.<word>` and **the word may carry the
+/// separator** — measured on the analysis tool's own capture-source roster,
+/// whose words are `lo · 127.0.0.1:7447` and `file · session-2.capture`. So the
+/// tail is split at the FIRST separator and only the first, and a reader that
+/// takes the last segment answers `1:7447`. That is not a hypothetical: it is
+/// what this module did until R2119, and it painted a roster whose second row
+/// read `1:7447` while the value behind it was the whole address.
+///
+/// ⇒ the recovery belongs beside the composition, where it is one edit away
+/// from the rule it inverts, rather than at each reader as a `rsplit`.
+pub mod address {
+    /// The part word an open roster's own box is addressed under.
+    pub const ROSTER: &str = "roster";
+
+    /// The part word each option in an open roster is addressed under.
+    pub const OPTION: &str = "option";
+
+    /// The address of the roster `key` opens, under the prefix it is painted
+    /// with.
+    #[must_use]
+    pub fn roster(prefix: &str, key: &str) -> String {
+        format!("{prefix}.{}", roster_suffix(key))
+    }
+
+    /// [`roster`] without the prefix — what a [`super::RosterBox`] is addressed
+    /// by inside the surface that holds it.
+    #[must_use]
+    pub fn roster_suffix(key: &str) -> String {
+        format!("{ROSTER}.{key}")
+    }
+
+    /// The address of the option `word` of the roster `key`.
+    #[must_use]
+    pub fn option(prefix: &str, key: &str, word: &str) -> String {
+        format!("{prefix}.{}", option_suffix(key, word))
+    }
+
+    /// [`option`] without the prefix — the form [`super::RosterBox::options`]
+    /// carries, because a laid-out roster does not know what it will be painted
+    /// under.
+    #[must_use]
+    pub fn option_suffix(key: &str, word: &str) -> String {
+        format!("{OPTION}.{key}.{word}")
+    }
+
+    /// The prefix every option of the roster `key` is addressed under.
+    ///
+    /// ★ A composer's *stem*, published for the one reader that legitimately
+    /// needs it: a driver asking the paint for the whole family at once. What a
+    /// caller naming ONE option gets is [`option`], never this — R2109.1's rule.
+    #[must_use]
+    pub fn option_prefix(prefix: &str, key: &str) -> String {
+        format!("{prefix}.{OPTION}.{key}.")
+    }
+
+    /// The word an option's address names, given the roster it belongs to.
+    ///
+    /// ★★★★★ [`option`]'s inverse. The whole remainder is the word — see the
+    /// module note: a word carrying the separator is the ordinary case, not the
+    /// edge one, so this may not split again.
+    #[must_use]
+    pub fn option_word<'a>(prefix: &str, key: &str, tag: &'a str) -> Option<&'a str> {
+        tag.strip_prefix(&option_prefix(prefix, key))
+    }
+
+    /// [`option_word`] against a suffix, for a reader inside the surface.
+    #[must_use]
+    pub fn option_word_of_suffix<'a>(key: &str, suffix: &'a str) -> Option<&'a str> {
+        suffix.strip_prefix(&format!("{OPTION}.{key}."))
+    }
+}
+
 /// The outline an open roster draws inside its own box, and so the inset its
 /// options are laid within.
 pub const ROSTER_FRAME: u32 = 1;
@@ -112,7 +197,7 @@ pub fn lay_roster(
         .map(|(n, word)| {
             let n = u32::try_from(n).unwrap_or(u32::MAX);
             (
-                format!("option.{key}.{word}"),
+                address::option_suffix(key, word),
                 Rect::new(
                     rect.x + ROSTER_FRAME,
                     rect.y + ROSTER_FRAME + n * option_h,
@@ -283,7 +368,30 @@ pub fn view_roster(
         .iter()
         .enumerate()
         .map(|(n, (suffix, rect))| {
-            let word = suffix.rsplit('.').next().unwrap_or_default();
+            // ★★★★★ R2119 — the address's own inverse, not a `rsplit` here.
+            //
+            // A word may carry the separator — the analysis tool's capture
+            // sources are `lo · 127.0.0.1:7447` and `file ·
+            // session-2.capture` — so taking the LAST segment answers
+            // `1:7447`, which is what this roster painted until this round
+            // while the value behind it was whole. The tail after
+            // `option.<key>.` is the word entire, and only the module that
+            // composed it can say where that boundary is.
+            //
+            // ⚠ The fallback cannot be reached by any caller in this
+            // workspace — a `RosterBox`'s suffixes are composed by
+            // `lay_roster` from the very key carried beside them — so it is
+            // asserted rather than merely tolerated: a hand-built roster whose
+            // key and suffixes disagree is a defect in the caller, caught
+            // wherever tests run, and drawing the address is the least
+            // damaging thing to do in a painter that must not abort a frame.
+            debug_assert!(
+                address::option_word_of_suffix(&roster.key, suffix).is_some(),
+                "the roster keyed {:?} carries the option suffix {suffix:?}, \
+                 which was not composed from that key",
+                roster.key,
+            );
+            let word = address::option_word_of_suffix(&roster.key, suffix).unwrap_or(suffix);
             let here = n == picker.at();
             let ink = if word == chosen {
                 theme.resolve(ColorRole::Accent)
@@ -314,7 +422,7 @@ pub fn view_roster(
         .collect();
     Scene::Container(
         ContainerNode::new(rows)
-            .with_tag(format!("{tag_prefix}.roster.{}", roster.key))
+            .with_tag(address::roster(tag_prefix, &roster.key))
             .with_style(
                 BoxStyle::filled(theme.resolve(ColorRole::Surface))
                     .with_corner_radius(8)
@@ -331,7 +439,7 @@ fn run_style() -> TextStyle {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChooserTags, lay_roster, view_collapsed, view_roster};
+    use super::{ChooserTags, address, lay_roster, view_collapsed, view_roster};
     use pinion_core::scene::Rect;
     use pinion_core::style::BoxStyle;
     use pinion_core::widgets::picker::Picker;
@@ -469,5 +577,100 @@ mod tests {
             picker().len(),
             "and every option is in it either way",
         );
+    }
+
+    /// ★★★★★ R2119 — **an option WORD that carries the address separator is
+    /// drawn whole**, and this is a repair rather than a precaution.
+    ///
+    /// Measured before the fix, on the analysis tool's own capture sources: the
+    /// roster's second row read `1:7447` where the picker held
+    /// `lo · 127.0.0.1:7447`, because the paint recovered the word by taking
+    /// the LAST segment of the address it had just composed. The value behind
+    /// the row was whole the entire time, so nothing that read the state could
+    /// see it — only a reader looking at the screen.
+    ///
+    /// ⚠ The words here are dotted ON PURPOSE. A roster of `eth0`/`wlan0`
+    /// passes with the defect in place, which is why it survived from R1732 to
+    /// R2119 under two gates that both drew this control.
+    #[test]
+    fn r2119_a_dotted_option_word_is_drawn_whole() {
+        let words = ["eth0", "lo \u{00B7} 127.0.0.1:7447"];
+        let picker = Picker::over(words, "eth0").expect("two words is a roster");
+        let roster = lay_roster(
+            "interface",
+            Rect::new(0, 0, 208, 32),
+            &picker,
+            Rect::new(0, 0, 400, 400),
+            30,
+        );
+        let scene = view_roster("shell.settings", &roster, &picker, "eth0", (0, 0), &theme());
+        let mut drawn: Vec<String> = Vec::new();
+        collect_text(&scene, &mut drawn);
+        assert_eq!(
+            drawn,
+            words.map(str::to_owned).to_vec(),
+            "each option is drawn with the word the picker holds"
+        );
+    }
+
+    /// ★★★★★ R2119 — the composition and its inverse are ONE pair, driven over
+    /// words that carry the separator and keys that carry it too.
+    ///
+    /// A form addresses its rows by configuration PATH, so the key half is
+    /// dotted on that consumer and the word half is dotted on this one. Either
+    /// alone leaves a `rsplit`/`split_once` reader passing.
+    #[test]
+    fn r2119_a_roster_address_and_its_inverse_are_one_pair() {
+        let prefix = "shell.settings";
+        for key in ["interface", "net.timeout"] {
+            for word in [
+                "eth0",
+                "lo \u{00B7} 127.0.0.1:7447",
+                "file \u{00B7} a.capture",
+            ] {
+                let tag = address::option(prefix, key, word);
+                assert_eq!(
+                    address::option_word(prefix, key, &tag),
+                    Some(word),
+                    "{key}/{word} does not round-trip"
+                );
+                assert_eq!(
+                    address::option_word_of_suffix(key, &address::option_suffix(key, word)),
+                    Some(word),
+                );
+                assert!(
+                    tag.starts_with(&address::option_prefix(prefix, key)),
+                    "the option prefix is the stem its members hang off"
+                );
+            }
+            assert_eq!(
+                address::roster(prefix, key),
+                format!("{prefix}.{}", address::roster_suffix(key))
+            );
+            // ★ A roster's own box is NOT one of its options, in either
+            // direction: a reader that answered `Some` here would report the
+            // box as a word nobody can choose.
+            assert_eq!(
+                address::option_word(prefix, key, &address::roster(prefix, key)),
+                None
+            );
+        }
+        // ★★ And a form's declaration is the same string, because it delegates.
+        assert_eq!(
+            crate::config_form::address::roster("form", "net.timeout"),
+            address::roster("form", "net.timeout")
+        );
+    }
+
+    fn collect_text(scene: &pinion_core::Scene, out: &mut Vec<String>) {
+        match scene {
+            pinion_core::Scene::Text(node) => out.push(node.content.clone()),
+            pinion_core::Scene::Container(node) => {
+                for child in &node.children {
+                    collect_text(child, out);
+                }
+            }
+            _ => {}
+        }
     }
 }

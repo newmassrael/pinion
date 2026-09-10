@@ -61,18 +61,38 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from analyzer_spec import DOCS, unjudged_sections  # noqa: E402
-from rpc_verify import RpcSubprocess, assert_eq, run_demo  # noqa: E402
+from rpc_verify import RpcSubprocess, assert_eq, run_demo, text_of_tag  # noqa: E402
 
 SHELL = "hello-analyzer-shell"
 EXT = "/external"
 SEAT = "settings"
 PIN = "analyzer-settings-spec.json"
-#: The preferences page's scrolling viewport, which R1864 needs a second frame
-#: of. The shell tags the pane with the page's own body tag.
-SETTINGS_BODY = "shell.settings.body"
-
 CHECKS: list[str] = []
 PARTS_COMPARED = 0
+
+
+# ★★★★★ R2119 — every address this walk drives is ASKED for, never spelled.
+#
+# The page publishes its own tag, its fixed seats by word and its eleven
+# parametric families as prefixes under `settings_addresses`, plus each row's
+# own address on the rosters that already cross the wire. Before this round ten
+# sites here re-typed the page's composition, and a wrong letter in one of them
+# does not fail loudly — it looks for a mark that is not there, which reads as
+# *the page did not paint it*.
+def addresses(app: RpcSubprocess) -> dict:
+    return app.query(f"{EXT}/spec")["settings_addresses"]
+
+
+def seat(app: RpcSubprocess, word: str) -> str:
+    """The address of the page's fixed seat called `word`."""
+    rows = addresses(app)["seats"]
+    return next(row["tag"] for row in rows if row["word"] == word)
+
+
+def value_row(app: RpcSubprocess, key: str) -> dict:
+    """The published row — its control, its roster and its choices' stem."""
+    rows = app.query(f"{EXT}/spec")["value_rows"]
+    return next(row for row in rows if row["key"] == key)
 
 
 def banner(text: str) -> None:
@@ -198,7 +218,8 @@ def section_c(app: RpcSubprocess) -> None:
     was = app.query(f"{EXT}/retention")
     ok("C: the retention row holds a word out of its own roster", was in app.query(f"{EXT}/retentions").split(","))
 
-    press(app, "shell.settings.choose.retention")
+    retention = value_row(app, "retention")
+    press(app, retention["tag"])
     assert_eq(app.query(f"{EXT}/picking"), "retention", "C: the roster is open")
     assert_eq(
         app.query(f"{EXT}/retention"),
@@ -209,26 +230,52 @@ def section_c(app: RpcSubprocess) -> None:
     )
     ok(
         "C: ★★ the roster is on the frame, over the rows it covers",
-        "shell.settings.roster.retention" in rects(app),
+        retention["roster"] in rects(app),
     )
 
     words = app.query(f"{EXT}/retentions").split(",")
     other = next(w for w in words if w != was)
-    press(app, f"shell.settings.option.retention.{other}")
+    press(app, retention["choices"] + other)
     assert_eq(app.query(f"{EXT}/retention"), other, "C: ★★ choosing a word writes it")
     assert_eq(app.query(f"{EXT}/picking"), "", "C: and closes the roster")
     ok(
         "C: ★ and the roster left the frame with it",
-        "shell.settings.roster.retention" not in rects(app),
+        retention["roster"] not in rects(app),
     )
 
     # The other value row is the capture source, which the application bar
     # shows: the reference puts it on this page for exactly that reason.
     source = app.query(f"{EXT}/source")
-    press(app, "shell.settings.choose.interface")
+    interface = value_row(app, "interface")
+    press(app, interface["tag"])
     assert_eq(app.query(f"{EXT}/picking"), "interface", "C: the second roster opens")
     others = [s for s in app.query(f"{EXT}/sources").split(",") if s != source]
-    press(app, f"shell.settings.option.interface.{others[0]}")
+    # ★★★★★ R2119 — **what the open roster DRAWS, read back word for word.**
+    #
+    # This row's words carry the address separator (`lo · 127.0.0.1:7447`), and
+    # until this round the framework recovered an option's word by taking the
+    # LAST segment of the address it had just composed — so the roster drew
+    # `1:7447` while the value behind it was whole. Nothing that read the state
+    # could see it: the wire, the write, the announcement and every check above
+    # were all correct. Only a reader looking at the screen was being lied to,
+    # which is why this assertion is about the PAINT.
+    drawn = [
+        text_of_tag(app, interface["choices"] + word)
+        for word in app.query(f"{EXT}/sources").split(",")
+    ]
+    assert_eq(
+        drawn,
+        app.query(f"{EXT}/sources").split(","),
+        "C: ★★★★★ every option in the open roster is drawn with the whole word "
+        "the row offers -- a word carrying the address separator included",
+    )
+    # ★★★★★ R2119 — these words CARRY THE SEPARATOR (`lo · 127.0.0.1:7447`), so
+    # this row is the one that proves the composition is a composition. The
+    # framework recovered an option's word by taking the last segment of its
+    # address until this round, and drew `1:7447` in the roster while the value
+    # behind it was whole — a defect only a reader looking at the screen could
+    # see, and section C below now reads the drawn word back.
+    press(app, interface["choices"] + others[0])
     assert_eq(
         app.query(f"{EXT}/source"),
         others[0],
@@ -250,9 +297,8 @@ def section_d(app: RpcSubprocess) -> None:
     # all — `scene/bbox` answers null for a tag nothing painted, which is how
     # this section found out. The claim is SHARPER now and it is asserted in the
     # honest direction: absent where a reader arrives, present after one scroll.
-    said = app.request(
-        "scene/bbox", {"tag": "shell.settings.group.appearance", "from": "paint"}
-    ).result
+    last_group = addresses(app)["group"] + "appearance"
+    said = app.request("scene/bbox", {"tag": last_group, "from": "paint"}).result
     # ⚠ Both `None`s are real answers and they are different ones: a null
     # RESULT is *nothing painted this tag*, and a null `window` inside a result
     # is *painted, and no part of it survives the viewport it is in*. The second
@@ -270,10 +316,10 @@ def section_d(app: RpcSubprocess) -> None:
         reach == 0,
     )
     before = app.frame_count()
-    app.scroll(SETTINGS_BODY, by=(0, 400))
+    app.scroll(seat(app, "body"), by=(0, 400))
     app.tick(16)
     app.await_paint(before)
-    moved = rects(app).get("shell.settings.group.appearance")
+    moved = rects(app).get(last_group)
     ok(
         "D: ★★ and ONE SCROLL puts it there, so a reader reaches it -- the "
         f"reference's own page scrolls too ({moved})",
@@ -300,11 +346,12 @@ def section_d(app: RpcSubprocess) -> None:
         not absent,
     )
     # And the control down there answers a press where it is now painted.
-    press(app, "shell.settings.theme.1")
+    choices = app.query(f"{EXT}/spec")["theme_choices"]
+    press(app, choices[1]["tag"])
     assert_eq(app.query(f"{EXT}/theme"), "light", "D: ★★★ the appearance choice took")
-    press(app, "shell.settings.theme.0")
+    press(app, choices[0]["tag"])
     before = app.frame_count()
-    app.scroll(SETTINGS_BODY, to=(0, 0))
+    app.scroll(seat(app, "body"), to=(0, 0))
     app.tick(16)
     app.await_paint(before)
 

@@ -1531,7 +1531,7 @@ fn the_locked_table_is_derived_from_the_tier_and_the_reservation() {
     );
     assert_eq!(
         tags.iter()
-            .filter(|t| t.starts_with("shell.settings."))
+            .filter(|t| t.starts_with(crate::address::SETTINGS_SEAT))
             .count(),
         spec::KEY_ROWS.len(),
     );
@@ -9549,6 +9549,404 @@ fn r2110_a_palette_address_is_typed_in_one_place() {
     );
     palette_part_templates_are_the_references_own();
     palette_addresses_reach_the_wire();
+}
+
+/// ★★★★★ R2119 — **a preferences address is typed in ONE place, and this
+/// counts.**
+///
+/// The twenty-second instalment, and the largest family this shell had left:
+/// measured at entry, **84 sites in this crate's five modules** and 16 across
+/// two walks. `main.rs` held one `const` of its own (the page's scrolling
+/// viewport) and `judge.rs` held SEVEN — the seven prefixes it reads its
+/// surfaces by — which is R2106's finding a third time: *a declared corner is
+/// not a declared screen*, and those eight could not be checked against the
+/// eleven parametric families hanging off the same stem.
+///
+/// ⚠ The needle is assembled rather than written, for
+/// [`r2051_a_rail_seat_address_is_typed_in_one_place`]'s reason: this file is
+/// one of the sources it reads, so assembling puts it in the population on the
+/// same terms as the rest instead of excusing it by name.
+///
+/// ⚠⚠ The needle is the page's tag WITHOUT its separator, so PROSE counts too.
+/// One comment was a site: a note on the host's status band that cited this
+/// page's build strip by address to say it was the same shape. It names the
+/// strip now — a prose copy of an address is the copy that goes stale, which is
+/// the whole of what this debt is.
+#[test]
+fn r2119_a_settings_address_is_typed_in_one_place() {
+    const NEEDLE: &str = concat!("shell.", "settings");
+    let sources = shell_sources();
+    // ⚠ NON-VACUITY FIRST — R2108's lesson, which this project paid for with a
+    // green whose denominator was empty. A count over sources that do not
+    // reach, or a needle that matches nothing anywhere, passes and reads
+    // exactly like a converted family.
+    for (name, body) in sources {
+        assert!(
+            !body.is_empty(),
+            "★ `{name}` reads as empty — the `include_str!` is not reaching the \
+             file, and a gate counting over nothing is green"
+        );
+    }
+    let declared = sources
+        .iter()
+        .find(|(name, _)| *name == "address.rs")
+        .map(|(_, body)| body.matches(NEEDLE).count())
+        .unwrap_or_default();
+    assert!(
+        declared > 0,
+        "★ the needle matches nothing in `address.rs`, so this gate is \
+         counting a family that no longer exists under that name"
+    );
+    let spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(NEEDLE).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ a preferences address is declared in `address.rs` and derived \
+         everywhere else; these file(s) spell it themselves"
+    );
+    settings_templates_are_their_composers();
+    settings_stems_hang_off_the_page();
+    settings_inverses_refuse_the_other_head();
+    settings_addresses_reach_the_wire();
+}
+
+/// ★★★★★ R2119 — every `&'static str` a specification table takes is held
+/// against what the painter composes, so the two cannot drift.
+///
+/// A `const` cannot format, so a table's row is always a declaration; what
+/// makes it safe is that the declaration is checked, here, against the function
+/// the paint calls.
+fn settings_templates_are_their_composers() {
+    assert_eq!(
+        crate::address::SETTINGS_SEAT,
+        format!("{}.", crate::address::SETTINGS)
+    );
+    for (template, composed) in [
+        (
+            crate::address::SETTINGS_HEAD_TEMPLATE,
+            crate::address::settings_head("{}"),
+        ),
+        (
+            crate::address::SETTINGS_GROUP_TEMPLATE,
+            crate::address::settings_group("{}"),
+        ),
+        (
+            crate::address::SETTINGS_ROW_TEMPLATE,
+            crate::address::settings_row("{}"),
+        ),
+        (
+            crate::address::SETTINGS_OPTION_TEMPLATE,
+            crate::address::settings_option("{}"),
+        ),
+        (
+            crate::address::SETTINGS_KEY_TEMPLATE,
+            crate::address::settings_key("{}"),
+        ),
+        (
+            crate::address::SETTINGS_CHOOSE_TEMPLATE,
+            crate::address::settings_choose("{}"),
+        ),
+        (
+            crate::address::SETTINGS_SHOWN_TEMPLATE,
+            crate::address::settings_shown("{}"),
+        ),
+        (
+            crate::address::SETTINGS_ARROW_TEMPLATE,
+            crate::address::settings_arrow("{}"),
+        ),
+    ] {
+        assert_eq!(template, composed, "★ {template} is not what is composed");
+    }
+    // ★ The two `&'static str` rows a table needs but a `const` cannot format,
+    // held against the composer — [`crate::address::RAIL_ACCOUNT`]'s shape.
+    assert_eq!(
+        crate::address::SETTINGS_ROW_THEME,
+        crate::address::settings_row("theme")
+    );
+    assert_eq!(
+        crate::address::SETTINGS_ROW_PLUGINS,
+        crate::address::settings_row(spec::PLUGIN_ROW.0)
+    );
+    assert_eq!(
+        crate::address::SETTINGS_ROW_PLUGINS_CHIPS,
+        crate::address::settings_row_chips(spec::PLUGIN_ROW.0)
+    );
+    for word in spec::PLUGINS {
+        let declared = match word {
+            "records" => crate::address::SETTINGS_PLUGIN_RECORDS,
+            "schema" => crate::address::SETTINGS_PLUGIN_SCHEMA,
+            other => panic!("the payload format {other} has no declared chip address"),
+        };
+        assert_eq!(declared, crate::address::settings_plugin(word));
+    }
+}
+
+/// ★★★★★ R2119 — eleven stems, all under the page's own.
+///
+/// A family that wandered out of it would be caught here rather than by a query
+/// that silently answers nothing.
+fn settings_stems_hang_off_the_page() {
+    // ★★ Every one carries the separator everything below it hangs off.
+    for stem in [
+        crate::address::SETTINGS_HEAD,
+        crate::address::SETTINGS_GROUP,
+        crate::address::SETTINGS_ROW,
+        crate::address::SETTINGS_OPTION,
+        crate::address::SETTINGS_KEY,
+        crate::address::SETTINGS_CHOOSE,
+        crate::address::SETTINGS_SHOWN,
+        crate::address::SETTINGS_ARROW,
+        crate::address::SETTINGS_ROSTER,
+        crate::address::SETTINGS_PLUGIN,
+        crate::address::SETTINGS_THEME_SEAT,
+    ] {
+        assert!(
+            stem.starts_with(crate::address::SETTINGS_SEAT) && stem.ends_with('.'),
+            "★ {stem} is not a family under the page's own stem"
+        );
+    }
+    // ★★ Every fixed seat composes onto the page's stem, and the appearance
+    // segment is BOTH a seat and a stem — which is the page's own fact and the
+    // reason the two forms must never be written as one.
+    for (word, tag) in crate::address::SETTINGS_SEATS {
+        assert_eq!(
+            *tag,
+            format!("{}{word}", crate::address::SETTINGS_SEAT),
+            "★ {word} composes"
+        );
+    }
+    assert_eq!(
+        crate::address::SETTINGS_THEME_SEAT,
+        format!("{}.", crate::address::SETTINGS_THEME)
+    );
+    // ★★ The roster and the choice come from the PAINTER, so this is where the
+    // page's prefix and the framework's composition are held together.
+    for row in spec::VALUE_ROWS {
+        assert_eq!(
+            crate::address::settings_roster(row.key),
+            format!("{}{}", crate::address::SETTINGS_ROSTER, row.key)
+        );
+        assert!(
+            crate::address::settings_choice(row.key, "any word")
+                .starts_with(&crate::address::settings_choice_prefix(row.key)),
+            "★ a choice hangs off its row's own stem"
+        );
+        assert_eq!(
+            crate::address::settings_choice_prefix(row.key),
+            format!("{}{}.", crate::address::SETTINGS_OPTION, row.key)
+        );
+    }
+}
+
+/// ★★★★★ R2119 — **the three inverses this page has refuse everything that is
+/// not theirs**, driven over every address the family composes.
+///
+/// This is the statement a classifier would have made. Three of this page's
+/// eleven stems carry two populations, and the sharp one is the switch stem: a
+/// word inside an open roster is addressed one level deeper under it, on a
+/// different control, on a different row. Until R2119 nothing refused —
+/// [`crate::address::settings_option_key`]'s predecessor was a bare
+/// `strip_prefix` and the router's next step happened to find no switch by that
+/// name, which made the correctness a property of the CALLER's ordering.
+///
+/// ⚠ The choice words here are the application's OWN, dotted ones included.
+/// A roster of undotted words passes with a `rsplit` reader in place, which is
+/// how the framework's own roster painted `1:7447` for eleven hundred rounds.
+fn settings_inverses_refuse_the_other_head() {
+    use crate::address::{settings_key_row, settings_option_key, settings_theme_index};
+
+    for option in spec::OPTIONS {
+        let tag = crate::address::settings_option(option.key);
+        assert_eq!(settings_option_key(&tag), Some(option.key));
+        assert_eq!(settings_key_row(&tag), None);
+        assert_eq!(settings_theme_index(&tag), None);
+    }
+    for row in spec::KEY_ROWS {
+        let tag = crate::address::settings_key(row.key);
+        assert_eq!(settings_key_row(&tag), Some(row.key));
+        assert_eq!(settings_option_key(&tag), None);
+        assert_eq!(settings_theme_index(&tag), None);
+    }
+    for n in 0..spec::THEMES.len() {
+        let tag = crate::address::settings_theme(n);
+        assert_eq!(settings_theme_index(&tag), Some(n));
+        assert_eq!(settings_option_key(&tag), None);
+        assert_eq!(settings_key_row(&tag), None);
+    }
+    // ★★★★★ The refusal this round is about: a word inside an open roster is
+    // NOT a switch, and the words are the ones the application actually offers.
+    for row in spec::VALUE_ROWS {
+        let picker = super::Valued::Preference(row)
+            .options()
+            .into_iter()
+            .collect::<Vec<_>>();
+        assert!(!picker.is_empty(), "★ {} offers words", row.key);
+        for word in picker {
+            let tag = crate::address::settings_choice(row.key, &word);
+            assert_eq!(
+                settings_option_key(&tag),
+                None,
+                "★ {tag} is a word in {}'s roster, not a switch",
+                row.key
+            );
+        }
+        assert_eq!(
+            settings_option_key(&crate::address::settings_roster(row.key)),
+            None,
+            "★ an open roster's own box is not a switch either"
+        );
+    }
+    // ★ And the whole page's fixed seats are none of the three.
+    for (_, tag) in crate::address::SETTINGS_SEATS {
+        assert_eq!(settings_option_key(tag), None);
+        assert_eq!(settings_key_row(tag), None);
+        assert_eq!(settings_theme_index(tag), None);
+    }
+}
+
+/// ★★★★ R2119 — the WIRE carries the declaration itself.
+///
+/// This is the half the two walks stand on — they are Python and cannot call
+/// any of the declaration — and a prefix that stopped agreeing here would hand
+/// them an address matching no mark, which reads as *the page did not paint
+/// it*.
+fn settings_addresses_reach_the_wire() {
+    let wire = super::spec_json();
+    let published = &wire["settings_addresses"];
+    assert_eq!(published["tag"].as_str(), Some(crate::address::SETTINGS));
+    assert_eq!(
+        published["seat"].as_str(),
+        Some(crate::address::SETTINGS_SEAT),
+        "★★★★★ the family prefix a walk filters by CARRIES its separator; \
+         publishing only the page's bare tag would hand every walk a prefix \
+         with no separator in it"
+    );
+    for (key, declared) in [
+        ("head", crate::address::SETTINGS_HEAD),
+        ("group", crate::address::SETTINGS_GROUP),
+        ("row", crate::address::SETTINGS_ROW),
+        ("option", crate::address::SETTINGS_OPTION),
+        ("key", crate::address::SETTINGS_KEY),
+        ("choose", crate::address::SETTINGS_CHOOSE),
+        ("shown", crate::address::SETTINGS_SHOWN),
+        ("arrow", crate::address::SETTINGS_ARROW),
+        ("roster", crate::address::SETTINGS_ROSTER),
+        ("plugin", crate::address::SETTINGS_PLUGIN),
+        ("theme", crate::address::SETTINGS_THEME_SEAT),
+    ] {
+        assert_eq!(
+            published[key].as_str(),
+            Some(declared),
+            "★ the wire's {key} prefix is not the one the page composes"
+        );
+    }
+    let seats: Vec<(String, String)> = published["seats"]
+        .as_array()
+        .expect("the wire publishes the page's fixed seats as a list")
+        .iter()
+        .map(|row| {
+            (
+                row["word"].as_str().unwrap_or_default().to_owned(),
+                row["tag"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    let declared_seats: Vec<(String, String)> = crate::address::SETTINGS_SEATS
+        .iter()
+        .map(|(word, tag)| ((*word).to_owned(), (*tag).to_owned()))
+        .collect();
+    assert_eq!(
+        seats, declared_seats,
+        "★★★★★ the seats the wire publishes and the ones `SETTINGS_SEATS` \
+         declares are not the same list, in the same order"
+    );
+    settings_rosters_carry_their_own_address(&wire);
+}
+
+/// ★★ R2119 — the five rosters that already cross the wire carry each row's own
+/// address, which is what a walk iterating them is handed.
+///
+/// R2109.1's rule: a member gets a composer's answer, never a stem it glues
+/// onto. A walk that appended is the second speller with an extra step.
+fn settings_rosters_carry_their_own_address(wire: &serde_json::Value) {
+    for (row, option) in wire["options"]
+        .as_array()
+        .expect("the wire publishes the switches")
+        .iter()
+        .zip(spec::OPTIONS)
+    {
+        assert_eq!(
+            row["tag"].as_str().map(str::to_owned),
+            Some(crate::address::settings_option(option.key))
+        );
+        assert_eq!(
+            row["row"].as_str().map(str::to_owned),
+            Some(crate::address::settings_row(option.key))
+        );
+    }
+    for (row, booked) in wire["key_rows"]
+        .as_array()
+        .expect("the wire publishes the booked rows")
+        .iter()
+        .zip(spec::KEY_ROWS)
+    {
+        assert_eq!(
+            row["tag"].as_str().map(str::to_owned),
+            Some(crate::address::settings_key(booked.key))
+        );
+    }
+    for (row, (key, _)) in wire["option_groups"]
+        .as_array()
+        .expect("the wire publishes the groups")
+        .iter()
+        .zip(spec::OPTION_GROUPS)
+    {
+        assert_eq!(
+            row["tag"].as_str().map(str::to_owned),
+            Some(crate::address::settings_group(key))
+        );
+        assert_eq!(
+            row["head"].as_str().map(str::to_owned),
+            Some(crate::address::settings_head(key))
+        );
+    }
+    for (row, value) in wire["value_rows"]
+        .as_array()
+        .expect("the wire publishes the value rows")
+        .iter()
+        .zip(spec::VALUE_ROWS)
+    {
+        for (key, declared) in [
+            ("tag", crate::address::settings_choose(value.key)),
+            ("shown", crate::address::settings_shown(value.key)),
+            ("arrow", crate::address::settings_arrow(value.key)),
+            ("roster", crate::address::settings_roster(value.key)),
+            ("choices", crate::address::settings_choice_prefix(value.key)),
+            ("row", crate::address::settings_row(value.key)),
+        ] {
+            assert_eq!(
+                row[key].as_str().map(str::to_owned),
+                Some(declared),
+                "★ the {} row's {key} is not what the page composes",
+                value.key
+            );
+        }
+    }
+    for (row, n) in wire["theme_choices"]
+        .as_array()
+        .expect("the wire publishes the appearance choices")
+        .iter()
+        .zip(0..spec::THEMES.len())
+    {
+        assert_eq!(
+            row["tag"].as_str().map(str::to_owned),
+            Some(crate::address::settings_theme(n))
+        );
+    }
 }
 
 /// ★★★★★ R2110 — the four part templates are `address.rs`'s ONE second copy of
