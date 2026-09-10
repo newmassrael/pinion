@@ -3192,7 +3192,7 @@ fn r1724_a_press_inside_the_mounted_section_resolves_to_it() {
         // on being true whichever of the two the layout is in.
         let page = pinion_runtime::rect_for_tag(&scene, "window.pan")
             .unwrap_or(pinion_core::scene::Rect::new(0, 0, 0, 0));
-        let card = pinion_runtime::rect_for_tag(&scene, "lab.node.P-02")
+        let card = pinion_runtime::rect_for_tag(&scene, &hello_node_lab::address::card("P-02"))
             .expect("the mounted lab paints its node cards");
         let inside = (page.x + card.x + card.w / 2, page.y + card.y + card.h / 2);
         let landed = resolves_at(inside.0, inside.1);

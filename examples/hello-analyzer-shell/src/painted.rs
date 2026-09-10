@@ -11773,7 +11773,7 @@ fn a_card_at_the_head_of_the_chain_is_selected(state: &std::rc::Rc<ShellState>) 
 
     let (shot, scene) = painted_at((WIN_W, WIN_H));
     let mut press = hand_on(scene);
-    press.cursor(aim(&shot, &format!("lab.node.{head}")));
+    press.cursor(aim(&shot, &hello_node_lab::address::card(&head)));
     press.press();
     press.release();
     let wire = lab_slot(state, "focused");
@@ -11823,10 +11823,10 @@ fn the_lineage_of_that_card_leaves_its_siblings_out(state: &std::rc::Rc<ShellSta
     // sees. Read as a comparison rather than against a pinned alpha: what has
     // to be true is that a card out of play is drawn back from one in play.
     let (_, scene) = painted_at((WIN_W, WIN_H));
-    let lit = painted_alpha(&scene, &format!("lab.node.{}", head.card))
+    let lit = painted_alpha(&scene, &hello_node_lab::address::card(&head.card))
         .expect("the card in play is painted");
     for sibling in &head.siblings {
-        let dim = painted_alpha(&scene, &format!("lab.node.{sibling}"))
+        let dim = painted_alpha(&scene, &hello_node_lab::address::card(sibling))
             .unwrap_or_else(|| panic!("{sibling} is still painted, only faded"));
         assert!(
             dim < lit,
@@ -11899,10 +11899,7 @@ fn one_more_press_shows_the_graph_whole_again(state: &std::rc::Rc<ShellState>) {
     let cards: Vec<String> = shot
         .tags
         .keys()
-        .filter(|tag| {
-            tag.strip_prefix("lab.node.")
-                .is_some_and(|rest| !rest.contains('.'))
-        })
+        .filter(|tag| hello_node_lab::address::card_of(tag).is_some())
         .cloned()
         .collect();
     assert!(cards.len() > 2, "this reads the whole canvas: {cards:?}");
@@ -12006,15 +12003,14 @@ fn choosing_a_card_and_framing_it_moves_the_canvas(state: &std::rc::Rc<ShellStat
     let card = shot
         .tags
         .keys()
-        .filter_map(|tag| tag.strip_prefix("lab.node."))
-        .filter(|rest| !rest.contains('.'))
-        .find(|rest| **rest != opened_on)
+        .filter_map(|tag| hello_node_lab::address::card_of(tag))
+        .find(|rest| *rest != opened_on)
         .expect("the opening graph paints more than one card")
         .to_owned();
 
     // Pressed, not wired: the selection this frames is the one a person makes.
     let mut press = hand_on(scene);
-    press.cursor(aim(&shot, &format!("lab.node.{card}")));
+    press.cursor(aim(&shot, &hello_node_lab::address::card(&card)));
     press.press();
     press.release();
     let chosen = lab_slot(state, "selection");
@@ -12810,8 +12806,8 @@ fn lab_card_boxes(shot: &Painted) -> std::collections::BTreeMap<String, Rect> {
     shot.tags
         .iter()
         .filter_map(|(tag, rect)| {
-            let name = tag.strip_prefix("lab.node.")?;
-            (!name.contains('.')).then(|| (name.to_owned(), *rect))
+            let name = hello_node_lab::address::card_of(tag)?;
+            Some((name.to_owned(), *rect))
         })
         .collect()
 }
@@ -13920,8 +13916,7 @@ fn carrying_a_card_over_a_host_says_it_would_be_taken(state: &std::rc::Rc<ShellS
     let card = shot
         .tags
         .keys()
-        .filter_map(|tag| tag.strip_prefix("lab.node."))
-        .find(|rest| !rest.contains('.'))
+        .find_map(|tag| hello_node_lab::address::card_of(tag))
         .expect("the opening graph paints a card")
         .to_owned();
 
@@ -13936,7 +13931,7 @@ fn carrying_a_card_over_a_host_says_it_would_be_taken(state: &std::rc::Rc<ShellS
     // takes — a driver that reached into the screen would be proving the
     // gesture against a delivery nothing else uses.
     drag.holding(ALT_CHORD);
-    drag.cursor(aim(&shot, &format!("lab.node.{card}")));
+    drag.cursor(aim(&shot, &hello_node_lab::address::card(&card)));
     drag.press();
 
     let mut offered = serde_json::Value::Null;
@@ -14991,7 +14986,7 @@ fn carrying_it_over_a_wire_says_which_one_and_that_it_would_be_taken(
     let (shot, scene) = painted_at((WIN_W, WIN_H));
     let boxes = lab_card_boxes(&shot);
     let mut drag = hand_on(scene);
-    drag.cursor(aim(&shot, &format!("lab.node.{card}")));
+    drag.cursor(aim(&shot, &hello_node_lab::address::card(card)));
     drag.press();
     // ★★ Picked up, and over nothing. This separates *a card is being carried*
     // from *a card is over a wire*: without it, a reading that answered as soon
@@ -15173,7 +15168,7 @@ fn a_card_that_cannot_listen_is_aimed_and_says_it_would_not_be_taken(
     // join of one clause — and it did, for exactly as long as it took the
     // canon's rule to be reproduced.
     drag.holding(ALT_CHORD);
-    drag.cursor(aim(&shot, &format!("lab.node.{card}")));
+    drag.cursor(aim(&shot, &hello_node_lab::address::card(&card)));
     drag.press();
     let mut refused = serde_json::Value::Null;
     'search: for (from, to) in lab_links(state) {
@@ -15259,7 +15254,7 @@ fn an_already_wired_card_carried_over_a_wire_aims_at_nothing(state: &std::rc::Rc
     let held = links.len();
 
     let mut drag = hand_on(scene);
-    drag.cursor(aim(&shot, &format!("lab.node.{wired}")));
+    drag.cursor(aim(&shot, &hello_node_lab::address::card(&wired)));
     drag.press();
     let mut tried = 0usize;
     for (from, to) in &links {

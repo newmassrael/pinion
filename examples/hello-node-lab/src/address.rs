@@ -202,10 +202,121 @@ pub const CARD_TEMPLATE: &str = "lab.node.{}";
 /// The address a **host frame** is painted under, as a template.
 pub const FRAME_TEMPLATE: &str = "lab.frame.{}";
 
+/// ★★★★★ R2117 — [`CARD_TEMPLATE`]'s prefix, with the separator every reader
+/// either composes onto or strips off.
+///
+/// Declared because thirteen readers held this string themselves, and one of
+/// them held its LENGTH: `tag[9..].contains('.')` is what "the card itself, not
+/// one of its parts" looked like before this round. Nine is `"lab.node."`
+/// counted by hand, so renaming the prefix would have left that reader slicing
+/// a string at the wrong place — in the middle of a UTF-8 character if the new
+/// prefix were shorter, and silently at the wrong boundary if it were longer.
+pub const CARD: &str = "lab.node.";
+
+/// ★★★★★ R2117 — the ANOTHER FAMILY that shares [`CARD`]'s prefix.
+///
+/// The build seat (R1885). A card is `lab.node.<name>`; this is
+/// `lab.node.build.<word>`, so a reader stripping [`CARD`] and stopping there
+/// reads `build` as a card called "build". The screen's router reads this one
+/// FIRST for exactly that reason, and [`card_of`] refuses it rather than
+/// leaving the ordering as the only thing that keeps them apart — an order is a
+/// property of one call site, and a refusal is a property of the address.
+pub const CARD_BUILD: &str = "lab.node.build.";
+
+/// ★★★★★ R2117 — every part of a card that carries an address of its own.
+///
+/// A card is drawn as a box with things inside it, and three of those things
+/// are addressed: the identifier it shows, the role badge beside it, and the
+/// problem marker it grows when the gate has something to say about it. The
+/// rest of a card's contents are painted into the card's own rectangle and are
+/// found through it.
+///
+/// ⚠ This is what is ADDRESSED, not what is drawn — [`FORM_PARTS`] draws the
+/// same distinction one family over, and for the same reason: only the painter
+/// knows what exists, and a roster here that tried to say so would be a second
+/// copy of its vocabulary.
+pub const CARD_PARTS: &[&str] = &["id", "badge", "issue"];
+
+/// The identifier a card shows, with the population's placeholder.
+pub const CARD_ID_TEMPLATE: &str = "lab.node.{}.id";
+
+/// The role badge beside it.
+pub const CARD_BADGE_TEMPLATE: &str = "lab.node.{}.badge";
+
+/// The problem marker a card grows when the gate has something to say.
+pub const CARD_ISSUE_TEMPLATE: &str = "lab.node.{}.issue";
+
+/// ★★★★★ R2117 — every declared card-part template beside the part word it is
+/// for.
+///
+/// A specification row must be `&'static str` and a derivation cannot make one,
+/// so these are declarations — but they are declarations in ONE file, and the
+/// address gate drives every one of them against [`card_part`], so a template
+/// that stopped agreeing with what the painter composes is a test failure
+/// rather than a table pointing at a mark nobody paints. [`FORM_PART_TEMPLATES`]
+/// is the same arrangement one family over; R2053 built it for that reason.
+pub const CARD_PART_TEMPLATES: &[(&str, &str)] = &[
+    ("id", CARD_ID_TEMPLATE),
+    ("badge", CARD_BADGE_TEMPLATE),
+    ("issue", CARD_ISSUE_TEMPLATE),
+];
+
 /// That card's address.
 #[must_use]
 pub fn card(name: &str) -> String {
     CARD_TEMPLATE.replace("{}", name)
+}
+
+/// The address of one PART of that card.
+///
+/// `part` is one of [`CARD_PARTS`]; a word that is not composes an address
+/// nothing paints, which is a lookup answering nothing rather than a wrong
+/// mark — the safe direction, and the same one [`form_part`] takes.
+#[must_use]
+pub fn card_part(name: &str, part: &str) -> String {
+    format!("{CARD}{name}.{part}")
+}
+
+/// The card a tag names, or `None` when the tag is not a card's own address.
+///
+/// ★★★★★ [`card`]'s inverse, and it refuses THREE things that all begin with
+/// this family's prefix:
+///
+/// * a tag of the build family ([`CARD_BUILD`]) — `build` is not a card name;
+/// * a tag naming one of a card's PARTS, because the part's address and the
+///   card's are different marks and a reader asking "which card is this" of
+///   `lab.node.R-01.badge` wants [`card_part_of`];
+/// * the bare prefix, which names no card at all.
+///
+/// ⚠ A card's name cannot contain a dot — the screen's own identifier rule —
+/// which is what makes "no dot in the tail" a sound test for *this is the card
+/// itself*. R1915 measured what the other reading costs one family over: a pin
+/// reader that split at the last dot left every member pin drawn, announced and
+/// unreachable.
+#[must_use]
+pub fn card_of(tag: &str) -> Option<&str> {
+    let tail = tag.strip_prefix(CARD)?;
+    if tail.contains('.') || tail.is_empty() {
+        return None;
+    }
+    Some(tail)
+}
+
+/// The card and the part a tag names, or `None` when it is not a card part.
+///
+/// ★ [`card_part`]'s inverse. The part must be one this screen ADDRESSES, so a
+/// tag whose tail is a word the roster does not carry is refused rather than
+/// answered — otherwise a future `lab.node.<name>.<anything>` would read as a
+/// part that nothing paints.
+#[must_use]
+pub fn card_part_of(tag: &str) -> Option<(&str, &'static str)> {
+    let tail = tag.strip_prefix(CARD)?;
+    let (name, word) = tail.split_once('.')?;
+    if name.is_empty() {
+        return None;
+    }
+    let part = CARD_PARTS.iter().find(|known| **known == word)?;
+    Some((name, *part))
 }
 
 /// That frame's address.

@@ -1751,7 +1751,7 @@ fn r2108_every_pin_address_is_derived() {
     for other in [
         super::address::PALETTE_BODY,
         super::address::TOOLBAR,
-        "lab.node.P-01",
+        &super::address::card("P-01"),
     ] {
         assert_eq!(
             super::address::pin_of(other),
@@ -1906,6 +1906,122 @@ fn r2116_every_reset_seat_address_is_derived() {
             "★★★★★ the specification publishes an address for `{word}` that is \
              not the one the paint is composed from"
         );
+    }
+}
+
+/// ★★★★★ R2117 — **a card's address is typed in ONE place, and this counts.**
+///
+/// The twentieth instalment, and the largest family left on this screen when
+/// the ratchet gained its Rust column: **65 sites over six files**, of which
+/// **13 were in the HOST** — the shell that mounts this screen as a page, which
+/// R2115 named the worse half of this debt's population.
+///
+/// ⚠ The needle is assembled with `concat!`, because this file is one of the
+/// sources it reads.
+///
+/// ⚠⚠ The needle is the bare stem, so PROSE is in the population. Six comments
+/// spelled this family while explaining the router's ordering rule, and they
+/// had to be reworded — one of them was *describing* the very ordering this
+/// round made unnecessary.
+#[test]
+fn r2117_a_card_address_is_typed_in_one_place() {
+    const CARD_ANY: &str = concat!("lab.", "node.");
+    let sources = crate_sources();
+    let spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(CARD_ANY).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ a card's address is declared in `address.rs` and taken from \
+         there everywhere else; these file(s) spell it themselves"
+    );
+}
+
+/// ★★★★★ R2117 — **the card address a reader composes, the one a reader takes
+/// apart, and the family that SHARES its prefix are held against each other.**
+///
+/// The second half of the gate above, split for the reason
+/// `r2108_every_pin_address_is_derived` states.
+///
+/// ★★★★★ THIS FAMILY'S DISCRIMINATOR IS "NO DOT IN THE TAIL", and that is why
+/// the inverse is worth more here than anywhere this campaign has been. Three
+/// different things begin with this prefix — a card, a card's PART, and the
+/// build seat, which is a different family (R1885) — and before this round the
+/// rule telling them apart was written out at **six** call sites, once as a
+/// hand-counted byte offset (`tag[9..]`) and four times inside the HOST. A
+/// renamed prefix would have left that offset slicing at the wrong boundary
+/// rather than failing.
+#[test]
+fn r2117_every_card_address_is_derived() {
+    use super::address as lab;
+
+    // The composition hangs off the declared prefix, and the template agrees.
+    assert_eq!(lab::card("P-01"), format!("{}P-01", lab::CARD));
+    assert_eq!(lab::CARD_TEMPLATE.replace("{}", "P-01"), lab::card("P-01"));
+    assert_eq!(lab::CARD_BUILD, format!("{}build.", lab::CARD));
+
+    // ★ Round trip, for names of the shapes this screen actually issues.
+    for name in ["P-01", "R-01", "Group Output", "S-01"] {
+        assert_eq!(
+            lab::card_of(&lab::card(name)),
+            Some(name),
+            "★ `{name}` does not round-trip through its own address"
+        );
+    }
+    // ★★ Every declared part template IS what `card_part` derives, and the
+    // inverse gives back both halves.
+    for (word, template) in lab::CARD_PART_TEMPLATES {
+        assert_eq!(
+            &lab::card_part("P-01", word),
+            &template.replace("{}", "P-01"),
+            "★ the template for `{word}` is not what `card_part()` derives"
+        );
+        assert!(
+            lab::CARD_PARTS.contains(word),
+            "★ `{word}` has a template and is not in the part roster"
+        );
+        assert_eq!(
+            lab::card_part_of(&lab::card_part("R-01", word)),
+            Some(("R-01", *word)),
+            "★ a `{word}` address does not round-trip"
+        );
+    }
+    // ★★★ THE THREE REFUSALS, which are what make the prefix unambiguous.
+    assert_eq!(
+        lab::card_of(&format!("{}reference", lab::CARD_BUILD)),
+        None,
+        "★★★★★ a build tag is NOT a card called `build` — before this round \
+         only the router's arm ORDER said so, at six call sites, four of them \
+         in another crate"
+    );
+    assert_eq!(
+        lab::card_of(&lab::card_part("P-01", "badge")),
+        None,
+        "★★ a card's part is a different mark from the card"
+    );
+    assert_eq!(
+        lab::card_of(lab::CARD),
+        None,
+        "★ the bare prefix names no card"
+    );
+    assert_eq!(
+        lab::card_part_of(&lab::card("P-01")),
+        None,
+        "★ a card's own address names no part"
+    );
+    assert_eq!(
+        lab::card_part_of(&format!("{}P-01.nosuch", lab::CARD)),
+        None,
+        "★★ a tail this screen does not address is refused rather than \
+         answered as a part nothing paints"
+    );
+    // ★★★★ A tag of another family is not a card, including the two that share
+    // this screen's namespace and hang off a name the same way.
+    for other in [lab::PALETTE_BODY, lab::TOOLBAR, lab::RESET_VIEW] {
+        assert_eq!(lab::card_of(other), None, "★ `{other}` is not a card");
     }
 }
 
@@ -2097,7 +2213,7 @@ fn r2067_the_way_ins_address_is_typed_in_one_place() {
         );
     }
     assert_eq!(
-        super::address::card_of_way_in("lab.node.R-01"),
+        super::address::card_of_way_in(&super::address::card("R-01")),
         None,
         "★ a card's own address is not a way into it — the two are different \
          marks, which is the whole reason this family has a prefix of its own"
@@ -7889,7 +8005,7 @@ fn r1966_the_canvas_draws_kinds_and_the_pins_draw_wires(state: &std::rc::Rc<LabS
         let scene = crate::painted::painted_scene(state);
         let mut fills: BTreeSet<(u8, u8, u8)> = BTreeSet::new();
         for node in state.cards() {
-            let tag = format!("lab.node.{}", state.name_of(node));
+            let tag = super::address::card(&state.name_of(node));
             if let Some(fill) = painted_fill(&scene, &tag) {
                 fills.insert((fill.r, fill.g, fill.b));
             }
@@ -7916,7 +8032,7 @@ fn r1966_the_canvas_draws_kinds_and_the_pins_draw_wires(state: &std::rc::Rc<LabS
         // would compare first.
         let fill_of = |name: &str| -> Option<(u8, u8, u8)> {
             let node = state.node_of(name)?;
-            painted_fill(&scene, &format!("lab.node.{}", state.name_of(node)))
+            painted_fill(&scene, &super::address::card(&state.name_of(node)))
                 .map(|c| (c.r, c.g, c.b))
         };
         let router = fill_of("R-01").expect("the router is painted");

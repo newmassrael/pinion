@@ -176,14 +176,14 @@ pub const PANES: &[PaneSpec] = &[
         // Width 0 above: the canvas takes what the flanking panes leave, so its
         // opening extent is not a number anybody chose.
         opens: EdgePlacement::open(ChromeEdge::Left, 0),
-        // ⚠ The graph's cards and wires are named `lab.node.*` / `lab.wire.*`,
-        // not under this tag. Listed because they ARE what the canvas holds,
+        // ⚠ The graph's cards and wires carry their own prefixes, not this
+        // tag's. Listed because they ARE what the canvas holds,
         // and a prefix list that named only `lab.canvas` would be describing
         // the pane's frame rather than its contents. The canvas does not fold,
         // so nothing here is ever excused — which is the point of writing it
         // down anyway: the gate can then check that the four lists PARTITION
         // the screen rather than merely covering the folding panes.
-        holds: &["lab.canvas", "lab.node.", "lab.wire."],
+        holds: &["lab.canvas", crate::address::CARD, "lab.wire."],
     },
     PaneSpec {
         tag: crate::address::INSPECTOR,
@@ -1588,7 +1588,7 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.node.{}",
+        tag: crate::address::CARD_TEMPLATE,
         role: "group",
         population: Population::Nodes,
     },
@@ -1780,8 +1780,16 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     (crate::address::PALETTE_BODY, Population::One, "layout"),
     (crate::address::INSPECTOR_BODY, Population::One, "layout"),
     // A card's identifier and its role chip: the card says both.
-    ("lab.node.{}.id", Population::Nodes, "name_of"),
-    ("lab.node.{}.badge", Population::Nodes, "part_of"),
+    (
+        crate::address::CARD_ID_TEMPLATE,
+        Population::Nodes,
+        "name_of",
+    ),
+    (
+        crate::address::CARD_BADGE_TEMPLATE,
+        Population::Nodes,
+        "part_of",
+    ),
     // Captions inside the seat they name.
     (
         crate::address::TOOLBAR_RUN_LABEL,

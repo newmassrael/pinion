@@ -292,7 +292,7 @@ const STATES: &[SweptState] = &[
         let shot = painted(state);
         let seat = *shot
             .tags
-            .get(&format!("lab.node.{}", state.name_of(node)))
+            .get(&super::address::card(&state.name_of(node)))
             .expect("the added card is painted with the view back home");
         let (px, py) = centre(seat);
         super::move_cursor(state, px, py);
@@ -1127,9 +1127,9 @@ fn declared_tags(state: &LabState) -> Vec<String> {
     // specification's list and therefore could never show an added node.
     for node in state.cards() {
         let id = state.name_of(node);
-        want.push(format!("lab.node.{id}"));
-        want.push(format!("lab.node.{id}.id"));
-        want.push(format!("lab.node.{id}.badge"));
+        want.push(super::address::card(&id));
+        want.push(super::address::card_part(&id, "id"));
+        want.push(super::address::card_part(&id, "badge"));
         // ★★★★★ R2068 — a card draws a `dial` when the MODEL gives it an output
         // port, which every card of the opening graph has and an interface card
         // does not: a subgraph's outward end is all inputs, so demanding one
@@ -1331,9 +1331,7 @@ fn must_answer(tag: &str) -> Option<String> {
     if let Some((node, word)) = super::address::pin_of(tag) {
         return Some(format!("pin:{node}:{word}"));
     }
-    if let Some(rest) = tag.strip_prefix("lab.node.")
-        && !rest.contains('.')
-    {
+    if let Some(rest) = super::address::card_of(tag) {
         return Some(format!("node:{rest}"));
     }
     // ★★ R1681.3 — the picked link's own seats. Declared here BECAUSE the card
@@ -1443,7 +1441,7 @@ fn owning_pane(tag: &str) -> Option<Rect> {
     {
         return Some(inspector_rect());
     }
-    if tag.starts_with("lab.node.")
+    if tag.starts_with(super::address::CARD)
         || tag.starts_with("lab.frame.")
         || tag.starts_with("lab.link.")
         || tag.starts_with("lab.gate")
@@ -1517,7 +1515,7 @@ fn declared_reader_of(tag: &str) -> Option<&'static str> {
 /// to chrome around it. Graph content can legitimately be off-screen; chrome
 /// cannot.
 fn is_graph_content(tag: &str) -> bool {
-    tag.starts_with("lab.node.")
+    tag.starts_with(super::address::CARD)
         || tag.starts_with("lab.frame.")
         || tag.starts_with("lab.link.")
         || tag.starts_with(super::address::PIN)
@@ -1961,7 +1959,7 @@ fn r2001_the_advanced_chip_sits_on_the_card_it_folds_and_a_wired_pin_stays() {
         // by the pan and comparing them is R1862's mistake — a rectangle from
         // one frame held against one from another.
         let shot = painted(&state);
-        let before = shot.tags[&format!("lab.node.{name}")];
+        let before = shot.tags[&super::address::card(&name)];
         assert!(
             !shot.tags.contains_key(&format!("lab.advanced.{name}")),
             "★ a card with nothing in the class draws no control for it"
@@ -1970,7 +1968,7 @@ fn r2001_the_advanced_chip_sits_on_the_card_it_folds_and_a_wired_pin_stays() {
         // A person puts the dial pin in the advanced class.
         super::classify_pin(&state, fresh, "dial", "advanced").expect("this taxonomy lets them");
         let shot = painted(&state);
-        let after = shot.tags[&format!("lab.node.{name}")];
+        let after = shot.tags[&super::address::card(&name)];
         let chip = *shot
             .tags
             .get(&format!("lab.advanced.{name}"))
@@ -2097,7 +2095,11 @@ fn r1681_the_picked_links_chrome_paints_over_what_a_press_over_it_reaches() {
         });
         let last_card = order
             .iter()
-            .rposition(|tag| tag.starts_with("lab.node.") && !tag[9..].contains('.'))
+            // ★★★★★ R2117 — `card_of`, which is what this was: the predicate
+            // read `tag[9..]`, nine being the card prefix counted by hand, so a
+            // renamed prefix would have sliced at the wrong byte rather than
+            // failing. The declaration answers "is this a card itself" now.
+            .rposition(|tag| super::address::card_of(tag).is_some())
             .expect("cards are painted");
         for seat in ["lab.link.label", "lab.link.act"] {
             let at = order
@@ -2303,7 +2305,7 @@ fn r2084_the_register_and_the_paint_name_the_same_pins(
     // property 6). The register answers about the document and the paint about
     // the window, so the comparison is drawn where both are speaking — anything
     // else asks the paint about a card nobody can see.
-    let on_screen = |card: &str| shot.tags.contains_key(&format!("lab.node.{card}"));
+    let on_screen = |card: &str| shot.tags.contains_key(&super::address::card(card));
     let mut compared = 0_usize;
     for row in rows {
         let card = row["card"].as_str().expect("a row names its card");
@@ -2930,7 +2932,7 @@ fn r1653_the_painted_screen_invented_nothing() {
             // `None` leaves and which this one does not have to.
             ("lab.observed.", Some(spec::OBSERVED.len())),
             ("lab.gate", None),
-            ("lab.node.", None),
+            (super::address::CARD, None),
             (super::address::PIN, None),
             ("lab.frame.", None),
             (form_stem.as_str(), None),
@@ -3508,7 +3510,7 @@ fn r1653_a_pan_past_the_edge_stops_painting_the_graph() {
         let visible = |shot: &Painted| {
             spec::NODES
                 .iter()
-                .filter(|n| shot.tags.contains_key(&format!("lab.node.{}", n.id)))
+                .filter(|n| shot.tags.contains_key(&super::address::card(n.id)))
                 .count()
         };
         assert_eq!(
@@ -3524,7 +3526,9 @@ fn r1653_a_pan_past_the_edge_stops_painting_the_graph() {
         let escaped: Vec<(&String, Rect)> = shot
             .tags
             .iter()
-            .filter(|(tag, _)| tag.starts_with("lab.node.") || tag.starts_with("lab.frame."))
+            .filter(|(tag, _)| {
+                tag.starts_with(super::address::CARD) || tag.starts_with("lab.frame.")
+            })
             .map(|(tag, rect)| (tag, *rect))
             .collect();
         assert!(
@@ -3646,7 +3650,7 @@ fn r1655_every_card_presses_and_drags_in_every_state() {
             let shot = painted(&state);
             for node in state.cards() {
                 let name = state.name_of(node);
-                let Some(rect) = shot.tags.get(&format!("lab.node.{name}")).copied() else {
+                let Some(rect) = shot.tags.get(&super::address::card(&name)).copied() else {
                     // Panned out of view is a legitimate absence; the clipping
                     // property is asserted elsewhere.
                     continue;
@@ -3710,7 +3714,7 @@ fn r1655_a_press_anywhere_on_a_card_reaches_that_card() {
             let shot = painted(&state);
             for node in state.cards() {
                 let name = state.name_of(node);
-                let Some(rect) = shot.tags.get(&format!("lab.node.{name}")).copied() else {
+                let Some(rect) = shot.tags.get(&super::address::card(&name)).copied() else {
                     continue;
                 };
                 for i in 0..6u32 {
@@ -3758,7 +3762,7 @@ fn r1655_a_press_anywhere_on_a_card_reaches_that_card() {
                             Hit::Node(other) => {
                                 let theirs = shot
                                     .tags
-                                    .get(&format!("lab.node.{}", state.name_of(other)))
+                                    .get(&super::address::card(&state.name_of(other)))
                                     .copied();
                                 format!(
                                     "ANOTHER card ({}) — PAINTED this {:?} that {theirs:?} \
@@ -4516,7 +4520,7 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         );
     }),
     ("move a node", |state, shot| {
-        drag_tag(state, shot, "lab.node.P-03", (40, 24));
+        drag_tag(state, shot, &super::address::card("P-03"), (40, 24));
     }),
     ("re-parent a node between frames", |state, shot| {
         // Onto the other host's frame, which is where a drop changes whose
@@ -4526,7 +4530,12 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         // onto a frame moves the card and changes nothing about what holds it,
         // which is the canon's rule (`apply frame` lives inside its alt branch)
         // and was this screen's silent default for 428 rounds.
-        alt_drag_between(state, shot, "lab.node.P-03", "lab.frame.host-b");
+        alt_drag_between(
+            state,
+            shot,
+            &super::address::card("P-03"),
+            "lab.frame.host-b",
+        );
     }),
     ("move a frame and its members", |state, shot| {
         drag_tag(state, shot, "lab.frame.host-b.caption", (30, 0));
@@ -4536,15 +4545,15 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     // the selection directly would be proving the buttons work against a state
     // no mouse can produce — the rule R1681 wrote next door for the link seats.
     ("delete a node", |state, shot| {
-        press_tag(state, shot, "lab.node.P-03");
+        press_tag(state, shot, &super::address::card("P-03"));
         press_tag(state, &painted(state), crate::address::INSPECTOR_DELETE);
     }),
     ("collapse a node", |state, shot| {
-        press_tag(state, shot, "lab.node.P-03");
+        press_tag(state, shot, &super::address::card("P-03"));
         press_tag(state, &painted(state), crate::address::INSPECTOR_COLLAPSE);
     }),
     ("disable a node", |state, shot| {
-        press_tag(state, shot, "lab.node.P-03");
+        press_tag(state, shot, &super::address::card("P-03"));
         press_tag(state, &painted(state), crate::address::INSPECTOR_DISABLE);
     }),
     // ★★★ R1683 — the two the one text field answers. Each opens it with the
@@ -4552,7 +4561,7 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     // same seat, which is the path a PERSON takes; the wire's `edit`/`type`/
     // `apply` trio drives the same three steps.
     ("rename a node", |state, shot| {
-        press_tag(state, shot, "lab.node.P-03");
+        press_tag(state, shot, &super::address::card("P-03"));
         press_tag(state, &painted(state), crate::address::INSPECTOR_RENAME);
         type_into(state, "edge-01");
         press_tag(state, &painted(state), crate::address::INSPECTOR_RENAME);
@@ -5139,7 +5148,7 @@ const HINT_GESTURES: &[HintDriver] = &[
     ("wheel", "zoom", |state, shot| {
         let card = *shot
             .tags
-            .get("lab.node.P-01")
+            .get(&super::address::card("P-01"))
             .expect("a card is painted, so a wheel has somewhere to be aimed");
         wheel_at(state, centre(card), -1.0);
     }),
@@ -5147,7 +5156,7 @@ const HINT_GESTURES: &[HintDriver] = &[
         "drag a node",
         "place it, hold ctrl to snap",
         |state, shot| {
-            drag_tag(state, shot, "lab.node.P-03", (40, 24));
+            drag_tag(state, shot, &super::address::card("P-03"), (40, 24));
         },
     ),
     // ★★★★★ R2082 — the two the strip gained when membership stopped happening
@@ -5160,7 +5169,12 @@ const HINT_GESTURES: &[HintDriver] = &[
         "alt-drag a node",
         "move it to another host",
         |state, shot| {
-            alt_drag_between(state, shot, "lab.node.P-03", "lab.frame.host-b");
+            alt_drag_between(
+                state,
+                shot,
+                &super::address::card("P-03"),
+                "lab.frame.host-b",
+            );
         },
     ),
     (
@@ -5170,7 +5184,7 @@ const HINT_GESTURES: &[HintDriver] = &[
             // A card that IS on a host, so the click takes it off — the arm
             // that needs no frame under the cursor and therefore cannot be
             // satisfied by luck.
-            alt_click_tag(state, shot, "lab.node.P-01");
+            alt_click_tag(state, shot, &super::address::card("P-01"));
         },
     ),
     ("drag a pin", "author a link", |state, shot| {
@@ -5370,9 +5384,9 @@ fn r1704_a_link_that_has_left_the_canvas_takes_its_affordances_with_it() {
             );
         }
         let gone = painted(&state);
-        for card in ["lab.node.P-01", "lab.node.R-01"] {
+        for card in [super::address::card("P-01"), super::address::card("R-01")] {
             assert!(
-                !gone.tags.contains_key(card),
+                !gone.tags.contains_key(&card),
                 "{card} is still painted, so the pan did not carry the link away \
                  and this test is not exercising what it says"
             );
@@ -6345,7 +6359,7 @@ fn r1684_picking_another_card_shuts_the_field() {
         );
         let elsewhere = *painted(&state)
             .tags
-            .get("lab.node.S-01")
+            .get(&super::address::card("S-01"))
             .expect("another card is on the canvas");
         press_at(&state, centre(elsewhere));
         assert_eq!(
@@ -10061,7 +10075,7 @@ fn r2067_a_card_that_stands_for_a_graph_carries_the_way_into_it() {
              control — a chip on a card that stands for a kind would be a \
              control over nothing"
         );
-        let card = shot.tags[&format!("lab.node.{}", state.name_of(part))];
+        let card = shot.tags[&super::address::card(&state.name_of(part))];
         assert!(
             inside(card, chip),
             "★★★★★ the chip is INSIDE its card {card:?}, not merely near it: \

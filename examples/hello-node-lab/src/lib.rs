@@ -6194,7 +6194,7 @@ impl Hit {
         marks
             .stack_at(wx, wy)
             .filter(|(tag, _)| {
-                tag.starts_with("lab.node.")
+                tag.starts_with(address::CARD)
                     || tag.starts_with(address::PIN)
                     || tag.starts_with("lab.link.")
                     // ★★★★★ R2001 — the advanced-fold chip's own family. A
@@ -6299,11 +6299,16 @@ impl Hit {
         {
             return Self::Definition(held, verb);
         }
-        // R1885 — read BEFORE the `lab.node.` prefix below, which would
-        // otherwise swallow `lab.node.build.reference` and look for a card of
-        // that name. The longer prefix wins, which is the rule this router
-        // already follows for [`address::PIN`] and `lab.link.endpoint.`.
-        if let Some(word) = tag.strip_prefix("lab.node.build.")
+        // R1885 — read BEFORE the card arm below. The longer prefix wins, which
+        // is the rule this router already follows for [`address::PIN`] and the
+        // picked link's endpoints.
+        // ★★★★★ R2117 — and the ORDER is no longer the only thing keeping them
+        // apart: `address::card_of` refuses a build tag itself now. An order is
+        // a property of ONE call site and a refusal is a property of the
+        // address, so the second reader of this family — the host, which had
+        // four copies of this predicate — inherits the rule instead of having
+        // to re-know it.
+        if let Some(word) = tag.strip_prefix(address::CARD_BUILD)
             && let Some(stack) = Stack::from_word(word)
         {
             return Self::Build(stack);
@@ -6311,24 +6316,24 @@ impl Hit {
         if tag == address::PALETTE_DISCOVERY {
             return Self::DiscoveryToggle;
         }
-        // ★★★★★ R2001 — a prefix of its own rather than `lab.node.<name>.…`,
-        // and that is the router's own rule speaking: the `lab.node.` arm below
-        // would swallow `<name>.advanced`, look for a card called that, find
-        // none and answer `Nothing` — the shape R1885 recorded for
-        // `lab.node.build.` and R1915 for a member pin.
+        // ★★★★★ R2001 — a prefix of its own rather than hanging off a card's
+        // address, and that is the router's own rule speaking: the card arm
+        // below would swallow `<name>.advanced`, look for a card called that,
+        // find none and answer `Nothing` — the shape R1885 recorded for the
+        // build seat and R1915 for a member pin.
         if let Some(name) = tag.strip_prefix("lab.advanced.")
             && let Some(id) = state.node_of(name)
         {
             return Self::AdvancedFold(id);
         }
         // ★★★★★ R2067 — its own prefix for the arm above's reason, read BEFORE
-        // `lab.node.` which would swallow it.
+        // the card arm which would swallow it.
         if let Some(name) = address::card_of_way_in(tag)
             && let Some(id) = state.node_of(name)
         {
             return Self::Inside(id);
         }
-        if let Some(name) = tag.strip_prefix("lab.node.")
+        if let Some(name) = address::card_of(tag)
             && let Some(id) = state.node_of(name)
         {
             return Self::Node(id);
@@ -9094,7 +9099,7 @@ fn canvas_attention(state: &LabState, stop: &str) -> Option<String> {
 /// A function rather than a `format!` at each site: the paint, the
 /// accessibility tree and the cursor all have to produce it from one rule.
 fn card_tag(state: &LabState, node: NodeId) -> String {
-    format!("lab.node.{}", state.name_of(node))
+    address::card(&state.name_of(node))
 }
 
 /// The tag the step for `depth` is addressed by.
@@ -12686,23 +12691,23 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         };
         parts.push(quiet(
             tagged_label(
-                &format!("lab.node.{name}.id"),
+                &address::card_part(&name, "id"),
                 name.clone(),
                 shape.id,
                 shape.id_font,
                 ink_for_name,
             ),
-            Silence::name_of(format!("lab.node.{name}")),
+            Silence::name_of(address::card(&name)),
         ));
         parts.push(quiet(
             box_at(
-                &format!("lab.node.{name}.badge"),
+                &address::card_part(&name, "badge"),
                 shape.badge,
                 ink.surface,
                 Some(role_ink(state, role)),
                 4,
             ),
-            Silence::part_of(format!("lab.node.{name}")),
+            Silence::part_of(address::card(&name)),
         ));
         parts.push(label(
             role.badge(),
@@ -12724,13 +12729,13 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         if let Some(&blocks) = troubled.get(&node) {
             parts.push(quiet(
                 box_at(
-                    &format!("lab.node.{name}.issue"),
+                    &address::card_part(&name, "issue"),
                     shape.issue,
                     if blocks { ink.err } else { ink.warn },
                     Some(ink.surface),
                     shape.issue.w / 2,
                 ),
-                Silence::part_of(format!("lab.node.{name}")),
+                Silence::part_of(address::card(&name)),
             ));
         }
         // ★★★★★ R2001 — **the advanced class's one control**, under the rows,
@@ -12797,7 +12802,7 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         style = style.with_border(Border::new(edge, if found_here { 3 } else { 1 }));
         children.push(Scene::Container(
             ContainerNode::new(parts)
-                .with_tag(format!("lab.node.{name}"))
+                .with_tag(address::card(&name))
                 .with_style(style)
                 .with_layout(absolute(shape.rect)),
         ));
@@ -12903,9 +12908,9 @@ fn advanced_chip(state: &LabState, node: NodeId, seat: Rect, ink: Ink) -> Scene 
 ///
 /// ★ Through [`caption::captioned`] for [`advanced_chip`]'s reason — the
 /// `r1812` ratchet counts a caption paired with its box by nothing but where
-/// the two landed — and its own tag prefix rather than a suffix under
-/// `lab.node.`, because this canvas resolves a name to a card by that prefix
-/// and would look for a card called `<name>.inside`.
+/// the two landed — and its own tag prefix rather than a suffix under the card
+/// prefix, because this canvas resolves a name to a card by that prefix and
+/// would look for a card called `<name>.inside`.
 fn inside_chip(state: &LabState, node: NodeId, seat: Rect, ink: Ink) -> Scene {
     let name = state.name_of(node);
     // What is INSIDE, asked of the model: the definition a descent lands in,
@@ -13640,7 +13645,7 @@ fn canvas(state: &LabState, theme: &Theme, ink: Ink) -> Scene {
     // owner reported that as three things — it goes grey, they do not overlap,
     // is not overlapping better — and all three were this.
     let held = match state.drag.get() {
-        Some(Drag::Node { node, .. }) => Some(format!("lab.node.{}", state.name_of(node))),
+        Some(Drag::Node { node, .. }) => Some(address::card(&state.name_of(node))),
         _ => None,
     };
     let mut world_surface = ContainerNode::new(canvas_world(state, ink));
@@ -25454,7 +25459,7 @@ fn card_access(state: &LabState, node: NodeId, selection: &Selection<NodeId>) ->
         let role = state.role_of(node).unwrap_or(Role::Peer);
         let (inbound, outbound) = state.degree(node);
         let (collapsed, disabled) = card_switches(state, node);
-        let mut card = AccessNode::new(format!("lab.node.{name}"), AriaRole::Group)
+        let mut card = AccessNode::new(address::card(&name), AriaRole::Group)
             .with_name(name.clone())
             // ★★ R1706 — `aria-selected` is MEMBERSHIP, and which member LEADS
             // is a second fact this row also has to carry: with six cards
