@@ -62,6 +62,38 @@ position by calls to that function IN THE SAME MODULE resolve it. One hop, not
 an interpreter -- `module_strings`'s own rule, applied to arguments instead of
 assignments, and it can only ADD targets to a demo that resolved none by the
 literal path.
+
+## R2126 -- the same blind spot, in the shape this tree actually writes
+
+R2106 fixed the hop where a demo calls its helper with a LITERAL per screen. The
+dominant shape here is the other one: a module-level roster --
+`SCREENS = [("node lab", "hello-node-lab"), ...]` -- iterated with tuple
+unpacking, and the unpacked name either launched directly or handed to a helper.
+Neither hop sees it, so such a demo resolved nothing and sat in `--audit`.
+
+**Measured, and it cost two rounds.** `r1712_a_window_says_what_it_gives_up.py`
+drives seven screens off such a roster and asserts, among much else, which of
+them publish a specification naming the regions they paint. R2123 made
+`hello-key-patterns` publish one and R2124 made `hello-log-view` publish one;
+each grew that set, each left the demo's recorded expectation short, and
+`--radius` selected the demo for NEITHER round because it could not resolve the
+launch. Both published a red that CI found afterwards. Two rounds, one blind
+spot, and R2106 had already written down what a blind spot looks like: exactly
+like a green.
+
+So a module-level ROSTER is a lookup too. `module_sequences` reads
+`NAME = [...]` / `(...)` / `{...}` whose elements are string literals, tuples of
+them, or names this module has already bound; `roster_bindings` binds what
+`for x in NAME`, `for x, y in NAME`, `for k, v in NAME.items()`, the `.keys()` /
+`.values()` views and a destructuring `a, b, c = NAME` put in each target,
+scoped to the module-level function the statement sits in; and a call argument
+that is one of those names now feeds the R2106 parameter hop the way a literal
+does.
+
+Still a lookup rather than an interpreter, and the line is in the same place all
+three hops draw it: a name resolves against bindings this module makes at its
+top level, never against a value that depends on control flow, on a rebinding,
+or on another parameter. What does not resolve stays in `--audit`.
 """
 
 from __future__ import annotations
@@ -71,9 +103,34 @@ import ast
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 REPO = Path(__file__).resolve().parent.parent
 DEMOS = REPO / "tools" / "demos"
+
+
+class Roster(NamedTuple):
+    """A module-level container of string literals, in the two shapes a `for`
+    statement can take it apart.
+
+    `rows` is one entry per element, one component per position: a bare literal
+    is a one-component row, `("node lab", "hello-node-lab")` is a two-component
+    row, and a dict entry is `(key, value)` so `.items()` unpacks the way Python
+    unpacks it. A component that is not a string literal is `None` -- present,
+    so positions after it still line up, and unresolvable, so nothing is
+    credited to it.
+
+    `bare` is what a bare target binds, which is NOT `rows[i][0]`: iterating a
+    list of TUPLES binds the whole tuple, not its first component, and reading
+    it as the first component is how a radius starts crediting a demo with a
+    screen it never launches. A dict is the one container where the two differ
+    legitimately -- bare iteration is its keys -- and that is stated here rather
+    than inferred at each use site.
+    """
+
+    rows: tuple[tuple[str | None, ...], ...]
+    bare: tuple[str | None, ...]
+    is_dict: bool
 
 
 def module_strings(tree: ast.Module) -> dict[str, str]:
@@ -108,7 +165,204 @@ def module_strings(tree: ast.Module) -> dict[str, str]:
     return out
 
 
-def parameter_arguments(tree: ast.Module) -> dict[tuple[str, str], set[str]]:
+def module_sequences(tree: ast.Module, consts: dict[str, str]) -> dict[str, Roster]:
+    """Module-level `NAME = [...]` / `(...)` / `{...}` rosters of string literals.
+
+    ★★★★★ R2126 — `module_strings` for a container instead of a scalar, and the
+    shape it reads is the one this tree writes far more often than the scalar:
+    a roster of screens at the top of a walk, iterated below.
+
+    Elements resolve exactly as far as a lookup goes: a string literal, a tuple
+    or list of them (its components, positionally), or a name this module has
+    ALREADY bound -- earlier in its own body, which is why the body is walked in
+    order and why `*OTHER` splices only a roster defined above it. Anything else
+    contributes a `None` component: the row keeps its width, so a later position
+    still means what it says, and the unresolved position credits nothing.
+    """
+    out: dict[str, Roster] = {}
+
+    def component(node: ast.expr) -> str | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.Name):
+            return consts.get(node.id)
+        return None
+
+    def roster(value: ast.expr) -> Roster | None:
+        if isinstance(value, ast.Dict):
+            rows = tuple(
+                (component(k) if k is not None else None, component(v))
+                for k, v in zip(value.keys, value.values)
+            )
+            return Roster(rows, tuple(row[0] for row in rows), True)
+        if not isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+            return None
+        rows: list[tuple[str | None, ...]] = []
+        bare: list[str | None] = []
+        for elt in value.elts:
+            if isinstance(elt, ast.Starred):
+                spliced = out.get(elt.value.id) if isinstance(elt.value, ast.Name) else None
+                if spliced is None:
+                    # An unresolvable splice must not be read as "nothing more
+                    # in this roster": the elements it would have contributed
+                    # are unknown, not absent. One opaque row keeps the roster
+                    # honest without inventing a width for them.
+                    rows.append((None,))
+                    bare.append(None)
+                    continue
+                rows.extend(spliced.rows)
+                bare.extend(spliced.bare)
+                continue
+            if isinstance(elt, (ast.Tuple, ast.List)):
+                rows.append(tuple(component(e) for e in elt.elts))
+                bare.append(None)
+                continue
+            resolved = component(elt)
+            rows.append((resolved,))
+            bare.append(resolved)
+        return Roster(tuple(rows), tuple(bare), False)
+
+    for node in tree.body:
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+        else:
+            continue
+        built = roster(node.value)
+        if built is None:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                out[target.id] = built
+    return out
+
+
+def enclosing_functions(tree: ast.Module) -> dict[int, str]:
+    """Every node's module-level function, by `id`; absent for module scope.
+
+    Shared by the loop hop and the parameter hop, because both resolve a NAME
+    against the scope that binds it and "the scope" has to mean the same thing
+    to both or one of them credits the other's binding.
+    """
+    enclosing: dict[int, str] = {}
+    for top in tree.body:
+        if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for inner in ast.walk(top):
+                enclosing[id(inner)] = top.name
+    return enclosing
+
+
+def roster_bindings(
+    tree: ast.Module, rosters: dict[str, Roster], enclosing: dict[int, str]
+) -> dict[tuple[str, str], set[str]]:
+    """What a module-level roster binds, wherever this module takes one apart.
+
+    ★★★★★ R2126 — keyed by `(scope, name)` for the reason `parameter_arguments`
+    is: `example` in one function and `example` in another are different things,
+    and pooling them credits a demo with a screen it never launches. The scope
+    is the module-level function the statement sits in, or `""` for module level.
+
+    Python takes a roster apart in two places, and both are here because leaving
+    one out is how a blind spot survives the round that went looking for it:
+
+    * `for x in NAME`         -- what bare iteration binds (a dict's keys; a
+                                 list's elements; nothing for a list of tuples,
+                                 because that binds a tuple and not a name)
+    * `for a, b in NAME`      -- component `i` of each row, per position
+    * `for k, v in NAME.items()`  -- the rows themselves
+    * `for x in NAME.keys()` / `.values()` -- component 0 / component 1
+    * `a, b, c = NAME`        -- destructuring, which walks the roster's
+                                 ELEMENTS rather than a row: `BARE_ROOT =
+                                 ("hello-x", "tag", ...)` is one row's worth of
+                                 literals spread over several names.
+
+    ⚠ A view a roster cannot legitimately have is refused rather than
+    approximated. `.items()` on a list is not a thing; and `for a, b in NAME`
+    over a DICT unpacks each KEY, not a key and its value, so it binds nothing
+    here -- reading it as a row is the over-selection direction wearing the
+    look of an obvious simplification.
+    """
+    out: dict[tuple[str, str], set[str]] = {}
+
+    def view(iter_node: ast.expr) -> tuple[Roster, str] | None:
+        if isinstance(iter_node, ast.Name):
+            found = rosters.get(iter_node.id)
+            return (found, "bare") if found is not None else None
+        if (
+            isinstance(iter_node, ast.Call)
+            and isinstance(iter_node.func, ast.Attribute)
+            and isinstance(iter_node.func.value, ast.Name)
+            and not iter_node.args
+            and not iter_node.keywords
+            and iter_node.func.attr in ("items", "keys", "values")
+        ):
+            found = rosters.get(iter_node.func.value.id)
+            if found is None or not found.is_dict:
+                return None
+            return found, iter_node.func.attr
+        return None
+
+    def bind(scope: str, name: str, values: list[str | None]) -> None:
+        kept = {v for v in values if v is not None}
+        if kept:
+            out.setdefault((scope, name), set()).update(kept)
+
+    def unpack(rows: tuple[tuple[str | None, ...], ...], target: ast.expr, scope: str) -> None:
+        if not isinstance(target, (ast.Tuple, ast.List)):
+            return
+        for index, element in enumerate(target.elts):
+            if isinstance(element, ast.Name):
+                bind(scope, element.id, [row[index] if len(row) > index else None for row in rows])
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+            seen = view(node.iter)
+            if seen is None:
+                continue
+            found, how = seen
+            scope = enclosing.get(id(node), "")
+            if how in ("keys", "values"):
+                # A tuple target here unpacks the key (or the value) ITSELF, and
+                # this tool does not model a roster whose entries are tuples of
+                # tuples, so only a bare name resolves.
+                index = 0 if how == "keys" else 1
+                if isinstance(node.target, ast.Name):
+                    bind(
+                        scope,
+                        node.target.id,
+                        [row[index] if len(row) > index else None for row in found.rows],
+                    )
+            elif how == "items":
+                unpack(found.rows, node.target, scope)
+            elif isinstance(node.target, ast.Name):
+                bind(scope, node.target.id, list(found.bare))
+            elif not found.is_dict:
+                unpack(found.rows, node.target, scope)
+            continue
+        # `a, b, c = NAME` -- the other place a roster comes apart.
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Name):
+            continue
+        found = rosters.get(node.value.id)
+        if found is None:
+            continue
+        scope = enclosing.get(id(node), "")
+        for target in node.targets:
+            if not isinstance(target, (ast.Tuple, ast.List)):
+                continue
+            for index, element in enumerate(target.elts):
+                if isinstance(element, ast.Name) and index < len(found.bare):
+                    bind(scope, element.id, [found.bare[index]])
+    return out
+
+
+def parameter_arguments(
+    tree: ast.Module,
+    consts: dict[str, str] | None = None,
+    loops: dict[tuple[str, str], set[str]] | None = None,
+    enclosing: dict[int, str] | None = None,
+) -> dict[tuple[str, str], set[str]]:
     """For each module-level function's parameter, the string literals this
     module passes at that position.
 
@@ -124,26 +378,51 @@ def parameter_arguments(tree: ast.Module) -> dict[tuple[str, str], set[str]]:
     — the over-selection direction, which is the one that makes a radius useless
     rather than merely short.
 
-    ⚠ Module-level `def` only, positional and keyword calls, string literals
-    only. A parameter fed from another parameter is not followed: that is the
-    second hop, and following it is an interpreter rather than a lookup —
-    `module_strings` drew the same line and said so.
+    ⚠ Module-level `def` only, positional and keyword calls. A parameter fed
+    from another parameter is not followed: that is the second hop, and
+    following it is an interpreter rather than a lookup — `module_strings` drew
+    the same line and said so.
+
+    ★★★★★ R2126 — an argument may also be a NAME this module has bound: a
+    module-level constant, or a `for` target over a module-level roster. That is
+    the shape `SCREENS` produces (`for name, example in SCREENS: drive(name,
+    example, ...)`) and it is what left `r1712` resolving nothing while two
+    rounds published a red in it. Resolved through the SAME bindings the launch
+    path uses, and against the CALLER's scope: a name means what the function
+    containing the call bound it to, never what a same-named local elsewhere
+    did.
     """
+    consts = consts or {}
+    loops = loops or {}
+    enclosing = enclosing if enclosing is not None else enclosing_functions(tree)
     params: dict[str, list[str]] = {}
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             args = node.args
             params[node.name] = [a.arg for a in (*args.posonlyargs, *args.args)]
     out: dict[tuple[str, str], set[str]] = {}
+
+    def literals(node: ast.expr, caller: str) -> set[str]:
+        if isinstance(node, ast.Constant):
+            return {node.value} if isinstance(node.value, str) else set()
+        if isinstance(node, ast.Name):
+            if node.id in consts:
+                return {consts[node.id]}
+            return set(loops.get((caller, node.id), set()))
+        return set()
+
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
             continue
         names = params.get(node.func.id)
         if names is None:
             continue
+        caller = enclosing.get(id(node), "")
         for i, arg in enumerate(node.args):
-            if i < len(names) and isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                out.setdefault((node.func.id, names[i]), set()).add(arg.value)
+            if i < len(names):
+                found = literals(arg, caller)
+                if found:
+                    out.setdefault((node.func.id, names[i]), set()).update(found)
         for kw in node.keywords:
             if kw.arg in names and isinstance(kw.value, ast.Constant):
                 if isinstance(kw.value.value, str):
@@ -151,28 +430,35 @@ def parameter_arguments(tree: ast.Module) -> dict[tuple[str, str], set[str]]:
     return out
 
 
-def launched_by(path: Path) -> set[str]:
+def launched_by(path: Path, *, rosters: bool = True) -> set[str]:
     """The package names a demo script launches, by parsing it.
 
     Every `RpcSubprocess(...)` call in the file, wherever it appears --
     including inside a helper defined in the same file, which is why this walks
     the whole tree rather than only the top level. The first argument resolves
-    from a string literal, from a module-level constant, or — R2106 — from the
-    literals this module passes at that parameter's position.
+    from a string literal, from a module-level constant, from — R2106 — the
+    literals this module passes at that parameter's position, or from — R2126 —
+    a `for` target over a module-level roster.
+
+    `rosters=False` withholds that last hop. It exists for the selftest, which
+    has to be able to ask what the tool answered BEFORE R2126 to assert that the
+    hop carries weight in this tree; a switch is how that question gets asked
+    without a second copy of this walk to drift from it.
     """
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except (SyntaxError, UnicodeDecodeError):
         return set()
     consts = module_strings(tree)
-    passed = parameter_arguments(tree)
-    # The module-level function each `RpcSubprocess` call sits inside, so a
-    # parameter name is resolved against the function that declares it.
-    enclosing: dict[int, str] = {}
-    for top in tree.body:
-        if isinstance(top, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for inner in ast.walk(top):
-                enclosing[id(inner)] = top.name
+    # The module-level function each node sits inside, so a name is resolved
+    # against the function that binds it.
+    enclosing = enclosing_functions(tree)
+    loops = (
+        roster_bindings(tree, module_sequences(tree, consts), enclosing)
+        if rosters
+        else {}
+    )
+    passed = parameter_arguments(tree, consts, loops, enclosing)
     out: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -189,9 +475,9 @@ def launched_by(path: Path) -> set[str]:
         elif isinstance(first, ast.Name) and first.id in consts:
             out.add(consts[first.id])
         elif isinstance(first, ast.Name):
-            owner = enclosing.get(id(node))
-            if owner is not None:
-                out |= passed.get((owner, first.id), set())
+            owner = enclosing.get(id(node), "")
+            out |= loops.get((owner, first.id), set())
+            out |= passed.get((owner, first.id), set())
     return out
 
 
@@ -332,11 +618,32 @@ def tracked_data(paths: list[str]) -> list[str]:
 
 
 def mentions_launcher(path: Path) -> bool:
-    """Whether the file refers to the launcher at all."""
+    """Whether the file actually CALLS the launcher.
+
+    ★★★★★ R2126 — parsed, not grepped, and this half of the tool was the last
+    place the two disagreed. `launched_by` above parses precisely so that "a
+    name inside a comment or a docstring is not a launch"; this asked
+    `"RpcSubprocess" in text`, so the audit's population came from a rule the
+    resolution half rejects.
+
+    Measured once the roster hop had emptied the rest of the audit: the single
+    remaining entry was `r1447_font_free_tui.py`, whose only occurrence of the
+    name is a COMMENT saying *this demo launches outside `RpcSubprocess`*. So
+    the residue the audit reported was entirely a demo telling the truth about
+    itself, and a number now printed at every push would have said there is a
+    blind spot where there is none — the error direction that wastes a round
+    looking for something that is not there.
+    """
     try:
-        return "RpcSubprocess" in path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError):
         return False
+    return any(
+        isinstance(node, ast.Call)
+        and (node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", None))
+        == "RpcSubprocess"
+        for node in ast.walk(tree)
+    )
 
 
 def changed_paths(mode: str, rev_range: str | None) -> list[str]:
@@ -371,13 +678,19 @@ def demos_for(names: set[str]) -> list[tuple[Path, set[str]]]:
     return out
 
 
+def audit_of(paths: list[Path]) -> list[Path]:
+    """Which of `paths` call the launcher and resolve no target.
+
+    Taken as an argument rather than read from `DEMOS` so the selftest can hand
+    it fixtures: `audit()` below is the real population, and a rule tested only
+    against the tree it reports on cannot be shown to discriminate at all.
+    """
+    return [path for path in paths if mentions_launcher(path) and not launched_by(path)]
+
+
 def audit() -> list[Path]:
     """Demos that mention the launcher and whose target could not be resolved."""
-    return [
-        path
-        for path in sorted(DEMOS.glob("*.py"))
-        if mentions_launcher(path) and not launched_by(path)
-    ]
+    return audit_of(sorted(DEMOS.glob("*.py")))
 
 
 def selftest() -> int:
@@ -500,6 +813,183 @@ def selftest() -> int:
                 f"{sorted(launched_by(unfed))!r} rather than to nothing"
             )
 
+    # ★★★★★ R2126 — the ROSTER hop, against fixtures for R2106's reason: what
+    # does not rot is the distinction being claimed, not a case pinned to a demo
+    # somebody will rewrite.
+    #
+    # Six cases, and the second and third are the ones that decide whether this
+    # is a lookup or a guess. Over-selection is the direction that makes a
+    # radius useless rather than merely short, and a roster offers two fresh
+    # ways into it: reading a bare target as the first COMPONENT of a tuple, and
+    # pooling two functions' same-named targets.
+    with tempfile.TemporaryDirectory() as tmp:
+        roster = Path(tmp) / "roster_demo.py"
+        roster.write_text(
+            'SCREENS = [("node lab", "hello-node-lab"), ("viewer", "hello-packet-view")]\n'
+            "def drive(name, example):\n"
+            "    with RpcSubprocess(example) as app:\n"
+            "        pass\n"
+            "def main():\n"
+            "    for name, example in SCREENS:\n"
+            "        drive(name, example)\n",
+            encoding="utf-8",
+        )
+        if launched_by(roster) != {"hello-node-lab", "hello-packet-view"}:
+            failures.append(
+                "the roster hop resolved "
+                f"{sorted(launched_by(roster))!r}, not the roster's second column"
+            )
+        bare = Path(tmp) / "bare_target_demo.py"
+        bare.write_text(
+            'SCREENS = [("node lab", "hello-node-lab")]\n'
+            "def main():\n"
+            "    for pair in SCREENS:\n"
+            "        with RpcSubprocess(pair) as app:\n"
+            "            pass\n",
+            encoding="utf-8",
+        )
+        if launched_by(bare):
+            failures.append(
+                "a BARE target over a roster of tuples binds the tuple, and reading it "
+                f"as the first component resolved {sorted(launched_by(bare))!r}"
+            )
+        scoped = Path(tmp) / "scoped_target_demo.py"
+        scoped.write_text(
+            'LAUNCHED = ["hello-node-lab"]\n'
+            'MENTIONED = ["hello-packet-view"]\n'
+            "def main():\n"
+            "    for example in LAUNCHED:\n"
+            "        with RpcSubprocess(example) as app:\n"
+            "            pass\n"
+            "def other():\n"
+            "    for example in MENTIONED:\n"
+            "        print(example)\n",
+            encoding="utf-8",
+        )
+        if launched_by(scoped) != {"hello-node-lab"}:
+            failures.append(
+                "a `for` target of the same name in a DIFFERENT function was credited as "
+                f"a launch: {sorted(launched_by(scoped))!r}"
+            )
+        mapping = Path(tmp) / "mapping_demo.py"
+        mapping.write_text(
+            'BINDINGS = {"hello-node-lab": "a", "hello-packet-view": "b"}\n'
+            "def main():\n"
+            "    for example, expected in BINDINGS.items():\n"
+            "        with RpcSubprocess(example) as app:\n"
+            "            pass\n"
+            "    for other in BINDINGS:\n"
+            "        print(other)\n",
+            encoding="utf-8",
+        )
+        if launched_by(mapping) != {"hello-node-lab", "hello-packet-view"}:
+            failures.append(
+                f"`.items()` unpacking resolved {sorted(launched_by(mapping))!r}"
+            )
+        values = Path(tmp) / "values_demo.py"
+        values.write_text(
+            'BINDINGS = {"a": "hello-node-lab"}\n'
+            "def main():\n"
+            "    for example in BINDINGS.values():\n"
+            "        with RpcSubprocess(example) as app:\n"
+            "            pass\n",
+            encoding="utf-8",
+        )
+        if launched_by(values) != {"hello-node-lab"}:
+            failures.append(f"`.values()` resolved {sorted(launched_by(values))!r}")
+        unpacked_key = Path(tmp) / "unpacked_key_demo.py"
+        unpacked_key.write_text(
+            'BINDINGS = {"hello-node-lab": "hello-packet-view"}\n'
+            "def main():\n"
+            "    for example, expected in BINDINGS:\n"
+            "        with RpcSubprocess(expected) as app:\n"
+            "            pass\n",
+            encoding="utf-8",
+        )
+        if launched_by(unpacked_key):
+            failures.append(
+                "`for a, b in <dict>` unpacks each KEY, and reading it as a row resolved "
+                f"{sorted(launched_by(unpacked_key))!r}"
+            )
+        destructured = Path(tmp) / "destructured_demo.py"
+        destructured.write_text(
+            'BARE_ROOT = ("hello-node-lab", "root", "label")\n'
+            "def body():\n"
+            "    example, tag, slot = BARE_ROOT\n"
+            "    with RpcSubprocess(example) as app:\n"
+            "        pass\n",
+            encoding="utf-8",
+        )
+        if launched_by(destructured) != {"hello-node-lab"}:
+            failures.append(
+                "a destructuring assignment off a roster resolved "
+                f"{sorted(launched_by(destructured))!r}"
+            )
+        computed = Path(tmp) / "computed_roster_demo.py"
+        computed.write_text(
+            "SCREENS = population().walkable\n"
+            "def main():\n"
+            "    for example in SCREENS:\n"
+            "        with RpcSubprocess(example) as app:\n"
+            "            pass\n",
+            encoding="utf-8",
+        )
+        if launched_by(computed):
+            failures.append(
+                "a roster whose value is computed resolved "
+                f"{sorted(launched_by(computed))!r} rather than staying in the audit"
+            )
+
+    # ★★★★★ R2126 — THE VACUITY GUARD ON THE AUDIT, and it comes first because
+    # the number it protects is now printed at every push.
+    #
+    # `audit()` is `mentions_launcher and not launched_by`, so a
+    # `mentions_launcher` that answered False for everything would report ZERO
+    # unresolved demos while resolving nothing — a green that means "nobody was
+    # asked", which is the shape R2124 and R2125 each recorded. The zero this
+    # tree currently prints is only worth printing if both halves discriminate.
+    with tempfile.TemporaryDirectory() as tmp:
+        calls = Path(tmp) / "calls_demo.py"
+        calls.write_text(
+            "def main():\n    with RpcSubprocess(whatever) as app:\n        pass\n",
+            encoding="utf-8",
+        )
+        if not mentions_launcher(calls):
+            failures.append("a real launch call was not seen as mentioning the launcher")
+        if audit_of([calls]) != [calls]:
+            failures.append("a demo that calls the launcher and resolves nothing left the audit")
+        says = Path(tmp) / "says_demo.py"
+        says.write_text(
+            "# this demo launches outside RpcSubprocess, on purpose\nx = 1\n",
+            encoding="utf-8",
+        )
+        if mentions_launcher(says):
+            failures.append(
+                "a demo whose only occurrence of the launcher is a COMMENT was counted "
+                "as mentioning it, which is the rule `launched_by` rejects"
+            )
+    if not any(mentions_launcher(demo) for demo in DEMOS.glob("*.py")):
+        failures.append(
+            "no demo in this tree calls the launcher at all, so the audit's zero is vacuous"
+        )
+
+    # And the hop must carry weight in THIS tree, or it is a rule that reads
+    # well and selects nothing. Asserted as a COMPARISON rather than as a count,
+    # for the reason the substring rule above is: a count in a test goes stale
+    # like a count in prose. The property is that some demo resolves a launch
+    # target ONLY because a roster was read -- which is what "sat in --audit and
+    # a change to its screen never selected it" was.
+    only_by_roster = [
+        demo
+        for demo in DEMOS.glob("*.py")
+        if launched_by(demo) and not launched_by(demo, rosters=False)
+    ]
+    if not only_by_roster:
+        failures.append(
+            "no demo in this tree resolves a launch target only through a roster, so "
+            "the roster hop is carrying nothing"
+        )
+
     # `tracked_data` must take pins and leave prose and the store alone.
     kept = tracked_data(
         [
@@ -571,12 +1061,45 @@ def selftest() -> int:
     if any(p.startswith("/") or "\n" in p for p in staged):
         failures.append("changed_paths answers one repository-relative path per entry")
 
+    # ★★★★★ R2126 — the failure lines carry the token `selftest: FAIL`, and the
+    # reason is not tidiness: `tools/counterfactual.py` classifies a red gate
+    # whose output matches no known marker as UNREADABLE, and R1939's rule is
+    # that UNREADABLE does NOT count as a catch. So a counterfactual battery run
+    # against this tool would have reported every genuine catch as a failure of
+    # the round.
+    #
+    # Measured rather than reasoned: `classify` was handed the literal this
+    # function used to print (`demo radius selftest: <sentence>`) and answered
+    # UNREADABLE. The driver's `python --selftest` vocabulary is
+    # `selftest: FAIL` / `selftest FAIL` / `SELFTEST FAIL`, and this tool spoke
+    # none of them.
+    #
+    # ⚠ The token goes on the FAILURE lines only. The summary lines below print
+    # on a green run too, so putting it in a shared prefix would classify every
+    # passing run as a failure — the trap the driver's own comment records for
+    # `painted-addresses:`.
+    #
+    # ⚠ Measured at the same time and NOT repaired here: 22 of this tree's 29
+    # selftests are inaudible to that driver the same way. This is the one whose
+    # battery this round runs; the rest are recorded in the round's entry with
+    # their reproduction command, because 21 unrelated gates are not this
+    # round's to move.
     for line in failures:
-        print(f"demo radius selftest: {line}", file=sys.stderr)
+        print(f"demo radius selftest: FAIL — {line}", file=sys.stderr)
     print(f"demo radius selftest: {len(resolved)} demo(s) resolve a launch target")
     print(
         f"demo radius selftest: {len(named)} demo(s) name the pin the pin axis "
         "was built for"
+    )
+    # ★★★★★ R2126 — and the RESIDUE, printed every push rather than waiting for
+    # somebody to type `--audit`. What this tool cannot resolve is the set a
+    # change silently fails to select, and two rounds paid for that set being a
+    # silence: `r1712` sat in it while R2123 and R2124 each published a red in
+    # it. A number nobody asked for is how the build-cache budget stopped being
+    # invisible, and it is the same fix.
+    print(
+        f"demo radius selftest: {len(audit())} demo(s) mention the launcher "
+        "and resolve no target (`--audit` names them)"
     )
     return 1 if failures else 0
 

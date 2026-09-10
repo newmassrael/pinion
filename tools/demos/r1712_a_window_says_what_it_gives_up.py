@@ -139,6 +139,44 @@ CONCEDES: dict[str, bool] = {
     "hello-sessions-view": True,
 }
 CONCEDING = {name for name, yes in CONCEDES.items() if yes}
+
+#: ★★★★★ R2126 — whether each screen's SPECIFICATION names the regions it
+#: paints, as a recorded decision per screen, for the reason `CONCEDES` is one:
+#: an unclassified screen must be a refusal rather than a default.
+#:
+#: This was a literal list of three display names inside section D's assertion,
+#: written at R1798 when three screens named their regions. It is a statement
+#: about the SCREENS wearing the shape of an assertion, so it went stale the way
+#: `CONCEDES` did — twice, in consecutive rounds. R2123 gave `hello-key-patterns`
+#: an address module and R2124 gave `hello-log-view` one; each round made a
+#: screen start naming its regions, which is the thing this file wants to see
+#: happen, and each round's push published a red because the list still said
+#: three.
+#:
+#: ⚠ The two rounds are not the same case, and the ledger says which is which.
+#: `--radius` could not select this demo at all until R2126 taught
+#: `demo_radius.py` to read a roster, so the computed answer was short by this
+#: walk for both — but R2123 RAN that answer (its row records `the radius sweep
+#: 100/100 PASS`), while R2124 named two walks by hand. For the first, the
+#: blind spot is the whole story; for the second, the instrument would now
+#: offer this walk, which is not the same as the round running it.
+#:
+#: Kept as a decision on record rather than read off the wire, for the reason
+#: stated twice above: an audit that takes its expectation from the thing under
+#: test passes for a screen that changed its mind quietly. What moves when a
+#: screen starts naming its regions is now one `False` -> `True` here, and the
+#: refusal says so.
+NAMES_ITS_REGIONS: dict[str, bool] = {
+    "hello-node-lab": True,
+    "hello-packet-view": True,
+    "hello-analyzer-shell": True,
+    # ★ R2123 / R2124 — these two published column keys and prose when R1798
+    # wrote this check, and publish tag names now.
+    "hello-key-patterns": True,
+    "hello-log-view": True,
+    "hello-topology-view": False,
+    "hello-sessions-view": False,
+}
 #: ★★★★★ R1714 — and the screen this file was written against no longer CUTS
 #: what its band costs; it moves over it. The decisions on record are therefore
 #: the floor and the RECOURSE, and the two clauses that were about clipping —
@@ -484,15 +522,32 @@ def the_window_really_goes_there(app: RpcSubprocess, name: str, report: dict) ->
         )
     # ★★★★★ R1798 — this check applies to a screen whose SPECIFICATION names the
     # regions it paints, and not every screen's does. `declared_and_painted`
-    # intersects every string in the published spec with the painted tags, and
-    # the two screens added this round publish column keys and prose rather than
-    # tag names, so the intersection is empty for a reason that is about how
-    # they describe themselves and not about their floor.
+    # intersects every string in the published spec with the painted tags, so a
+    # screen whose `{EXT}/spec` carries no tag name has an empty intersection
+    # for a reason that is about how it describes itself and not about its
+    # floor.
+    #
+    # ⚠★★★★★ R2126 — AND R1798's WORDING FOR THAT ("publishes column keys and
+    # prose rather than tag names") READS AS *those screens have no addresses*,
+    # WHICH IS FALSE. Measured in the sources: `hello-sessions-view` and
+    # `hello-topology-view` both carry a `src/address.rs` with
+    # `parts() -> Vec<(&PartSpec, String)>` — R2121 built `sv.*` and R2122 built
+    # `tv.*` — and both publish those tags, on the `described` channel
+    # (`{region, marks: [{tag, sentence}]}`), which this check does not read.
+    # Their `spec_json` answers `columns: [c.key]` and counts.
+    #
+    # So the two screens outside this check are ONE CHANNEL away, with the
+    # address already in hand: putting the tag beside the part in `spec_json`,
+    # exactly as R2123 did for the key patterns and R2124 for the log view,
+    # takes this section from five screens to all seven. That is a sized piece
+    # of work rather than a property of those screens, and saying so is what
+    # stops the next reader treating the `False` as permanent.
     #
     # Skipping them silently would be the failure this whole round is about, so
     # the contribution is RECORDED instead: `SPEC_REGIONS` accumulates one row
-    # per screen and `body` asserts the total, so a screen that stops naming its
-    # regions changes a number rather than quietly dropping out of a check.
+    # per screen and `body` compares the whole set against `NAMES_ITS_REGIONS`,
+    # so a screen that starts OR stops naming its regions is refused by name
+    # rather than quietly dropping out of a check.
     declared = declared_and_painted(app, floor)
     SPEC_REGIONS[name] = len(declared)
     if declared:
@@ -699,21 +754,39 @@ def main() -> None:
         "and every conceding screen's floor is a decision on record -- the "
         "half that raised a KeyError rather than a verdict when it was short",
     )
+    # ★★★★★ R2126 — and the same completeness for the other recorded decision,
+    # before anything is launched. `NAMES_ITS_REGIONS` replaced a literal list
+    # of three display names that had gone stale twice in consecutive rounds,
+    # and a map is only a refusal if every screen is in it.
+    assert_eq(
+        sorted(NAMES_ITS_REGIONS),
+        sorted(example for _, example in SCREENS),
+        "every screen carries a recorded expectation about whether its "
+        "specification names the regions it paints",
+    )
     with tempfile.TemporaryDirectory() as d:
         for name, example in SCREENS:
             drive(name, example, Path(d))
-    # ★★★★★ R1798 — the floor on section D's own coverage. Three of the five
-    # screens publish a specification that names the regions they paint, and
-    # those three are where "the specification is on screen at the floor" is a
-    # claim at all. Asserting the SET rather than a count of assertions is what
-    # stops a screen dropping out of that check the way two screens dropped out
-    # of this whole demo: silently, by never having been in it.
+    # ★★★★★ R1798 — the floor on section D's own coverage. A screen that
+    # publishes a specification naming the regions it paints is where "the
+    # specification is on screen at the floor" is a claim at all. Asserting the
+    # SET rather than a count of assertions is what stops a screen dropping out
+    # of that check the way two screens dropped out of this whole demo:
+    # silently, by never having been in it.
+    #
+    # ★★★★★ R2126 — and the expectation is the recorded decision rather than a
+    # literal, so the two directions read differently: a screen that STARTS
+    # naming its regions is an advance somebody has to record, and one that
+    # STOPS is a regression. Both are refused here, and the message says which
+    # screen and which way.
     naming = sorted(k for k, v in SPEC_REGIONS.items() if v)
     print(f"[demo] section D covered {naming} of {sorted(SPEC_REGIONS)}")
     assert_eq(
         naming,
-        ["capture viewer", "dashboard", "node lab"],
-        "D: the screens whose specification names its painted regions",
+        sorted(name for name, example in SCREENS if NAMES_ITS_REGIONS[example]),
+        "D: the screens whose specification names its painted regions are the "
+        "screens recorded as naming them (a screen that started naming them is "
+        "an advance to record in NAMES_ITS_REGIONS, not a defect)",
     )
     assert_eq(
         sorted(SPEC_REGIONS),
