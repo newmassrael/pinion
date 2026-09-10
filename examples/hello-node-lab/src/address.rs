@@ -952,7 +952,7 @@ pub fn pin_of(tag: &str) -> Option<(&str, &str)> {
 // ⚠ Every arrangement before this drew its keys from a roster written beside
 // the addresses (a seat list) or from an open vocabulary parsed back out of the
 // tag (a field path, a layer id, a row number). This family's keys are
-// [`crate::ResetScope::WIRE_NAMES`], which is itself derived from that enum's
+// `ResetScope::WIRE_NAMES`, which is itself derived from that enum's
 // arms — so the roster below is not the vocabulary's source, it is a SECOND
 // statement of it, and the gate's job is to hold the two equal. That is a
 // stronger property than the earlier families have: a scope added to the enum
@@ -991,14 +991,20 @@ pub const RESET_LINKS: &str = "lab.reset.links";
 /// home to go to. A reader classifying this address by *where it is painted*
 /// would put it with the bar; it is addressed here, with the other four,
 /// because what it does is what names it. `ResetScope::gated` is the fact, and
-/// this comment is not a second copy of it — [`crate::ResetScope`] holds it.
+/// this comment is not a second copy of it — `ResetScope::gated` holds it.
+///
+/// ⚠ NAMED, not linked. `ResetScope` is private to this crate, so a rustdoc
+/// intra-doc link from a `pub` item resolves only under
+/// `--document-private-items` and is refused by `rustdoc::private_intra_doc_links`
+/// everywhere else. The push gate caught exactly that here.
 pub const RESET_VIEW: &str = "lab.reset.view";
 
 /// ★★★★★ R2116 — every scope's word beside its address.
 ///
 /// The whole family: this prefix carries nothing parametric, because the
 /// vocabulary is closed by the type it comes from. The gate holds this roster
-/// against [`crate::ResetScope::WIRE_NAMES`] in BOTH directions.
+/// against `ResetScope::WIRE_NAMES` in BOTH directions — named rather than
+/// linked, because that type is private to this crate.
 pub const RESET_SEATS: &[(&str, &str)] = &[
     ("nodes", RESET_NODES),
     ("layout", RESET_LAYOUT),
