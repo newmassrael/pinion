@@ -46,6 +46,8 @@
 //!
 //! See `tools/demos/r1731_a_log_section_is_the_one_the_reference_draws.py`.
 
+pub mod address;
+
 mod judge;
 mod spec;
 
@@ -99,32 +101,30 @@ vello_renderer_impl!(HelloLogViewRenderer, HelloLogViewRendererError);
 /// The tag the widget is registered under — the receiver a press resolves to.
 const VIEW_TAG: &str = "log_view";
 /// The root address, for `scene/snapshot` and the sweep.
-const ROOT_TAG: &str = "lv.root";
+const ROOT_TAG: &str = address::ROOT;
 /// The theme scope.
 const THEME_TAG: &str = "app";
-/// The filter box. Deliberately outside the `lv.header.` namespace the header's
-/// parts live in — a surface's parts are read back by walking that prefix and
-/// taking the names with no further dot, so a child tagged inside a part would
-/// have to be excluded by name.
-const QUERY_TAG: &str = "lv.filter.query";
+/// The filter box. Deliberately outside the header's own seat — see
+/// [`address`], which declares the divergence rather than leaving the next
+/// reader to compose the address they expected.
+const QUERY_TAG: &str = address::QUERY;
 /// The list's header row — announced by the grid, and, since R2064, painted.
 ///
 /// ⚠ This doc used to say *"nothing paints it"*, and that was the defect: the
-/// row WAS painted, as a panel called `lv.colhead`, so one row had two
-/// spellings and a keyboard could stand on neither — a stop must be a node in
-/// the accessibility tree or a reader is told nothing about what they landed
-/// on. One tag now, carried by the panel a reader sees and by the row the grid
-/// announces.
-const LIST_HEADER: &str = "lv.list.header";
+/// row WAS painted, as a panel of its own, so one row had two spellings and a
+/// keyboard could stand on neither — a stop must be a node in the accessibility
+/// tree or a reader is told nothing about what they landed on. One tag now,
+/// carried by the panel a reader sees and by the row the grid announces.
+const LIST_HEADER: &str = address::LIST_HEADER;
 /// The list's grid.
-const LIST_TAG: &str = "lv.list";
+const LIST_TAG: &str = address::LIST;
 /// The decode pane.
-const DETAIL_TAG: &str = "lv.detail";
+const DETAIL_TAG: &str = address::DETAIL;
 /// The section header.
-const HEADER_TAG: &str = "lv.header";
+const HEADER_TAG: &str = address::HEADER;
 /// ★ R2064 — the severity row: a radio group the accessibility tree already
 /// announced, painted under this same tag, and now a Tab stop with a cursor.
-const SEVERITY_TAG: &str = "lv.header.severity";
+const SEVERITY_TAG: &str = address::SEVERITY_GROUP;
 
 // ★ R1877 — from the specification rather than spelled a second time here: the
 // decode pane's part heights are DERIVED from these faces, so a copy in the
@@ -559,7 +559,7 @@ impl ViewState {
 fn use_view_state() -> Rc<ViewState> {
     // ★ [[owner-cache-no-nested-factory]] — every cached slot this one holds is
     // resolved BEFORE the factory runs.
-    let list_scroll = pinion_core::widgets::scroll::use_scroll_state("lv.list.body");
+    let list_scroll = pinion_core::widgets::scroll::use_scroll_state(address::LIST_BODY);
     let query = use_text_edit_state(QUERY_TAG);
     let owner = pinion_core::reactive::Owner::current()
         .expect("use_view_state requires an active Owner scope");
@@ -595,22 +595,21 @@ enum Hit {
 impl Hit {
     /// What a **key** press at `tag` addresses.
     fn of_tag(tag: &str) -> Self {
-        if let Some(n) = tag
-            .strip_prefix("lv.list.row.")
-            .and_then(|n| n.parse::<usize>().ok())
+        // ★★★★★ R2124 — the three inverses come from `address`, which is also
+        // where the composers live. A cell's join is an UNDERSCORE here, and
+        // this site used to split it by hand: two spellings of one rule, in
+        // files that never meet.
+        if let Some(n) = address::row_index(tag)
             && n < spec::ROWS.len()
         {
             return Self::Event(n);
         }
-        if let Some((row, _column)) = tag
-            .strip_prefix("lv.list.cell.")
-            .and_then(|rest| rest.split_once('_'))
-            && let Ok(row) = row.parse::<usize>()
+        if let Some((row, _column)) = address::cell_of(tag)
             && row < spec::ROWS.len()
         {
             return Self::Event(row);
         }
-        if let Some(key) = tag.strip_prefix("lv.severity.")
+        if let Some(key) = address::severity_key(tag)
             && let Some(n) = spec::CHOICES.iter().position(|c| c.key == key)
         {
             return Self::Choice(n);
@@ -781,7 +780,7 @@ fn column_tag(n: usize) -> String {
     let key = spec::COLUMNS
         .get(n)
         .map_or(spec::COLUMNS[0].key, |column| column.key);
-    format!("lv.column.{key}")
+    address::column(key)
 }
 
 /// The tag severity choice `n` is addressed by.
@@ -789,7 +788,7 @@ fn choice_tag(n: usize) -> String {
     let key = spec::CHOICES
         .get(n)
         .map_or(spec::CHOICES[0].key, |choice| choice.key);
-    format!("lv.severity.{key}")
+    address::severity(key)
 }
 
 /// ★★★★★ R2064 — the column-heading row's cursor.
@@ -853,7 +852,7 @@ fn attention_at(state: &Rc<ViewState>, stop: &str) -> Option<String> {
         SEVERITY_TAG => severity_cursor(state)
             .active_descendant()
             .map(str::to_owned),
-        LIST_TAG => Some(format!("lv.list.row.{}", state.cursor_row())),
+        LIST_TAG => Some(address::row(state.cursor_row())),
         _ => None,
     }
 }
@@ -1026,7 +1025,7 @@ fn header_bar(
     let rect = header_rect();
     let mut children = Vec::new();
     for (key, at) in header_parts() {
-        let tag = format!("{HEADER_TAG}.{key}");
+        let tag = address::header(key);
         match key {
             "title" => children.push(
                 tagged_label(&tag, spec::HEADER[0].title, at, FONT_TITLE, ink.text)
@@ -1094,7 +1093,7 @@ fn severity_choice(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
         let on = n == chosen;
         out.push(
             box_at(
-                &format!("lv.severity.{}", choice.key),
+                &address::severity(choice.key),
                 at,
                 if on { ink.accent_soft } else { ink.surface_2 },
                 Some(if on { ink.accent } else { ink.outline }),
@@ -1123,7 +1122,7 @@ fn column_header(ink: Ink) -> Scene {
     for (n, column) in spec::COLUMNS.iter().enumerate() {
         let at = column_rect(n);
         children.push(tagged_label(
-            &format!("lv.column.{}", column.key),
+            &address::column(column.key),
             column.title,
             Rect::new(at.x, 10, at.w, 12),
             10,
@@ -1170,13 +1169,13 @@ fn list_row_paint(n: usize, visual: usize, open: usize, ink: Ink) -> Vec<Scene> 
     let mut children = Vec::with_capacity(spec::COLUMNS.len() + 3);
     if n == open {
         children.push(
-            box_at("lv.list.open", at, ink.accent_soft, Some(ink.accent), 0).silenced(
+            box_at(address::LIST_OPEN, at, ink.accent_soft, Some(ink.accent), 0).silenced(
                 Silence::decorative("the band behind the open event; the row says so"),
             ),
         );
     }
     children.push(box_at(
-        &format!("lv.list.row.{n}"),
+        &address::row(n),
         at,
         Color::rgba(0, 0, 0, 0),
         None,
@@ -1194,7 +1193,7 @@ fn list_row_paint(n: usize, visual: usize, open: usize, ink: Ink) -> Vec<Scene> 
         if column.key == "severity" {
             children.push(
                 box_at(
-                    &format!("lv.list.dot.{n}"),
+                    &address::dot(n),
                     Rect::new(cell.x, cell.y + 4, 6, 6),
                     fg,
                     None,
@@ -1209,7 +1208,7 @@ fn list_row_paint(n: usize, visual: usize, open: usize, ink: Ink) -> Vec<Scene> 
             cell.x
         };
         children.push(tagged_label(
-            &format!("lv.list.cell.{n}_{}", column.key),
+            &address::cell(n, column.key),
             row.cell(column.key),
             Rect::new(text_x, cell.y, cell.w.saturating_sub(text_x - cell.x), 14),
             FONT_BODY,
@@ -1224,7 +1223,7 @@ fn detail_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     let record = state.record();
     let mut children = Vec::new();
     for (key, at) in detail_parts(record) {
-        let tag = format!("{DETAIL_TAG}.{key}");
+        let tag = address::detail(key);
         let marks = detail_part_paint(key, at, record, ink);
         children.push(if key == "subject" {
             part_box(&tag, at, marks).silenced(Silence::name_of(DETAIL_TAG))
@@ -1253,7 +1252,7 @@ fn detail_part_paint(key: &str, at: Rect, record: &'static spec::RowSpec, ink: I
         )],
         "kind" => vec![
             box_at(
-                "lv.detail.kind.pill",
+                &address::child(&address::detail("kind"), "pill"),
                 whole,
                 Color::rgba(0x2A, 0x2E, 0x36, 0xB0),
                 None,
@@ -1396,17 +1395,35 @@ fn conformance_json() -> serde_json::Value {
 fn spec_json() -> serde_json::Value {
     serde_json::json!({
         "window": { "w": WIN_W, "h": WIN_H },
+        // ★★★★★ R2124 — the addresses, published so a WALK is handed what it
+        // used to spell. The keys have been on this wire since R1731 and the
+        // address each key names never was, so every walk composed it — in a
+        // language where no compiler and no Rust gate can see the copy drift.
+        "addresses": address::published(),
         "columns": spec::COLUMNS
             .iter()
-            .map(|c| serde_json::json!({ "key": c.key, "title": c.title, "width": c.width }))
+            .map(|c| serde_json::json!({
+                "key": c.key,
+                "title": c.title,
+                "width": c.width,
+                "tag": address::column(c.key),
+            }))
             .collect::<Vec<_>>(),
         "detail": spec::DETAIL
             .iter()
-            .map(|p| serde_json::json!({ "key": p.key, "title": p.title }))
+            .map(|p| serde_json::json!({
+                "key": p.key,
+                "title": p.title,
+                "tag": address::detail(p.key),
+            }))
             .collect::<Vec<_>>(),
         "header": spec::HEADER
             .iter()
-            .map(|p| serde_json::json!({ "key": p.key, "title": p.title }))
+            .map(|p| serde_json::json!({
+                "key": p.key,
+                "title": p.title,
+                "tag": address::header(p.key),
+            }))
             .collect::<Vec<_>>(),
         // ★ The vocabulary AND the control, because they are two facts: how bad
         // an event can be, and which floors a reader may set. An agent given
@@ -1422,6 +1439,7 @@ fn spec_json() -> serde_json::Value {
                 "key": c.key,
                 "title": c.title,
                 "floor": c.floor.map(spec::Severity::label),
+                "tag": address::severity(c.key),
             }))
             .collect::<Vec<_>>(),
         "gestures": spec::GESTURES
@@ -1800,7 +1818,7 @@ impl WidgetCore for LogView {
     /// its root tag; the root is one marker node. See
     /// [`pinion_core::WidgetCore::paint_stems`].
     fn paint_stems() -> Vec<&'static str> {
-        vec![VIEW_TAG, "lv"]
+        vec![VIEW_TAG, address::STEM]
     }
 
     fn read_state(scene: &Scene) -> (TextFieldState, u32) {
@@ -1897,7 +1915,7 @@ impl WidgetA11y for LogView {
 }
 
 /// The tag the description region is painted and announced under.
-const TOOLTIP_TAG: &str = "lv.tip";
+const TOOLTIP_TAG: &str = address::TIP;
 
 /// ★★★★★ R1918 — the sentences this screen's marks carry, by paint tag.
 ///
@@ -1915,10 +1933,10 @@ const TOOLTIP_TAG: &str = "lv.tip";
 fn descriptions() -> Descriptions {
     let mut described = Descriptions::new();
     for column in spec::COLUMNS {
-        described.describe(format!("lv.column.{}", column.key), column.description);
+        described.describe(address::column(column.key), column.description);
     }
     for choice in spec::CHOICES {
-        described.describe(format!("lv.severity.{}", choice.key), choice.description());
+        described.describe(address::severity(choice.key), choice.description());
     }
     described
 }
@@ -2009,12 +2027,12 @@ fn header_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     let mut nodes = vec![
         AccessNode::new(HEADER_TAG, AriaRole::Group)
             .with_name(spec::HEADER[0].title)
-            .with_child("lv.header.live")
+            .with_child(address::HEADER_LIVE)
             .with_child(QUERY_TAG)
-            .with_child("lv.header.severity"),
+            .with_child(SEVERITY_TAG),
         // The capture state is a live region: it changes without a reader
         // touching it, which is the definition.
-        AccessNode::new("lv.header.live", AriaRole::Status)
+        AccessNode::new(address::HEADER_LIVE, AriaRole::Status)
             .with_name("Capture state")
             .with_value(AccessValue::Text(state.capture_reading()))
             .with_live(AccessLive::Polite),
@@ -2026,15 +2044,15 @@ fn header_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
         // *empty*, and it caught this on the demo's first run: the three marks
         // were built and announced and the group did not say they were its.
         spec::CHOICES.iter().fold(
-            AccessNode::new("lv.header.severity", AriaRole::RadioGroup)
+            AccessNode::new(SEVERITY_TAG, AriaRole::RadioGroup)
                 .with_name("Severity")
                 .with_value(AccessValue::Text(spec::CHOICES[chosen].title.to_owned())),
-            |group, choice| group.with_child(format!("lv.severity.{}", choice.key)),
+            |group, choice| group.with_child(address::severity(choice.key)),
         ),
     ];
     for (n, choice) in spec::CHOICES.iter().enumerate() {
         nodes.push(
-            AccessNode::new(format!("lv.severity.{}", choice.key), AriaRole::RadioButton)
+            AccessNode::new(address::severity(choice.key), AriaRole::RadioButton)
                 .with_name(choice.title)
                 .with_selected(n == chosen)
                 .with_set_position(n, spec::CHOICES.len()),
@@ -2048,7 +2066,7 @@ fn list_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode> {
     let columns: Vec<GridColumn> = spec::COLUMNS
         .iter()
         .map(|column| GridColumn {
-            tag: format!("lv.column.{}", column.key),
+            tag: address::column(column.key),
             sort: None,
         })
         .collect();
@@ -2056,13 +2074,13 @@ fn list_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode> {
         .kept()
         .into_iter()
         .map(|n| GridRow {
-            tag: format!("lv.list.row.{n}"),
+            tag: address::row(n),
             selected: n == open,
             state: RadioState::Idle,
             cells: spec::COLUMNS
                 .iter()
                 .map(|column| GridCell {
-                    tag: format!("lv.list.cell.{n}_{}", column.key),
+                    tag: address::cell(n, column.key),
                     name: format!("{}: {}", column.title, spec::ROWS[n].cell(column.key)),
                     focused: focused == Some(LIST_TAG) && n == open,
                     selected: None,
@@ -2077,11 +2095,11 @@ fn detail_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     let record = state.record();
     let mut pane = AccessNode::new(DETAIL_TAG, AriaRole::Group).with_name(spec::DETAIL[0].title);
     for part in &spec::DETAIL[1..] {
-        pane = pane.with_child(format!("lv.detail.{}", part.key));
+        pane = pane.with_child(address::detail(part.key));
     }
     let mut nodes = vec![pane];
     for part in &spec::DETAIL[1..] {
-        let tag = format!("lv.detail.{}", part.key);
+        let tag = address::detail(part.key);
         nodes.push(
             AccessNode::new(tag, AriaRole::Group)
                 .with_name(part.title)

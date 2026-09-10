@@ -12,8 +12,8 @@ use pinion_core::reactive::Owner;
 use pinion_core::widgets::text_field::TextFieldState;
 
 use super::{
-    Hit, LIST_TAG, LogView, ViewOracle, choose_severity, conformance_json, detail_parts, key_at,
-    select_event, set_capturing, set_query, spec, use_view_state,
+    Hit, LIST_TAG, LogView, ViewOracle, address, choose_severity, conformance_json, detail_parts,
+    key_at, select_event, set_capturing, set_query, spec, use_view_state,
 };
 
 const IDLE_FIELD: (TextFieldState, u32) = (TextFieldState::Idle, 0);
@@ -282,7 +282,7 @@ fn r1731_an_event_with_no_frame_says_so_rather_than_going_blank() {
         let nodes = LogView::access_node(&IDLE_FIELD, None);
         let bytes = nodes
             .iter()
-            .find(|n| n.tag == "lv.detail.bytes")
+            .find(|n| n.tag == address::detail("bytes"))
             .expect("the byte part announces itself");
         assert!(
             format!("{:?}", bytes.value).contains(spec::NO_FRAME),
@@ -366,7 +366,7 @@ fn r1731_a_cell_is_addressed_as_its_row() {
     for (n, row) in spec::ROWS.iter().enumerate() {
         for column in spec::COLUMNS {
             assert_eq!(
-                Hit::of_tag(&format!("lv.list.cell.{n}_{}", column.key)),
+                Hit::of_tag(&address::cell(n, column.key)),
                 Hit::Event(n),
                 "the {} cell of event {} does not address its row",
                 column.key,
@@ -463,23 +463,23 @@ fn r1731_the_severity_control_announces_as_one_choice() {
         let nodes = LogView::access_node(&IDLE_FIELD, None);
         let group = nodes
             .iter()
-            .find(|n| n.tag == "lv.header.severity")
+            .find(|n| n.tag == address::SEVERITY_GROUP)
             .expect("the severity control announces itself");
         assert_eq!(group.role, AriaRole::RadioGroup);
         let selected: Vec<&str> = nodes
             .iter()
-            .filter(|n| n.tag.starts_with("lv.severity.") && n.selected == Some(true))
+            .filter(|n| address::severity_key(&n.tag).is_some() && n.selected == Some(true))
             .map(|n| n.tag.as_str())
             .collect();
         assert_eq!(
             selected,
-            [format!("lv.severity.{}", spec::CHOICES[1].key).as_str()],
+            [address::severity(spec::CHOICES[1].key).as_str()],
             "exactly one member is selected, and it is the chosen one",
         );
         assert_eq!(
             nodes
                 .iter()
-                .filter(|n| n.tag.starts_with("lv.severity."))
+                .filter(|n| address::severity_key(&n.tag).is_some())
                 .count(),
             spec::Severity::ALL.len(),
             "one member per severity the vocabulary has",
@@ -549,4 +549,352 @@ fn r1731_the_declared_floor_fits_the_tallest_decode() {
         super::MIN_H,
     );
     assert_eq!(super::SHRINK.comfortable(), (super::MIN_W, super::MIN_H));
+}
+
+// ── The addresses ───────────────────────────────────────────────────────────
+
+/// Every module of this crate, for the address gate to read.
+fn crate_sources() -> [(&'static str, &'static str); 6] {
+    [
+        ("address.rs", include_str!("address.rs")),
+        ("lib.rs", include_str!("lib.rs")),
+        ("spec.rs", include_str!("spec.rs")),
+        ("judge.rs", include_str!("judge.rs")),
+        ("painted.rs", include_str!("painted.rs")),
+        ("tests.rs", include_str!("tests.rs")),
+    ]
+}
+
+/// ★★★★★ R2124 — **every module this crate declares is one the address gate
+/// reads.**
+///
+/// Derived from `lib.rs`'s own `mod` lines rather than compared with a second
+/// list: a module added tomorrow could otherwise spell a hundred addresses
+/// while the namespace gate below reported zero — the shape R2053 measured on
+/// the node lab, where the gate's own population was six modules of eleven.
+#[test]
+fn r2124_every_module_is_read() {
+    const LIB: &str = include_str!("lib.rs");
+    let mut declared: Vec<String> = LIB
+        .lines()
+        .filter_map(|line| {
+            let name = line
+                .trim()
+                .strip_prefix("pub mod ")
+                .or_else(|| line.trim().strip_prefix("mod "))?
+                .strip_suffix(';')?;
+            (!name.contains(' ')).then(|| format!("{name}.rs"))
+        })
+        .collect();
+    declared.push("lib.rs".to_owned());
+    declared.sort_unstable();
+    declared.dedup();
+    let mut read: Vec<String> = crate_sources()
+        .iter()
+        .map(|(name, _)| (*name).to_owned())
+        .collect();
+    read.sort_unstable();
+    assert_eq!(
+        declared, read,
+        "★★★★★ the address gate reads {read:?} and this crate declares \
+         {declared:?} — a module outside that roster can spell any address it \
+         likes and the namespace gate below will report zero"
+    );
+}
+
+/// ★★★★★ R2124 — **nobody in this CRATE but the declaration spells this
+/// screen's stem.**
+///
+/// Measured at entry: **fifty-one literals** across four modules, all inside
+/// this crate, so the crate half of this section's debt is an assertion of zero
+/// rather than a ratchet.
+///
+/// ⚠⚠ **This section's population is THREE, and this gate covers ONE of them.**
+/// That sentence is the reason this test exists in the shape it does, and it is
+/// what the twenty-five instalments before it could not say: `sv.*` and `tv.*`
+/// were crate-only, so one assertion finished them; `kp.*` was crate + walk. The
+/// log section is the first family with all three alive, and the two this gate
+/// cannot see are held elsewhere, by name:
+///
+/// * the **host** — `hello-analyzer-shell` mounts this section and spelled two
+///   of its addresses. `include_str!` reaches this crate's files and no others,
+///   so a gate here is structurally blind to that file. The host's own
+///   `r2124_this_host_spells_no_mounted_screens_painted_address` takes the
+///   needle from [`crate::address::NAMESPACE`] and refuses a member there;
+/// * the **walks** — Python, which no Rust gate reads.
+///   `tools/painted_addresses.py` ratchets them, and
+///   [`r2124_the_wire_hands_over_every_address_a_walk_would_spell`] is what
+///   makes the repair possible at all.
+///
+/// Saying so here is not decoration: a reader who took this green as covering
+/// the section would be wrong in exactly the direction that let two host
+/// spellings sit unnoticed since R2049.
+///
+/// ⚠ The needle is the BARE stem, so a module spelling it with no separator —
+/// `paint_stems` wanted exactly that until this round — is caught too.
+///
+/// ⚠⚠ The vacuity guard comes FIRST: a needle that matched nothing would clear
+/// every module below and read exactly like success, which is the failure this
+/// family of gates is most exposed to.
+#[test]
+fn r2124_no_module_but_the_declaration_spells_this_screens_namespace() {
+    let anchor = format!("\"{}", address::STEM);
+    let sources = crate_sources();
+    let declaration = sources
+        .iter()
+        .find(|(name, _)| *name == "address.rs")
+        .expect("the declaring module is in the roster");
+    let declared = declaration.1.matches(anchor.as_str()).count();
+    assert!(
+        declared >= 15,
+        "★ `address.rs` spells the stem {declared} time(s), which is not what a \
+         module declaring three panes, a root, a tip, a query field and five \
+         keyed families looks like — the anchor is wrong and the emptiness \
+         below means nothing"
+    );
+    for (name, body) in &sources {
+        assert!(
+            !body.is_empty(),
+            "★ `{name}` reads as empty — the `include_str!` is not reaching the \
+             file, and a gate counting over nothing is green"
+        );
+    }
+    let mut spellers: Vec<(&str, usize)> = Vec::new();
+    for (name, body) in &sources {
+        if *name == "address.rs" {
+            continue;
+        }
+        let count = body.matches(anchor.as_str()).count();
+        if count > 0 {
+            spellers.push((name, count));
+        }
+    }
+    assert!(
+        spellers.is_empty(),
+        "★★★★★ every painted address of this screen begins with this crate's \
+         stem and is declared in `address.rs`; these (file, times) spell one \
+         themselves: {spellers:?}. A literal here is a second copy of a \
+         composition the declaration already publishes, and one wrong letter \
+         in it paints a mark no reader can find."
+    );
+}
+
+/// ★★★★★ R2124 — **the declaration agrees with itself and with the
+/// specification, and its inverses are disjoint.**
+///
+/// *Nobody re-spells the address* and *the composition is right* are two
+/// claims, and the first is satisfied by a declaration that composes nonsense.
+#[test]
+fn r2124_every_log_address_is_derived() {
+    // The two spellings of the stem agree.
+    assert_eq!(address::NAMESPACE, format!("{}.", address::STEM));
+    // Each surface's two forms agree, so a reader classifying on the bare form
+    // cannot drift from one composing on the separator form.
+    assert_eq!(address::HEADER_SEAT, format!("{}.", address::HEADER));
+    assert_eq!(address::LIST_SEAT, format!("{}.", address::LIST));
+    assert_eq!(address::DETAIL_SEAT, format!("{}.", address::DETAIL));
+    // ★ The marks a caller needs as a `&'static str` ARE the derivation.
+    assert_eq!(address::LIST_HEADER, address::list("header"));
+    assert_eq!(address::LIST_BODY, address::list("body"));
+    assert_eq!(address::LIST_OPEN, address::list("open"));
+    assert_eq!(address::HEADER_LIVE, address::header("live"));
+    assert_eq!(address::SEVERITY_GROUP, address::header("severity"));
+    // ★★ Every part the SPECIFICATION names round-trips through its own
+    // surface's inverse and is refused by the others — the surface is half the
+    // answer, because a key alone cannot say which table it came from.
+    let mut checked = 0;
+    for part in spec::HEADER {
+        let tag = address::header(part.key);
+        assert_eq!(address::header_part(&tag), Some(part.key));
+        assert_eq!(address::detail_part(&tag), None);
+        assert_eq!(address::list_part(&tag), None);
+        checked += 1;
+    }
+    for part in spec::DETAIL {
+        let tag = address::detail(part.key);
+        assert_eq!(address::detail_part(&tag), Some(part.key));
+        assert_eq!(address::header_part(&tag), None);
+        checked += 1;
+    }
+    for column in spec::COLUMNS {
+        let tag = address::column(column.key);
+        assert_eq!(address::column_key(&tag), Some(column.key));
+        assert_eq!(address::list_part(&tag), None);
+        checked += 1;
+    }
+    for choice in spec::CHOICES {
+        let tag = address::severity(choice.key);
+        assert_eq!(address::severity_key(&tag), Some(choice.key));
+        assert_eq!(address::header_part(&tag), None);
+        checked += 1;
+    }
+    assert!(
+        checked >= 18,
+        "{checked} part(s) were round-tripped, and a specification whose tables \
+         had emptied would pass every assertion above by describing nothing"
+    );
+    // ★★★ A surface's own tag is not one of its parts — container and content.
+    assert_eq!(address::header_part(address::HEADER), None);
+    assert_eq!(address::list_part(address::LIST), None);
+    assert_eq!(address::detail_part(address::DETAIL), None);
+    // ★★★★ The filter FIELD is deliberately not under the header part it sits
+    // in, so a reader composing the address they expected finds nothing. Pinned
+    // rather than left as prose — R2123 did the same for that section's
+    // endpoints, and for the same reason.
+    assert!(!address::QUERY.starts_with(address::HEADER_SEAT));
+    assert_eq!(address::header_part(address::QUERY), None);
+    // ★★★★★ Everything this module composes is in the namespace.
+    for (_, _, tag) in address::parts() {
+        assert!(
+            address::ours(&tag),
+            "`{tag}` is not in this screen's namespace"
+        );
+    }
+}
+
+/// ★★★★★ R2124 — **a deeper seat tells this stem's four heads apart.**
+///
+/// `lv.list.` carries a PART and three INDEXED families. R2118 needed a
+/// classifier for the node lab's wire family because both its heads survive
+/// `strip_prefix`; here each head is a word in the segment after the stem, so a
+/// seat one segment deeper separates them and the inverses are disjoint by
+/// construction. Which of the two shapes a stem has is the question R2123 says
+/// to ask before writing any gate, and this test is what says the answer rather
+/// than leaving a reader to re-derive it.
+///
+/// 🟥 It also pins the JOIN. A cell is `<row>_<column>` where most joined keys
+/// in this tree join on the separator, and three sites did that split by hand
+/// before this round.
+#[test]
+fn r2124_a_deeper_seat_tells_this_stems_four_heads_apart() {
+    // ★ Every indexed seat is UNDER the list's seat, which is what makes the
+    // separation a fact about the addresses rather than about the reader.
+    for seat in [address::ROW_SEAT, address::CELL_SEAT, address::DOT_SEAT] {
+        assert!(
+            seat.starts_with(address::LIST_SEAT) && seat.len() > address::LIST_SEAT.len(),
+            "`{seat}` is meant to be one segment deeper than the list's parts"
+        );
+    }
+    // ★★ A row, a cell and a dot are NOT list parts, and the list's parts are
+    // none of those three — in both directions, over the real population.
+    for part in ["header", "body", "open"] {
+        let tag = address::list(part);
+        assert_eq!(address::list_part(&tag), Some(part));
+        assert_eq!(address::row_index(&tag), None);
+        assert_eq!(address::cell_of(&tag), None);
+        assert_eq!(address::dot_index(&tag), None);
+    }
+    let mut cells = 0;
+    for n in 0..spec::ROWS.len() {
+        let row = address::row(n);
+        assert_eq!(address::row_index(&row), Some(n));
+        assert_eq!(
+            address::list_part(&row),
+            None,
+            "★ `{row}` is a row and the list's PART inverse claimed it — a \
+             reader handed `row` as a part key looks it up in the list's parts \
+             and finds nothing, quietly"
+        );
+        assert_eq!(address::cell_of(&row), None);
+        let dot = address::dot(n);
+        assert_eq!(address::dot_index(&dot), Some(n));
+        assert_eq!(address::row_index(&dot), None);
+        for column in spec::COLUMNS {
+            let cell = address::cell(n, column.key);
+            assert_eq!(
+                address::cell_of(&cell),
+                Some((n, column.key)),
+                "★★ `{cell}` did not round-trip — the JOIN is an underscore \
+                 here, where most of this tree joins on the separator"
+            );
+            assert_eq!(
+                address::row_index(&cell),
+                None,
+                "★★★ `{cell}` is a cell and the row inverse claimed it — a \
+                 press on it would then open whatever that spelling parsed as"
+            );
+            cells += 1;
+        }
+    }
+    assert!(
+        cells >= 40,
+        "{cells} cell(s) were round-tripped, and an empty grid would satisfy \
+         every assertion above by describing nothing"
+    );
+    // ★★★★ The join is the declaration's, and it is NOT the separator. Without
+    // this the pair above would pass with both spellings changed together.
+    assert_ne!(address::CELL_JOIN, '.');
+    assert!(address::cell(3, "time").contains(address::CELL_JOIN));
+    // ★★★★★ A part's CHILD is not that part.
+    let kind = address::detail("kind");
+    assert_eq!(address::detail_part(&address::child(&kind, "pill")), None);
+}
+
+/// ★★★★★ R2124 — **the screen HANDS the walk every address it used to spell.**
+///
+/// # Why this is a gate and not a convenience
+///
+/// This section's population is three, and the walk half cannot be asserted from
+/// Rust at all: a walk is Python and no Rust gate reads it. What CAN be asserted
+/// is the thing the walk depends on — that the wire carries an address for every
+/// roster row and every seat, so a walk never has to compose one. If this
+/// regressed, the walk would fall back to spelling and nothing would say so;
+/// `published_tags` in `tools/rpc_verify.py` refuses a row with no `tag` for the
+/// same reason, from the other side.
+#[test]
+fn r2124_the_wire_hands_over_every_address_a_walk_would_spell() {
+    let published = super::spec_json();
+    let addresses = &published["addresses"];
+    assert_eq!(addresses["namespace"], address::NAMESPACE);
+    assert_eq!(addresses["query"], address::QUERY);
+    assert_eq!(addresses["cell_join"], address::CELL_JOIN.to_string());
+    for (name, seat) in [
+        ("header", address::HEADER_SEAT),
+        ("list", address::LIST_SEAT),
+        ("detail", address::DETAIL_SEAT),
+        ("column", address::COLUMN_SEAT),
+        ("severity", address::SEVERITY_SEAT),
+        ("row", address::ROW_SEAT),
+        ("cell", address::CELL_SEAT),
+        ("dot", address::DOT_SEAT),
+    ] {
+        assert_eq!(
+            addresses["seats"][name], seat,
+            "the wire's `{name}` seat is not the one the declaration composes"
+        );
+    }
+    // ★ Every roster row carries the address its key names — the half R2116
+    // measured as missing, here with the reader in another language.
+    let mut rows = 0;
+    for (roster, table) in [
+        (
+            "columns",
+            spec::COLUMNS.iter().map(|c| c.key).collect::<Vec<_>>(),
+        ),
+        ("detail", spec::DETAIL.iter().map(|p| p.key).collect()),
+        ("header", spec::HEADER.iter().map(|p| p.key).collect()),
+        ("severities", spec::CHOICES.iter().map(|c| c.key).collect()),
+    ] {
+        let published_rows = published[roster]
+            .as_array()
+            .unwrap_or_else(|| panic!("the wire publishes a `{roster}` roster"));
+        assert_eq!(published_rows.len(), table.len());
+        for row in published_rows {
+            let key = row["key"].as_str().expect("every row names its key");
+            let tag = row["tag"]
+                .as_str()
+                .unwrap_or_else(|| panic!("`{roster}.{key}` carries no address"));
+            assert!(
+                address::ours(tag) && tag.ends_with(key),
+                "`{roster}.{key}` publishes `{tag}`, which is not this screen's \
+                 address for that key"
+            );
+            rows += 1;
+        }
+    }
+    assert_eq!(
+        rows,
+        spec::COLUMNS.len() + spec::DETAIL.len() + spec::HEADER.len() + spec::CHOICES.len(),
+        "a roster that had emptied would satisfy every assertion above"
+    );
 }

@@ -10145,25 +10145,31 @@ fn r2051_a_rail_seat_address_is_typed_in_one_place() {
 /// exactly that to check nothing escapes the window — and that is a question
 /// about the family as a whole rather than a second copy of one member's
 /// address. A member address is refused; the bare namespace is not.
+///
+/// # ★★★★★ R2124 — it asks about EVERY guest now, and the roster is derived
+///
+/// Written at R2115 this gate held ONE guest's namespace, and the reason it was
+/// not obviously incomplete is the reason such gates never are: the guest it
+/// named was at zero, so the gate was green and looked finished. Measured at
+/// R2124 the host spelled **two** addresses of a DIFFERENT guest — the log
+/// section's decode pane — and no gate anywhere would have reported a third.
+///
+/// So the population is derived from this crate's own `Cargo.toml`: every
+/// `hello-*` path dependency is a screen this binary mounts, and each one has to
+/// appear in [`MOUNTED`] beside the namespace it declares. A guest added
+/// tomorrow fails [`r2124_every_mounted_guest_is_asked_about`] rather than
+/// slipping past unasked, which is the same trick `every_module_is_read` plays
+/// one level down.
+///
+/// ⚠ **One guest is exempt and says so**: the node lab is mid-campaign and
+/// still spells its own family here (R2116's ratchet and its
+/// `UNADDRESSED_FAMILIES` are what hold it). A gate that is red on the day it is
+/// written is a gate somebody turns off, so the exemption is declared rather
+/// than the gate weakened — and it is asserted to be still EARNED, so the round
+/// that finishes that campaign is told to delete it.
 #[test]
 fn r2115_this_host_spells_no_mounted_screens_painted_address() {
-    const PAINTED: &str = include_str!("painted.rs");
-    const TESTS: &str = include_str!("tests.rs");
-    const MAIN: &str = include_str!("main.rs");
-    const SPEC: &str = include_str!("spec.rs");
-    const JUDGE: &str = include_str!("judge.rs");
-
-    // The needle comes from the mounted screen's own declaration, so a screen
-    // that renamed its namespace moves this gate with it rather than leaving it
-    // matching nothing.
-    let anchor = format!("\"{}", hello_packet_view::address::NAMESPACE);
-    let sources = [
-        ("painted.rs", PAINTED),
-        ("tests.rs", TESTS),
-        ("main.rs", MAIN),
-        ("spec.rs", SPEC),
-        ("judge.rs", JUDGE),
-    ];
+    let sources = shell_sources();
     for (name, body) in sources {
         assert!(
             !body.is_empty(),
@@ -10172,29 +10178,39 @@ fn r2115_this_host_spells_no_mounted_screens_painted_address() {
         );
     }
 
-    let mut members: Vec<(&str, String)> = Vec::new();
+    let mut members: Vec<(&str, &str, String)> = Vec::new();
     let mut namespace_only = 0usize;
-    for (name, body) in sources {
-        for (at, _) in body.match_indices(anchor.as_str()) {
-            // What follows the opening quote, up to the closing one.
-            let literal = &body[at + 1..];
-            let Some(end) = literal.find('"') else {
-                continue;
-            };
-            let spelled = &literal[..end];
-            if spelled == hello_packet_view::address::NAMESPACE {
-                namespace_only += 1;
-            } else {
-                members.push((name, spelled.to_owned()));
+    let mut exempt_spellings = 0usize;
+    for (guest, namespace) in MOUNTED {
+        // The needle comes from the mounted screen's own declaration, so a
+        // screen that renamed its namespace moves this gate with it rather than
+        // leaving it matching nothing.
+        let anchor = format!("\"{namespace}");
+        for (name, body) in sources {
+            for (at, _) in body.match_indices(anchor.as_str()) {
+                // What follows the opening quote, up to the closing one.
+                let literal = &body[at + 1..];
+                let Some(end) = literal.find('"') else {
+                    continue;
+                };
+                let spelled = &literal[..end];
+                if spelled == *namespace {
+                    namespace_only += 1;
+                } else if MID_CAMPAIGN.contains(guest) {
+                    exempt_spellings += 1;
+                } else {
+                    members.push((guest, name, spelled.to_owned()));
+                }
             }
         }
     }
     assert!(
         members.is_empty(),
-        "★★★★★ this host spells {} painted address(es) of a screen it MOUNTS: \
-         {members:?}. Take each from `hello_packet_view::address` — the guest \
-         declares every one of them, and a literal here compiles against nothing \
-         while reading, when it drifts, as the guest failing to paint.",
+        "★★★★★ this host spells {} painted address(es) of screens it MOUNTS, as \
+         (guest, file, address): {members:?}. Take each from that guest's own \
+         `address` module — the guest declares every one of them, and a literal \
+         here compiles against nothing while reading, when it drifts, as the \
+         guest failing to paint.",
         members.len()
     );
     // ⚠ The allowance has to be EXERCISED or this gate is indistinguishable
@@ -10202,14 +10218,104 @@ fn r2115_this_host_spells_no_mounted_screens_painted_address() {
     // need a family-wide question would delete the wrong half.
     assert!(
         namespace_only > 0,
-        "★★ nothing in this host asks a family-wide question about the mounted \
+        "★★ nothing in this host asks a family-wide question about a mounted \
          screen any more. The bare namespace is deliberately allowed above; with \
          no site using it, that branch is untested and the gate should be \
          simplified rather than left describing a case that does not occur"
     );
-    println!(
-        "[r2115] host sources scanned: {}, member address(es) spelled: 0, \
-         family-wide question(s): {namespace_only}",
-        sources.len()
+    // ⚠⚠ And so does the exemption. When the node lab's campaign closes this
+    // count reaches zero, and the round that closes it should delete the
+    // exemption rather than leave a gate describing a case that no longer
+    // occurs — which is what this assertion asks for, in that round, loudly.
+    assert!(
+        exempt_spellings > 0,
+        "★★★ {MID_CAMPAIGN:?} is exempt from the refusal above and no longer \
+         needs to be: this host spells none of its addresses. Delete the \
+         exemption — an exemption nobody exercises is a hole nobody notices."
     );
+    println!(
+        "[r2115] host sources scanned: {}, guests asked about: {}, member \
+         address(es) spelled: 0, family-wide question(s): {namespace_only}, \
+         exempt spelling(s) still owed: {exempt_spellings}",
+        sources.len(),
+        MOUNTED.len(),
+    );
+}
+
+/// Every screen this binary mounts, beside the namespace that screen declares.
+///
+/// ★ R2124 — a pair rather than a bare list, because the namespace has to come
+/// from the GUEST (so a rename moves the gate with it) and the package name has
+/// to be comparable with `Cargo.toml` (so the roster cannot go short). Held
+/// against the manifest by [`r2124_every_mounted_guest_is_asked_about`].
+const MOUNTED: &[(&str, &str)] = &[
+    ("hello-node-lab", hello_node_lab::address::NAMESPACE),
+    ("hello-packet-view", hello_packet_view::address::NAMESPACE),
+    ("hello-key-patterns", hello_key_patterns::address::NAMESPACE),
+    ("hello-log-view", hello_log_view::address::NAMESPACE),
+    (
+        "hello-topology-view",
+        hello_topology_view::address::NAMESPACE,
+    ),
+    (
+        "hello-sessions-view",
+        hello_sessions_view::address::NAMESPACE,
+    ),
+];
+
+/// The guests whose own address campaign is still running, so this host is not
+/// yet held to zero for them.
+///
+/// ⚠ Exactly one, and it is a DECLARED remainder rather than a silent gap: the
+/// node lab's families are ratcheted by `r2116_*` and by that screen's
+/// `UNADDRESSED_FAMILIES`. The gate above asserts this exemption is still
+/// earned, so it cannot quietly outlive the campaign it exists for.
+const MID_CAMPAIGN: &[&str] = &["hello-node-lab"];
+
+/// ★★★★★ R2124 — **every screen this binary MOUNTS is one the host address
+/// gate asks about.**
+///
+/// Derived from this crate's own manifest rather than compared with a second
+/// list. R2115's gate named one guest and was green; the host was spelling
+/// another guest's addresses at the time, and would have gone on doing so for a
+/// sixth screen with nothing to say otherwise. A roster that is not checked
+/// against the dependency list is a roster that reports zero about whatever it
+/// forgot.
+#[test]
+fn r2124_every_mounted_guest_is_asked_about() {
+    const MANIFEST: &str = include_str!("../Cargo.toml");
+    let mut depended: Vec<&str> = MANIFEST
+        .lines()
+        .filter_map(|line| {
+            let (name, rest) = line.split_once(" = {")?;
+            (name.starts_with("hello-") && rest.contains("path = \"../")).then_some(name)
+        })
+        .collect();
+    depended.sort_unstable();
+    depended.dedup();
+    assert!(
+        depended.len() >= 6,
+        "★ the manifest reader found {depended:?}, which is not what this \
+         binary's dependency list looks like — the parse is wrong and the \
+         comparison below means nothing"
+    );
+    let mut asked: Vec<&str> = MOUNTED.iter().map(|(guest, _)| *guest).collect();
+    asked.sort_unstable();
+    assert_eq!(
+        depended, asked,
+        "★★★★★ this binary mounts {depended:?} and the host address gate asks \
+         about {asked:?} — a screen missing from that roster can have its \
+         addresses spelled here forever with every gate green"
+    );
+    // ★★ And every exemption names a guest that is actually mounted, so a
+    // renamed package cannot leave a permanent hole behind an exemption that
+    // matches nothing.
+    for guest in MID_CAMPAIGN {
+        assert!(
+            asked.contains(guest),
+            "★★ `{guest}` is exempted from the host address gate and is not a \
+             screen this binary mounts — the exemption matches nothing and hides \
+             whatever the real package is called now"
+        );
+    }
 }

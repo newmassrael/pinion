@@ -24,14 +24,14 @@
 use pinion_core::conformance::{Built, DocumentReport, parts_as_read, parts_titled, titles_from};
 use pinion_core::painted::PaintedRegions;
 
-use crate::{VIEW_TAG, spec};
+use crate::{VIEW_TAG, address, spec};
 
 /// Where the section header's parts are addressed.
-const HEADER: &str = "lv.header.";
+const HEADER: &str = address::HEADER_SEAT;
 /// Where the list's column headers are addressed.
-const COLUMNS: &str = "lv.column.";
+const COLUMNS: &str = address::COLUMN_SEAT;
 /// Where the event pane's parts are addressed.
-const DETAIL: &str = "lv.detail.";
+const DETAIL: &str = address::DETAIL_SEAT;
 
 /// How much of `docs/analyzer-logs-spec.json` this build is showing.
 ///

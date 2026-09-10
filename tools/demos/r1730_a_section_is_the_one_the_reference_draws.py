@@ -76,6 +76,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     address_prefix,
     assert_eq,
+    published_tags,
     run_demo,
 )
 
@@ -102,32 +103,6 @@ def ok(what: str, condition: bool) -> None:
 
 def q(app: RpcSubprocess, path: str):
     return app.query(f"{EXT}/{path}")
-
-
-def published_tags(published: dict, roster: str) -> dict:
-    """key -> painted address, as the SCREEN published them.
-
-    ★★★★★ R2123 — the one place this walk turns a key into an address, and it
-    does not compose one. Before this round four sites here spelled
-    `<stem>.<family>.<key>` themselves: a second copy of a composition the
-    screen owns, in a language where no compiler and no Rust gate can see it
-    drift. The screen now carries each roster row's `tag` beside its key.
-
-    ⚠ It REFUSES a row with no `tag` rather than falling back to composing one.
-    A fallback would make this helper silently become the thing it replaced the
-    moment the wire regressed, and the regression is exactly what it exists to
-    catch.
-    """
-    rows = published[roster]
-    missing = [row.get("key") for row in rows if not row.get("tag")]
-    if missing:
-        raise AssertionError(
-            f"the screen published {roster} rows with no address: {missing}. "
-            "A walk cannot name a Rust const, so an address it is not handed is "
-            "one it would have to spell -- which is the defect this reader "
-            "exists to remove, not a case to fall back on."
-        )
-    return {row["key"]: row["tag"] for row in rows}
 
 
 #: The reviewed artifacts, read from the repository rather than from the

@@ -66,6 +66,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     address_prefix,
     assert_eq,
+    published_tags,
     run_demo,
 )
 
@@ -201,7 +202,12 @@ def section_b(app: RpcSubprocess) -> None:
 
 def section_c(app: RpcSubprocess) -> None:
     banner("C — an event whose frame never arrived says so")
-    rows = q(app, "spec")["rows"]
+    published = q(app, "spec")
+    rows = published["rows"]
+    # ★★★★★ R2124 — the address is RECEIVED, not composed here. This walk spelled
+    # the byte part's address twice; the screen publishes each decode part's
+    # `tag` beside its key, and `published_tags` is the join, done once.
+    bytes_tag = published_tags(published, "detail")["bytes"]
     empty = next(n for n, row in enumerate(rows) if row["bytes"] == 0)
     app.invoke(f"{EXT}/select_event", empty)
     app.tick(8)
@@ -209,7 +215,7 @@ def section_c(app: RpcSubprocess) -> None:
     assert_eq(record["bytes"], 0, "C: the selected event carries no frame")
     assert_eq(record["severity"], "warn", "C: and it is the warning that timed out")
     tree = {n["tag"]: n for n in app.request("scene/access").result["nodes"]}
-    reading = str(tree["lv.detail.bytes"].get("value"))
+    reading = str(tree[bytes_tag].get("value"))
     ok(
         "C: ★★ a reader is TOLD the frame never arrived rather than handed an "
         "empty block -- which would be indistinguishable from a decode that "
@@ -223,16 +229,25 @@ def section_c(app: RpcSubprocess) -> None:
     tree = {n["tag"]: n for n in app.request("scene/access").result["nodes"]}
     ok(
         "C: and an event that did carry one reads as bytes",
-        "bytes" in str(tree["lv.detail.bytes"].get("value")),
+        "bytes" in str(tree[bytes_tag].get("value")),
     )
 
 
-def section_d(app: RpcSubprocess, spec: dict) -> None:
+def section_d(app: RpcSubprocess, spec: dict) -> dict:
+    """Returns the column key -> address map this section READ off the screen's
+    wire, so section E asserts against the addresses the screen published rather
+    than composing them a second time."""
     banner("D — the list and the choice, pressed by the machine's own pointer")
     rects = abs_rects_of(app.snapshot(source="paint"))
+    # ★★★★★ R2124 — the addresses are RECEIVED, not composed here. Three sites
+    # in this section spelled `lv.<family>.<key>`, which is a second copy of a
+    # composition the screen owns — in another language, so no compiler and no
+    # Rust gate could ever see it drift.
+    published = q(app, "spec")
+    tag_of = published_tags(published, "columns")
     lefts = []
     for column in spec["columns"]["canon"]:
-        tag = f"lv.column.{column['key']}"
+        tag = tag_of[column["key"]]
         ok(f"D: the {column['key']} column is painted", tag in rects)
         lefts.append(rects[tag][0])
     ok(
@@ -242,14 +257,16 @@ def section_d(app: RpcSubprocess, spec: dict) -> None:
 
     driver = pointer(app)
     if driver is None:
-        return
+        return tag_of
     with driver as hand:
         app.invoke(f"{EXT}/choose_severity", "all")
         app.tick(8)
         rects = abs_rects_of(app.snapshot(source="paint"))
+        row_seat = published["addresses"]["seats"]["row"]
+        severity_tag = published_tags(published, "severities")
         pressed = 0
         for n in range(int(q(app, "row_count"))):
-            tag = f"lv.list.row.{n}"
+            tag = f"{row_seat}{n}"
             if tag not in rects:
                 continue
             rect = rects[tag]
@@ -261,8 +278,8 @@ def section_d(app: RpcSubprocess, spec: dict) -> None:
             pressed += 1
         ok(f"D: all {pressed} painted events took a real press", pressed >= 8)
 
-        for choice in q(app, "spec")["severities"]:
-            rect = rects[f"lv.severity.{choice['key']}"]
+        for choice in published["severities"]:
+            rect = rects[severity_tag[choice["key"]]]
             hand.move((rect[0] + rect[2] / 2, rect[1] + rect[3] / 2))
             hand.press()
             hand.release()
@@ -274,9 +291,10 @@ def section_d(app: RpcSubprocess, spec: dict) -> None:
             )
         app.invoke(f"{EXT}/choose_severity", "all")
         app.tick(8)
+    return tag_of
 
 
-def section_e(spec: dict) -> None:
+def section_e(spec: dict, tag_of: dict) -> None:
     banner("E — the rail, closed")
     rail = rail_spec()
     ok(
@@ -360,9 +378,18 @@ def section_e(spec: dict) -> None:
             f"{address_prefix(q(shell, 'spec')['rail'])}logs",
         ):
             ok(f"E: and the host's {chrome} survives -- a page, not a takeover", chrome in rects)
+        # ★ R2124 — the addresses are the ones the SECTION published, carried in
+        # from section D rather than composed again here.
+        #
+        # ⚠ They cannot be re-read from the host: `{EXT}/spec` on the shell is
+        # the SHELL's specification — it answers `rail` — and not the mounted
+        # section's. R2123 drafted exactly that and withdrew the claim rather
+        # than weakening it; this comment says which claim is being made (the
+        # host paints the marks the section declares) and which is not (that the
+        # host and the standalone binary compose their addresses alike).
         ok(
             "E: ★ every column of the specified list is painted in the host too",
-            all(f"lv.column.{c['key']}" in rects for c in spec["columns"]["canon"]),
+            all(tag_of[c["key"]] in rects for c in spec["columns"]["canon"]),
         )
         shell.intervene(f"{EXT}/nav", "dashboard")
         shell.tick(16)
@@ -389,9 +416,9 @@ def body() -> None:
         section_a(app, spec)
         section_b(app)
         section_c(app)
-        section_d(app, spec)
+        tag_of = section_d(app, spec)
 
-    section_e(spec)
+    section_e(spec, tag_of)
 
     banner("what was checked")
     for line in CHECKS:

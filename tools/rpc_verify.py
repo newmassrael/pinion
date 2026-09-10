@@ -5025,6 +5025,39 @@ def address_prefix(rows: Any, *, key: str = "key", tag: str = "tag") -> str:
     return address[: len(address) - len(own)]
 
 
+def published_tags(published: Any, roster: str, *, key: str = "key", tag: str = "tag") -> dict:
+    """key -> painted address, as the SCREEN published them.
+
+    ★★★★★ R2123 — the one place a walk turns a key into an address, and it does
+    not compose one. Before that round four sites in one walk spelled
+    `<stem>.<family>.<key>` themselves: a second copy of a composition the screen
+    owns, in a language where no compiler and no Rust gate can see it drift.
+    A screen carries each roster row's `tag` beside its key for exactly this.
+
+    ⚠ It REFUSES a row with no `tag` rather than falling back to composing one.
+    A fallback would make this helper silently BECOME the thing it replaced the
+    moment the wire regressed, and that regression is what it exists to catch.
+
+    ★ Lifted here at R2124, the second walk family to need it, and this file is
+    where it belongs rather than where the rule of three would put it:
+    [`address_prefix`] and [`address_family`] are already here for the same
+    reason — a walk cannot name a Rust const, so every rule about reading an
+    address off the wire is a rule this harness owns. Two copies of a REFUSAL
+    are two refusals that can drift, and the drift would be silent in the
+    direction that reads as the screen failing to paint.
+    """
+    rows = published[roster]
+    missing = [row.get(key) for row in rows if not row.get(tag)]
+    if missing:
+        raise AssertionError(
+            f"the screen published {roster} rows with no address: {missing}. "
+            "A walk cannot name a Rust const, so an address it is not handed is "
+            "one it would have to spell -- which is the defect this reader "
+            "exists to remove, not a case to fall back on."
+        )
+    return {row[key]: row[tag] for row in rows}
+
+
 def address_family(prefix: str, *, separator: str = ".") -> str:
     """The family STEM a published prefix names — the prefix with its trailing
     separator taken off.

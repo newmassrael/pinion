@@ -10531,7 +10531,13 @@ fn r1874_no_run_in_the_node_palettes_body_sits_in_a_box_too_short_for_its_face()
 #[test]
 fn r1877_no_run_of_the_log_details_pane_sits_in_a_box_too_short_for_its_face() {
     /// The pane whose content this gate judges, as a run's path spells it.
-    const PANE: &str = "lv.detail";
+    ///
+    /// ★ R2124 — taken from the mounted section's own declaration. This and the
+    /// seat below were the LAST two spellings of a guest's address left in this
+    /// host, and they survived twenty-five instalments of the address campaign
+    /// because no gate could see them: the section's own gate reads that
+    /// crate's modules and the Python ratchet reads walks.
+    const PANE: &str = hello_log_view::address::DETAIL;
 
     let owner = Owner::new();
     owner.run(|| {
@@ -10562,7 +10568,16 @@ fn r1877_no_run_of_the_log_details_pane_sits_in_a_box_too_short_for_its_face() {
                 // says how many FAMILIES are involved and not only how many
                 // runs — the question this destination's 1:1 ratio makes the
                 // interesting one.
-                if let Some(part) = row.path.iter().find(|seg| seg.starts_with("lv.detail.")) {
+                // ★ R2124 — the seat comes from the guest's declaration. The
+                // predicate is deliberately `starts_with` rather than the
+                // guest's part inverse: a part's CHILD sits under this seat too
+                // and the inverse refuses one, so swapping in the inverse would
+                // quietly narrow which families this failure names.
+                if let Some(part) = row
+                    .path
+                    .iter()
+                    .find(|seg| seg.starts_with(hello_log_view::address::DETAIL_SEAT))
+                {
                     families.insert(part.clone());
                 }
                 format!(
@@ -17314,6 +17329,154 @@ fn r1875_no_run_in_the_decode_tree_sits_in_a_box_too_short_for_its_face() {
              that reads the face, so this is that derivation being bypassed \
              rather than a number to raise: {cut:#?}",
             cut.len(),
+        );
+    });
+}
+
+/// Which declared reader of the log section recovers `tag`, or `None`.
+///
+/// ★★ CLASSIFIED, NOT PREFIXED, for R2123's measured reason a screen over: this
+/// screen's `lv.list.` stem carries FOUR vocabularies — a part, a row, a cell
+/// and a severity dot — and a reader that stopped at the prefix would file a row
+/// under parts and a cell under rows, in both directions and silently. Every
+/// mark is put to the screen's own declared inverses, which refuse what is not
+/// theirs.
+///
+/// ⚠ A caption is recovered as ITS BOX by the framework's name for the suffix.
+/// `pinion_widget_paint::caption` writes `.caption` onto the tag its caller
+/// hands over — the screen never composes it — and publishes `CAPTION_SUFFIX` so
+/// a census can exclude it by that name rather than by a literal each reader
+/// spells again.
+fn log_reader_of(tag: &str) -> Option<&'static str> {
+    use hello_log_view::address as lv;
+    use pinion_widget_paint::caption::CAPTION_SUFFIX;
+
+    if let Some(box_tag) = tag.strip_suffix(CAPTION_SUFFIX) {
+        return log_reader_of(box_tag);
+    }
+    // ⚠ The lone marks first: a surface's own tag is deliberately not one of its
+    // parts, so no inverse claims it and it would read as an orphan.
+    if tag == lv::ROOT || tag == lv::HEADER || tag == lv::LIST || tag == lv::DETAIL {
+        return Some("pane");
+    }
+    if tag == lv::TIP {
+        return Some("tip");
+    }
+    // ⚠⚠ The filter FIELD, which is the divergence this screen's declaration
+    // states: it sits inside the header's `filter` part and is addressed OUTSIDE
+    // the header's seat, so `header_part` refuses it and it is lone.
+    if tag == lv::QUERY {
+        return Some("filter field");
+    }
+    // ★ The DEEPER seats before the list's parts: a row, a cell and a dot all
+    // begin with the list's own seat, so asking the part inverse first would let
+    // it refuse them and drop them here as orphans.
+    if lv::row_index(tag).is_some() {
+        return Some("row");
+    }
+    if lv::cell_of(tag).is_some() {
+        return Some("cell");
+    }
+    if lv::dot_index(tag).is_some() {
+        return Some("severity dot");
+    }
+    if lv::column_key(tag).is_some() {
+        return Some("column");
+    }
+    if lv::severity_key(tag).is_some() {
+        return Some("severity choice");
+    }
+    if lv::header_part(tag).is_some() {
+        return Some("header part");
+    }
+    if lv::list_part(tag).is_some() {
+        return Some("list part");
+    }
+    if lv::detail_part(tag).is_some() {
+        return Some("detail part");
+    }
+    // A part's own child hangs off that part's address, so it is recovered by
+    // walking back to the part that owns it — and the owner must be recovered
+    // too, or a mark under a family nothing declares would pass.
+    let (owner, word) = tag.rsplit_once('.')?;
+    (lv::CHILD_WORDS.contains(&word) && log_reader_of(owner).is_some()).then_some("inside a part")
+}
+
+/// ★★★★★ R2124 — **every mark the ASSEMBLED log section paints is at an address
+/// one of its declared readers recovers.**
+///
+/// # Why this is not the crate's own gate
+///
+/// `hello-log-view` holds itself to *nobody but the declaration spells the
+/// stem*, which is a claim about its SOURCE. This is the claim about the PAGE:
+/// *the composition is declared* and *what this assembly paints is what the
+/// declaration composes* are two facts, and only the second is about the tool a
+/// person opens. It is also the population that gate is structurally blind to —
+/// `include_str!` reaches one crate's files — and this section is the first of
+/// the campaign whose host really was spelling something.
+///
+/// # ⚠ Floors per reader, not one over the union
+///
+/// ORed together, every reader but one describing nothing would leave the orphan
+/// count at zero and this would read as green while asserting almost nothing —
+/// R2108's denominator lesson.
+#[test]
+fn r2124_every_mark_the_mounted_log_section_paints_has_a_declared_reader() {
+    use hello_log_view::address as lv;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let shot = painted_at_destination("logs");
+        let mut by_reader: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
+        let mut orphans: Vec<&str> = Vec::new();
+        for tag in shot.family(lv::NAMESPACE) {
+            if let Some(reader) = log_reader_of(tag) {
+                *by_reader.entry(reader).or_default() += 1;
+            } else {
+                orphans.push(tag);
+            }
+        }
+        assert!(
+            orphans.is_empty(),
+            "★★★★★ the mounted log section paints {} mark(s) in its own \
+             namespace that no declared reader recovers: {orphans:?}. Either the \
+             screen grew a region nothing declares, or a declaration drifted \
+             from what the painter composes.",
+            orphans.len()
+        );
+        for reader in [
+            "cell",
+            "column",
+            "detail part",
+            "header part",
+            "pane",
+            "row",
+            "severity choice",
+        ] {
+            assert!(
+                by_reader.get(reader).copied().unwrap_or(0) > 0,
+                "★★ no painted mark was claimed by the `{reader}` reader — with \
+                 the claims ORed, a reader describing nothing makes the zero \
+                 orphans above mean less than it reads. Counted: {by_reader:?}"
+            );
+        }
+        // ★★★ And the four-headed stem is told apart ON THIS PAGE: every row of
+        // this list has five cells, so a cell count at or below the row count
+        // means the row inverse is swallowing cells.
+        let cells = by_reader.get("cell").copied().unwrap_or(0);
+        let rows = by_reader.get("row").copied().unwrap_or(0);
+        assert!(
+            cells > rows,
+            "★★★ the page paints {rows} row(s) and {cells} cell(s); a cell count \
+             at or below the row count means the deeper seat is not separating \
+             the heads on the assembled page"
+        );
+        println!(
+            "[r2124] the mounted log section paints {} mark(s) under `{}`, all \
+             recovered: {by_reader:?}",
+            by_reader.values().sum::<usize>(),
+            lv::NAMESPACE
         );
     });
 }
