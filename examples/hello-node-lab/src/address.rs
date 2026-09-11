@@ -1846,7 +1846,7 @@ pub const RAIL_SEAT_TEMPLATE: &str = "lab.rail.{}";
 /// The address of the rail seat for `destination`.
 ///
 /// ★ The key is the destination's own name, which is the roster's
-/// ([`crate::spec::RAIL`]) and not a word closed here — so this is composed
+/// (`spec::RAIL`) and not a word closed here — so this is composed
 /// where [`appbar`] is looked up.
 #[must_use]
 pub fn rail(destination: &str) -> String {
@@ -1911,7 +1911,7 @@ pub const FAULTS_SCOPE_SEAT: &str = "lab.faults.scope.";
 
 /// The parts every offer's row paints, in the order the row lays them out.
 ///
-/// ★ POSITIONAL, and [`crate::spec::FaultPanelSpec`] reads them by position
+/// ★ POSITIONAL, and `spec::FaultPanelSpec` reads them by position
 /// rather than by a literal spelled again at the painter — so renaming one here
 /// moves the paint with it instead of leaving the declaration and the screen to
 /// drift.
