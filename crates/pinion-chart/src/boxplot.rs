@@ -255,7 +255,7 @@ impl BoxPlotChart {
             mark: DistributionMark::default(),
             violin_scale: ViolinScale::default(),
             mute: MuteState::default(),
-            tag_prefix: "chart".to_string(),
+            tag_prefix: crate::address::DEFAULT_PREFIX.to_string(),
         }
     }
 

@@ -58,6 +58,32 @@
 //! saying here which kinds answer which, is what this module can do that a
 //! `format!` at the call site cannot.
 
+/// The prefix a chart paints under when its caller does not choose one.
+///
+/// ★★★★★ R2143 — **this was spelled eight times before it was declared once.**
+/// R2136 lifted the grammar that follows a prefix and missed the prefix itself,
+/// because its needle looked for a `}`-placeholder followed by the grammar and
+/// `"chart"` is a bare word in a `Default` impl. Eight builders each wrote
+/// `tag_prefix: "chart".to_string()`, which is a cross-file grammar by R2136's
+/// own criterion — spelled in more than one file — and every reader that wants
+/// a default-prefixed address had nothing to reach for either.
+pub const DEFAULT_PREFIX: &str = "chart";
+
+/// The overlay's frame, under [`DEFAULT_PREFIX`].
+///
+/// ★★ A whole address as a `&'static str`, which the composers cannot give:
+/// they run `format!`, so none is a `const fn`, and a reader holding a `const`
+/// — an accessibility region's tag, a `&'static str` Tab stop — has nothing to
+/// call. R2049 met the same wall on a screen and answered it the same way, with
+/// a `&'static str` beside the derivation.
+///
+/// ⚠ It spells its prefix, because `concat!` takes literals and not consts, so
+/// [`DEFAULT_PREFIX`] cannot be pasted into it. That is one spelling in the
+/// declaring module rather than one per reader, and
+/// `the_const_addresses_agree_with_their_composers` holds it to
+/// [`inspect`]`(`[`DEFAULT_PREFIX`]`).tooltip()` so the two cannot drift.
+pub const DEFAULT_INSPECT_TOOLTIP: &str = "chart.inspect.tooltip";
+
 /// The background box behind the whole chart.
 ///
 /// ★ The most-spelled grammar in the crate: ten painters, one per chart kind.
@@ -419,6 +445,20 @@ mod tests {
         // the inverse can tell them apart.
         assert_eq!(overlay.member_of(&overlay.value()), Some("value"));
         assert_eq!(overlay.member_of(&overlay.value_at(7)), Some("value.7"));
+    }
+
+    /// ★★ Every `&'static str` address agrees with the composer it stands in
+    /// for, so a const a reader holds cannot drift from the paint.
+    ///
+    /// This is the whole reason a const may spell its prefix: the spelling is
+    /// checked here against the derivation, which is what R2049 established
+    /// when a screen hit the same wall.
+    #[test]
+    fn the_const_addresses_agree_with_their_composers() {
+        assert_eq!(
+            super::DEFAULT_INSPECT_TOOLTIP,
+            super::inspect(super::DEFAULT_PREFIX).tooltip()
+        );
     }
 
     /// The general forms compose what the named ones do.

@@ -125,7 +125,7 @@ impl PolarChart {
             inspect: None,
             legend_interaction: LegendInteraction::default(),
             mute: MuteState::default(),
-            tag_prefix: "chart".to_string(),
+            tag_prefix: crate::address::DEFAULT_PREFIX.to_string(),
         }
     }
 

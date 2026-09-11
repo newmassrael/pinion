@@ -30,8 +30,8 @@ chart.candle	15	5
 chart.cap	6	3
 chart.colorbar	8	8
 chart.grid	14	2
-chart.inspect	53	28
-chart.label	19	8
+chart.inspect	53	24
+chart.label	19	7
 chart.legend	13	9
 chart.median	9	3
 chart.ohlc	9	3

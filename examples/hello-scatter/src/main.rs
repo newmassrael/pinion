@@ -350,7 +350,7 @@ impl WidgetA11y for ScatterView {
             .with_state(access_state);
         let mut nodes = describedby_region(
             control,
-            "chart.inspect.tooltip",
+            pinion_chart::address::DEFAULT_INSPECT_TOOLTIP,
             AriaRole::Tooltip,
             readout,
             true,

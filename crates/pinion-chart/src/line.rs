@@ -172,7 +172,7 @@ impl LineChart {
             color: ValueEncoding::default(),
             kinds: AxisKinds::default(),
             mute: MuteState::default(),
-            tag_prefix: "chart".to_string(),
+            tag_prefix: crate::address::DEFAULT_PREFIX.to_string(),
         }
     }
 

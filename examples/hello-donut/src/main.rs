@@ -230,7 +230,7 @@ impl WidgetA11y for DonutView {
             .with_state(access_state);
         describedby_region(
             control,
-            "chart.inspect.tooltip",
+            pinion_chart::address::DEFAULT_INSPECT_TOOLTIP,
             AriaRole::Tooltip,
             readout,
             true,

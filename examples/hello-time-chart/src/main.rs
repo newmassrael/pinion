@@ -218,7 +218,15 @@ fn chart_style(theme: &Theme) -> ChartStyle {
 fn x_tick_labels(scene: &Scene) -> Vec<String> {
     let mut out = Vec::new();
     for k in 0..32 {
-        match find(scene, &format!("chart.label.x.{k}")) {
+        // ★ R2143 — composed through the chart's own declaration rather than
+        // spelled. ⚠ `label.x` is still a literal here: it is painted only by
+        // `pinion_chart::draw`, so R2136's cut (a grammar spelled in ONE file
+        // is already declared there) left it undeclared. The prefix and the
+        // shape are the declaration's; the part name is not yet.
+        match find(
+            scene,
+            &pinion_chart::address::indexed(pinion_chart::address::DEFAULT_PREFIX, "label.x", k),
+        ) {
             Some(Scene::Text(t)) => out.push(t.content.clone()),
             _ => break,
         }

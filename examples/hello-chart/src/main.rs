@@ -360,7 +360,7 @@ impl pinion_a11y::WidgetA11y for ChartView {
             .with_state(access_state);
         let mut nodes = describedby_region(
             control,
-            "chart.inspect.tooltip",
+            pinion_chart::address::DEFAULT_INSPECT_TOOLTIP,
             AriaRole::Tooltip,
             readout,
             true,
