@@ -121,27 +121,36 @@ PRODUCT = "hello-analyzer-shell"
 #: An arm's text is searched for these, longest spelling first so that
 #: `IntrospectValue::Int` cannot be read out of `IntrospectValue::Integer`-like
 #: neighbours by prefix. The right-hand side is what a caller must be ready for.
-_CONSTRUCTORS: tuple[tuple[str, str], ...] = (
-    ("IntrospectValue::Json", "json"),
-    ("IntrospectValue::Bool", "bool"),
-    ("IntrospectValue::Float", "float"),
-    ("IntrospectValue::Text", "text"),
-    ("IntrospectValue::Int", "int"),
-    # ★★★★★ `Raw` IS json, and calling it anything else was this tool's own
-    # first defect. `IntrospectValue::kind()` in `pinion-core` answers
-    # `Json(_) | Raw(_) => "json"` — a `Raw` carries JSON text the producer
-    # already had and reaches the wire verbatim. Classifying it as a seventh
-    # word made two correct surfaces (`hello-encoded-answer`'s `frame`, a
-    # dispatch fixture's `raw`) read as broken promises. A census that invents
-    # a vocabulary the framework does not have reports its own invention.
-    ("IntrospectValue::Raw", "json"),
-    ("IntrospectValue::raw", "json"),
-)
+#: The file that owns which variants are the same shape.
+CORE_EXTERNAL = ROOT / "crates" / "pinion-core" / "src" / "external.rs"
 
-#: Local one-word constructors the screens in this product wrap the above in.
-#: Each is a named helper whose body is `IntrospectValue::<V>`; they are listed
-#: because a text census cannot follow a call, which is the `unknown` blind
-#: spot the module docstring states.
+#: ★★★★★ The correspondence between the framework's TWO renderings of one
+#: fact, and the only part of the shape vocabulary still written down here.
+#:
+#: `IntrospectValue::kind()` answers a fragment a person reads in a sentence
+#: ("a whole number"); a `SchemaField` declares a token an agent matches on
+#: ("int"). `kind()`'s own docstring says this in as many words -- *"One fact,
+#: two renderings, held to opposite rules"* -- so this table is the join
+#: between two things the framework declares, not a vocabulary this file
+#: invented. `selftest` asserts it TOTAL against the derived grouping, so a
+#: variant added to `kind()` or a reworded arm fails here instead of silently
+#: grading a screen against a word that no longer exists.
+#:
+#: `null` is deliberately absent: no `SchemaField` declares it, and a path that
+#: can answer `Null` declares the type of the value it answers otherwise.
+_SCHEMA_TOKEN_FOR_KIND: dict[str, str] = {
+    "json": "json",
+    "a boolean": "bool",
+    "a whole number": "int",
+    "a number": "float",
+    "text": "text",
+}
+
+#: Local one-word constructors the SCREENS wrap a variant in. Unlike the table
+#: above these are not the framework's — each is a closure or helper a screen
+#: declares for itself (`let text = |s: String| Ok(IntrospectValue::Text(s));`)
+#: — so there is nothing upstream to derive them from, and a text census cannot
+#: follow a call. That is the `unknown` blind spot the module docstring states.
 _HELPERS: tuple[tuple[str, str], ...] = (
     ("text", "text"),
     ("int", "int"),
@@ -303,7 +312,54 @@ def arms(block: str) -> list[tuple[tuple[str, ...], str]]:
     return out
 
 
-def shape_of(body: str) -> str:
+def variant_groups(core_source: str) -> dict[str, str]:
+    """`IntrospectValue` variant -> the shape token it satisfies, DERIVED.
+
+    ★★★★★ Read off `IntrospectValue::kind()` rather than written down, because
+    writing it down is how this tool's own first defect happened: it classified
+    `Raw` as a seventh word when `kind()` already answers
+    `Json(_) | Raw(_) => "json"`, and two CORRECT surfaces read as broken
+    promises. A census that invents a vocabulary the framework does not have
+    reports its own invention.
+
+    `kind()` is the right source and says so itself: it carries no wildcard on
+    purpose, so the round that adds a variant meets a compile error there — and
+    therefore this derivation sees every variant the enum has, not every
+    variant somebody remembered.
+
+    The person-words `kind()` answers are joined to the schema's tokens through
+    [`_SCHEMA_TOKEN_FOR_KIND`], which `selftest` holds total in both directions.
+    """
+    mask = code_mask(core_source)
+    head = re.search(r"fn kind\(\s*&self\s*\)", core_source)
+    if not head:
+        return {}
+    start = core_source.find("match self {", head.end())
+    if start < 0:
+        return {}
+    i = start + len("match self {")
+    depth = 1
+    while i < len(core_source) and depth:
+        if mask[i]:
+            depth += {"{": 1, "}": -1}.get(core_source[i], 0)
+        i += 1
+    block = core_source[start + len("match self {") : i - 1]
+    out: dict[str, str] = {}
+    for line in block.splitlines():
+        arm = re.match(
+            r"\s*((?:Self::\w+(?:\(_?\))?\s*\|\s*)*Self::\w+(?:\(_?\))?)\s*=>\s*\"([^\"]+)\"",
+            line,
+        )
+        if not arm:
+            continue
+        for variant in re.findall(r"Self::(\w+)", arm.group(1)):
+            token = _SCHEMA_TOKEN_FOR_KIND.get(arm.group(2))
+            if token:
+                out[variant] = token
+    return out
+
+
+def shape_of(body: str, groups: dict[str, str]) -> str:
     """What a caller must be ready for: one variant, `mixed`, or `unknown`.
 
     `unknown` is an arm that hands the answer to a helper — the census cannot
@@ -316,7 +372,16 @@ def shape_of(body: str) -> str:
     """
     mask = code_mask(body)
     code = "".join(c if m else " " for c, m in zip(body, mask))
-    found = {shape for spelling, shape in _CONSTRUCTORS if spelling in code}
+    # The variant spellings come from `groups`, which `variant_groups` read off
+    # `kind()`. A `Raw` is `json` here because the framework says so, not
+    # because this file decided. The lowercase constructor fn (`raw(..)`) is
+    # matched too -- it is the same variant under a builder's name.
+    found = {
+        shape
+        for variant, shape in groups.items()
+        if f"IntrospectValue::{variant}" in code
+        or f"IntrospectValue::{variant.lower()}" in code
+    }
     found |= {
         shape
         for name, shape in _HELPERS
@@ -666,6 +731,11 @@ def read_budget() -> dict[str, dict[str, str]]:
     return parse_budget(BUDGET.read_text(encoding="utf-8")) if BUDGET.exists() else {}
 
 
+def read_core_source() -> str:
+    """`pinion-core`'s `external.rs`, which owns `IntrospectValue::kind()`."""
+    return CORE_EXTERNAL.read_text(encoding="utf-8")
+
+
 def read_walks() -> list[Path]:
     """Every demo walk, in a stable order."""
     return sorted((ROOT / "tools" / "demos").glob("*.py"))
@@ -723,12 +793,12 @@ def product_crates() -> list[str]:
     return seen
 
 
-def answered_here(impl_body: str) -> dict[str, str]:
+def answered_here(impl_body: str, groups: dict[str, str]) -> dict[str, str]:
     """The shape each read path is answered with, inside ONE impl."""
     out: dict[str, str] = {}
     for block in query_blocks(impl_body):
         for names, body in arms(block):
-            shape = shape_of(body)
+            shape = shape_of(body, groups)
             for name in names:
                 out[name] = shape
     return out
@@ -742,13 +812,14 @@ def split_census() -> tuple[dict[str, dict[str, str]], list[str]]:
     other. Two unrelated demos owe each other nothing.
     """
     crates = product_crates()
+    groups = variant_groups(read_core_source())
     published: dict[str, dict[str, str]] = {}
     for crate in crates:
         for source in read_sources(crate):
             if "ExternalIntrospect" not in source:
                 continue
             for impl_body in impl_bodies(source):
-                for name, shape in answered_here(impl_body).items():
+                for name, shape in answered_here(impl_body, groups).items():
                     was = published.get(name, {}).get(crate)
                     published.setdefault(name, {})[crate] = (
                         shape if was in (None, shape, "unknown") else "mixed"
@@ -770,6 +841,7 @@ def promise_census() -> tuple[dict[str, tuple[str, str]], int, int]:
     holds six, and pairing per file compared one fixture's `count` declaration
     with another fixture's arm.
     """
+    groups = variant_groups(read_core_source())
     broken: dict[str, tuple[str, str]] = {}
     impls = compared = 0
     for source_path in promise_sources():
@@ -777,7 +849,7 @@ def promise_census() -> tuple[dict[str, tuple[str, str]], int, int]:
         consts = const_items(source)
         for impl_body in impl_bodies(source):
             impls += 1
-            here = answered_here(impl_body)
+            here = answered_here(impl_body, groups)
             declared = declared_types(schema_text(impl_body, consts))
             compared += sum(1 for name in declared if name in here)
             for name, pair in broken_promises(declared, here).items():
@@ -879,22 +951,51 @@ def selftest() -> int:
             failed += 1
             print(f"FAIL: {name}{': ' + detail if detail else ''}", file=sys.stderr)
 
-    case("a json arm", shape_of("Ok(IntrospectValue::Json(spec_json()))"), "json")
-    case("a text arm", shape_of("text(spec_json().to_string())"), "text")
-    case("a bool arm", shape_of("Ok(IntrospectValue::Bool(state.running.get()))"), "bool")
-    case("an int helper", shape_of("Ok(int(ROWS))"), "int")
-    case("a delegating arm is unknown", shape_of("read_specification(path)"), "unknown")
+    # ★★★★★ The grouping is DERIVED from `pinion-core`, and these fixtures use
+    # the real derivation rather than a copy of it. A copy here would be the
+    # transcription this round removed, reintroduced in the tests that are
+    # supposed to guard it.
+    groups = variant_groups(read_core_source())
+    case(
+        "Raw and Json are ONE shape, because kind() says so",
+        (groups.get("Raw"), groups.get("Json")),
+        ("json", "json"),
+    )
+    case(
+        "every variant kind() names except Null has a schema token",
+        sorted(groups),
+        ["Bool", "Float", "Int", "Json", "Raw", "Text"],
+    )
+    # The join must be total in BOTH directions: a token with no kind word is a
+    # word this file invented, and a kind word with no token is a variant the
+    # census would grade against nothing.
+    kinds_named = set(_SCHEMA_TOKEN_FOR_KIND.values())
+    case("the join produces every token the census uses", kinds_named, set(groups.values()))
+    case(
+        "and every declared word maps onto one of them",
+        set(_DECLARED_AS.values()) - kinds_named,
+        set(),
+    )
+
+    case("a json arm", shape_of("Ok(IntrospectValue::Json(spec_json()))", groups), "json")
+    case("a text arm", shape_of("text(spec_json().to_string())", groups), "text")
+    case(
+        "a bool arm",
+        shape_of("Ok(IntrospectValue::Bool(state.running.get()))", groups),
+        "bool",
+    )
+    case("an int helper", shape_of("Ok(int(ROWS))", groups), "int")
+    case(
+        "a delegating arm is unknown", shape_of("read_specification(path)", groups), "unknown"
+    )
     case(
         "an arm that can answer two is mixed",
-        shape_of("match x { A => text(s), B => Ok(IntrospectValue::Json(v)) }"),
+        shape_of("match x { A => text(s), B => Ok(IntrospectValue::Json(v)) }", groups),
         "mixed",
     )
-    # ★ `IntrospectValue::Int` must not be read out of a longer spelling that
-    # merely starts the same way. The tuple is ordered for this; the assertion
-    # is what would notice the order being lost.
     case(
-        "the json spelling wins over a bare Int prefix",
-        shape_of("Ok(IntrospectValue::Json(serde_json::json!({ \"n\": 1 })))"),
+        "a Raw arm reads as json without this file saying so",
+        shape_of("Ok(IntrospectValue::raw(RawJson::new(s)))", groups),
         "json",
     )
 
@@ -909,7 +1010,7 @@ def selftest() -> int:
     )
     case(
         "a multi-line arm travels whole",
-        [(n, shape_of(b)) for n, b in arms(block)],
+        [(n, shape_of(b, groups)) for n, b in arms(block)],
         [(("spec",), "json"), (("zoom",), "int"), (("at",), "text"), (("a", "b"), "bool")],
     )
 
@@ -999,7 +1100,9 @@ def selftest() -> int:
     )
     case(
         "a Raw answer keeps a `json` promise",
-        broken_promises({"frame": "json"}, {"frame": shape_of("Ok(IntrospectValue::raw(r))")}),
+        broken_promises(
+            {"frame": "json"}, {"frame": shape_of("Ok(IntrospectValue::raw(r))", groups)}
+        ),
         {},
     )
 
@@ -1073,7 +1176,7 @@ def selftest() -> int:
     )
     case(
         "a comment naming another variant is not read",
-        shape_of("// answers Ok(IntrospectValue::Json(v)) elsewhere\n text(s)"),
+        shape_of("// answers Ok(IntrospectValue::Json(v)) elsewhere\n text(s)", groups),
         "text",
     )
     case(
