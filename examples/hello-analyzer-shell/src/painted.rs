@@ -37,6 +37,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use pinion_core::availability::{Recourse, UnavailableKind};
+use pinion_core::chrome::Part as ChromePart;
 use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
@@ -16419,6 +16420,140 @@ fn r2127_the_mounted_lab_is_asked_about_the_families_one_frame_cannot_show() {
             lab::NAMESPACE,
             REACHED.len(),
             revealed.len(),
+        );
+    });
+}
+
+/// ★★★★★ R2135 — **every mounted screen this host declares chrome to, and has
+/// never been asked about it by.**
+///
+/// The pairs still owed, as `(destination, part)`. Each row is a guest that
+/// draws in an application providing this part and has never decided about it —
+/// so if it draws its own, the application has two, and nothing else in this
+/// tree can see that.
+///
+/// ⚠ **This list may only get SHORTER**, and the assertion below is an equality
+/// rather than a subset for exactly that: a row repaid and left here would go
+/// on claiming a debt that is gone, and this project has already paid for a
+/// hand-kept remainder list that rotted in the direction that hides work.
+///
+/// ★ `sessions` and `topology` paint no chrome of their own at all, measured at
+/// R2135, so what they owe is the *decision* rather than a removal — and they
+/// are on this list rather than exempted from it because "it happens to paint
+/// nothing today" is a fact about today. `packets` is the one with a live
+/// duplicate: `pv.appbar` carries the interface and the packet rate, which is
+/// what this host's own bar carries. See
+/// `debt-a-guest-restates-the-application-bar-it-was-told-about`.
+const CHROME_OWED: &[(&str, ChromePart)] = &[
+    ("keys", ChromePart::Navigation),
+    ("keys", ChromePart::ApplicationBar),
+    ("logs", ChromePart::Navigation),
+    ("logs", ChromePart::ApplicationBar),
+    ("packets", ChromePart::Navigation),
+    ("packets", ChromePart::ApplicationBar),
+    ("sessions", ChromePart::Navigation),
+    ("sessions", ChromePart::ApplicationBar),
+    ("topology", ChromePart::Navigation),
+    ("topology", ChromePart::ApplicationBar),
+];
+
+/// ★★★★★ R2135 — **the host asks who read what it declared.**
+///
+/// # What this replaces
+///
+/// One hand-written test naming one guest and its two published decisions
+/// (`r2127_…` above). That shape scales by hand at one test per (guest, part),
+/// and measured on arrival **2 of 12** such pairs had one — so five mounted
+/// screens ignoring the declaration entirely was a fact no gate held.
+///
+/// # Why the population is the roster's and not this file's
+///
+/// [`ScreenRoster::unasked_chrome`] crosses the screens this host MOUNTED with
+/// the chrome it DECLARED. Neither half is written here, so a screen mounted
+/// tomorrow is covered by this assertion today, and a part added to
+/// [`ChromePart`] is too. A list in this file would be this file's opinion
+/// about the roster's fact — which is the defect [`CHROME_OWED`] is kept short
+/// to bound rather than to reintroduce.
+///
+/// # ⚠ Why it navigates first
+///
+/// A guest decides when it RUNS. A census taken without reaching a destination
+/// finds no record for the screen there and reports it unasked — which is the
+/// failure direction we want, and which is also why the walk below is not
+/// optional scaffolding: without it this gate would report all twelve pairs and
+/// the equality would fail rather than pass, so it cannot go quietly green by
+/// reaching nothing.
+#[test]
+fn r2135_every_mounted_screen_decides_about_the_chrome_it_is_offered() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+
+        assert!(
+            !state.screens.chrome().is_empty(),
+            "★★★★★ this host declares no chrome at all, so every pair below is \
+             vacuous — `providing` was dropped, or this gate is asking a roster \
+             that is not the assembled one"
+        );
+
+        // Reach every mounted screen, so each one's code gets to decide. The
+        // keys are collected first because `go` takes the state while
+        // `mounted_keys` borrows the roster inside it.
+        let keys: Vec<String> = state.screens.mounted_keys().map(str::to_owned).collect();
+        assert!(
+            keys.len() > 1,
+            "★★ one mounted screen or none, so a per-screen census has nothing \
+             to be a census OF"
+        );
+        for key in &keys {
+            state.go(key).unwrap_or_else(|why| {
+                panic!("{key} is a mounted destination and refused: {why:?}")
+            });
+            // Painting is what runs the guest. Its layout, its tree and its
+            // hit test are the callers that ask.
+            let _ = painted_at((WIN_W, WIN_H));
+        }
+
+        let mut unasked: Vec<(String, ChromePart)> = state
+            .screens
+            .unasked_chrome()
+            .into_iter()
+            .map(|(key, _tag, part)| (key.to_owned(), part))
+            .collect();
+        unasked.sort();
+        let mut owed: Vec<(String, ChromePart)> = CHROME_OWED
+            .iter()
+            .map(|(key, part)| ((*key).to_owned(), *part))
+            .collect();
+        owed.sort();
+
+        assert_eq!(
+            unasked, owed,
+            "★★★★★ the screens this host provides chrome to, and which have \
+             never decided about it, are not the ones `CHROME_OWED` claims. \
+             A pair that is here and not on the list is a guest that may be \
+             drawing a second navigation or a second application bar with \
+             nothing to say so; a pair on the list and not here has been \
+             repaid and the row must go, because a remainder list that keeps \
+             a closed row hides the work that is actually left."
+        );
+
+        // ⚠ The floor that keeps the equality from being satisfiable by an
+        // empty census: the screen that DOES ask must be absent from the
+        // report for the right reason — it asked — rather than because the
+        // roster reported nothing at all.
+        let lab = state
+            .screens
+            .tag_of("lab")
+            .expect("the node lab is mounted at `lab`");
+        assert!(
+            ChromePart::ALL
+                .iter()
+                .all(|part| pinion_core::chrome::has_asked(lab, *part)),
+            "★★★★★ the node lab is absent from the report above because it \
+             never ran, not because it asked. Every other row is then about a \
+             screen that did not run either, and this gate is measuring the \
+             walk rather than the guests."
         );
     });
 }

@@ -191,9 +191,9 @@
       ]
     },
     {
-      "name": "debt-a-guest-derives-width-from-one-of-two-declarable-chrome-parts",
+      "name": "debt-a-guest-restates-the-application-bar-it-was-told-about",
       "substituted": false,
-      "blocked_by": "unmeasured",
+      "blocked_by": "buildable",
       "blocked_because": "",
       "closed_by": "",
       "closed_because": "",
@@ -469,6 +469,18 @@
       ]
     },
     {
+      "name": "debt-five-mounted-screens-never-decide-about-the-chrome-they-are-offered",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-debt-repayment-loop, debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-four-decode-layer-headings-are-out-of-a-keyboard-readers-reach",
       "substituted": false,
       "blocked_by": "buildable",
@@ -709,6 +721,18 @@
       "rank": "ordinary",
       "why": [
         "links debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
+      "name": "debt-the-two-toolbar-strips-have-never-been-compared-seat-by-seat",
+      "substituted": false,
+      "blocked_by": "unmeasured",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-debt-repayment-loop, debt-the-canon-is-one-app-and-we-are-many-binaries"
       ]
     },
     {

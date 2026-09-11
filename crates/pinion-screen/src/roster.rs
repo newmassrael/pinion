@@ -12,7 +12,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
-use pinion_core::chrome::{HostChrome, with_host_chrome_for};
+use pinion_core::chrome::{HostChrome, Part, with_host_chrome_for};
 use pinion_core::external::with_surface_extent;
 use pinion_core::shrink::{ShrinkPolicy, pan};
 use pinion_core::widget_core::ExtraExternal;
@@ -1327,6 +1327,56 @@ impl ScreenRoster {
                 let screen = self.screens.get(key)?;
                 Some((key, screen.externals()))
             })
+            .collect()
+    }
+
+    /// ★★★★★ R2135 — **every part this host provides that a screen it mounted
+    /// has never decided about**, as `(destination, screen tag, part)`.
+    ///
+    /// The other half of [`providing`](Self::providing). That declares what
+    /// this host has; this answers who read it — and until R2135 nothing did,
+    /// so the axis was a broadcast with no reader census.
+    ///
+    /// # Why the population is here and not in the record
+    ///
+    /// [`pinion_core::chrome::ask`] records that a guest decided, and a record
+    /// of who asked cannot report who did not: a screen that never ran is
+    /// absent from it exactly like a screen that ignores the declaration. The
+    /// roster is the only thing that holds both halves — **the screens it
+    /// mounted, and the chrome it declared to them** — so the cross product is
+    /// derived here and the report is complete by construction. A screen
+    /// mounted tomorrow is covered by an assertion written today, which is
+    /// [`externals_everywhere`](Self::externals_everywhere)'s property and for
+    /// the same reason.
+    ///
+    /// # ⚠ It reports a screen that was never reached
+    ///
+    /// Deliberately, and it is the difference between this and a gate that
+    /// cannot fail. A census that navigated nowhere has no records, so every
+    /// mounted screen comes back unasked and a caller asserting this is empty
+    /// fails loudly — rather than passing for having asked about nothing, which
+    /// is how the hand-written per-guest gates it replaces could go green.
+    ///
+    /// # What it measured on arrival
+    ///
+    /// The analysis tool mounts **six** screens and declares both parts to all
+    /// six. **One** asks. The census that had been prescribed for this — *does
+    /// every arm of [`Part`](pinion_core::chrome::Part) have a consumer* — is
+    /// green on that tree, because the one guest that asks consumes both arms.
+    /// **The arm is not the unit; the (screen, arm) pair is**, and that is the
+    /// unit this answers in.
+    #[must_use]
+    pub fn unasked_chrome(&self) -> Vec<(&str, &'static str, Part)> {
+        self.mounted_keys()
+            .filter_map(|key| {
+                let tag = self.screens.get(key)?.tag();
+                Some(
+                    pinion_core::chrome::unasked(tag, self.chrome)
+                        .into_iter()
+                        .map(move |part| (key, tag, part)),
+                )
+            })
+            .flatten()
             .collect()
     }
 

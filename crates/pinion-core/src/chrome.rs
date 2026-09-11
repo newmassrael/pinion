@@ -250,6 +250,21 @@ thread_local! {
     /// [`forget_host_chrome`] is what a host calls when it stops placing one, so
     /// a record cannot outlive the placement it describes.
     static RECORDED: RefCell<Vec<(String, HostChrome)>> = const { RefCell::new(Vec::new()) };
+
+    /// ★★★★★ R2135 — **the other half of the declaration: who read it.**
+    ///
+    /// `PROVIDED` and `RECORDED` are both what a host SAYS. Nothing here held
+    /// what a guest DID about it, so the axis was one-way and a reader census
+    /// over it was impossible to write — which is why the only accounting that
+    /// existed was a hand-written test per (guest, part) in the host's own
+    /// file, and why 2 of 12 such pairs had one.
+    ///
+    /// A `Vec` rather than a set, and cumulative rather than scoped, for two
+    /// reasons that are the same reason: what it holds is a fact about the
+    /// guest's CODE — *this screen decides about this part* — not about a
+    /// placement, so it must outlive a placement the way the code does, and it
+    /// is bounded by (surfaces × [`Part::ALL`]) rather than by frames.
+    static ASKED: RefCell<Vec<(String, Part)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// State what this host provides, for the duration of `body`.
@@ -345,6 +360,103 @@ pub fn host_chrome_for(tag: &str) -> HostChrome {
     })
 }
 
+/// ★★★★★ R2135 — **ask what this place provides, and be on the record for
+/// having asked.**
+///
+/// The spelling a mounted screen should use. Identical in answer to
+/// `host_chrome_for(tag).provides(part)`, and additionally records that the
+/// surface `tag` decided about `part`, which is what [`unasked`] reads.
+///
+/// # Why the asking has to be recorded
+///
+/// Before this, a host declared a set and each guest independently wrote its
+/// own `!…provides(…)` and derived its own number from it. Nothing related the
+/// offer to the decision, so the offer was a broadcast with no reader census —
+/// and both failures that follow from that are ones this module has already
+/// paid for:
+///
+/// * [`Part::ApplicationBar`] sat in the vocabulary declared by nobody and read
+///   by nobody for **97 rounds** (R1725 → R1822). A dead arm is not
+///   distinguishable from a live one when nothing counts readers.
+/// * Measured at R2135 on the analysis tool: the shell mounts **six** screens
+///   and declares both parts to all six. **One** of them asks.
+///   `hello-packet-view` paints its own application bar — the interface and the
+///   packet rate, which is what the host's bar carries — under a host that is
+///   providing one, and every gate is green because no gate had the pair as a
+///   population.
+///
+/// ⚠ **And the census that was prescribed for this would have been green on
+/// arrival.** The prescription was *a census over [`Part::ALL`] answering
+/// whether both arms are consumed*. Measured, both arms are consumed — by the
+/// one guest that asks — so that assertion passes while five of six guests
+/// ignore the declaration entirely. **The arm is not the unit. The
+/// (surface, arm) pair is.**
+///
+/// # What it cannot see, and why that is the right way round
+///
+/// It cannot see a guest that never ran. So the population does not come from
+/// here: it comes from the HOST — every screen it mounted, crossed with every
+/// part it declared — and a screen missing from this record is *reported*. A
+/// census that failed to reach a destination therefore fails loudly, rather
+/// than passing for having asked about nothing.
+#[must_use]
+pub fn ask(tag: &str, part: Part) -> bool {
+    ASKED.with(|asked| {
+        let mut asked = asked.borrow_mut();
+        if !asked.iter().any(|(t, p)| t == tag && *p == part) {
+            asked.push((tag.to_string(), part));
+        }
+    });
+    host_chrome_for(tag).provides(part)
+}
+
+/// Whether surface `tag` has ever [`ask`]ed about `part`.
+#[must_use]
+pub fn has_asked(tag: &str, part: Part) -> bool {
+    ASKED.with(|asked| asked.borrow().iter().any(|(t, p)| t == tag && *p == part))
+}
+
+/// Every `(surface, part)` pair that has been [`ask`]ed, ordered by surface and
+/// then by [`Part::ALL`] so a report does not move with the order things ran in.
+#[must_use]
+pub fn asked() -> Vec<(String, Part)> {
+    let mut all = ASKED.with(|asked| asked.borrow().clone());
+    all.sort();
+    all
+}
+
+/// Of what `provided` offers, the parts surface `tag` has never [`ask`]ed about.
+///
+/// The shape a host's census wants: hand it what it is providing to one screen
+/// and it answers what that screen has not decided about. Ordered by
+/// [`Part::ALL`], so the report does not move with the caller.
+///
+/// Empty for a `tag` that has asked about everything offered — and empty, too,
+/// for a host that offers nothing, which is the honest answer: a guest owes no
+/// decision about a part nobody is providing.
+#[must_use]
+pub fn unasked(tag: &str, provided: HostChrome) -> Vec<Part> {
+    Part::ALL
+        .iter()
+        .copied()
+        .filter(|part| provided.provides(*part) && !has_asked(tag, *part))
+        .collect()
+}
+
+/// Forget that `tag` ever asked — for a test that needs the record to start
+/// empty, and for nothing else.
+///
+/// ⚠ **Not the twin of [`forget_host_chrome`], and deliberately not called
+/// where that is.** What a host declares is a fact about a *placement* and ends
+/// with it. Whether a screen's code decides about a part is a fact about *the
+/// screen*, and it does not stop being true because the journey moved. Clearing
+/// it alongside the declaration would make the census answer depend on which
+/// destination the reader happens to be standing at — which is the class of
+/// defect this module opened with.
+pub fn forget_asked(tag: &str) {
+    ASKED.with(|asked| asked.borrow_mut().retain(|(t, _)| t != tag));
+}
+
 /// ★★★★★ R1861 — **where to put a floating overlay so it covers nothing.**
 ///
 /// `seat` moved the shortest distance that clears **every** band in `bands`
@@ -427,8 +539,8 @@ pub fn clear_of(seat: Rect, bands: &[Rect], within: Rect) -> Option<Rect> {
 #[cfg(test)]
 mod tests {
     use super::{
-        HostChrome, Part, Rect, clear_of, forget_host_chrome, host_chrome, host_chrome_for,
-        with_host_chrome, with_host_chrome_for,
+        HostChrome, Part, Rect, ask, asked, clear_of, forget_asked, forget_host_chrome, has_asked,
+        host_chrome, host_chrome_for, unasked, with_host_chrome, with_host_chrome_for,
     };
 
     /// The window the analysis tool ships in, and the region it hands a guest.
@@ -677,6 +789,157 @@ mod tests {
                 vec![chrome.name()],
                 "a set holding only {chrome:?} must report only its name"
             );
+        }
+    }
+
+    // ── R2135: the reader half of the declaration ────────────────────────────
+    //
+    // ⚠ Each `#[test]` runs on its own thread and the record is thread-local,
+    // so these do not need to isolate from one another. They isolate from
+    // THEMSELVES — `forget_asked` at the top — because a test that passed only
+    // because an earlier line in the same test had already asked would be
+    // asserting the opposite of what it says.
+
+    /// ★★★★★ The pair, not the arm. This is the measurement that refuted the
+    /// prescribed census: *both arms are consumed* is true while a guest that
+    /// never asks sits beside the one that does.
+    #[test]
+    fn r2135_an_arm_with_a_reader_says_nothing_about_a_guest_that_never_asked() {
+        let both = HostChrome::NONE
+            .with(Part::Navigation)
+            .with(Part::ApplicationBar);
+        forget_asked("asks");
+        forget_asked("silent");
+
+        with_host_chrome_for("asks", both, || {
+            assert!(ask("asks", Part::Navigation));
+            assert!(ask("asks", Part::ApplicationBar));
+        });
+
+        // The arm-level question — "does every arm have a reader" — is now YES
+        // for both arms, and it is exactly as green as it would be with a
+        // hundred silent guests.
+        for part in Part::ALL {
+            assert!(
+                asked().iter().any(|(_, p)| p == part),
+                "{part:?} has no reader at all, so this fixture is not the one \
+                 the test is about"
+            );
+        }
+
+        // The pair-level question answers the thing that matters.
+        assert_eq!(unasked("asks", both), Vec::<Part>::new());
+        assert_eq!(
+            unasked("silent", both),
+            vec![Part::Navigation, Part::ApplicationBar]
+        );
+    }
+
+    /// A guest owes a decision only about what it is offered: a host providing
+    /// nothing is owed nothing, which is what keeps a standalone screen out of
+    /// every census.
+    #[test]
+    fn r2135_nothing_is_owed_about_a_part_nobody_provides() {
+        forget_asked("standalone");
+        assert_eq!(unasked("standalone", HostChrome::NONE), Vec::<Part>::new());
+        assert_eq!(
+            unasked("standalone", HostChrome::NONE.with(Part::Navigation)),
+            vec![Part::Navigation],
+            "offered one part and having decided about neither, exactly the \
+             offered one is owed"
+        );
+    }
+
+    /// ★★ Asking is recorded whatever the answer is. A guest told *no* has
+    /// decided just as much as one told *yes* — the record is about the
+    /// decision, not about the omission — so a standalone screen that asks is
+    /// not reported as having ignored anything.
+    #[test]
+    fn r2135_a_guest_told_no_has_still_asked() {
+        forget_asked("told_no");
+        assert!(
+            !ask("told_no", Part::Navigation),
+            "nothing is being provided"
+        );
+        assert!(has_asked("told_no", Part::Navigation));
+        assert_eq!(
+            unasked("told_no", HostChrome::NONE.with(Part::Navigation)),
+            Vec::<Part>::new()
+        );
+    }
+
+    /// ★★★★★ The record outlives the placement, and that is the whole reason it
+    /// is not cleared beside it: whether this screen's code decides about a
+    /// part does not stop being true because the journey moved off it.
+    ///
+    /// Without this, a host's census would answer differently depending on
+    /// which destination a reader happened to be standing at — and the answer
+    /// it would give is *this guest ignores the declaration*, about a guest
+    /// that does not.
+    #[test]
+    fn r2135_a_record_of_asking_survives_the_placement_it_was_made_under() {
+        let nav = HostChrome::NONE.with(Part::Navigation);
+        forget_asked("moved_off");
+
+        with_host_chrome_for("moved_off", nav, || {
+            assert!(ask("moved_off", Part::Navigation));
+        });
+        forget_host_chrome("moved_off");
+
+        assert_eq!(
+            host_chrome_for("moved_off"),
+            HostChrome::NONE,
+            "the placement is gone, which is the fixture"
+        );
+        assert!(
+            has_asked("moved_off", Part::Navigation),
+            "★★★★★ the screen's decision went with the placement, so a census \
+             run at another destination would report a guest that asks as one \
+             that never did"
+        );
+    }
+
+    /// Asking twice is asking once: the record is a set of pairs, so a screen
+    /// whose paint, tree, keyboard and hit test all ask — which is the arrangement
+    /// `draws_own_rail` exists to enforce — does not weigh five times.
+    #[test]
+    fn r2135_the_record_holds_one_entry_per_pair() {
+        forget_asked("repeat");
+        for _ in 0..5 {
+            let _ = ask("repeat", Part::Navigation);
+        }
+        assert_eq!(
+            asked()
+                .iter()
+                .filter(|(t, p)| t == "repeat" && *p == Part::Navigation)
+                .count(),
+            1
+        );
+    }
+
+    /// The answer is the same as the spelling it replaces, for every arm and
+    /// both ways round — so migrating a guest onto `ask` cannot change what it
+    /// draws, only what is known about it.
+    #[test]
+    fn r2135_asking_answers_exactly_what_provides_does() {
+        forget_asked("same");
+        for declared in [
+            HostChrome::NONE,
+            HostChrome::NONE.with(Part::Navigation),
+            HostChrome::NONE.with(Part::ApplicationBar),
+            HostChrome::NONE
+                .with(Part::Navigation)
+                .with(Part::ApplicationBar),
+        ] {
+            with_host_chrome_for("same", declared, || {
+                for part in Part::ALL {
+                    assert_eq!(
+                        ask("same", *part),
+                        host_chrome_for("same").provides(*part),
+                        "{part:?} under {declared:?}"
+                    );
+                }
+            });
         }
     }
 }

@@ -277,9 +277,15 @@ fn rail_w() -> u32 {
 /// checkable beside the reason for it: without this the shell's gate would
 /// assert *the rail family is empty* and pass just as happily on a screen that
 /// had stopped painting a rail anywhere.
+/// ★★★★★ R2135 — **through [`chrome::ask`](pinion_core::chrome::ask)**, which
+/// answers exactly what the spelling it replaces did and additionally puts this
+/// screen on the record as having decided. The host's census is derived from
+/// that record crossed with its own roster, so a screen that asks is *known* to
+/// have asked rather than believed to have on the strength of a hand-written
+/// test naming it.
 #[must_use]
 pub fn draws_own_rail() -> bool {
-    !pinion_core::chrome::host_chrome_for(VIEW_TAG).provides(pinion_core::chrome::Part::Navigation)
+    !pinion_core::chrome::ask(VIEW_TAG, pinion_core::chrome::Part::Navigation)
 }
 
 /// ★★★★★ R1822 — **the app bar's twin of [`draws_own_rail`]**, and the reason
@@ -320,10 +326,11 @@ pub fn draws_own_rail() -> bool {
 /// ★★★★★ R2127 — **published**, for the reason given on [`draws_own_rail`]:
 /// the host's gate reads this screen's own decision instead of writing a second
 /// one.
+/// ★★★★★ R2135 — through [`chrome::ask`](pinion_core::chrome::ask), for the
+/// reason given on [`draws_own_rail`].
 #[must_use]
 pub fn draws_own_app_bar() -> bool {
-    !pinion_core::chrome::host_chrome_for(VIEW_TAG)
-        .provides(pinion_core::chrome::Part::ApplicationBar)
+    !pinion_core::chrome::ask(VIEW_TAG, pinion_core::chrome::Part::ApplicationBar)
 }
 
 /// The app bar's height where it is being drawn — zero where the host draws it.
