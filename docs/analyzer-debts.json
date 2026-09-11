@@ -784,6 +784,18 @@
       ]
     },
     {
+      "name": "debt-two-demos-still-assert-the-vocabulary-two-rounds-replaced",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-debt-repayment-loop, debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-two-dock-examples-still-spell-absence-as-an-empty-box",
       "substituted": false,
       "blocked_by": "buildable",
