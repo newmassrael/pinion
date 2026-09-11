@@ -167,6 +167,18 @@
       ]
     },
     {
+      "name": "debt-a-compile-time-guarantee-is-a-property-of-the-call-site",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-tool-capability-spec"
+      ]
+    },
+    {
       "name": "debt-a-composed-destination-has-no-single-published-description",
       "substituted": false,
       "blocked_by": "campaign",
@@ -623,6 +635,18 @@
       "rank": "ordinary",
       "why": [
         "links debt-canon-gui-surface-census, debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
+      "name": "debt-the-demo-budget-reports-a-cold-build-as-a-stuck-demo",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-debt-repayment-loop"
       ]
     },
     {
