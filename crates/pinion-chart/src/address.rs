@@ -28,13 +28,13 @@
 //!
 //! ⚠ The exemption is stated rather than left to be inferred: a painter's own
 //! vocabulary (`box.{i}`, `candle.{i}`, `tile.{i}.label`, the tick and label
-//! families in [`crate::draw`], the legend's in [`crate::legend`]) is composed
+//! families in `draw`, the legend's in `legend`) is composed
 //! where it is painted. A round that gives one of those a second speller should
 //! move it here rather than spell it twice.
 //!
 //! # ★★★★★ The overlay is one grammar under two names
 //!
-//! Eight chart kinds paint an inspect overlay and [`crate::timeline`] paints
+//! Eight chart kinds paint an inspect overlay and `timeline` paints
 //! the same thing under the part name `playhead` — `header`, `tooltip`,
 //! `value.{i}`, member for member. A needle looking for `inspect.` cannot see
 //! it, which is why the count above found the timeline's three spellings only
@@ -110,7 +110,7 @@ pub fn cap(prefix: &str, index: usize, part: &str) -> String {
 
 /// The general form: one of this crate's parts, under a chart's prefix.
 ///
-/// ★ Public for the same reason [`crate::draw`]'s families are not lifted here:
+/// ★ Public for the same reason `draw`'s families are not lifted here:
 /// a painter names more parts than this module declares, and one that needs
 /// another should compose it through here rather than reach for a `format!`,
 /// which is the whole defect.
@@ -155,7 +155,13 @@ pub fn inspect(prefix: &str) -> Overlay<'_> {
     }
 }
 
-/// The same overlay, under the part name [`crate::timeline`] paints it with.
+/// The same overlay, under the part name `timeline` paints it with.
+///
+/// ⚠ `draw`, `legend` and `timeline` are named here WITHOUT intra-doc links:
+/// they are private modules, and a public doc that links into one is a rustdoc
+/// error under `-D warnings`. R2134.1 repaired the same class two rounds ago in
+/// another crate, and this module reintroduced it — the rule is easy to break
+/// because the link reads correctly right up until rustdoc runs.
 #[must_use]
 pub fn playhead(prefix: &str) -> Overlay<'_> {
     Overlay {
