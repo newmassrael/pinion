@@ -2085,6 +2085,34 @@ PY
 )"
 ok "and a demo walk's own failure sentence is readable" "$cf_walk" "read"
 
+# ★★★★★ R2145.1 — and a gate that REDIRECTS its output is still followed.
+#
+# Every verdict the driver gives is read off what came back on the gate's pipe.
+# `bx` — this project's local/remote build chooser, and the wrapper most rounds
+# gate through — sends the whole build to a log file and prints only its own
+# summary, so the driver saw an exit code and nothing else: R2145's three
+# counterfactuals were ALL really caught and ALL reported UNREADABLE. The
+# capability asserted here is that the pointer is followed; its absence is
+# silent in the worst direction, because "unreadable" reads as a tooling
+# hiccup rather than as evidence that went missing.
+cf_log="$(python3 - "$repo_root" <<'PY' 2>&1 || true
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, sys.argv[1] + "/tools")
+from counterfactual import classify
+
+with tempfile.TemporaryDirectory() as tmp:
+    log = pathlib.Path(tmp) / "run.log"
+    log.write_text("---- tests::a_thing stdout ----\npanicked at src/x.rs")
+    pipe = f"bx: exit=101 in 34s -- full log: {log}"
+    print(classify(subprocess.CompletedProcess(["gate"], 101, pipe, ""))[0])
+PY
+)"
+ok "and a gate that redirects its output has its log followed" "$cf_log" "CAUGHT"
+
 # ── R1892: the round verdict leads with a word a driver can read ────────────
 #
 # ★★★★★ An independent checker watches this repository's repayment loop and its

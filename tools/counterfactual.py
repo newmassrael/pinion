@@ -117,8 +117,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -236,6 +238,34 @@ FAILURE_MARKERS = tuple(
     for marker in markers
 )
 
+#: ★★★★★ R2145.1 — the gates that send their output SOMEWHERE ELSE and say
+#: where, keyed by the tool that redirects.
+#:
+#: Every verdict above is read off what came back on the gate's pipe. A wrapper
+#: that redirects the command's whole stdout and stderr into a file therefore
+#: hands this driver an exit code and nothing else — and `classify` is right to
+#: call that UNREADABLE, which is how this was found: three counterfactuals
+#: gated through `bx`, all three really caught, all three unjudgeable.
+#:
+#: ⚠⚠ The repair is NOT a marker. `bx: exit=101` names a red, so a marker
+#: matching it would classify a COMPILE error as a catch — the exact confusion
+#: [`COMPILE_MARKERS`] exists to prevent, and the one R2104's ratchet was
+#: written to keep out of this table. The pointer is honest where a marker
+#: cannot be: the log holds the harness's own sentences, so following it makes
+#: every vocabulary above work again, compile markers included.
+#:
+#: ⚠ Keyed by tool for [`FAILURE_MARKERS_BY_HARNESS`]'s reason: what goes stale
+#: here is a wrapper nobody taught it, and a flat list cannot be asked which.
+#:
+#: ⚠ Each pattern must capture the PATH in group 1. A pointer this driver
+#: cannot read is reported by name rather than passed over — see [`classify`].
+LOG_POINTERS_BY_TOOL = {
+    # `bx`, this project's local/remote build chooser: `ssh ... >>"$log" 2>&1`,
+    # then one `say` line carrying the path. Nothing of the build reaches the
+    # pipe — not the test names, not `error[E`, not the panic.
+    "bx": r"full log:\s*(\S+)",
+}
+
 CAUGHT, PASSED, BROKEN, NOT_APPLIED = "CAUGHT", "PASSED", "BROKEN", "NOT-APPLIED"
 
 #: ★★★★★ R1939 — the gate went red and NOTHING in its output says what failed.
@@ -306,9 +336,43 @@ def failing_lines(blob: str, markers: tuple[str, ...] = ()) -> list[str]:
     ]
 
 
-def classify(completed: subprocess.CompletedProcess) -> tuple[str, str]:
+def follow_logs(blob: str, root: Path | None = None) -> tuple[str, list[str]]:
+    """`blob` with every log it points at appended, and the ones unreadable.
+
+    ★★★★★ R2145.1 — see [`LOG_POINTERS_BY_TOOL`]. A gate that redirects its
+    output and names the file is telling this driver where its evidence went;
+    the alternative is to judge a run by its exit code, which is what
+    [`UNREADABLE`] exists to refuse.
+
+    ⚠ An unreadable pointer is RETURNED rather than ignored, because "the gate
+    said nothing" and "the gate said where and the where was gone" are
+    different repairs and only the second one names a path.
+    """
+    seen: set[str] = set()
+    found: list[str] = []
+    unread: list[str] = []
+    for pattern in LOG_POINTERS_BY_TOOL.values():
+        for match in re.finditer(pattern, blob):
+            path = Path(match.group(1))
+            if not path.is_absolute() and root is not None:
+                path = root / path
+            if str(path) in seen:
+                continue
+            seen.add(str(path))
+            try:
+                found.append(path.read_text(errors="replace"))
+            except OSError:
+                unread.append(str(path))
+    return blob + "".join(found), unread
+
+
+def classify(
+    completed: subprocess.CompletedProcess, root: Path | None = None
+) -> tuple[str, str]:
     """Property 3: a compile error is its own verdict, and it is a failure."""
-    blob = (completed.stdout or "") + (completed.stderr or "")
+    blob, unread = follow_logs(
+        (completed.stdout or "") + (completed.stderr or ""), root
+    )
     for marker in COMPILE_MARKERS:
         if marker in blob:
             line = next(
@@ -323,10 +387,15 @@ def classify(completed: subprocess.CompletedProcess) -> tuple[str, str]:
         # catch with a thin detail: an unreadable verdict cannot be told from a
         # gate that fell over for an unrelated reason, so it is reported as its
         # own failure and does not count toward `caught`.
+        gone = (
+            f"; its log was named and could not be read: {', '.join(unread)}"
+            if unread
+            else ""
+        )
         return UNREADABLE, (
             f"exit {completed.returncode}, and no line of the gate's output "
             f"names what failed — known harnesses: "
-            f"{', '.join(FAILURE_MARKERS_BY_HARNESS)}"
+            f"{', '.join(FAILURE_MARKERS_BY_HARNESS)}{gone}"
         )
     return CAUGHT, "; ".join(failing[:3])[:300]
 
@@ -374,7 +443,9 @@ def check_baseline(root: Path, gate: list[str]) -> None:
         gate, cwd=root, capture_output=True, text=True, check=False
     )
     if completed.returncode != 0:
-        blob = (completed.stdout or "") + (completed.stderr or "")
+        blob, _ = follow_logs(
+            (completed.stdout or "") + (completed.stderr or ""), root
+        )
         failing = failing_lines(blob)
         raise SystemExit(
             "counterfactual: the gate is ALREADY RED before any case ran, so "
@@ -414,7 +485,7 @@ def run_case(root: Path, gate: list[str], case: Case) -> Outcome:
             text=True,
             check=False,
         )
-        verdict, detail = classify(completed)
+        verdict, detail = classify(completed, root)
     finally:
         target.write_text(original)
         after = digest(target)
@@ -569,6 +640,36 @@ def selftest() -> int:
         "★ the baseline reader and the case reader share one extractor",
         failing_lines(blob) and failing_lines(blob)[0] in ran(1, blob)[1],
     )
+
+    # (5) ★★★★★ R2145.1 — a gate that redirects its output and says WHERE.
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "run.log"
+        pipe = f"bx: exit=101 in 34s — full log: {log}"
+        held(
+            "★★★★★ the same red with NO pointer is UNREADABLE, which is what "
+            "the pointer is doing the work of",
+            ran(101, "bx: exit=101 in 34s")[0] == UNREADABLE,
+        )
+        log.write_text("---- tests::a_thing stdout ----\npanicked at src/x.rs")
+        verdict, detail = ran(101, pipe)
+        held("a redirected gate's failure is read out of its log", verdict == CAUGHT)
+        held(
+            "★ and the detail quotes the LOG's own sentence, not the wrapper's",
+            "tests::a_thing" in detail,
+        )
+        log.write_text("error[E0599]: no method named `takes`")
+        held(
+            "★★★★★ and a COMPILE error inside the log is BROKEN — the "
+            "distinction a marker on the wrapper's exit line would destroy",
+            ran(101, pipe)[0] == BROKEN,
+        )
+        log.unlink()
+        verdict, detail = ran(101, pipe)
+        held(
+            "★ a pointer whose log is gone FAILS CLOSED, not open",
+            verdict == UNREADABLE,
+        )
+        held("and the path it could not read is named", str(log) in detail)
 
     for one in failures:
         print(f"selftest: FAIL — {one}")
