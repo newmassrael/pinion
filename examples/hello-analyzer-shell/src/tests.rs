@@ -10443,19 +10443,40 @@ fn r2124_every_mounted_guest_is_asked_about() {
 /// rounds before the audit that listed it).
 ///
 /// ⚠ These are NOT all the same kind of work, and saying so here is what stops
-/// the next round picking the harder one by accident:
+/// the next round picking the harder one by accident. **Measured per screen,
+/// R2140.1 — the first draft of this list said TWO kinds and the tree has
+/// FOUR.** It was written from an earlier survey rather than from the screens,
+/// which is the defect this whole campaign is about, committed inside the round
+/// whose subject was hand-written claims going unchecked:
 ///
-/// * `hello-key-patterns` and `hello-node-lab` carry a `Painted` with a
-///   `reachable` set, so their gate is the four lines `hello-log-view` has.
-/// * `hello-sessions-view` and `hello-topology-view` have NO `Painted` at all —
-///   their sweep hands out a bare `Scene`. A tag collection has to be written
-///   first, and *does a mark a scroll would reveal count as painted here* has
-///   to be ANSWERED for those screens rather than inherited.
-/// * this host paints its own chrome and mounts the rest, so its pin covers the
-///   host's marks and not its guests'.
+/// * ~~`hello-key-patterns`~~ — `Painted` + `sweep` + a `BTreeSet`
+///   `reachable`, genuinely the four lines `hello-log-view` has. **Pinned at
+///   R2141**, and its row left this roster in the same commit, which is the
+///   rule this gate exists to enforce.
+/// * this host — `Painted` + `sweep`, but NO `reachable` field and a different
+///   sweep signature. Four lines with `tags` alone. It paints its own chrome
+///   and mounts the rest, so its pin covers the host's marks, not its guests'.
+/// * `hello-node-lab` — has `Painted` but **no `sweep` at all**: its tests
+///   iterate `STATES`/`SIZES` inline at four separate sites, and its
+///   `reachable` is a `BTreeMap<String, Vec<Move>>` rather than a set. Needs
+///   its own iteration written; not four lines.
+/// * `hello-sessions-view` and `hello-topology-view` — NO `Painted` at all,
+///   their sweep hands out a bare `Scene`, so a tag walk has to be written.
+///
+/// ⚠ And a second correction, because the first draft asked a question that
+/// does not exist: it said *does a mark a scroll would reveal count as painted*
+/// has to be ANSWERED for the last two. It does not — those screens have **no
+/// `reachable` concept at all**, so there is nothing to include. Whether they
+/// OUGHT to have one is a separate question, and folding it in here made a
+/// measurement look like a pending decision.
+///
+/// ★ The census behind both corrections: `reachable` exists in **4 of 7**
+/// screens and in **two different types** — a `BTreeSet` in three, a
+/// `BTreeMap` in the node lab. That is why
+/// `pinion_core::test_fixtures::address_pin` takes the screen's own TAG
+/// ITERATOR rather than a `Scene` or a `Painted`.
 const PIN_OWED: &[&str] = &[
     "hello-analyzer-shell",
-    "hello-key-patterns",
     "hello-node-lab",
     "hello-sessions-view",
     "hello-topology-view",

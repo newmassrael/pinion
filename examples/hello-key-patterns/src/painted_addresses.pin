@@ -1,0 +1,46 @@
+# Every address this screen paints, folded by `repeating_site`.
+# Rewritten by setting PINION_REGEN_ADDRESS_PIN and running this
+# screen's address-pin test; do not hand-edit.
+key_patterns
+kp.column.by
+kp.column.direction
+kp.column.id
+kp.column.matches
+kp.column.pattern
+kp.column.rate
+kp.column.status
+kp.detail
+kp.detail.declared_by
+kp.detail.declarer
+kp.detail.direction
+kp.detail.endpoint.*
+kp.detail.endpoints
+kp.detail.first_seen
+kp.detail.matches
+kp.detail.ordinal
+kp.detail.pattern
+kp.detail.rate
+kp.detail.standing
+kp.detail.standing.health
+kp.detail.standing.kind
+kp.detail.subject
+kp.filter.query
+kp.filter.query-text
+kp.header
+kp.header.filter
+kp.header.summary
+kp.header.title
+kp.list
+kp.list.body
+kp.list.cell.*_by
+kp.list.cell.*_direction
+kp.list.cell.*_id
+kp.list.cell.*_matches
+kp.list.cell.*_pattern
+kp.list.cell.*_rate
+kp.list.cell.*_status
+kp.list.dot.*
+kp.list.header
+kp.list.open
+kp.list.row.*
+kp.root
