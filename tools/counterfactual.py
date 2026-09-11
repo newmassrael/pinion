@@ -215,7 +215,16 @@ FAILURE_MARKERS_BY_HARNESS = {
     # ⚠ The marker is the SENTENCE and not the tool's name prefix: every line
     # this tool prints starts `painted-addresses:`, its green summary included,
     # so a prefix marker would classify a passing run as a failure.
-    "painted-addresses ratchet": ("spells a painted address it could ask for",),
+    # ⚠ R2147 — a SECOND sentence, not a second population. R2116's note above
+    # says a third population would join without an edit here, and that is true
+    # of a population; this tool now makes a different REFUSAL — a family that
+    # reached zero spellers with nothing holding its address to a value — and a
+    # different refusal is a different sentence. Measured the way the first one
+    # was: three counterfactuals really caught, all three UNREADABLE.
+    "painted-addresses ratchet": (
+        "spells a painted address it could ask for",
+        "reached zero spellers with nothing pinning their value",
+    ),
     # ★ R2129 — the second ratchet of that shape, and it needed its own entry
     # for the reason the one above did: `read_path_shapes.py --check` refuses
     # with `read-path-shapes: a read path answers two shapes`, which holds no

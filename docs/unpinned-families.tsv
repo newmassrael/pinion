@@ -1,0 +1,38 @@
+# R2147 — family/ies whose every reader was converted and whose value
+# nothing pins: no `.pin` artifact covers them and no assertion spells
+# them. Each row is a check this campaign DELETED rather than repaid.
+#
+# The gate refuses a family JOINING this list, which is what stops a
+# conversion from taking the last check with it. It does not refuse the
+# rows already here: a gate that is red the day it is written is one
+# nobody turns on, and these were created over many rounds.
+#
+# The fix for a row is to give the family a value pin — a screen's
+# address-pin test, or a crate that emits its grammar — and then run
+# `python3 tools/painted_addresses.py --write-budget`.
+#
+# Rewritten by that command; do not hand-edit.
+lab.crumb
+lab.faults
+lab.hint
+lab.node
+lab.observed
+lab.pin
+lab.rail
+lab.reset
+lab.toast
+no.such
+sv.chip
+sv.detail
+sv.list
+sv.row
+sv.tip
+tv.chip
+tv.filters
+tv.graph
+tv.inspector
+tv.layout
+tv.link
+tv.node
+tv.tip
+tv.toggle
