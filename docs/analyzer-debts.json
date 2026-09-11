@@ -336,6 +336,18 @@
       ]
     },
     {
+      "name": "debt-a-published-address-can-be-renamed-and-nothing-refuses",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
       "name": "debt-a-push-dies-after-the-gates-with-the-keepalive-already-set",
       "substituted": false,
       "blocked_by": "buildable",
