@@ -12,34 +12,44 @@
 //! paint it. That is the defect this module is opened against, and it is the
 //! crate-side half of a campaign that has already moved seven screens.
 //!
-//! # ★ What is declared here, and what is deliberately not
+//! # ★ What is declared here: every family this crate paints
 //!
-//! The unit of declaration is a **grammar with more than one speller**.
-//! Measured over this crate's painters, 67 distinct grammars are composed and
-//! 52 of them are spelled in exactly one file — that painter *is* their
-//! declaring site, and lifting them here would move a name without removing a
-//! copy. The other 15 are spelled in two to ten files apiece, and those are
-//! what this module holds.
+//! R2136 opened this module at a narrower rule — *a grammar spelled by more
+//! than one painter* — on the reasoning that a grammar spelled in exactly one
+//! painter is already declared there. R2145 measured what that costs a READER:
+//! a walk is another language in another file, so every chart grammar is
+//! cross-file from its side, and the walks spell **27** distinct grammars
+//! against a declaration that held **6**. A reader cannot compose an address
+//! the crate never declared, however many painters spell it.
 //!
-//! The one exception to that rule is the overlay, declared whole. It is a
-//! single grammar with nine members, and declaring seven of them while two
-//! stayed behind a `format!` in their painter is the shape this campaign
-//! exists to remove — one grammar answering in two places.
+//! ⇒ the unit is not "more than one painter" but **"painted at all"**, and
+//! [`GRAMMAR`] is the whole of it.
 //!
-//! ⚠ The exemption is stated rather than left to be inferred: a painter's own
-//! vocabulary (`box.{i}`, `candle.{i}`, `tile.{i}.label`, the tick and label
-//! families in `draw`, the legend's in `legend`) is composed
-//! where it is painted. A round that gives one of those a second speller should
-//! move it here rather than spell it twice.
+//! # ★★★★★ The declaration and its table are ONE literal
+//!
+//! Each family below is written once, as a template, inside the `composers!`
+//! invocation. That single literal becomes both the function's `format!` string
+//! and its row in [`GRAMMAR`] — so the table cannot drift from the composers,
+//! because there is nothing to drift: they are the same token.
+//!
+//! [`render_grammar`] writes that table to `src/painted_grammar.tsv`, which is
+//! committed. A walk is Python and can call none of this; what it can do is
+//! read the artifact and format the template, and Rust's `{name}` placeholders
+//! are Python's `str.format` placeholders unchanged.
+//!
+//! ⚠ A template that does not mention one of its own arguments is a COMPILE
+//! error (`named argument never used`), so a composer cannot silently drop a
+//! coordinate from an address.
 //!
 //! # ★★★★★ The overlay is one grammar under two names
 //!
 //! Eight chart kinds paint an inspect overlay and `timeline` paints
 //! the same thing under the part name `playhead` — `header`, `tooltip`,
 //! `value.{i}`, member for member. A needle looking for `inspect.` cannot see
-//! it, which is why the count above found the timeline's three spellings only
-//! after the grammar was named. [`Overlay`] therefore carries the part rather
-//! than baking it in, and [`inspect`] and [`playhead`] are the two that exist.
+//! it, which is why the count that opened this module found the timeline's
+//! three spellings only after the grammar was named. [`Overlay`] therefore
+//! carries the part rather than baking it in, [`OVERLAY_GRAMMAR`] leaves it as
+//! a `{part}` placeholder, and [`OVERLAY_PARTS`] is what it can be.
 //!
 //! # ⚠⚠ `value` is two grammars, and they split by chart kind
 //!
@@ -57,6 +67,83 @@
 //! nothing and reads it as the chart not painting a value. Declaring both, and
 //! saying here which kinds answer which, is what this module can do that a
 //! `format!` at the call site cannot.
+
+/// Declare a family: one template becomes the composer AND its [`GRAMMAR`] row.
+///
+/// ★★★★★ R2146 — the bridge this removes is a HAND LIST. An artifact emitted
+/// from a table, with the table written beside the functions, is two spellings
+/// of every grammar and the second one goes stale silently; an artifact emitted
+/// by CALLING each composer needs a call per composer, which is the same list
+/// wearing a different hat. Passing the literal through to both is the only
+/// arrangement with nothing to keep in step.
+macro_rules! composers {
+    ($(
+        $(#[$meta:meta])*
+        $name:ident ( $($arg:ident : $ty:ty),* ) = $tpl:literal ;
+    )*) => {
+        $(
+            $(#[$meta])*
+            #[must_use]
+            pub fn $name(prefix: &str $(, $arg: $ty)*) -> String {
+                format!($tpl, prefix = prefix $(, $arg = $arg)*)
+            }
+        )*
+
+        /// Every family this crate paints, as `(name, template)`.
+        ///
+        /// The template's placeholders are `{prefix}` and the composer's own
+        /// argument names. Formatting one is what a reader outside Rust does
+        /// instead of spelling the address.
+        pub const GRAMMAR: &[(&str, &str)] = &[ $( (stringify!($name), $tpl) ),* ];
+    };
+}
+
+/// Declare an overlay member, whose template also carries `{part}`.
+macro_rules! overlay_members {
+    ($(
+        $(#[$meta:meta])*
+        $name:ident ( $($arg:ident : $ty:ty),* ) = $tpl:literal ;
+    )*) => {
+        impl Overlay<'_> {
+            $(
+                $(#[$meta])*
+                #[must_use]
+                pub fn $name(&self $(, $arg: $ty)*) -> String {
+                    format!(
+                        $tpl,
+                        prefix = self.prefix,
+                        part = self.part
+                        $(, $arg = $arg)*
+                    )
+                }
+            )*
+        }
+
+        /// Every member grammar an [`Overlay`] paints, as `(name, template)`.
+        ///
+        /// `{part}` is the overlay's own name — one of [`OVERLAY_PARTS`].
+        pub const OVERLAY_GRAMMAR: &[(&str, &str)] = &[ $( (stringify!($name), $tpl) ),* ];
+    };
+}
+
+/// Declare an overlay part: the constructor AND its [`OVERLAY_PARTS`] row.
+macro_rules! overlay_parts {
+    ($(
+        $(#[$meta:meta])*
+        $name:ident = $value:literal ;
+    )*) => {
+        $(
+            $(#[$meta])*
+            #[must_use]
+            pub fn $name(prefix: &str) -> Overlay<'_> {
+                Overlay { prefix, part: $value }
+            }
+        )*
+
+        /// Every part name an [`Overlay`] is painted under.
+        pub const OVERLAY_PARTS: &[&str] = &[ $($value),* ];
+    };
+}
 
 /// The prefix a chart paints under when its caller does not choose one.
 ///
@@ -84,71 +171,235 @@ pub const DEFAULT_PREFIX: &str = "chart";
 /// [`inspect`]`(`[`DEFAULT_PREFIX`]`).tooltip()` so the two cannot drift.
 pub const DEFAULT_INSPECT_TOOLTIP: &str = "chart.inspect.tooltip";
 
-/// The background box behind the whole chart.
-///
-/// ★ The most-spelled grammar in the crate: ten painters, one per chart kind.
-#[must_use]
-pub fn bg(prefix: &str) -> String {
-    part(prefix, "bg")
-}
+composers! {
+    /// The background box behind the whole chart.
+    ///
+    /// ★ The most-spelled grammar in the crate: ten painters, one per chart
+    /// kind.
+    bg() = "{prefix}.bg";
 
-/// The x axis rule.
-#[must_use]
-pub fn axis_x(prefix: &str) -> String {
-    part(prefix, "axis.x")
-}
+    /// The x axis rule.
+    axis_x() = "{prefix}.axis.x";
 
-/// The y axis rule.
-#[must_use]
-pub fn axis_y(prefix: &str) -> String {
-    part(prefix, "axis.y")
-}
+    /// The y axis rule.
+    axis_y() = "{prefix}.axis.y";
 
-/// One series' stroked path.
-#[must_use]
-pub fn series(prefix: &str, index: usize) -> String {
-    indexed(prefix, "series", index)
-}
+    /// One series' stroked path.
+    series(index: usize) = "{prefix}.series.{index}";
 
-/// One series' filled area.
-#[must_use]
-pub fn area(prefix: &str, index: usize) -> String {
-    indexed(prefix, "area", index)
-}
+    /// One series' filled area.
+    area(index: usize) = "{prefix}.area.{index}";
 
-/// One datum: series `index`, point `at`.
-///
-/// ⚠ Both coordinates are in the address because these marks are a grid rather
-/// than a list — the series alone does not name one.
-#[must_use]
-pub fn point(prefix: &str, index: usize, at: usize) -> String {
-    format!("{prefix}.point.{index}.{at}")
-}
+    /// One datum: series `index`, point `at`.
+    ///
+    /// ⚠ Both coordinates are in the address because these marks are a grid
+    /// rather than a list — the series alone does not name one.
+    point(index: usize, at: usize) = "{prefix}.point.{index}.{at}";
 
-/// One part of one distribution's cap.
-///
-/// `part` is the painter's own word for which cap this is, and arrives computed
-/// rather than as a literal — which is why it is taken rather than enumerated.
-#[must_use]
-pub fn cap(prefix: &str, index: usize, part: &str) -> String {
-    format!("{prefix}.cap.{index}.{part}")
-}
+    /// One part of one distribution's cap.
+    ///
+    /// `part` is the painter's own word for which cap this is, and arrives
+    /// computed rather than as a literal — which is why it is taken rather than
+    /// enumerated.
+    cap(index: usize, part: &str) = "{prefix}.cap.{index}.{part}";
 
-/// The general form: one of this crate's parts, under a chart's prefix.
-///
-/// ★ Public for the same reason `draw`'s families are not lifted here:
-/// a painter names more parts than this module declares, and one that needs
-/// another should compose it through here rather than reach for a `format!`,
-/// which is the whole defect.
-#[must_use]
-pub fn part(prefix: &str, part: &str) -> String {
-    format!("{prefix}.{part}")
-}
+    /// The general form: one of this crate's parts, under a chart's prefix.
+    ///
+    /// ★ Public for the same reason a painter's computed part names are taken
+    /// rather than enumerated: a painter can name a part this module does not
+    /// declare, and one that does should compose it through here rather than
+    /// reach for a `format!`, which is the whole defect.
+    part(part: &str) = "{prefix}.{part}";
 
-/// The general indexed form: one of this crate's parts, numbered.
-#[must_use]
-pub fn indexed(prefix: &str, part: &str, index: usize) -> String {
-    format!("{prefix}.{part}.{index}")
+    /// The general indexed form: one of this crate's parts, numbered.
+    indexed(part: &str, index: usize) = "{prefix}.{part}.{index}";
+
+    /// The accessibility node for a named landmark of a chart's summary.
+    ///
+    /// 🟥🟥🟥★★★★★ R2145 — **this family is spelled in FOUR painters (boxplot,
+    /// bar, candlestick, scatter) and R2136's own criterion would have declared
+    /// it. It was missed because the inventory's character class was
+    /// `[a-z_.{}]` and `a11y` CARRIES A DIGIT**, so the token did not fail the
+    /// group — it failed the whole pattern, and the family never appeared in
+    /// the count at all. This tree has paid for that shape before: R2130 judged
+    /// `i32` a regex artifact on the same reasoning and it was a real fifth
+    /// word.
+    ///
+    /// ⇒ a pattern is part of the claim a census makes. A family a census
+    /// cannot spell is a family it reports as absent.
+    a11y_at(name: &str) = "{prefix}.a11y.{name}";
+
+    /// The accessibility node for one row of a chart's data.
+    ///
+    /// ⚠ The index joins with a bare `r` and NOT a separator — `…a11y.r3`, not
+    /// `…a11y.r.3`. Declared here so a reader who knows this tree's dotted
+    /// convention cannot apply it by reflex and find nothing.
+    a11y_row(index: usize) = "{prefix}.a11y.r{index}";
+
+    /// The accessibility node standing for a chart's series as a whole.
+    a11y_series() = "{prefix}.a11y.series";
+
+    /// The accessibility node for one series.
+    a11y_series_at(index: usize) = "{prefix}.a11y.series.{index}";
+
+    /// One bar of a bar chart.
+    bar(index: usize) = "{prefix}.bar.{index}";
+
+    /// One box of a box plot.
+    ///
+    /// ⚠ `box_at`, not `box`: `box` is a reserved word in Rust.
+    box_at(index: usize) = "{prefix}.box.{index}";
+
+    /// One session's candle body.
+    candle(index: usize) = "{prefix}.candle.{index}";
+
+    /// The colour scale's strip.
+    colorbar_strip() = "{prefix}.colorbar.strip";
+
+    /// One tick of the colour scale.
+    colorbar_tick(index: usize) = "{prefix}.colorbar.tick.{index}";
+
+    /// One series' in-window overdraw, filled.
+    focus_area(index: usize) = "{prefix}.focus.area.{index}";
+
+    /// One series' in-window overdraw, stroked.
+    focus_series(index: usize) = "{prefix}.focus.series.{index}";
+
+    /// One vertical gridline.
+    grid_x(index: usize) = "{prefix}.grid.x.{index}";
+
+    /// One horizontal gridline.
+    grid_y(index: usize) = "{prefix}.grid.y.{index}";
+
+    /// One minor vertical gridline.
+    grid_minor_x(index: usize) = "{prefix}.grid.minor.x.{index}";
+
+    /// One minor horizontal gridline.
+    grid_minor_y(index: usize) = "{prefix}.grid.minor.y.{index}";
+
+    /// One x-axis tick label.
+    label_x(index: usize) = "{prefix}.label.x.{index}";
+
+    /// One y-axis tick label.
+    label_y(index: usize) = "{prefix}.label.y.{index}";
+
+    /// One angular tick label, on a polar chart.
+    label_a(index: usize) = "{prefix}.label.a.{index}";
+
+    /// One radial tick label, on a polar chart.
+    label_r(index: usize) = "{prefix}.label.r.{index}";
+
+    /// A timeline lane's name.
+    lane_label(index: usize) = "{prefix}.lane.{index}.label";
+
+    /// One span drawn in a timeline lane.
+    lane_span(lane: usize, at: usize) = "{prefix}.lane.{lane}.span.{at}";
+
+    /// The legend as a whole.
+    legend_root() = "{prefix}.legend";
+
+    /// What the legend says it could not fit.
+    legend_overflow() = "{prefix}.legend.overflow";
+
+    /// One legend entry.
+    legend_at(index: usize) = "{prefix}.legend.{index}";
+
+    /// One legend entry's words.
+    legend_label(index: usize) = "{prefix}.legend.{index}.label";
+
+    /// One legend entry's colour chip.
+    legend_swatch(index: usize) = "{prefix}.legend.{index}.swatch";
+
+    /// One distribution's median line.
+    median(index: usize) = "{prefix}.median.{index}";
+
+    /// One session's open-high-low-close range.
+    ohlc_range(index: usize) = "{prefix}.ohlc.{index}.range";
+
+    /// One named landmark of a session's range.
+    ohlc_part(index: usize, part: &str) = "{prefix}.ohlc.{index}.{part}";
+
+    /// One datum outside a distribution's whiskers.
+    outlier(index: usize, at: usize) = "{prefix}.outlier.{index}.{at}";
+
+    /// A polar chart's outer boundary.
+    rim() = "{prefix}.rim";
+
+    /// One of a polar chart's own grid rings.
+    ///
+    /// ⚠ NOT [`Overlay::ring`], which is `<prefix>.inspect.ring.<i>` — the ring
+    /// drawn around a mark the reader is pointing at. This is the chart's grid.
+    ring_at(index: usize) = "{prefix}.ring.{index}";
+
+    /// One timeline rule.
+    rule(index: usize) = "{prefix}.rule.{index}";
+
+    /// One segment of a series whose colour varies along it.
+    ///
+    /// ⚠ Its template repeats [`series`]' words rather than nesting the call,
+    /// because a template is what makes the artifact derivable. What was
+    /// structural is now asserted:
+    /// `a_nested_grammar_still_starts_with_the_one_it_extends` holds this to
+    /// [`series`], so the two cannot drift apart silently.
+    series_seg(index: usize, at: usize) = "{prefix}.series.{index}.seg.{at}";
+
+    /// One wedge of a donut.
+    slice(index: usize) = "{prefix}.slice.{index}";
+
+    /// One of a polar chart's own radial spokes.
+    ///
+    /// ⚠ NOT [`Overlay::spoke`], which is `<prefix>.inspect.spoke` — the rule
+    /// dropped at the reader's angle. This is the chart's grid.
+    spoke_at(index: usize) = "{prefix}.spoke.{index}";
+
+    /// One timeline tick.
+    tick(index: usize) = "{prefix}.tick.{index}";
+
+    /// One rectangle of a treemap.
+    tile(index: usize) = "{prefix}.tile.{index}";
+
+    /// One treemap rectangle's words.
+    tile_label(index: usize) = "{prefix}.tile.{index}.label";
+
+    /// One distribution's violin outline.
+    violin(index: usize) = "{prefix}.violin.{index}";
+
+    /// One end of one distribution's whisker.
+    whisker(index: usize, end: &str) = "{prefix}.whisker.{index}.{end}";
+
+    /// One session's high wick.
+    wick_hi(index: usize) = "{prefix}.wick.{index}.hi";
+
+    /// One session's low wick.
+    wick_lo(index: usize) = "{prefix}.wick.{index}.lo";
+
+    /// One named end of a session's wick.
+    wick_part(index: usize, end: &str) = "{prefix}.wick.{index}.{end}";
+
+    /// One category label under a bar chart.
+    xlabel(index: usize) = "{prefix}.xlabel.{index}";
+
+    /// A sparkline's filled area.
+    ///
+    /// ⚠⚠ **NOT [`area`], and the difference is an index.** A line or polar
+    /// chart fills one area PER SERIES (`<prefix>.area.<i>`); a sparkline has a
+    /// single series and fills `<prefix>.area` with no index at all.
+    /// Substituting [`area`] here would compile and paint a DIFFERENT address —
+    /// the same trap as [`Overlay::value`] against [`Overlay::value_at`],
+    /// caught at R2145 while converting this very site.
+    spark_area() = "{prefix}.area";
+
+    /// A sparkline's trailing point.
+    spark_end() = "{prefix}.end";
+
+    /// A sparkline's stroked path.
+    spark_line() = "{prefix}.line";
+
+    /// A sparkline's high mark.
+    spark_max() = "{prefix}.max";
+
+    /// A sparkline's low mark.
+    spark_min() = "{prefix}.min";
 }
 
 /// The part a tag names, given the prefix it was painted under.
@@ -162,357 +413,6 @@ pub fn part_of<'a>(prefix: &str, tag: &'a str) -> Option<&'a str> {
     tag.strip_prefix(prefix)?.strip_prefix('.')
 }
 
-// ── R2145: the families R2136's cut left out ────────────────────────────────
-//
-// ★★★★★ R2136 cut this module at "a grammar spelled in more than one PAINTER",
-// on the reasoning that a grammar spelled in exactly one painter is already
-// declared there. That is right for stopping painter-side duplication and
-// WRONG as a basis for reader conversion, and the measurement says so: a walk
-// is another language in another file, so every chart grammar is cross-file
-// from its side. The walks spell 27 distinct grammars; before this block the
-// declaration held 6, and 154 chart walk sites had nothing to be handed.
-//
-// ⚠ Two names below are deliberate and a reader should not "tidy" them:
-// `box_at` because `box` is a Rust keyword, and `ring_at`/`spoke_at` because
-// [`Overlay::ring`] and [`Overlay::spoke`] already own those words for
-// DIFFERENT addresses — `<prefix>.inspect.ring.<i>` is the ring drawn round a
-// hit mark, while `<prefix>.ring.<k>` is a polar chart's own grid ring. Free
-// functions and methods would not collide at the compiler, so nothing but the
-// name would have stopped a reader taking the wrong one.
-
-/// The accessibility node for a named landmark of a chart's summary.
-///
-/// 🟥🟥🟥★★★★★ R2145 — **this family is spelled in FOUR painters (boxplot, bar,
-/// candlestick, scatter) and R2136's own criterion would have declared it. It
-/// was missed because the inventory's character class was `[a-z_.{}]` and
-/// `a11y` CARRIES A DIGIT**, so the token did not fail the group — it failed
-/// the whole pattern, and the family never appeared in the count at all. This
-/// tree has paid for that shape before: R2130 judged `i32` a regex artifact on
-/// the same reasoning and it was a real fifth word.
-///
-/// ⇒ a pattern is part of the claim a census makes. A family a census cannot
-/// spell is a family it reports as absent.
-#[must_use]
-pub fn a11y_at(prefix: &str, name: &str) -> String {
-    format!("{prefix}.a11y.{name}")
-}
-
-/// The accessibility node for one row of a chart's data.
-///
-/// ⚠ The index joins with a bare `r` and NOT a separator — `…a11y.r3`, not
-/// `…a11y.r.3`. Declared here so a reader who knows this tree's dotted
-/// convention cannot apply it by reflex and find nothing.
-#[must_use]
-pub fn a11y_row(prefix: &str, index: usize) -> String {
-    format!("{prefix}.a11y.r{index}")
-}
-
-/// The accessibility node standing for a chart's series as a whole.
-#[must_use]
-pub fn a11y_series(prefix: &str) -> String {
-    part(prefix, "a11y.series")
-}
-
-/// The accessibility node for one series.
-#[must_use]
-pub fn a11y_series_at(prefix: &str, index: usize) -> String {
-    indexed(prefix, "a11y.series", index)
-}
-
-/// One bar of a bar chart.
-#[must_use]
-pub fn bar(prefix: &str, index: usize) -> String {
-    indexed(prefix, "bar", index)
-}
-
-/// One box of a box plot.
-///
-/// ⚠ `box_at`, not `box`: `box` is a reserved word in Rust.
-#[must_use]
-pub fn box_at(prefix: &str, index: usize) -> String {
-    indexed(prefix, "box", index)
-}
-
-/// One session's candle body.
-#[must_use]
-pub fn candle(prefix: &str, index: usize) -> String {
-    indexed(prefix, "candle", index)
-}
-
-/// The colour scale's strip.
-#[must_use]
-pub fn colorbar_strip(prefix: &str) -> String {
-    part(prefix, "colorbar.strip")
-}
-
-/// One tick of the colour scale.
-#[must_use]
-pub fn colorbar_tick(prefix: &str, index: usize) -> String {
-    indexed(prefix, "colorbar.tick", index)
-}
-
-/// One series' in-window overdraw, filled.
-#[must_use]
-pub fn focus_area(prefix: &str, index: usize) -> String {
-    indexed(prefix, "focus.area", index)
-}
-
-/// One series' in-window overdraw, stroked.
-#[must_use]
-pub fn focus_series(prefix: &str, index: usize) -> String {
-    indexed(prefix, "focus.series", index)
-}
-
-/// One vertical gridline.
-#[must_use]
-pub fn grid_x(prefix: &str, index: usize) -> String {
-    indexed(prefix, "grid.x", index)
-}
-
-/// One horizontal gridline.
-#[must_use]
-pub fn grid_y(prefix: &str, index: usize) -> String {
-    indexed(prefix, "grid.y", index)
-}
-
-/// One minor vertical gridline.
-#[must_use]
-pub fn grid_minor_x(prefix: &str, index: usize) -> String {
-    indexed(prefix, "grid.minor.x", index)
-}
-
-/// One minor horizontal gridline.
-#[must_use]
-pub fn grid_minor_y(prefix: &str, index: usize) -> String {
-    indexed(prefix, "grid.minor.y", index)
-}
-
-/// One x-axis tick label.
-#[must_use]
-pub fn label_x(prefix: &str, index: usize) -> String {
-    indexed(prefix, "label.x", index)
-}
-
-/// One y-axis tick label.
-#[must_use]
-pub fn label_y(prefix: &str, index: usize) -> String {
-    indexed(prefix, "label.y", index)
-}
-
-/// One angular tick label, on a polar chart.
-#[must_use]
-pub fn label_a(prefix: &str, index: usize) -> String {
-    indexed(prefix, "label.a", index)
-}
-
-/// One radial tick label, on a polar chart.
-#[must_use]
-pub fn label_r(prefix: &str, index: usize) -> String {
-    indexed(prefix, "label.r", index)
-}
-
-/// A timeline lane's name.
-#[must_use]
-pub fn lane_label(prefix: &str, index: usize) -> String {
-    format!("{prefix}.lane.{index}.label")
-}
-
-/// One span drawn in a timeline lane.
-#[must_use]
-pub fn lane_span(prefix: &str, lane: usize, at: usize) -> String {
-    format!("{prefix}.lane.{lane}.span.{at}")
-}
-
-/// The legend as a whole.
-#[must_use]
-pub fn legend_root(prefix: &str) -> String {
-    part(prefix, "legend")
-}
-
-/// What the legend says it could not fit.
-#[must_use]
-pub fn legend_overflow(prefix: &str) -> String {
-    part(prefix, "legend.overflow")
-}
-
-/// One legend entry.
-#[must_use]
-pub fn legend_at(prefix: &str, index: usize) -> String {
-    indexed(prefix, "legend", index)
-}
-
-/// One legend entry's words.
-#[must_use]
-pub fn legend_label(prefix: &str, index: usize) -> String {
-    format!("{prefix}.legend.{index}.label")
-}
-
-/// One legend entry's colour chip.
-#[must_use]
-pub fn legend_swatch(prefix: &str, index: usize) -> String {
-    format!("{prefix}.legend.{index}.swatch")
-}
-
-/// One distribution's median line.
-#[must_use]
-pub fn median(prefix: &str, index: usize) -> String {
-    indexed(prefix, "median", index)
-}
-
-/// One session's open-high-low-close range.
-#[must_use]
-pub fn ohlc_range(prefix: &str, index: usize) -> String {
-    format!("{prefix}.ohlc.{index}.range")
-}
-
-/// One named landmark of a session's range.
-#[must_use]
-pub fn ohlc_part(prefix: &str, index: usize, part: &str) -> String {
-    format!("{prefix}.ohlc.{index}.{part}")
-}
-
-/// One datum outside a distribution's whiskers.
-#[must_use]
-pub fn outlier(prefix: &str, index: usize, at: usize) -> String {
-    format!("{prefix}.outlier.{index}.{at}")
-}
-
-/// A polar chart's outer boundary.
-#[must_use]
-pub fn rim(prefix: &str) -> String {
-    part(prefix, "rim")
-}
-
-/// One of a polar chart's own grid rings.
-///
-/// ⚠ NOT [`Overlay::ring`], which is `<prefix>.inspect.ring.<i>` — the ring
-/// drawn around a mark the reader is pointing at. This is the chart's grid.
-#[must_use]
-pub fn ring_at(prefix: &str, index: usize) -> String {
-    indexed(prefix, "ring", index)
-}
-
-/// One timeline rule.
-#[must_use]
-pub fn rule(prefix: &str, index: usize) -> String {
-    indexed(prefix, "rule", index)
-}
-
-/// One segment of a series whose colour varies along it.
-///
-/// ★ Composed ON TOP OF [`series`] rather than beside it, so a segment cannot
-/// drift from the series it belongs to.
-#[must_use]
-pub fn series_seg(prefix: &str, index: usize, at: usize) -> String {
-    format!("{}.seg.{at}", series(prefix, index))
-}
-
-/// One wedge of a donut.
-#[must_use]
-pub fn slice(prefix: &str, index: usize) -> String {
-    indexed(prefix, "slice", index)
-}
-
-/// One of a polar chart's own radial spokes.
-///
-/// ⚠ NOT [`Overlay::spoke`], which is `<prefix>.inspect.spoke` — the rule
-/// dropped at the reader's angle. This is the chart's grid.
-#[must_use]
-pub fn spoke_at(prefix: &str, index: usize) -> String {
-    indexed(prefix, "spoke", index)
-}
-
-/// One timeline tick.
-#[must_use]
-pub fn tick(prefix: &str, index: usize) -> String {
-    indexed(prefix, "tick", index)
-}
-
-/// One rectangle of a treemap.
-#[must_use]
-pub fn tile(prefix: &str, index: usize) -> String {
-    indexed(prefix, "tile", index)
-}
-
-/// One treemap rectangle's words.
-#[must_use]
-pub fn tile_label(prefix: &str, index: usize) -> String {
-    format!("{prefix}.tile.{index}.label")
-}
-
-/// One distribution's violin outline.
-#[must_use]
-pub fn violin(prefix: &str, index: usize) -> String {
-    indexed(prefix, "violin", index)
-}
-
-/// One end of one distribution's whisker.
-#[must_use]
-pub fn whisker(prefix: &str, index: usize, end: &str) -> String {
-    format!("{prefix}.whisker.{index}.{end}")
-}
-
-/// One session's high wick.
-#[must_use]
-pub fn wick_hi(prefix: &str, index: usize) -> String {
-    format!("{prefix}.wick.{index}.hi")
-}
-
-/// One session's low wick.
-#[must_use]
-pub fn wick_lo(prefix: &str, index: usize) -> String {
-    format!("{prefix}.wick.{index}.lo")
-}
-
-/// One named end of a session's wick.
-#[must_use]
-pub fn wick_part(prefix: &str, index: usize, end: &str) -> String {
-    format!("{prefix}.wick.{index}.{end}")
-}
-
-/// One category label under a bar chart.
-#[must_use]
-pub fn xlabel(prefix: &str, index: usize) -> String {
-    indexed(prefix, "xlabel", index)
-}
-
-/// A sparkline's filled area.
-///
-/// ⚠⚠ **NOT [`area`], and the difference is an index.** A line or polar chart
-/// fills one area PER SERIES (`<prefix>.area.<i>`); a sparkline has a single
-/// series and fills `<prefix>.area` with no index at all. Substituting [`area`]
-/// here would compile and paint a DIFFERENT address — the same trap as
-/// [`Overlay::value`] against [`Overlay::value_at`], caught at R2145 while
-/// converting this very site.
-#[must_use]
-pub fn spark_area(prefix: &str) -> String {
-    part(prefix, "area")
-}
-
-/// A sparkline's trailing point.
-#[must_use]
-pub fn spark_end(prefix: &str) -> String {
-    part(prefix, "end")
-}
-
-/// A sparkline's stroked path.
-#[must_use]
-pub fn spark_line(prefix: &str) -> String {
-    part(prefix, "line")
-}
-
-/// A sparkline's high mark.
-#[must_use]
-pub fn spark_max(prefix: &str) -> String {
-    part(prefix, "max")
-}
-
-/// A sparkline's low mark.
-#[must_use]
-pub fn spark_min(prefix: &str) -> String {
-    part(prefix, "min")
-}
-
 /// The overlay a chart paints over its marks while a reader inspects it.
 ///
 /// Obtained from [`inspect`] or [`playhead`] — see this module's header for why
@@ -523,106 +423,65 @@ pub struct Overlay<'a> {
     part: &'a str,
 }
 
-/// The overlay eight chart kinds paint under the part name `inspect`.
-#[must_use]
-pub fn inspect(prefix: &str) -> Overlay<'_> {
-    Overlay {
-        prefix,
-        part: "inspect",
-    }
+overlay_parts! {
+    /// The overlay eight chart kinds paint under the part name `inspect`.
+    inspect = "inspect";
+
+    /// The same overlay, under the part name `timeline` paints it with.
+    ///
+    /// ⚠ `draw`, `legend` and `timeline` are named here WITHOUT intra-doc
+    /// links: they are private modules, and a public doc that links into one is
+    /// a rustdoc error under `-D warnings`. R2134.1 repaired the same class two
+    /// rounds before R2136, and this module reintroduced it — the rule is easy
+    /// to break because the link reads correctly right up until rustdoc runs.
+    playhead = "playhead";
 }
 
-/// The same overlay, under the part name `timeline` paints it with.
-///
-/// ⚠ `draw`, `legend` and `timeline` are named here WITHOUT intra-doc links:
-/// they are private modules, and a public doc that links into one is a rustdoc
-/// error under `-D warnings`. R2134.1 repaired the same class two rounds ago in
-/// another crate, and this module reintroduced it — the rule is easy to break
-/// because the link reads correctly right up until rustdoc runs.
-#[must_use]
-pub fn playhead(prefix: &str) -> Overlay<'_> {
-    Overlay {
-        prefix,
-        part: "playhead",
-    }
-}
-
-impl Overlay<'_> {
+overlay_members! {
     /// The overlay's own node, when the painter gives it one.
-    #[must_use]
-    pub fn root(&self) -> String {
-        format!("{}.{}", self.prefix, self.part)
-    }
+    root() = "{prefix}.{part}";
 
     /// The callout's heading.
-    #[must_use]
-    pub fn header(&self) -> String {
-        self.member("header")
-    }
+    header() = "{prefix}.{part}.header";
 
     /// The callout's frame.
-    #[must_use]
-    pub fn tooltip(&self) -> String {
-        self.member("tooltip")
-    }
+    tooltip() = "{prefix}.{part}.tooltip";
 
     /// The callout's value, for a chart whose overlay reads one value.
     ///
     /// ⚠ Not the same grammar as [`value_at`](Self::value_at) — see the table
     /// in this module's header for which chart kinds answer which.
-    #[must_use]
-    pub fn value(&self) -> String {
-        self.member("value")
-    }
+    value() = "{prefix}.{part}.value";
 
     /// One series' row inside the callout.
     ///
     /// ⚠ Not the same grammar as [`value`](Self::value).
-    #[must_use]
-    pub fn value_at(&self, index: usize) -> String {
-        format!("{}.{}.value.{index}", self.prefix, self.part)
-    }
+    value_at(index: usize) = "{prefix}.{part}.value.{index}";
 
     /// The mark drawn over whatever the reader is pointing at.
-    #[must_use]
-    pub fn highlight(&self) -> String {
-        self.member("highlight")
-    }
+    highlight() = "{prefix}.{part}.highlight";
 
     /// The rule dropped through the plot at the reader's x.
-    #[must_use]
-    pub fn crosshair(&self) -> String {
-        self.member("crosshair")
-    }
+    crosshair() = "{prefix}.{part}.crosshair";
 
     /// The ring drawn around one hit mark.
-    #[must_use]
-    pub fn ring(&self, index: usize) -> String {
-        format!("{}.{}.ring.{index}", self.prefix, self.part)
-    }
+    ring(index: usize) = "{prefix}.{part}.ring.{index}";
 
     /// The filled marker drawn on one series at the reader's x.
-    #[must_use]
-    pub fn marker(&self, index: usize) -> String {
-        format!("{}.{}.marker.{index}", self.prefix, self.part)
-    }
+    marker(index: usize) = "{prefix}.{part}.marker.{index}";
 
     /// The radial rule a polar chart drops at the reader's angle.
-    #[must_use]
-    pub fn spoke(&self) -> String {
-        self.member("spoke")
-    }
+    spoke() = "{prefix}.{part}.spoke";
 
     /// A member whose name the painter computes.
     ///
     /// ★ Taken rather than enumerated: a distribution's overlay names its parts
     /// from the same vocabulary its marks use, so the set is the chart's and
     /// not this module's.
-    #[must_use]
-    pub fn member(&self, member: &str) -> String {
-        format!("{}.{}.{member}", self.prefix, self.part)
-    }
+    member(member: &str) = "{prefix}.{part}.{member}";
+}
 
+impl Overlay<'_> {
     /// The member a tag names, or `None` when the tag is not this overlay's.
     #[must_use]
     pub fn member_of<'a>(&self, tag: &'a str) -> Option<&'a str> {
@@ -633,10 +492,68 @@ impl Overlay<'_> {
     }
 }
 
+/// The committed artifact's body: every grammar this crate paints, as text.
+///
+/// ★★★★★ R2146 — **a walk is Python and cannot call any of the above.** Seven
+/// screens answered that by PUBLISHING their addresses on the wire, and R2143
+/// measured that the same answer does not reach here: the chart examples carry
+/// no introspection surface at all, and building one into twenty-two minimal
+/// examples would be a spec per demo rather than a declaration per grammar.
+/// What a crate can do instead is EMIT — the pin pattern, where a test
+/// regenerates a tracked file and the gate is a byte comparison.
+///
+/// The rows are `kind<TAB>name<TAB>value`, sorted, so a diff of the artifact is
+/// a diff of the grammar:
+///
+/// | kind | value |
+/// |---|---|
+/// | `const` | a whole address, already rendered |
+/// | `grammar` | a template taking `prefix` and the composer's own arguments |
+/// | `overlay` | a template taking `part` as well |
+/// | `part` | one name `part` can be |
+#[must_use]
+pub fn render_grammar() -> String {
+    let mut rows: Vec<(&str, &str, &str)> = vec![
+        ("const", "DEFAULT_PREFIX", DEFAULT_PREFIX),
+        ("const", "DEFAULT_INSPECT_TOOLTIP", DEFAULT_INSPECT_TOOLTIP),
+    ];
+    rows.extend(GRAMMAR.iter().map(|(name, tpl)| ("grammar", *name, *tpl)));
+    rows.extend(
+        OVERLAY_GRAMMAR
+            .iter()
+            .map(|(name, tpl)| ("overlay", *name, *tpl)),
+    );
+    rows.extend(OVERLAY_PARTS.iter().map(|part| ("part", *part, *part)));
+    rows.sort_unstable();
+
+    let mut out = String::from(
+        "# Every address grammar `pinion-chart` paints, emitted from\n\
+         # `src/address.rs`. Rewritten by setting PINION_REGEN_ADDRESS_PIN and\n\
+         # running this crate's `the_committed_grammar_is_what_the_declaration\n\
+         # _composes` test; do not hand-edit.\n\
+         #\n\
+         # kind<TAB>name<TAB>value -- const | grammar | overlay | part.\n\
+         # A `grammar` value is a template: format it with `prefix` and the\n\
+         # named placeholders it carries. An `overlay` template takes `part`\n\
+         # too, which is one of the `part` rows.\n",
+    );
+    for (kind, name, value) in rows {
+        out.push_str(kind);
+        out.push('\t');
+        out.push_str(name);
+        out.push('\t');
+        out.push_str(value);
+        out.push('\n');
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        area, axis_x, axis_y, bg, cap, indexed, inspect, part, part_of, playhead, point, series,
+        DEFAULT_INSPECT_TOOLTIP, DEFAULT_PREFIX, GRAMMAR, OVERLAY_GRAMMAR, OVERLAY_PARTS, area,
+        axis_x, axis_y, bg, cap, indexed, inspect, legend_at, legend_label, part, part_of,
+        playhead, point, render_grammar, series, series_seg,
     };
 
     /// Every hand-composed address in `source`, as `(line, what)`.
@@ -711,6 +628,15 @@ mod tests {
         out
     }
 
+    /// This module's own source, cut off at its test module.
+    fn declaration_source() -> String {
+        let whole = include_str!("address.rs");
+        let end = whole
+            .find("\n#[cfg(test)]")
+            .expect("this module ends with its own tests");
+        whole[..end].to_owned()
+    }
+
     /// ★★★★★ R2136 — **a grammar painted by more than one chart is typed in
     /// ONE place, and this counts.**
     ///
@@ -770,6 +696,142 @@ mod tests {
         );
     }
 
+    /// ★★★★★ R2146 — **and the declaration itself composes only through the
+    /// macro**, so [`GRAMMAR`] is the WHOLE of what this crate paints.
+    ///
+    /// The gate above excuses this file, which is what made it possible to add
+    /// a composer here by hand — and a hand-written composer is a family the
+    /// emitted artifact does not carry, so every reader outside Rust goes on
+    /// spelling it. The population is this module's own source and the
+    /// exception is NAMED rather than left as a hole: [`render_grammar`] is the
+    /// one function here that builds a `String` without being a composer.
+    #[test]
+    fn r2146_every_composer_goes_through_the_macro() {
+        let source = declaration_source();
+        let mut composing: Vec<String> = Vec::new();
+        let mut string_fns: Vec<String> = Vec::new();
+        // The macro DEFINITIONS are the sites that may compose — they are the
+        // declaration's engine. Recognised as blocks rather than by a token on
+        // the line, because rustfmt is free to put `format!(` and its template
+        // on separate lines and a per-line rule would then read the engine's
+        // own `format!` as a hand-written one.
+        let mut in_macro = false;
+        for line in source.lines() {
+            if line.starts_with("macro_rules!") {
+                in_macro = true;
+            } else if in_macro && line == "}" {
+                in_macro = false;
+                continue;
+            }
+            if in_macro {
+                continue;
+            }
+            if line.contains("format!(") {
+                composing.push(line.trim().to_owned());
+            }
+            if let Some(rest) = line.trim().strip_prefix("pub fn ")
+                && line.contains("-> String")
+            {
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                string_fns.push(name);
+            }
+        }
+        assert!(
+            source.lines().count() > 300,
+            "the declaration read as {} line(s), which is not this module",
+            source.lines().count()
+        );
+        // ★ And the skipped region is not the whole file: the engine's own
+        // `format!` must be in the source, or the first assertion below is
+        // green for having read nothing that could compose.
+        assert!(
+            source.contains("format!("),
+            "no `format!` anywhere in the declaration — this scan is reading \
+             something other than the module that composes"
+        );
+        assert_eq!(
+            composing,
+            Vec::<String>::new(),
+            "★ a `format!` outside the macro is a grammar the artifact cannot \
+             carry, so a walk would go on spelling it"
+        );
+        assert_eq!(
+            string_fns,
+            vec!["render_grammar".to_owned()],
+            "★★★★★ every composer is declared through `composers!` or \
+             `overlay_members!`, whose single literal is both the `format!` \
+             string and the row a reader outside Rust is handed"
+        );
+    }
+
+    /// ★★★★★ R2146 — the committed artifact is what the declaration composes.
+    ///
+    /// Regenerate with `PINION_REGEN_ADDRESS_PIN=1 cargo test -p pinion-chart`.
+    /// The name is the workspace's one regeneration flag, declared once in
+    /// `pinion_core` as `REGEN_ADDRESS_PIN`, so a round that renames an address
+    /// rewrites every artifact in the campaign with one command.
+    ///
+    /// ⚠ **LOCALLY.** Measured at R2146: the remote build wrapper forwards no
+    /// environment variable of its caller's, so a regeneration run through it
+    /// does not regenerate — and the variable reaching the far side would be
+    /// worse, writing the artifact onto the build host where the next sync
+    /// cannot see it. The failure is loud either way (this test refuses), which
+    /// is why the note is a warning rather than a guard.
+    #[test]
+    fn the_committed_grammar_is_what_the_declaration_composes() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/painted_grammar.tsv");
+        let rendered = render_grammar();
+        // ★ A floor, not decoration: an empty table would otherwise agree with
+        // an empty artifact, which is a gate green for having asked nothing.
+        assert!(
+            GRAMMAR.len() >= 55 && OVERLAY_GRAMMAR.len() >= 10 && OVERLAY_PARTS.len() == 2,
+            "the declaration holds {} families, {} overlay members and {} \
+             part(s), which is not this crate",
+            GRAMMAR.len(),
+            OVERLAY_GRAMMAR.len(),
+            OVERLAY_PARTS.len()
+        );
+        if std::env::var_os(pinion_core::REGEN_ADDRESS_PIN).is_some() {
+            std::fs::write(path, &rendered).expect("the artifact is writable");
+            return;
+        }
+        let committed = std::fs::read_to_string(path).expect("the artifact is committed");
+        assert_eq!(
+            committed, rendered,
+            "★★★★★ this crate's painted grammar changed. A reader outside Rust \
+             formats these templates instead of spelling an address, so a \
+             change here is a PUBLISHED change. If it is intended, set \
+             PINION_REGEN_ADDRESS_PIN and re-run this test."
+        );
+    }
+
+    /// ★ A template that nests another family still starts with it.
+    ///
+    /// The templates are flat literals so the artifact can be derived from
+    /// them; what that gives up is the composition that used to make a segment
+    /// unable to drift from its series. This is that guarantee, asserted.
+    #[test]
+    fn a_nested_grammar_still_starts_with_the_one_it_extends() {
+        let seg = series_seg("chart", 1, 2);
+        assert!(
+            seg.starts_with(&series("chart", 1)),
+            "{seg} does not extend {}",
+            series("chart", 1)
+        );
+        let label = legend_label("chart", 3);
+        assert!(
+            label.starts_with(&legend_at("chart", 3)),
+            "{label} does not extend {}",
+            legend_at("chart", 3)
+        );
+        // ★ And not vacuously: a different index is NOT an extension, so the
+        // assertions above are about the whole address and not its stem.
+        assert!(!seg.starts_with(&series("chart", 2)));
+    }
+
     /// The composition and its inverse agree, in both directions.
     ///
     /// ★★ Without this the inverse is a second speller of the same grammar —
@@ -805,6 +867,8 @@ mod tests {
             playhead("chart").member_of("chart.playhead.value.2"),
             Some("value.2")
         );
+        // ★ And the parts the artifact publishes are the parts that exist.
+        assert_eq!(OVERLAY_PARTS, ["inspect", "playhead"]);
     }
 
     /// ⚠⚠ The two `value` grammars are DIFFERENT addresses, and this is what
@@ -835,10 +899,7 @@ mod tests {
     /// when a screen hit the same wall.
     #[test]
     fn the_const_addresses_agree_with_their_composers() {
-        assert_eq!(
-            super::DEFAULT_INSPECT_TOOLTIP,
-            super::inspect(super::DEFAULT_PREFIX).tooltip()
-        );
+        assert_eq!(DEFAULT_INSPECT_TOOLTIP, inspect(DEFAULT_PREFIX).tooltip());
     }
 
     /// The general forms compose what the named ones do.

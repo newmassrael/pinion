@@ -44,6 +44,8 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     WORKSPACE_ROOT,
     assert_eq,
+    chart_address,
+    chart_overlay_address,
     find_by_tag,
     png_pixel,
     read_png_rgba8,
@@ -106,7 +108,7 @@ def body() -> None:
         # Three series: 12-point stroke-only polylines in fixed hues, each
         # with a filled + closed area fill (area chart default).
         for i, color in enumerate(SERIES_COLORS):
-            s = _path(snap, f"chart.series.{i}")
+            s = _path(snap, chart_address("series", index=i))
             types = _cmd_types(s)
             assert_eq(len(types), 12, f"series {i}: MoveTo + 11 LineTo")
             assert_eq(types[0], "MoveTo", f"series {i} starts with MoveTo")
@@ -115,60 +117,66 @@ def body() -> None:
             assert stroke is not None, f"series {i} carries a stroke"
             assert_color(stroke["color"], color, f"series {i} stroke colour")
 
-            area = _path(snap, f"chart.area.{i}")
+            area = _path(snap, chart_address("area", index=i))
             assert_eq(_cmd_types(area)[-1], "Close", f"area {i} is closed")
             assert area["style"]["fill"] is not None, f"area {i} is filled"
 
         # Axes + gridlines.
-        for axis in ("chart.axis.x", "chart.axis.y"):
+        for axis in (chart_address("axis_x"), chart_address("axis_y")):
             assert _path(snap, axis)["style"]["stroke"] is not None, f"{axis} stroked"
-        assert find_by_tag(snap, "chart.grid.y.0") is not None, "a y gridline"
-        assert find_by_tag(snap, "chart.grid.x.0") is not None, "an x gridline"
+        assert find_by_tag(snap, chart_address("grid_y", index=0)) is not None, "a y gridline"
+        assert find_by_tag(snap, chart_address("grid_x", index=0)) is not None, "an x gridline"
 
         # Legend: one swatch (correct hue) + one label (text) per series.
         for i, (color, name) in enumerate(zip(SERIES_COLORS, SERIES_NAMES)):
-            swatch = _node(snap, f"chart.legend.{i}.swatch")
+            swatch = _node(snap, chart_address("legend_swatch", index=i))
             assert_eq(swatch["type"], "Box", f"legend {i} swatch is a box")
             assert_color(swatch["style"]["fill"], color, f"legend {i} swatch hue")
-            label = _node(snap, f"chart.legend.{i}.label")
+            label = _node(snap, chart_address("legend_label", index=i))
             assert_eq(label.get("content"), name, f"legend {i} label text")
 
         # Inspect overlay (boot scrub value 0.5): crosshair + tooltip +
         # header + one marker & value line per series.
-        assert find_by_tag(snap, "chart.inspect.crosshair") is not None, "crosshair"
-        assert find_by_tag(snap, "chart.inspect.tooltip") is not None, "tooltip card"
-        assert find_by_tag(snap, "chart.inspect.header") is not None, "tooltip header"
+        crosshair = chart_overlay_address("crosshair")
+        assert find_by_tag(snap, crosshair) is not None, "crosshair"
+        assert find_by_tag(snap, chart_overlay_address("tooltip")) is not None, "tooltip card"
+        assert find_by_tag(snap, chart_overlay_address("header")) is not None, "tooltip header"
         for i in range(3):
-            assert find_by_tag(snap, f"chart.inspect.marker.{i}") is not None, f"marker {i}"
-            assert find_by_tag(snap, f"chart.inspect.value.{i}") is not None, f"value {i}"
+            marker = chart_overlay_address("marker", index=i)
+            assert find_by_tag(snap, marker) is not None, f"marker {i}"
+            # ⚠ `value_at` and not `value`: this chart paints one value row per
+            # series, and the two are different addresses — see the grammar.
+            value = chart_overlay_address("value_at", index=i)
+            assert find_by_tag(snap, value) is not None, f"value {i}"
 
-        crosshair_boot = _window_points(_path(snap, "chart.inspect.crosshair"))[0][0]
+        crosshair_boot = _window_points(_path(snap, crosshair))[0][0]
 
         # ── Drive the scrub over RPC: the crosshair must move right ───
         d.intervene("/external/value", 0.9)
         moved = d.query("/external/value")
         assert abs(moved - 0.9) < 0.02, f"scrub value set to 0.9, got {moved}"
         snap2 = d.snapshot(source="paint", viewport=VIEWPORT)
-        crosshair_moved = _window_points(_path(snap2, "chart.inspect.crosshair"))[0][0]
+        crosshair_moved = _window_points(_path(snap2, crosshair))[0][0]
         assert crosshair_moved > crosshair_boot + 20, (
             f"crosshair moved right with the scrub: {crosshair_boot} -> {crosshair_moved}"
         )
         # Near the right edge the inspector snaps to the nearest bucket.
         # The x domain is the data extent 0..11 (R1357 pins it from the
         # brush), so scrub 0.9 -> data x ~10.05 -> bucket 10 (ingress 2600).
-        header = _node(snap2, "chart.inspect.header").get("content")
+        header = _node(snap2, chart_overlay_address("header")).get("content")
         assert_eq(header, "x = 10", "tooltip header near the right edge")
-        ingress_val = _node(snap2, "chart.inspect.value.0").get("content")
+        ingress_val = _node(snap2, chart_overlay_address("value_at", index=0)).get("content")
         assert ingress_val is not None and "2.6k" in ingress_val, (
             f"ingress value at x=10 (~2600): {ingress_val!r}"
         )
 
         # Series 0's boot polyline bbox for the pixel phase.
-        series0_points = _window_points(_path(snap, "chart.series.0"))
+        series0_points = _window_points(_path(snap, chart_address("series", index=0)))
 
         # ── Brush zoom (R1357): the sibling RangeSlider external ──────
         assert find_by_tag(snap, "chart_brush") is not None, "brush strip present"
-        x_label_full = _node(snap, "chart.label.x.0").get("content")
+        first_x_label = chart_address("label_x", index=0)
+        x_label_full = _node(snap, first_x_label).get("content")
         d.intervene("/chart_brush/external/low", 0.30)
         d.intervene("/chart_brush/external/high", 0.62)
         # `intervene` only asserts a response arrived; round-trip the value so
@@ -178,7 +186,7 @@ def body() -> None:
         snap_zoom = d.snapshot(source="paint", viewport=VIEWPORT)
 
         # The x axis re-domains: its first tick label must change.
-        x_label_zoom = _node(snap_zoom, "chart.label.x.0").get("content")
+        x_label_zoom = _node(snap_zoom, first_x_label).get("content")
         assert x_label_full is not None and x_label_zoom is not None, "x tick labels carry text"
         assert x_label_full != x_label_zoom, (
             f"x axis re-domained on brush: {x_label_full!r} -> {x_label_zoom!r}"
@@ -189,7 +197,7 @@ def body() -> None:
         # margins -> x in [66, 730]. Without clipping the pinned domain
         # extrapolates far outside it.
         for i in range(3):
-            for x, _y in _window_points(_path(snap_zoom, f"chart.series.{i}")):
+            for x, _y in _window_points(_path(snap_zoom, chart_address("series", index=i))):
                 assert 65.0 <= x <= 731.0, (
                     f"series {i} vertex x={x} escaped the clipped plot [66,730]"
                 )

@@ -32,6 +32,7 @@ import queue
 import shutil
 import signal
 import socket
+import string
 import struct
 import subprocess
 import sys
@@ -5079,6 +5080,139 @@ def address_family(prefix: str, *, separator: str = ".") -> str:
         "member's key is appended to and has no family stem to recover"
     )
     return prefix[: -len(separator)]
+
+
+#: Where `pinion-chart` emits the grammar of every address it paints.
+#:
+#: ★★★★★ R2146 — **the chart crate has no wire to ask.** Seven screens answered
+#: "a walk cannot call the declaration" by PUBLISHING their addresses, and
+#: [`published_tags`] is what reads them. R2143 measured that the same answer
+#: does not reach the charts: the chart examples carry no `ExternalIntrospect`,
+#: no spec and no RPC surface at all, and their demos drive them by
+#: `subprocess` + `scene/snapshot`. Building a publishing surface into
+#: twenty-two minimal examples would be a spec per demo where the defect is one
+#: grammar per family.
+#:
+#: So the crate EMITS instead, by the pin pattern: a test regenerates this file
+#: from the same literal its composers are declared with, and a byte comparison
+#: refuses a tree where the two disagree. Rust's `{name}` placeholders are
+#: Python's `str.format` placeholders unchanged, which is what makes the
+#: artifact readable here without a translation step to get wrong.
+_CHART_GRAMMAR_PATH = WORKSPACE_ROOT / "crates" / "pinion-chart" / "src" / "painted_grammar.tsv"
+
+#: Parsed once. The file is committed and cannot change under a running walk.
+_CHART_GRAMMAR_CACHE: dict[str, dict[str, str]] = {}
+
+
+def chart_grammar() -> dict[str, dict[str, str]]:
+    """The emitted chart grammar, as `kind -> name -> value`.
+
+    Kinds are `const` (a whole address), `grammar` (a template taking `prefix`
+    and the composer's own arguments), `overlay` (a template taking `part` too)
+    and `part` (what `part` can be).
+
+    Raises when the artifact is missing or empty rather than returning a bare
+    mapping: an absent grammar would make every composition below fall back to a
+    spelled address, which is the defect this reader exists to remove.
+    """
+    if _CHART_GRAMMAR_CACHE:
+        return _CHART_GRAMMAR_CACHE
+    text = _CHART_GRAMMAR_PATH.read_text(encoding="utf-8")
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        kind, name, value = line.split("\t", 2)
+        _CHART_GRAMMAR_CACHE.setdefault(kind, {})[name] = value
+    missing = {"const", "grammar", "overlay", "part"} - set(_CHART_GRAMMAR_CACHE)
+    if missing:
+        raise AssertionError(
+            f"{_CHART_GRAMMAR_PATH} carries no {sorted(missing)} row. A walk "
+            "that cannot read the grammar would go back to spelling an address, "
+            "which is what this reader exists to remove."
+        )
+    return _CHART_GRAMMAR_CACHE
+
+
+def _chart_format(template: str, name: str, prefix: Optional[str], fields: dict) -> str:
+    """Format one chart template, REFUSING a field it does not carry.
+
+    ⚠ The refusal is the point, and it runs in both directions. A field the
+    template does not want is a walk addressing a family it does not mean; a
+    field it wants and did not get is an address with a hole in it. Either one
+    composes a plausible string that names nothing, and a walk reads that as
+    *the chart did not paint this* — which is this whole campaign's failure
+    mode, one language further out.
+    """
+    grammar = chart_grammar()
+    if prefix is None:
+        prefix = grammar["const"]["DEFAULT_PREFIX"]
+    wanted = {
+        field
+        for _text, field, _spec, _conv in string.Formatter().parse(template)
+        if field
+    } - {"prefix"}
+    given = set(fields)
+    if wanted != given:
+        raise AssertionError(
+            f"the chart grammar for {name!r} is {template!r}: it takes "
+            f"{sorted(wanted)} and was given {sorted(given)}. An address "
+            "composed past this would name nothing, and the walk would read "
+            "that as the chart not painting it."
+        )
+    return template.format(prefix=prefix, **fields)
+
+
+def chart_address(name: str, *, prefix: Optional[str] = None, **fields: Any) -> str:
+    """One address `pinion-chart` paints, composed from its emitted grammar.
+
+    `name` is the composer's own name — `series`, `label_x`, `tile_label` — and
+    the keyword arguments are that composer's arguments, spelled the same way.
+    `prefix` defaults to the crate's own declared default.
+
+        chart_address("series", index=0)      -> "chart.series.0"
+        chart_address("label_x", index=2)     -> "chart.label.x.2"
+        chart_address("point", index=1, at=4) -> "chart.point.1.4"
+
+    ⚠ A name the crate does not paint is an `AssertionError` naming what it
+    does, never a composed guess. That is the same refusal [`published_tags`]
+    makes for a screen: a fallback would turn this helper into the thing it
+    replaced the moment the grammar moved.
+    """
+    grammar = chart_grammar()["grammar"]
+    if name not in grammar:
+        raise AssertionError(
+            f"`pinion-chart` paints no family called {name!r}. It paints "
+            f"{sorted(grammar)}. A walk cannot name a Rust item, so a family it "
+            "is not handed is one it would have to spell."
+        )
+    return _chart_format(grammar[name], name, prefix, fields)
+
+
+def chart_overlay_address(
+    name: str, *, part: str = "inspect", prefix: Optional[str] = None, **fields: Any
+) -> str:
+    """One member of a chart's inspect overlay, from the emitted grammar.
+
+    ⚠⚠ `part` is not decoration. Eight chart kinds paint this overlay under
+    `inspect` and the timeline paints the same members under `playhead`; a walk
+    that asks the timeline for `inspect.header` finds nothing and reads it as
+    the chart not painting a header. The parts that exist are the artifact's
+    own, so a wrong one is refused here rather than composed.
+    """
+    grammar = chart_grammar()
+    if part not in grammar["part"]:
+        raise AssertionError(
+            f"no chart paints an overlay under {part!r}; the parts are "
+            f"{sorted(grammar['part'])}"
+        )
+    members = grammar["overlay"]
+    if name not in members:
+        raise AssertionError(
+            f"a chart's overlay has no member called {name!r}. It has "
+            f"{sorted(members)}."
+        )
+    return _chart_format(members[name], name, prefix, dict(fields, part=part))
 
 
 def form_part_prefixes(tf, *, ext: str = "/external") -> dict:

@@ -457,6 +457,75 @@ def test_hostile_args_compose_through_the_declaring_site() -> None:
     check(first == want, f"the hostile name is composed: {first!r}")
 
 
+def test_chart_grammar_composes_what_the_crate_paints() -> None:
+    """★★★★★ R2146 — the walk-side half of the chart declaration.
+
+    A walk is Python and cannot call `pinion_chart::address`, so the crate
+    emits its grammar and this reads it. What is asserted here is the
+    COMPOSITION, against addresses this file spells on purpose: the artifact is
+    the crate's output and a test that re-derived its answer from the same file
+    would be checking the file against itself.
+
+    ⚠ Spelling them here is the value pin the campaign asks for, and it costs
+    the campaign nothing — MEASURED rather than assumed. `painted_addresses.py`
+    derives its corpus as `tools/demos/*.py` plus the helpers those walks
+    IMPORT, and nothing imports a test file, so these literals are outside the
+    census. `--list chart.playhead` answers 0 with this case in the tree, which
+    is how that was checked rather than reasoned.
+    """
+    check(rpc_verify.chart_address("series", index=0) == "chart.series.0",
+          "chart_address: an indexed family")
+    check(rpc_verify.chart_address("bg") == "chart.bg",
+          "chart_address: a family with no coordinate")
+    check(rpc_verify.chart_address("point", index=1, at=4) == "chart.point.1.4",
+          "chart_address: a two-coordinate family")
+    # ⚠ Asserted as a PROPERTY and not as a literal: a chart painted under its
+    # own prefix is any prefix, and writing one out here would put a family
+    # this workspace does not paint into the corpus the census reads.
+    own = rpc_verify.chart_address("series", index=0, prefix="widget")
+    check(own.startswith("widget.") and own.endswith(".0"),
+          f"chart_address: a chart painted under its own prefix -> {own}")
+    check(rpc_verify.chart_overlay_address("tooltip") == "chart.inspect.tooltip",
+          "chart_overlay_address: the overlay eight kinds paint")
+    check(rpc_verify.chart_overlay_address("value_at", index=1, part="playhead")
+          == "chart.playhead.value.1",
+          "chart_overlay_address: the same member under the timeline's part")
+    # ⚠⚠ The two `value` grammars are different addresses, and a walk that
+    # cannot tell them apart finds nothing and reads it as unpainted paint.
+    check(rpc_verify.chart_overlay_address("value")
+          != rpc_verify.chart_overlay_address("value_at", index=0),
+          "chart_overlay_address: `value` is not `value_at`")
+
+
+def test_chart_grammar_refuses_rather_than_composing_a_guess() -> None:
+    """★★★★★ And every refusal, because a fallback would restore the defect.
+
+    A helper that composed `<prefix>.<name>` for a family the crate does not
+    paint would hand back a plausible string addressing nothing — which reads
+    to every later assertion as *the chart did not paint it*, the exact silence
+    this campaign is about. Each case below is a way to get that wrong.
+    """
+    cases = [
+        ("a family the crate does not paint",
+         lambda: rpc_verify.chart_address("seres", index=0)),
+        ("a coordinate the template does not take",
+         lambda: rpc_verify.chart_address("bg", index=3)),
+        ("a coordinate the template takes and did not get",
+         lambda: rpc_verify.chart_address("series")),
+        ("an overlay part no chart paints under",
+         lambda: rpc_verify.chart_overlay_address("tooltip", part="hover")),
+        ("an overlay member that does not exist",
+         lambda: rpc_verify.chart_overlay_address("nope")),
+    ]
+    for label, call in cases:
+        try:
+            call()
+        except AssertionError:
+            check(True, f"chart grammar: {label} is refused")
+        else:
+            check(False, f"chart grammar: {label} must be refused")
+
+
 def test_request_matches_its_own_id() -> None:
     tf = wired()
     deliver(tf, {"jsonrpc": "2.0", "id": 999, "result": "somebody else's"})

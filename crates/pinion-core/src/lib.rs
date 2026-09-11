@@ -106,6 +106,22 @@ pub mod window_level;
 pub mod wire_address;
 pub mod workspace;
 
+/// The environment variable that rewrites an address artifact instead of
+/// checking it.
+///
+/// ★★★★★ R2139 gave the screens' address pins ONE name, on the reasoning that a
+/// round renaming an address should regenerate every affected artifact with one
+/// command rather than remembering a name per screen. R2146 needed the same name
+/// for a CRATE's emitted grammar and found it behind the `test-fixtures`
+/// feature — so reaching it would have unified that feature into the production
+/// build, and not reaching it would have created the second name the rule exists
+/// to prevent.
+///
+/// ⇒ the NAME is a workspace convention and not a test fixture. It lives here,
+/// where anything can read it, and
+/// `test_fixtures::address_pin::REGEN` re-exports it so the rule has one value.
+pub const REGEN_ADDRESS_PIN: &str = "PINION_REGEN_ADDRESS_PIN";
+
 // R51.127 §5.41 — substrate-level test fixtures shared across
 // `pinion-runtime` + `pinion-tui` test suites. Gated behind the
 // `test-fixtures` feature so production binaries never see them.

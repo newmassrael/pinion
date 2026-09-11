@@ -53,7 +53,13 @@ use crate::containment::repeating_site;
 ///
 /// One name for every screen: a round that renames an address regenerates every
 /// affected pin with one command rather than remembering a name per screen.
-pub const REGEN: &str = "PINION_REGEN_ADDRESS_PIN";
+///
+/// ⚠ R2146 — a RE-EXPORT now, not a second definition. The value moved to
+/// [`crate::REGEN_ADDRESS_PIN`] when a crate outside the `test-fixtures` feature
+/// needed the same name for its emitted grammar: reaching it here would have
+/// unified that feature into a production build, and spelling it again would
+/// have created the second name this const exists to prevent.
+pub use crate::REGEN_ADDRESS_PIN as REGEN;
 
 /// Fold a screen's painted tags into the set a pin holds.
 ///

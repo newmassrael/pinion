@@ -1,0 +1,83 @@
+# Every address grammar `pinion-chart` paints, emitted from
+# `src/address.rs`. Rewritten by setting PINION_REGEN_ADDRESS_PIN and
+# running this crate's `the_committed_grammar_is_what_the_declaration
+# _composes` test; do not hand-edit.
+#
+# kind<TAB>name<TAB>value -- const | grammar | overlay | part.
+# A `grammar` value is a template: format it with `prefix` and the
+# named placeholders it carries. An `overlay` template takes `part`
+# too, which is one of the `part` rows.
+const	DEFAULT_INSPECT_TOOLTIP	chart.inspect.tooltip
+const	DEFAULT_PREFIX	chart
+grammar	a11y_at	{prefix}.a11y.{name}
+grammar	a11y_row	{prefix}.a11y.r{index}
+grammar	a11y_series	{prefix}.a11y.series
+grammar	a11y_series_at	{prefix}.a11y.series.{index}
+grammar	area	{prefix}.area.{index}
+grammar	axis_x	{prefix}.axis.x
+grammar	axis_y	{prefix}.axis.y
+grammar	bar	{prefix}.bar.{index}
+grammar	bg	{prefix}.bg
+grammar	box_at	{prefix}.box.{index}
+grammar	candle	{prefix}.candle.{index}
+grammar	cap	{prefix}.cap.{index}.{part}
+grammar	colorbar_strip	{prefix}.colorbar.strip
+grammar	colorbar_tick	{prefix}.colorbar.tick.{index}
+grammar	focus_area	{prefix}.focus.area.{index}
+grammar	focus_series	{prefix}.focus.series.{index}
+grammar	grid_minor_x	{prefix}.grid.minor.x.{index}
+grammar	grid_minor_y	{prefix}.grid.minor.y.{index}
+grammar	grid_x	{prefix}.grid.x.{index}
+grammar	grid_y	{prefix}.grid.y.{index}
+grammar	indexed	{prefix}.{part}.{index}
+grammar	label_a	{prefix}.label.a.{index}
+grammar	label_r	{prefix}.label.r.{index}
+grammar	label_x	{prefix}.label.x.{index}
+grammar	label_y	{prefix}.label.y.{index}
+grammar	lane_label	{prefix}.lane.{index}.label
+grammar	lane_span	{prefix}.lane.{lane}.span.{at}
+grammar	legend_at	{prefix}.legend.{index}
+grammar	legend_label	{prefix}.legend.{index}.label
+grammar	legend_overflow	{prefix}.legend.overflow
+grammar	legend_root	{prefix}.legend
+grammar	legend_swatch	{prefix}.legend.{index}.swatch
+grammar	median	{prefix}.median.{index}
+grammar	ohlc_part	{prefix}.ohlc.{index}.{part}
+grammar	ohlc_range	{prefix}.ohlc.{index}.range
+grammar	outlier	{prefix}.outlier.{index}.{at}
+grammar	part	{prefix}.{part}
+grammar	point	{prefix}.point.{index}.{at}
+grammar	rim	{prefix}.rim
+grammar	ring_at	{prefix}.ring.{index}
+grammar	rule	{prefix}.rule.{index}
+grammar	series	{prefix}.series.{index}
+grammar	series_seg	{prefix}.series.{index}.seg.{at}
+grammar	slice	{prefix}.slice.{index}
+grammar	spark_area	{prefix}.area
+grammar	spark_end	{prefix}.end
+grammar	spark_line	{prefix}.line
+grammar	spark_max	{prefix}.max
+grammar	spark_min	{prefix}.min
+grammar	spoke_at	{prefix}.spoke.{index}
+grammar	tick	{prefix}.tick.{index}
+grammar	tile	{prefix}.tile.{index}
+grammar	tile_label	{prefix}.tile.{index}.label
+grammar	violin	{prefix}.violin.{index}
+grammar	whisker	{prefix}.whisker.{index}.{end}
+grammar	wick_hi	{prefix}.wick.{index}.hi
+grammar	wick_lo	{prefix}.wick.{index}.lo
+grammar	wick_part	{prefix}.wick.{index}.{end}
+grammar	xlabel	{prefix}.xlabel.{index}
+overlay	crosshair	{prefix}.{part}.crosshair
+overlay	header	{prefix}.{part}.header
+overlay	highlight	{prefix}.{part}.highlight
+overlay	marker	{prefix}.{part}.marker.{index}
+overlay	member	{prefix}.{part}.{member}
+overlay	ring	{prefix}.{part}.ring.{index}
+overlay	root	{prefix}.{part}
+overlay	spoke	{prefix}.{part}.spoke
+overlay	tooltip	{prefix}.{part}.tooltip
+overlay	value	{prefix}.{part}.value
+overlay	value_at	{prefix}.{part}.value.{index}
+part	inspect	inspect
+part	playhead	playhead
