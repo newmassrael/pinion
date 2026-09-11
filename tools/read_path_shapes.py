@@ -1468,6 +1468,35 @@ def selftest() -> int:
         f"{stale} (run --write-budget)",
     )
 
+    # ★★★★★ R2130.1 — THE UNSEEN PIN'S ORACLE, AIMED AT THE REAL TREE.
+    #
+    # `tools/oracle_census.py` refused the push that added this pin, and it
+    # was right: `unseen_verdict` had six fixture cases and `read_unseen` —
+    # the oracle that gives it its world — was called by nothing. A pure
+    # rule and its oracle are TWO gates, and the one that gets remembered is
+    # the pure one, because it is the one that is pleasant to test.
+    #
+    # Mirrors the budget's staleness require one line up, and for its reason:
+    # a pin carrying a count HIGHER than reality means someone repaired
+    # something and did not re-run `--write-budget`, so the gate is now
+    # measuring against a number that no longer describes the tree. That is
+    # the direction this pin fails in silently — a too-high pin never
+    # refuses anything.
+    pinned_unseen = read_unseen()
+    blind_now = sum(1 for by in published.values() if "unknown" in by.values())
+    # Non-vacuity first: an empty pin would agree with any tree at all.
+    require(
+        "the unseen pin describes something",
+        sum(pinned_unseen.values()) > 0,
+        f"{pinned_unseen} (run --write-budget)",
+    )
+    _, _, dropped = unseen_verdict(unseen_now(unreadable, blind_now), pinned_unseen)
+    require(
+        "the unseen pin counts nothing this census now examines",
+        not dropped,
+        f"{dropped} (run --write-budget)",
+    )
+
     print(f"read_path_shapes selftest: {ran - failed} of {ran} checks OK")
     return 1 if failed else 0
 
