@@ -700,18 +700,6 @@
       ]
     },
     {
-      "name": "debt-the-repayment-loop-takes-work-in-an-order-nobody-set",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "ordinary",
-      "why": [
-        "links analyzer-debt-repayment-loop"
-      ]
-    },
-    {
       "name": "debt-the-screens-own-palette-is-never-held-to-the-legibility-table",
       "substituted": false,
       "blocked_by": "buildable",

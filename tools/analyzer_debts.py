@@ -757,6 +757,25 @@ def unblocked(rows: list[dict]) -> list[dict]:
     return [row for row in rows if row["blocked_by"] not in BLOCKED]
 
 
+def loop_can_close(row: dict) -> bool:
+    """Is this OPEN debt one the LOOP can close, rather than repay and leave?
+
+    ★★★★★ R2132 — the predicate itself, lifted, because R2132 would have been
+    its THIRD hand-spelling. `cohort_standing` walks to `"loop"` through it and
+    `outside_cohort` re-spells it in a comprehension, and that comment already
+    said the quiet part: *the same three predicates the cohort's own `loop`
+    standing uses, so the two numbers add up to one population*. Two numbers
+    that must add up, computed from two copies of one rule, is the shape this
+    tree keeps paying for — so the rule is named once and the copies call it.
+
+    `status` is NOT one of the three: `survey` already filtered to open, and
+    `cohort_standing` decides `"closed"` before it reaches here. Folding it in
+    would make this answer a question its two callers have already answered
+    differently, which is the second name for one fact all over again.
+    """
+    return row.get("blocked_by", "") not in BLOCKED and row.get("closed_by", "") not in CLOSERS
+
+
 #: (R2038) The words a debt's `priority:` may carry. Five of them predate any
 #: reader: they were written by hand, one per file, and NOTHING read them —
 #: `survey` carried the string through and no rule ranked anything by it.
@@ -799,6 +818,161 @@ def rank_of(priority: str) -> str:
 def unranked_of(rows: list[dict]) -> list[str]:
     """The family's debts that nobody has ranked, by name. Pure in `rows`."""
     return sorted(r["public_name"] for r in rows if rank_of(r.get("priority", "")) == "unranked")
+
+
+#: How far a debt that can sit in no chain is placed. Bigger than any real
+#: depth and named rather than inlined, so the sort key reads as a rule instead
+#: of as a magic number: an undated debt goes LAST among its tier, because the
+#: one thing known about it is that nobody wrote down where it came from.
+NO_DEPTH = 1 << 30
+
+
+def work_order(
+    rows: list[dict], members: list[str], depths: dict[str, int | None]
+) -> list[dict]:
+    """★★★★★ R2132 — **the order the loop takes work in, DERIVED.**
+
+    Returns the takeable debts, first one first, each with the term that placed
+    it. Pure in its arguments.
+
+    # Why this exists at all
+
+    `debt-the-repayment-loop-takes-work-in-an-order-nobody-set`. Phase B derives
+    its work order — `LEVERAGE = weight x remaining` — and `CLAUDE.md` forbids
+    writing that order down by hand, because a completion that moves has to
+    re-rank it. The analyzer debts had no equivalent, so every round chose by
+    eye, and the choice was not recorded anywhere a later round could check.
+
+    ⚠⚠ **The repair is NOT to rank the unranked twelve.** Measured at R2132,
+    `priority` has exactly three readers in this file — `rank_of`,
+    `unranked_of`, and the snapshot row — and **not one of them orders
+    anything**. R2038 had already written that down (*a shade a reader may still
+    read, and no rule does*): the five older shades all fold to `ordinary`,
+    which nothing reads. So filling a debt's `priority` changes no decision, and
+    a round that filled all twelve would have moved a ratchet and left the loop
+    choosing by eye exactly as before. That is almost certainly why nobody
+    filled them.
+
+    ⇒ `priority` is an **override channel**, not the order. `critical` is the
+    one value a rule reads, and it is the person's lever: it jumps the queue.
+    The order below is what governs everything else, which is most of it.
+
+    # The terms, and why each one
+
+    1. **`critical`** — the person's override, and the only declared input.
+       Kept first so that steering remains possible without editing this rule.
+    2. **In the pinned cohort** — closing it decrements the `loop` seat, which
+       IS the north star's terminating condition. Nothing else can end the loop.
+    3. **Chain depth, ascending** — a tie-break among the rest, and it points
+       AWAY from drift. Depth is a join over `opened:` and `closed:`: a debt
+       opened by the round that closed another sits one deeper, so a long chain
+       is the loop wandering from the pin one round at a time.
+    4. **Name** — so the order is total and two runs agree.
+
+    ★★★★★ **Term 2 is measured, not assumed, and the measurement is why this
+    round exists.** R2129, R2130 and R2131 each closed or opened debts entirely
+    outside the R2008 pin: three consecutive rounds of real work with the
+    terminating condition frozen at 10. Each round's carry named the next link
+    in the same chain, and that chain never touched the pin. The two debts
+    R2131 opened sit at depth **3**, which is that drift with a number on it.
+
+    ⚠ **`cohort` and `depth == 0` are the same set today** — measured at R2132,
+    23 and 23, no difference either way — because `chain_depth` gives a cohort
+    member depth zero *by construction*. They are not two terms dressed as one:
+    term 2 is the cohort because that is the term with the MEANING (it is what
+    the terminating condition counts), and depth only ever separates debts that
+    are already outside it.
+
+    # What this rule deliberately does NOT decide
+
+    - **Which debt is `critical`.** That follows from the standing instruction
+      to reproduce the canon's UI/UX, and the debt this repays says in as many
+      words that a round must not settle it alone. The lever is left where a
+      person can reach it, empty and printed, which is R2038's reason for
+      printing an empty list at all.
+    - **That a `campaign` debt should wait.** It is takeable and it sorts like
+      anything else. The standing instruction is now that the most correct
+      approach is worth several rounds, so "larger than one round" stopped
+      being a reason to skip.
+    - **Where an `unmeasured` debt belongs.** Its own premise has not been
+      re-measured, so any position is a guess; it sorts by the same terms and is
+      NAMED in the rendering, so the round that takes one knows its first act is
+      the measurement rather than the repair.
+    """
+    pin = set(members)
+    out: list[dict] = []
+    for row in rows:
+        if not loop_can_close(row):
+            continue
+        name = row["public_name"]
+        critical = rank_of(row.get("priority", "")) == "critical"
+        in_cohort = name in pin
+        depth = depths.get(name)
+        if critical:
+            why = "critical — a person put it here"
+        elif in_cohort:
+            why = "in the pinned cohort — closing it moves the ending condition"
+        else:
+            why = (
+                "outside the pin — closing it does not move the ending condition"
+                + (f", depth {depth}" if depth is not None else ", depth unrecorded")
+            )
+        out.append(
+            {
+                "name": name,
+                "critical": critical,
+                "cohort": in_cohort,
+                "depth": depth,
+                "standing": row.get("blocked_by", ""),
+                "why": why,
+                "key": (
+                    0 if critical else 1,
+                    0 if in_cohort else 1,
+                    NO_DEPTH if depth is None else depth,
+                    name,
+                ),
+            }
+        )
+    return sorted(out, key=lambda item: item["key"])
+
+
+def order_covers(rows: list[dict], order: list[dict]) -> list[str]:
+    """Every takeable debt the order leaves out, or names twice.
+
+    ★★★★★ The non-vacuity floor, in the shape R2128 established: an assertion
+    whose subject can empty out is restated rather than deleted. *The order is
+    non-empty* would go vacuously green the day a bug made it return nothing,
+    so what is asserted instead is that it is a BIJECTION with the population it
+    claims to order — which fails in both directions and cannot pass by
+    returning less.
+    """
+    want = {r["public_name"] for r in rows if loop_can_close(r)}
+    seen = [item["name"] for item in order]
+    out = [f"{name}: takeable and absent from the work order" for name in sorted(want - set(seen))]
+    out += [f"{name}: ordered but not takeable" for name in sorted(set(seen) - want)]
+    out += [f"{name}: placed twice in the work order" for name in sorted({n for n in seen if seen.count(n) > 1})]
+    return out
+
+
+def render_order(order: list[dict], limit: int | None) -> list[str]:
+    """The work order as lines — the head of it, or all of it."""
+    shown = order if limit is None else order[:limit]
+    out = [
+        "",
+        f"  work order  {len(order)} takeable debt(s), DERIVED — critical, then the"
+        " pinned cohort, then chain depth. Do not write this order down;"
+        " ask for it (`--order`).",
+    ]
+    for at, item in enumerate(shown, 1):
+        mark = "unmeasured — measure its premise first" if item["standing"] == "unmeasured" else ""
+        out.append(f"   {at:>3}. {item['name']}{'  <- ' + mark if mark else ''}")
+    if limit is not None and len(order) > limit:
+        out.append(f"        ... {len(order) - limit} more; `--order` prints them all")
+    if order:
+        out.append("")
+        out.append(f"  next      {order[0]['name']}")
+        out.append(f"            {order[0]['why']}")
+    return out
 
 
 def undated_of(rows: list[dict], members: list[str]) -> list[str]:
@@ -939,6 +1113,9 @@ def cohort_standing(label: str, index: dict[str, dict], family: set[str]) -> str
         return "blocked"
     if held["closed_by"] in CLOSERS:
         return "person"
+    # The two branches above are `loop_can_close` spelled out, and they stay
+    # spelled out because this function must NAME which of the two refused.
+    # What R2132 removed is the third copy, not this one — see that predicate.
     return "loop"
 
 
@@ -953,14 +1130,14 @@ def outside_cohort(members: list[str], rows: list[dict]) -> list[str]:
 
     The same three predicates the cohort's own `loop` standing uses, so the two
     numbers add up to one population: open, not blocked, not a person's to close.
+    R2132 made that sentence true by construction — [`loop_can_close`] is the
+    rule, and this asks it rather than restating it.
     """
     held = set(members)
     return sorted(
         row["public_name"]
         for row in rows
-        if row["public_name"] not in held
-        and row["blocked_by"] not in BLOCKED
-        and row.get("closed_by", "") not in CLOSERS
+        if row["public_name"] not in held and loop_can_close(row)
     )
 
 
@@ -1141,6 +1318,10 @@ def cohort_report(
         else f"  deferred  {sum(1 for x in family_depth if x is not None and x >= 2):>3}"
         " at depth 2 or more — the loop was re-aimed twice over and did not come back"
     )
+    # ★★★★★ (R2132) The ORDER, printed last because it is the answer the three
+    # blocks above are evidence for. Everything up to here says what the family
+    # holds; this says what to take.
+    out.extend(render_order(work_order(rows, members, depths), limit=5))
     return out
 
 
@@ -1348,6 +1529,91 @@ def selftest() -> int:
         "the snapshot carries the derived rank, not the shade",
         {d["name"]: d["rank"] for d in ranked_shot["debts"]}
         == {"debt-aaa": "unranked", "debt-mmm": "critical"},
+    )
+
+    # ★★★★★ (R2132) THE WORK ORDER. Each term is exercised by a pair that
+    # differs in that term ALONE, because a sort asserted only on a whole list
+    # passes for the wrong reason as soon as two terms agree — which they do
+    # here, `cohort` and `depth == 0` being the same set on the real tree.
+    def W(name, *, priority="", cohort=False, depth=0, blocked_by="buildable", closed_by=""):
+        return (
+            {
+                "public_name": name,
+                "priority": priority,
+                "blocked_by": blocked_by,
+                "closed_by": closed_by,
+            },
+            name if cohort else None,
+            depth,
+        )
+
+    def order_of(*specs):
+        rows = [s[0] for s in specs]
+        members = [s[1] for s in specs if s[1]]
+        depths = {s[0]["public_name"]: s[2] for s in specs}
+        return [item["name"] for item in work_order(rows, members, depths)]
+
+    check(
+        "the pinned cohort comes before everything outside it",
+        order_of(W("debt-out", depth=0), W("debt-in", cohort=True, depth=0))
+        == ["debt-in", "debt-out"],
+    )
+    check(
+        "`critical` outranks the cohort — the person's lever still works",
+        order_of(W("debt-in", cohort=True), W("debt-crit", priority="critical"))
+        == ["debt-crit", "debt-in"],
+    )
+    check(
+        "outside the pin, the shallower chain comes first (drift sorts last)",
+        order_of(W("debt-deep", depth=3), W("debt-near", depth=1))
+        == ["debt-near", "debt-deep"],
+    )
+    check(
+        "a debt that can sit in no chain goes last, not first",
+        order_of(W("debt-undated", depth=None), W("debt-deep", depth=9))
+        == ["debt-deep", "debt-undated"],
+    )
+    check(
+        "the order is total — equal terms fall back to the name",
+        order_of(W("debt-b", depth=1), W("debt-a", depth=1)) == ["debt-a", "debt-b"],
+    )
+    # The population, both refusals. A blocked debt and a person's debt are not
+    # work the loop can take, so ordering them would be offering work nobody here
+    # can do — the failure this family's `loop` standing exists to prevent.
+    check(
+        "a blocked debt is not in the order",
+        order_of(W("debt-b", blocked_by="phase-c"), W("debt-ok")) == ["debt-ok"],
+    )
+    check(
+        "nor is one only a person can close",
+        order_of(W("debt-p", closed_by="person"), W("debt-ok")) == ["debt-ok"],
+    )
+    check(
+        "and `campaign` / `unmeasured` ARE in it — neither blocks",
+        order_of(W("debt-c", blocked_by="campaign"), W("debt-u", blocked_by="unmeasured"))
+        == ["debt-c", "debt-u"],
+    )
+    # ★★★★★ The coverage floor, and it is asserted as a BIJECTION so it cannot
+    # pass by returning less. Both failing directions are driven.
+    cover_rows = [W("debt-x")[0], W("debt-y")[0]]
+    full = work_order(cover_rows, [], {"debt-x": 0, "debt-y": 0})
+    check("a complete order reports no coverage finding", order_covers(cover_rows, full) == [])
+    check(
+        "a takeable debt missing from the order is a finding",
+        [f.split(":")[0] for f in order_covers(cover_rows, full[:1])] == ["debt-y"],
+    )
+    check(
+        "and so is one ordered that the loop cannot take",
+        any("not takeable" in f for f in order_covers([W("debt-x")[0]], full)),
+    )
+    check(
+        "and so is one placed twice",
+        any("twice" in f for f in order_covers(cover_rows, full + full[:1])),
+    )
+    check(
+        "the head carries the term that placed it, so the answer explains itself",
+        work_order([W("debt-in", cohort=True)[0]], ["debt-in"], {"debt-in": 0})[0]["why"]
+        == "in the pinned cohort — closing it moves the ending condition",
     )
     check("and the ratchet's number at the top", ranked_shot["unranked"] == 1)
 
@@ -1879,6 +2145,33 @@ def main() -> int:
     rows = survey(folder)
     index = all_debts(folder)
     members, source = cohort_members()
+
+    # ★★★★★ (R2132) The order, on its own, before any gate — the loop asks this
+    # at the START of a round and a gate's verdict is not what it is asking for.
+    # `--next` is deliberately ONE line: a round that has to parse a report to
+    # learn what to do next will go back to choosing by eye.
+    if "--next" in sys.argv or "--order" in sys.argv:
+        order = work_order(rows, members, chain_depth(index, set(members)))
+        missed = order_covers(rows, order)
+        for line in missed:
+            print(f"analysis-tool debts: {line}", file=sys.stderr)
+        if missed:
+            return 1
+        if not order:
+            print(
+                "analysis-tool debts: nothing is takeable — every open family "
+                "debt is blocked or is a person's to close",
+                file=sys.stderr,
+            )
+            return 1
+        if "--next" in sys.argv:
+            head = order[0]
+            print(f"{head['name']} — {head['why']}")
+            return 0
+        for line in render_order(order, limit=None):
+            print(line)
+        return 0
+
     broken = (
         check_standings(rows)
         + check_citations(
@@ -1890,6 +2183,13 @@ def main() -> int:
         + check_public_names(folder)
         + check_cohort(members, source, index)
         + check_cohort_live(members, source, index, rows)
+        # ★★★★★ (R2132) The order's coverage is checked at the GATE, not only
+        # when a round asks for the order. A derivation that is verified only by
+        # the command that consumes it is verified by whoever remembers to run
+        # it, which is the shape this repository keeps paying for — and the loop
+        # reads `--next` while the hook runs `--check`, so without this line the
+        # two would disagree with nothing noticing.
+        + order_covers(rows, work_order(rows, members, chain_depth(index, set(members))))
     )
 
     if "--write" in sys.argv:
