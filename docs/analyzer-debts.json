@@ -119,6 +119,18 @@
       ]
     },
     {
+      "name": "debt-a-census-prints-what-it-cannot-see-but-nothing-bounds-it",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
       "name": "debt-a-check-whose-two-sides-share-one-derivation",
       "substituted": false,
       "blocked_by": "buildable",
@@ -673,6 +685,18 @@
       "why": [
         "links analyzer-behaviour-canon-is-the-standalone-prototype",
         "names dashboard.t2.9"
+      ]
+    },
+    {
+      "name": "debt-the-repayment-loop-takes-work-in-an-order-nobody-set",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-debt-repayment-loop"
       ]
     },
     {

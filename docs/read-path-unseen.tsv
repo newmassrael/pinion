@@ -1,0 +1,19 @@
+# R2130 — the population `read_path_shapes.py` CANNOT examine.
+# `0 broken` is a statement about what is left after these, so the
+# count is pinned and the gate refuses a NEW kind or a RISEN count.
+# Derived by `tools/read_path_shapes.py --write-budget`; do not
+# hand-edit. Repairing one means re-running that, so this can only
+# fall.
+#
+# ⛔ Do NOT shrink these by teaching the census a synonym. That
+# blesses a split vocabulary and re-hides what the gap was hiding —
+# R2129 measured two real mismatches inside it. Close the vocabulary
+# instead; then these rows go to zero because there is nothing left
+# to skip.
+#
+# kind	count
+type-word:boolean	2
+type-word:number	4
+type-word:object	7
+type-word:text	16
+unclassified-arm	16

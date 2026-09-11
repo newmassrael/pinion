@@ -96,6 +96,22 @@ carries one row per split that exists, and the gate refuses a NEW split or a
 split that grew a shape. A split repaired must be dropped from the budget with
 `--write-budget`, so the pin can only fall.
 
+★★★★★ **There is a SECOND pin, and it is on what this census never looked at**
+(R2130): `docs/read-path-unseen.tsv`. Everything above answers questions about
+the population that WAS examined, and none of them notices a declaration
+LEAVING it. Add one new spelling of a type word and that word's declarations
+move from `compared` into `skipped` — `broken` stays 0, every check here stays
+green, and coverage has fallen with nothing said. That is not hypothetical:
+R2129 measured two real `object`-declared / `Text`-answering mismatches that
+the existing vocabulary gap was already hiding. So `0 broken` is reported
+together with the size of what it is silent about, and a RISE in that size is
+refused exactly as a new split is.
+
+⛔ The repair for a rise is never to teach this file another synonym. That
+blesses the split vocabulary and re-hides what it hides; the root is that
+`SchemaField.ty` is a `&'static str` so any word is legal, and closing that
+vocabulary drives these rows to zero by leaving nothing to skip.
+
 ★ The runtime end of the same invariant is `rpc_verify.screen_spec`, which
 refuses a string rather than converting it. Two ends, one rule, and each says
 so — the door cannot silently absorb what this would refuse.
@@ -113,6 +129,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES = ROOT / "examples"
 BUDGET = ROOT / "docs" / "read-path-shapes.tsv"
+
+#: R2130 — the population this census CANNOT examine, pinned so it can only
+#: fall. `BUDGET` pins what the census found; this pins what it never looked
+#: at, which is the number a reader needs in order to know what `0 broken` is
+#: a statement ABOUT. Printing it (R2129.2) was half the job: a printed number
+#: nothing bounds can rise while every verdict stays green, and it rises in
+#: the direction that HIDES work — a declaration that moves from `compared`
+#: into `skipped` takes any disagreement it was carrying out of sight with it.
+UNSEEN = ROOT / "docs" / "read-path-unseen.tsv"
 
 #: The root of the assembled product. Its path dependencies are the population;
 #: this one name is the only thing about the population written down here.
@@ -726,6 +751,71 @@ def render_budget(now: dict[str, dict[str, str]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def unseen_now(untyped: dict[str, int], blind: int) -> dict[str, int]:
+    """The unexamined population as one table: what was skipped, and why.
+
+    Two kinds, deliberately in ONE pin rather than two files. They have
+    different causes — an unknown type word is a vocabulary that never
+    closed ([[debt-a-declared-type-is-an-untyped-string]]), an unclassified
+    arm is a delegation this census cannot follow — but they are the same
+    FACT to a reader of `0 broken`: a declaration the comparison never
+    reached. Splitting them into two budgets would let a round move weight
+    from one to the other without either moving.
+    """
+    now = {f"type-word:{word}": n for word, n in untyped.items() if n}
+    if blind:
+        now["unclassified-arm"] = blind
+    return now
+
+
+def unseen_verdict(
+    now: dict[str, int], pinned: dict[str, int]
+) -> tuple[list[str], list[str], list[str]]:
+    """`(new, grown, repaired)` — what appeared, what rose, what may be dropped.
+
+    Deliberately the same shape as `budget_verdict`, because it is the same
+    rule: a pin that can only fall. `grown` compares COUNTS rather than the
+    set of shapes, which is the one difference the two populations force.
+    """
+    new = sorted(k for k in now if k not in pinned)
+    grown = sorted(k for k, n in now.items() if k in pinned and n > pinned[k])
+    repaired = sorted(k for k in pinned if now.get(k, 0) < pinned[k])
+    return new, grown, repaired
+
+
+def render_unseen(now: dict[str, int]) -> str:
+    """The unseen pin's text, so the writer and the selftest agree on it."""
+    lines = [
+        "# R2130 — the population `read_path_shapes.py` CANNOT examine.",
+        "# `0 broken` is a statement about what is left after these, so the",
+        "# count is pinned and the gate refuses a NEW kind or a RISEN count.",
+        "# Derived by `tools/read_path_shapes.py --write-budget`; do not",
+        "# hand-edit. Repairing one means re-running that, so this can only",
+        "# fall.",
+        "#",
+        "# ⛔ Do NOT shrink these by teaching the census a synonym. That",
+        "# blesses a split vocabulary and re-hides what the gap was hiding —",
+        "# R2129 measured two real mismatches inside it. Close the vocabulary",
+        "# instead; then these rows go to zero because there is nothing left",
+        "# to skip.",
+        "#",
+        "# kind\tcount",
+    ]
+    lines += [f"{kind}\t{n}" for kind, n in sorted(now.items())]
+    return "\n".join(lines) + "\n"
+
+
+def parse_unseen(text: str) -> dict[str, int]:
+    """The unseen pin read back, ignoring comments and blank lines."""
+    out: dict[str, int] = {}
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        kind, count = line.split("\t")
+        out[kind] = int(count)
+    return out
+
+
 def parse_budget(text: str) -> dict[str, dict[str, str]]:
     """The budget file read back, ignoring comments and blank lines."""
     out: dict[str, dict[str, str]] = {}
@@ -757,6 +847,11 @@ def read_sources(crate: str) -> list[str]:
 def read_budget() -> dict[str, dict[str, str]]:
     """The pinned splits, or `{}` on a tree that has no budget yet."""
     return parse_budget(BUDGET.read_text(encoding="utf-8")) if BUDGET.exists() else {}
+
+
+def read_unseen() -> dict[str, int]:
+    """The pinned unexamined population, or `{}` on a tree with no pin yet."""
+    return parse_unseen(UNSEEN.read_text(encoding="utf-8")) if UNSEEN.exists() else {}
 
 
 def read_core_source() -> str:
@@ -957,12 +1052,52 @@ def check() -> int:
         )
         return 1
 
+    # ★★★★★ R2130 — THE PIN ON WHAT THIS CENSUS NEVER LOOKED AT.
+    #
+    # The three checks above are all about what WAS examined. This one is
+    # about the rest, and it exists because the other direction is the one
+    # that goes wrong quietly: nothing above notices a declaration LEAVING
+    # the comparison. Add one new spelling of a type word and that word's
+    # declarations move from `compared` into `skipped`, `broken` stays 0,
+    # and every verdict here stays green while coverage falls — which is
+    # exactly how the gap that hid R2129's two real mismatches was built.
+    #
+    # A pin rather than zero, for `budget_verdict`'s reason: the unclassified
+    # arms cannot be driven to zero from here at all (following a delegation
+    # is what this census structurally cannot do), so demanding zero would
+    # make the gate a thing to be bypassed rather than obeyed.
+    unseen = unseen_now(untyped, blind)
+    appeared, risen, _ = unseen_verdict(unseen, read_unseen())
+    if appeared or risen:
+        print(
+            "read-path-shapes: this census now examines LESS than it is pinned to",
+            file=sys.stderr,
+        )
+        pinned_unseen = read_unseen()
+        for kind in appeared + risen:
+            was = pinned_unseen.get(kind)
+            where = "new" if was is None else f"was {was}"
+            print(f"  {kind}: {unseen[kind]} ({where})", file=sys.stderr)
+        print(
+            "read-path-shapes: `0 broken` is a statement about what is LEFT\n"
+            "                  after these, so a rise here weakens every\n"
+            "                  verdict above it. Do NOT teach the census a new\n"
+            "                  synonym to make this fall -- that blesses the\n"
+            "                  split vocabulary and re-hides what it hides.\n"
+            "                  Close the vocabulary, or, if the rise is\n"
+            "                  deliberate, say why and re-run\n"
+            "                  `python3 tools/read_path_shapes.py --write-budget`.",
+            file=sys.stderr,
+        )
+        return 1
+
     print(
         f"read-path-shapes: {len(published)} read path(s) over {len(crates)} crate(s) "
         f"of {PRODUCT}; {shared} published by more than one, {len(now)} split, "
         f"{blind} with an arm this census cannot classify; "
         f"{compared} declaration(s) over {impls} impl(s) workspace-wide checked "
-        f"against their arm, 0 broken, "
+        f"against their arm, 0 broken "
+        f"over the {compared} examined and {sum(unseen.values())} pinned unexamined, "
         f"{sum(untyped.values())} skipped for a type word this census has no "
         f"shape for {dict(sorted(untyped.items()))}; "
         f"{len(read_walks())} walk(s) read for a stale decode, 0 found, "
@@ -1105,6 +1240,44 @@ def selftest() -> int:
         "the budget round-trips",
         parse_budget(render_budget({"said": {"a": "json", "b": "text"}})),
         {"said": {"a": "json", "b": "text"}},
+    )
+
+    # ── R2130: the pin on what the census cannot examine ──────────────────
+    #
+    # ★ These four exist because the gate they back is the only one here that
+    # fires on coverage FALLING, and a gate with no failing path is not a
+    # gate. The middle two are the failing paths, written as the two ways
+    # coverage falls: a word nobody had spelled before, and one more site
+    # spelling a word already known.
+    case(
+        "the two unseen kinds are pinned as one table",
+        unseen_now({"text": 16, "object": 7}, 16),
+        {"type-word:text": 16, "type-word:object": 7, "unclassified-arm": 16},
+    )
+    case(
+        "a type word nobody had spelled before is refused",
+        unseen_verdict({"type-word:text": 16, "type-word:bool8": 1}, {"type-word:text": 16}),
+        (["type-word:bool8"], [], []),
+    )
+    case(
+        "one more site skipping a known word is refused",
+        unseen_verdict({"type-word:text": 17}, {"type-word:text": 16}),
+        ([], ["type-word:text"], []),
+    )
+    case(
+        "a word that stopped being skipped is offered back",
+        unseen_verdict({"type-word:text": 15}, {"type-word:text": 16}),
+        ([], [], ["type-word:text"]),
+    )
+    case(
+        "a word skipped zero times is not a row",
+        unseen_now({"text": 0}, 0),
+        {},
+    )
+    case(
+        "the unseen pin round-trips",
+        parse_unseen(render_unseen({"type-word:text": 16, "unclassified-arm": 16})),
+        {"type-word:text": 16, "unclassified-arm": 16},
     )
 
     case(
@@ -1310,9 +1483,23 @@ def main() -> int:
     if args.selftest:
         return selftest()
     if args.write_budget:
-        now = splits(split_census()[0])  # the budget pins SPLITS; nothing else
+        published = split_census()[0]
+        now = splits(published)
         BUDGET.write_text(render_budget(now), encoding="utf-8")
         print(f"wrote {BUDGET.relative_to(ROOT)}: {len(now)} split(s)")
+        # R2130 — BOTH pins, in one command. Two writers would let a round
+        # refresh the splits and leave the unseen pin stale, and a stale pin
+        # is worse than none: it reads as a measurement.
+        _, _, _, untyped_words = promise_census()
+        unclassified = sum(
+            1 for by in published.values() if "unknown" in by.values()
+        )
+        unseen = unseen_now(untyped_words, unclassified)
+        UNSEEN.write_text(render_unseen(unseen), encoding="utf-8")
+        print(
+            f"wrote {UNSEEN.relative_to(ROOT)}: "
+            f"{sum(unseen.values())} declaration(s) this census cannot examine"
+        )
         return 0
     if args.list:
         published, _ = split_census()
