@@ -1878,9 +1878,22 @@ fn description_shown(state: &Rc<ViewState>) -> Option<(String, String)> {
 }
 
 /// Where a resting description is painted.
+/// ⚠⚠ R2148 — **this box was too short for its own caption, measured.**
+///
+/// It wrote `22`, and the containment gate found the overhang the moment a
+/// swept state reached the tip for the first time: the whole surface had been
+/// outside every check this screen makes, which is what R2148's value pin
+/// surfaced.
+///
+/// ★ It is [`ROW_H`] now — the height this screen DECLARES for a one-line
+/// control, in `spec` — rather than another number. ⚠ And NOT [`seat`], which
+/// was the first repair tried and is wrong here: `line_rect` sizes the box a
+/// bare RUN sits in, and measured against this caption it reserves 18 where the
+/// mark needs 23. A captioned control is not a run, and the screen's own row
+/// height is what the rest of them use.
 fn tip_rect() -> Rect {
     let plot = canvas_rect();
-    Rect::new(plot.x + PAD, plot.y + PAD, 300, 22)
+    Rect::new(plot.x + PAD, plot.y + PAD, 300, ROW_H)
 }
 
 // ── The view ────────────────────────────────────────────────────────────────

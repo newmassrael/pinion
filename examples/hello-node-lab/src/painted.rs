@@ -696,6 +696,59 @@ fn painted(state: &std::rc::Rc<LabState>) -> Painted {
     painted_at(state, (WIN_W, WIN_H)).0
 }
 
+/// Where this screen's pinned address set lives, for the regeneration path.
+const PIN_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/painted_addresses.pin");
+
+/// ★★★★★ R2148 — **what this screen publishes is pinned by its VALUE.**
+///
+/// # ⚠⚠ Nine families, converted and held by nothing
+///
+/// R2147 counted what this campaign's own progress had been doing: converting a
+/// family's readers removes its literals, and a family's literals are the only
+/// thing comparing its address with the paint. Of 161 families, 56 were pinned
+/// by nothing and 24 of those were already converted — nine of them this
+/// screen's `lab.*` (`lab.crumb`, `lab.faults`, `lab.hint`, `lab.node`,
+/// `lab.observed`, `lab.pin`, `lab.rail`, `lab.reset`, `lab.toast`).
+///
+/// R2137.3 is the measurement underneath: a consistent rename of one family
+/// passed 790 tests and four censuses, because paint, specification, wire,
+/// walks and tests all derive from one constant and therefore all move
+/// together. The declaration improves the LIKELIHOOD of a typo and creates no
+/// DETECTION; this is the detection.
+///
+/// ★★ REACHABLE IS IN THE PIN, and on this screen that is not a detail: the
+/// panes scroll, so a control below the fold is absent from [`Painted::tags`]
+/// and is not missing. A pin taking only the painted set would drop every mark
+/// a reader scrolls to — which is the half of this screen that R1662 and R1714
+/// exist for.
+#[test]
+fn r2148_every_published_address_is_pinned_by_value() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let mut tags: Vec<String> = Vec::new();
+        for (_when, mutate) in STATES {
+            mutate(&state);
+            for (_how_big, size) in SIZES {
+                let shot = painted_at(&state, *size).0;
+                tags.extend(shot.tags.keys().cloned());
+                tags.extend(shot.reachable.keys().cloned());
+            }
+        }
+        let seen = pinion_core::test_fixtures::address_pin::fold(tags.iter().map(String::as_str));
+        pinion_core::test_fixtures::address_pin::check(
+            &seen,
+            include_str!("painted_addresses.pin"),
+            PIN_PATH,
+            // ⚠ A floor, not decoration: near it means the sweep stopped
+            // reaching the screen rather than that the screen shrank, and a pin
+            // compared against almost nothing is green for having asked
+            // nothing. This screen paints hundreds.
+            50,
+        );
+    });
+}
+
 /// ★★★★★ R2078 — **the palette, gathered across the scroll positions a reader
 /// can reach, in the frame its rectangles are stated in.**
 ///

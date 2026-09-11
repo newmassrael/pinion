@@ -16,6 +16,7 @@ use std::rc::Rc;
 
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
+use pinion_core::test_fixtures::address_pin;
 use pinion_core::test_fixtures::screen_ink::{assert_boxes_hold_their_text, assert_contained_ink};
 use pinion_core::{Frame, Scene};
 
@@ -55,13 +56,29 @@ const SIZES: [(&str, (u32, u32)); 3] = [
 type SweptState = (&'static str, fn(&Rc<ViewState>));
 
 /// The states this section is swept in, cumulative.
-const STATES: [SweptState; 4] = [
+const STATES: [SweptState; 5] = [
     ("opening", |_| {}),
     ("a closed session picked", |state| {
         super::select_session(state, "S-06");
     }),
     ("kept to established", |state| super::choose_chip(state, 1)),
     ("kept to reconnecting", |state| super::choose_chip(state, 2)),
+    // ★★★★★ R2148 — **the sweep did not reach the tip at all**, and the value
+    // pin is what said so: `sv.tip` was the one family this screen publishes
+    // that the pin could not cover. The tip is painted only while the pointer
+    // is inside AND resting on something described, and `reset` clears both —
+    // so a whole painted surface, its announcement and its containment were
+    // outside every check this sweep makes.
+    //
+    // ⚠ The resting tag is DERIVED from the described set rather than written:
+    // `descriptions()` describes one per chip, so the first chip's address is a
+    // tag this screen really has a sentence for. A literal here would be a
+    // second spelling of the address — and one that would go on "resting" on a
+    // mark that stopped existing.
+    ("a chip rested on", |state| {
+        state.pointer_inside.set(true);
+        state.resting.set(Some(address::chip(spec::CHIPS[0].key)));
+    }),
 ];
 
 fn painted_at(state: &Rc<ViewState>, size: (u32, u32)) -> Scene {
@@ -118,6 +135,46 @@ fn record(scene: &Scene) {
 /// Where a tag was painted on this frame.
 fn rect_of(scene: &Scene, tag: &str) -> Option<Rect> {
     pinion_shell::rect_for_tag(scene, tag)
+}
+
+/// Where this screen's pinned address set lives, for the regeneration path.
+const PIN_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/painted_addresses.pin");
+
+/// ★★★★★ R2148 — **what this screen publishes is pinned by its VALUE.**
+///
+/// # ⚠⚠ This screen was the campaign's most exposed, and a count said so
+///
+/// R2143 reasoned that the fully converted screens are the unpinned ones —
+/// conversion is what removes a family's literals, and a family's literals are
+/// the only thing holding its address to a value. R2147 turned that into a
+/// number: of 161 families, 56 are pinned by nothing and **24 of those are
+/// already converted**, five of them this screen's `sv.*`. That is not a debt
+/// getting smaller; it is a check that was deleted, and `sv.chip`, `sv.detail`,
+/// `sv.list`, `sv.row` and `sv.tip` could be renamed with nothing refusing.
+///
+/// R2137.3 is the measurement underneath: a consistent rename of one family
+/// passed 790 tests and four censuses, because paint, specification, wire,
+/// walks and tests all derive from one constant and therefore all move
+/// together. The declaration improves the LIKELIHOOD of a typo and creates no
+/// DETECTION; this is the detection.
+///
+/// ★ The tags come from the SWEEP rather than from one frame, so a mark that
+/// only appears in a later state — a picked row's detail, a chip's crossing —
+/// is in the pin too.
+#[test]
+fn r2148_every_published_address_is_pinned_by_value() {
+    let mut tags: Vec<String> = Vec::new();
+    sweep(|_, scene, _, _| tags.extend(scene.tags()));
+    let seen = address_pin::fold(tags.iter().map(String::as_str));
+    address_pin::check(
+        &seen,
+        include_str!("painted_addresses.pin"),
+        PIN_PATH,
+        // ⚠ A floor, not decoration: near it means the sweep stopped reaching
+        // the screen rather than that the screen shrank, and a pin compared
+        // against almost nothing is green for having asked nothing.
+        10,
+    );
 }
 
 // ── 1. The section the pipeline paints IS the section the reference draws ───

@@ -12,27 +12,4 @@
 # `python3 tools/painted_addresses.py --write-budget`.
 #
 # Rewritten by that command; do not hand-edit.
-lab.crumb
-lab.faults
-lab.hint
-lab.node
-lab.observed
-lab.pin
-lab.rail
-lab.reset
-lab.toast
 no.such
-sv.chip
-sv.detail
-sv.list
-sv.row
-sv.tip
-tv.chip
-tv.filters
-tv.graph
-tv.inspector
-tv.layout
-tv.link
-tv.node
-tv.tip
-tv.toggle

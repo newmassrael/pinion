@@ -1441,9 +1441,18 @@ fn description_shown(state: &Rc<ViewState>) -> Option<(String, String)> {
 }
 
 /// Where a resting description is painted.
+/// ⚠ R2148 — **the height is the screen's declared row height, not a number.**
+///
+/// It wrote `22`, which held this screen's caption and was one pixel too few on
+/// the sibling screen — and nothing had said so because the sweep never reached
+/// the state that paints a tip at all, which R2148's value pin surfaced.
+///
+/// ⚠ NOT [`seat`], which was the first repair tried: `line_rect` sizes the box
+/// a bare RUN sits in, and measured against this caption it reserves 18 where
+/// the mark needs 20. A captioned control is not a run.
 fn tip_rect() -> Rect {
     let body = rows_rect();
-    Rect::new(body.x + PAD, body.y + PAD, 320, 22)
+    Rect::new(body.x + PAD, body.y + PAD, 320, ROW_H)
 }
 
 // ── The view ────────────────────────────────────────────────────────────────

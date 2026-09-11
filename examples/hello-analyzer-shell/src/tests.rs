@@ -10463,12 +10463,16 @@ fn r2124_every_mounted_guest_is_asked_about() {
 ///   deleted — it now holds that this sweep paints nothing under a guest
 ///   namespace, so the absence of a filter is a recorded fact instead of an
 ///   assumption.
-/// * `hello-node-lab` — has `Painted` but **no `sweep` at all**: its tests
+/// * ~~`hello-node-lab`~~ — had `Painted` but **no `sweep` at all**: its tests
 ///   iterate `STATES`/`SIZES` inline at four separate sites, and its
-///   `reachable` is a `BTreeMap<String, Vec<Move>>` rather than a set. Needs
-///   its own iteration written; not four lines.
-/// * `hello-sessions-view` and `hello-topology-view` — NO `Painted` at all,
-///   their sweep hands out a bare `Scene`, so a tag walk has to be written.
+///   `reachable` is a `BTreeMap<String, Vec<Move>>` rather than a set, so it
+///   needed its own iteration written. **Pinned at R2148**, reachable included,
+///   because the panes scroll and a control below the fold is not missing.
+/// * ~~`hello-sessions-view` and `hello-topology-view`~~ — NO `Painted` at all,
+///   their sweep hands out a bare `Scene`. **Pinned at R2148**: no tag walk had
+///   to be written after all — `Scene::tags()` is public and its own doc calls
+///   it the read a census of what a screen addresses wants, so each is the four
+///   lines `hello-log-view` has.
 ///
 /// ⚠ And a second correction, because the first draft asked a question that
 /// does not exist: it said *does a mark a scroll would reveal count as painted*
@@ -10482,11 +10486,11 @@ fn r2124_every_mounted_guest_is_asked_about() {
 /// `BTreeMap` in the node lab. That is why
 /// `pinion_core::test_fixtures::address_pin` takes the screen's own TAG
 /// ITERATOR rather than a `Scene` or a `Painted`.
-const PIN_OWED: &[&str] = &[
-    "hello-node-lab",
-    "hello-sessions-view",
-    "hello-topology-view",
-];
+/// ✅ R2148 — **EMPTY, and the emptiness is the claim.** Every screen this
+/// binary assembles now pins its published addresses by value. The gate below
+/// is what makes that durable: a screen mounted without a pin puts its name
+/// back here, in the commit that mounts it.
+const PIN_OWED: &[&str] = &[];
 
 /// ★★★★★ R2140 — **every screen this binary assembles pins its published
 /// addresses, and the population is DERIVED.**
