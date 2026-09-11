@@ -188,7 +188,7 @@ def body() -> None:
               f"{counted['invoke']} declared action(s) dispatch")
 
         # ── (B) The specification is on the wire, and it is what was built ──
-        spec = json.loads(q(tf, "spec"))
+        spec = q(tf, "spec")
         # ★★★★★ R2054 — the prefix each part of a form row is addressed under,
         # from the screen rather than spelled here. A walk cannot call the
         # composition the framework's painter uses, so it is handed the answer;
@@ -694,8 +694,9 @@ def body() -> None:
         # document-sized families below. Asked here rather than earlier because
         # the sections above drive declared actions, and a definition made by
         # one of them is a member this table has to count.
-        # ⚠ Not `json.loads`: this read answers a JSON value where `spec` above
-        # answers a string holding one, so the helper hands back a dict already.
+        # ⚠ Not `json.loads`: this read answers a JSON value, so the helper
+        # hands back a dict already. ★ R2129 — so does `spec` above now; the
+        # sentence that used to sit here named it as the exception.
         registered = q(tf, "definitions")["definitions"]
         FAMILIES = {
             "node_lab": 1,

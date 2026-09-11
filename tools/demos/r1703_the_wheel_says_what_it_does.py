@@ -149,7 +149,7 @@ def hint_strip_gestures(tf: RpcSubprocess) -> int:
     whole life advertising a wheel nothing answered.
     """
     checks = 0
-    spec = json.loads(tf.query(f"{EXT}/spec"))
+    spec = tf.query(f"{EXT}/spec")
     advertised = [tuple(g) for g in spec["gestures"]]
     # ★★★★★ R2082 — the count is DERIVED and printed, not pinned at four. It
     # was `assert_eq(len(advertised), 4, "the canvas advertises four gestures")`,

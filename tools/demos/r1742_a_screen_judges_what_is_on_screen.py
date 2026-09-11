@@ -220,9 +220,7 @@ def press_tag(app: RpcSubprocess, tag: str) -> None:
 def enum_key(app: RpcSubprocess) -> str:
     """The configuration path whose roster is driven — the SCREEN's, not this
     file's."""
-    import json
-
-    return json.loads(app.query(f"/{tag_of(app)}/external/spec"))["enum_key"]
+    return app.query(f"/{tag_of(app)}/external/spec")["enum_key"]
 
 
 def tag_of(app: RpcSubprocess) -> str:
@@ -557,9 +555,7 @@ def section_d(app: RpcSubprocess, key: str) -> None:
         ok(f"D: the host's {chrome} survives the lab being on it", chrome in rects)
     ok("D: and the section is addressed by the tag the report names", tag == "node_lab")
 
-    import json
-
-    published = json.loads(app.query(f"/{tag}{EXT}/spec"))["inspector"]
+    published = app.query(f"/{tag}{EXT}/spec")["inspector"]
     assert_eq(
         sorted(published),
         sorted(row["conformance"]["surfaces"]),

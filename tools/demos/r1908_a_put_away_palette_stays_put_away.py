@@ -109,9 +109,7 @@ def blob(root: Path) -> dict | None:
 
 def placement(app: RpcSubprocess) -> dict:
     """What the running tool says about the palette's placement."""
-    spec = app.query(f"{EXT}/spec")
-    spec = json.loads(spec) if isinstance(spec, str) else spec
-    return spec["palette_placement"]
+    return app.query(f"{EXT}/spec")["palette_placement"]
 
 
 def settle(app: RpcSubprocess) -> None:

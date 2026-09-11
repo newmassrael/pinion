@@ -92,7 +92,7 @@ def body() -> None:
             )
 
         # ── (B) the vocabulary is declared, not guessed ─────────────
-        spec = json.loads(q(tf, "spec"))
+        spec = q(tf, "spec")
         declared = {r["scope"]: r["gated"] for r in spec["resets"]}
         assert_eq(sorted(declared), sorted(opened), "the wire declares every scope it reports")
         assert_eq(declared["view"], False, "the view's affordance is unconditional")
@@ -140,7 +140,7 @@ def body() -> None:
                     tf,
                     next(
                         role["tag"]
-                        for role in json.loads(q(tf, "spec"))["roles"]
+                        for role in q(tf, "spec")["roles"]
                         if role["name"] == "Responder"
                     ),
                     lambda: q(tf, "nodes"),

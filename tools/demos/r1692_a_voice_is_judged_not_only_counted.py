@@ -43,7 +43,6 @@ R1691 silences do that separating, so a flag is a defect.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -70,7 +69,7 @@ _DESIGN: tuple[int, int] | None = None
 def viewport(tf) -> tuple[int, int]:
     global _DESIGN
     if _DESIGN is None:
-        design = json.loads(q(tf, "spec"))["design"]
+        design = q(tf, "spec")["design"]
         _DESIGN = (design[0], design[1])
     return _DESIGN
 
@@ -335,7 +334,7 @@ def body() -> None:
         print(f"[E] {len(virtual)} virtual region(s), every one of them anchored")
 
         # ── (F) it holds through a real press ───────────────────────
-        spec = json.loads(q(tf, "spec"))
+        spec = q(tf, "spec")
         before_names = set(q(tf, "nodes").split(","))
         # ★ R2049 — the address the screen publishes, not one spelled here.
         press(tf, spec["roles"][0]["tag"])

@@ -234,7 +234,7 @@ def drive_the_lab(app: RpcSubprocess) -> tuple[dict, dict]:
     open — the two frames that cannot coexist.
     """
     app.intervene_painted(f"{EXT}/nav", "lab")
-    enum_key = json.loads(app.query(f"{LAB}/spec"))["enum_key"]
+    enum_key = app.query(f"{LAB}/spec")["enum_key"]
     act(app, f"{LAB}/select", "P-01")
     # Idempotent, because this walk is taken more than once: the screen REFUSES
     # a second `add_field` for a key the card already carries, and a demo that

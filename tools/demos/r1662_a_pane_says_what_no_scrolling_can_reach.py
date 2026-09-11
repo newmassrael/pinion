@@ -38,7 +38,6 @@ Run from the workspace root:
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -101,7 +100,7 @@ def reach(tf):
 def run(tf: RpcSubprocess) -> None:
     # ★★★ R1687 — the floor comes from the screen. See `FLOOR`.
     global FLOOR, WIN
-    declared = json.loads(tf.query(f"{EXT}/spec"))["floor"]
+    declared = tf.query(f"{EXT}/spec")["floor"]
     FLOOR = (declared[0], declared[1])
     WIN = (FLOOR[0] + ABOVE_FLOOR, max(900, FLOOR[1] + ABOVE_FLOOR))
     assert FLOOR[0] < WIN[0] and FLOOR[1] < WIN[1], (
@@ -225,7 +224,7 @@ def run(tf: RpcSubprocess) -> None:
     # A walk cannot call the declaration they come from, so it is handed them:
     # a wrong letter here would find no target and read as *the pane holds no
     # role row past the fold*.
-    rows = {role["tag"] for role in json.loads(tf.query(f"{EXT}/spec"))["roles"]}
+    rows = {role["tag"] for role in tf.query(f"{EXT}/spec")["roles"]}
     target = next(
         o for o in away
         if o["viewport"]["name"] == palette_body and o["tag"] in rows

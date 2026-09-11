@@ -95,7 +95,7 @@ def body() -> None:
         # ★★★★★ R2105 — and the inspector's seats, asked of the screen the same
         # way. This walk PRESSES three of them, so a wrong letter here would be
         # a press that lands on nothing and a card that never changed.
-        seat = inspector_seats(json.loads(q(tf, "spec")))
+        seat = inspector_seats(q(tf, "spec"))
         # ── (A) boot ────────────────────────────────────────────────
         opening = cards(tf)
         assert_eq(
@@ -112,7 +112,7 @@ def body() -> None:
             assert seat[act] in painted, f"★ {seat[act]} is on the opening screen"
 
         # ── (B) the vocabulary is declared, not guessed ─────────────
-        spec = json.loads(q(tf, "spec"))
+        spec = q(tf, "spec")
         ops = {op["name"]: op for op in spec["operations"]}
         for name in ("delete a node", "rename a node", "collapse a node", "disable a node"):
             assert_eq(ops[name]["absent"], False, f"{name!r} is answered now")

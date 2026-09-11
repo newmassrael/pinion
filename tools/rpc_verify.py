@@ -7022,18 +7022,28 @@ def abs_rects_of(snap: Any) -> dict[str, tuple[int, int, int, int]]:
 def screen_spec(app: "RpcSubprocess", external: str = "/external") -> Any:
     """The specification a screen publishes about itself, as data.
 
-    ★ Two spellings, and both are read: one screen publishes `spec` as JSON and
-    another as a string holding JSON. Which a screen chose is not what any
-    caller of this is about, and a demo that knows is a demo that breaks when
-    the other screen is added.
-
     R1709 lifted this out of `r1708_a_drag_is_answered_once.py` on its second
     consumer, per the standing rule that what a demo re-derives belongs in the
     harness before a third one derives it differently.
+
+    ★★★★★ R2129 — ONE spelling, and the refusal is the point. This read used to
+    absorb two: five screens and the shell answered `spec` as a JSON value and
+    the node lab answered a string holding JSON, so the same expression was
+    right five times and a `TypeError` the sixth. R2129 moved the lab and
+    deleted the absorber, and what is left here refuses rather than converts —
+    a door that quietly converted is how the split survived 400 rounds.
+
+    `tools/read_path_shapes.py` is the same invariant read off the source at
+    push time; this is the runtime end of it, and says so rather than being a
+    second opinion about it.
     """
     spec = app.query(f"{external}/spec")
     if isinstance(spec, str):
-        spec = json.loads(spec)
+        raise AssertionError(
+            f"{external}/spec answered a string holding JSON, not a JSON value. "
+            "Every screen publishes it as a JSON value (R2129); run "
+            "`python3 tools/read_path_shapes.py` for which screen regressed."
+        )
     return spec
 
 

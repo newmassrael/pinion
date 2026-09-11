@@ -75,7 +75,7 @@ _DESIGN: tuple[int, int] | None = None
 def viewport(tf) -> tuple[int, int]:
     global _DESIGN
     if _DESIGN is None:
-        design = json.loads(q(tf, "spec"))["design"]
+        design = q(tf, "spec")["design"]
         _DESIGN = (design[0], design[1])
     return _DESIGN
 
@@ -114,7 +114,7 @@ def access(tf):
 def graph_boxes(tf) -> dict[str, tuple[int, int, int, int]]:
     """Every card and every host frame, as PAINTED."""
     painted = rects(tf)
-    spec = json.loads(q(tf, "spec"))
+    spec = q(tf, "spec")
     # ★ R2103 — both prefixes come off the rosters the screen publishes. The
     # card family needs the prefix rather than a row's address because this
     # reads the LIVE list of cards, which is not the specification's.
@@ -166,7 +166,7 @@ def overlaps(a, b) -> bool:
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         # ── (A) the declaration ─────────────────────────────────────
-        spec = json.loads(q(tf, "spec"))
+        spec = q(tf, "spec")
         # ★★★★★ R2104 — every toolbar seat's address, by the word the screen
         # declares it under. This walk is about the canvas controls, so it named
         # the pill's four seats and the launch chip twenty-eight times over; a

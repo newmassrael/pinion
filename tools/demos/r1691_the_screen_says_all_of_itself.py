@@ -78,7 +78,7 @@ _DESIGN: tuple[int, int] | None = None
 def viewport(tf) -> tuple[int, int]:
     global _DESIGN
     if _DESIGN is None:
-        design = json.loads(q(tf, "spec"))["design"]
+        design = q(tf, "spec")["design"]
         _DESIGN = (design[0], design[1])
     return _DESIGN
 
@@ -134,7 +134,7 @@ def expand(spec: dict, tag: str, population: str) -> list[str]:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
-        spec = json.loads(q(tf, "spec"))
+        spec = q(tf, "spec")
 
         # ── (A) the census answers, as a partition ──────────────────
         census = tf.voice()

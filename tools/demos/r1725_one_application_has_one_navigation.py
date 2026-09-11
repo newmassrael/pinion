@@ -342,12 +342,13 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # destination it belongs to, so a walk that has the roster has the
         # addresses and composes nothing.
         #
-        # 🟥 THROUGH `screen_spec`, NOT through `before`. This screen publishes
-        # `spec` as a STRING HOLDING JSON while its sibling publishes JSON, and
-        # `screen_spec` is the harness door that exists for exactly that split.
-        # The first draft indexed `before` directly and died
-        # `TypeError: string indices must be integers` — the door was already
-        # there and going around it is what broke.
+        # 🟥 THROUGH `screen_spec`. When this was written the screen published
+        # `spec` as a STRING HOLDING JSON while its sibling published JSON, and
+        # the first draft indexed `before` directly and died `TypeError: string
+        # indices must be integers` — eight lines under an expression of the
+        # same shape that worked. ★ R2129 closed the split at the wire, so both
+        # now answer a JSON value; the door stays, and what it does now is
+        # REFUSE a string rather than absorb one.
         seat_of = {row["name"]: row["tag"] for row in screen_spec(lab, EXT)["rail"]}
         for seat in ("packets", "keys", "logs"):
             rect = rects[seat_of[seat]]

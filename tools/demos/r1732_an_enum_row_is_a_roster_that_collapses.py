@@ -104,7 +104,15 @@ def q(app: RpcSubprocess, path: str):
 
 
 def qj(app: RpcSubprocess, path: str):
-    """A read this screen answers as JSON TEXT — its whole table surface is."""
+    """A read this screen answers as JSON TEXT — its table surface is.
+
+    ⚠ R2129 — NOT `spec`, which now answers a JSON value like every other
+    screen's. This helper is why the grep that found the other twenty-two walks
+    missed these two: the decode is one level up from the path, so a search for
+    `json.loads` on a line naming `spec` cannot see it. The derivation that
+    does is two-level and structural -- the wrappers that decode a wire read,
+    then the literals their callers pass -- and it found exactly these.
+    """
     return json.loads(q(app, path))
 
 
@@ -150,7 +158,7 @@ def pointer(app: RpcSubprocess):
 
 def enum_key(app: RpcSubprocess) -> str:
     """The path whose roster is driven — the SCREEN's, not this file's."""
-    return qj(app, "spec")["enum_key"]
+    return q(app, "spec")["enum_key"]
 
 
 def open_the_row(app: RpcSubprocess) -> str:
@@ -166,7 +174,7 @@ def open_the_row(app: RpcSubprocess) -> str:
 
 def section_a(app: RpcSubprocess, spec: dict, key: str) -> None:
     banner("A — the inspector's specification, published and reproduced")
-    published = qj(app, "spec")["inspector"]
+    published = q(app, "spec")["inspector"]
     ok(
         "A: the application publishes every surface the file fixes",
         sorted(published) == surfaces(spec),

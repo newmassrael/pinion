@@ -165,7 +165,7 @@ def body() -> None:
         VIEWPORT = widen_until_row_whole(tf, 900, EXT)
         print(f"[demo] the toolbar's row is whole at {VIEWPORT[0]}px wide")
         # ── (A) the declaration, and the two seats ──────────────────
-        spec = json.loads(q(tf, "spec"))
+        spec = q(tf, "spec")
         # ★★★★★ R2104 — every toolbar seat's address, by the word the screen
         # declares it under, handed over rather than spelled here.
         seat_tag = toolbar_seats(spec)

@@ -481,6 +481,18 @@
       ]
     },
     {
+      "name": "debt-nothing-ties-a-declared-type-to-the-answered-variant",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-tool-capability-spec"
+      ]
+    },
+    {
       "name": "debt-one-planes-census-population-has-no-source-to-check-against",
       "substituted": false,
       "blocked_by": "buildable",
@@ -490,18 +502,6 @@
       "rank": "ordinary",
       "why": [
         "links analyzer-tool-capability-spec, debt-canon-gui-surface-census"
-      ]
-    },
-    {
-      "name": "debt-one-read-path-answers-two-shapes-across-six-screens",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "ordinary",
-      "why": [
-        "links analyzer-tool-capability-spec"
       ]
     },
     {
@@ -689,6 +689,18 @@
     },
     {
       "name": "debt-thirty-six-examples-hand-roll-one-ring-census",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-tool-capability-spec"
+      ]
+    },
+    {
+      "name": "debt-three-read-paths-still-answer-two-shapes",
       "substituted": false,
       "blocked_by": "buildable",
       "blocked_because": "",

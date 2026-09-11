@@ -95,9 +95,10 @@ def parts(tf) -> dict:
     framework's painter uses, and a wrong letter written here looks for a mark
     that is not there, which reads as the screen not painting it.
 
-    Through the harness, because a screen's `spec` comes back as a mapping from
-    one screen and as a string holding one from another, and that difference
-    belongs in one place rather than in each walk that reads it.
+    Through the harness, which is where a fact about the wire's shape belongs
+    rather than in each walk that reads it. ★ R2129 — it used to be a mapping
+    from one screen and a string holding one from another; that is closed, and
+    the harness now REFUSES the string instead of absorbing it.
     """
     return form_part_prefixes(tf, ext=EXT)
 
@@ -303,7 +304,7 @@ def inside(a, b) -> bool:
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         # ── (A) the declaration, and a seat on every shown row ──────
-        spec = json.loads(q(tf, "spec"))
+        spec = q(tf, "spec")
         op = {row["name"]: row for row in spec["operations"]}["remove a field"]
         assert_eq(op["gesture"], True, "★ 'remove a field' has a way in for a person")
         assert_eq(op["verb"][0], "remove_field", "and still has its verb")

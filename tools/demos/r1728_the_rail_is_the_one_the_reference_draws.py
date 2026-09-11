@@ -155,8 +155,9 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # PREFIX is recovered from a published address by taking the seat's own
         # key off the end, so a seat the canon has and this build does not still
         # fails as "not painted" rather than as a lookup error.
-        # ⚠ Not `json.loads`: this read answers a JSON value where others answer
-        # a string holding one, so the helper hands back a dict already.
+        # ⚠ Not `json.loads`: this read answers a JSON value, so the helper
+        # hands back a dict already. ★ R2129 — and so does every other screen's
+        # `spec` now; the clause that used to sit here named the exception.
         published = q(app, "spec")["rail"]
         seat_tag = published[0]["tag"][: -len(published[0]["key"])]
 

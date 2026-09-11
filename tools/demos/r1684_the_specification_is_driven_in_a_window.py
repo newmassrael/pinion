@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -100,7 +101,7 @@ def apply_seat(tf) -> str:
 # ── reading the screen ──────────────────────────────────────────────────────
 
 
-def q(tf, path: str) -> str:
+def q(tf, path: str) -> Any:
     return tf.query(f"{EXT}/{path}")
 
 
@@ -110,7 +111,7 @@ def catalogue_key(tf) -> str:
     Read off the screen's own published table rather than written down here, so
     a catalogue key that is made more precise moves this with it.
     """
-    spec = json.loads(q(tf, "spec"))
+    spec = q(tf, "spec")
     for op in spec["operations"]:
         if op["name"] == "add a field from the catalogue":
             return op["verb"][1]
@@ -164,7 +165,7 @@ def control_tag(tf, key: str) -> str:
 
     ★ R2050 — asked rather than spelled, for the reason [`role_tag`] is.
     """
-    fields = json.loads(tf.query(f"{EXT}/spec"))["fields"]
+    fields = tf.query(f"{EXT}/spec")["fields"]
     return next(field["control"] for field in fields if field["key"] == key)
 
 
@@ -188,7 +189,7 @@ def role_tag(tf, name: str) -> str:
     these come from, so it is handed them; a wrong letter written here would aim
     at a mark that is not there and read as the screen not painting it.
     """
-    roles = json.loads(tf.query(f"{EXT}/spec"))["roles"]
+    roles = tf.query(f"{EXT}/spec")["roles"]
     return next(role["tag"] for role in roles if role["name"] == name)
 
 
@@ -433,7 +434,7 @@ def body() -> None:
     caused = 0
 
     with screen(True) as tf:
-        spec = json.loads(q(tf, "spec"))
+        spec = q(tf, "spec")
         table = {op["name"]: op for op in spec["operations"]}
         assert_eq(
             len(table), len(spec["operations"]), "the operations are named uniquely"

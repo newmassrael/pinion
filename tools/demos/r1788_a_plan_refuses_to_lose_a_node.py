@@ -242,7 +242,7 @@ def body() -> None:
 
         # ── (F) a row no document can carry reaches both renderings ──
         banner("F — `uncarried` on the wire, in the document and in the script")
-        spec = json.loads(q(tf, "spec"))
+        spec = q(tf, "spec")
         # ★★★★★ R2120 — the row with a ceiling and the value past it, from the
         # screen. Spelled here until this round, and the value was the half
         # nothing could check: the ceiling lives in the option surface and this

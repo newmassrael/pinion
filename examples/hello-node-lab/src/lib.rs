@@ -15066,7 +15066,13 @@ const BUILD_WORDS: [&str; Stack::ALL.len()] = {
 
 const FIELDS: &[SchemaField] = &{
     [
-        SchemaField::new("spec", "string"),
+        // ★★★★★ R2129 — `json`, which is what the arm answers and what the
+        // other five screens and the shell have always declared. The split
+        // this round closed had TWO halves and only one of them was in the
+        // `match`: a declaration that says `string` over an arm that answers a
+        // JSON value is the self-describing surface telling a client the
+        // wrong thing, which is worse than the arm alone was.
+        SchemaField::new("spec", "json"),
         // ★★★★★ R1918 — what the marks on this frame say about themselves, with
         // the region they are drawn under. The lab was the first screen to draw
         // a description (R1916) and the last to PUBLISH its register: while it
@@ -16281,7 +16287,18 @@ impl ExternalIntrospect for LabOracle {
             .ok_or_else(|| ReadRefusal::unavailable("the lab holds no document yet"))?;
         let text = |s: String| Ok(IntrospectValue::Text(s));
         match path {
-            "spec" => text(spec_json().to_string()),
+            // ★★★★★ R2129 — the specification, as a JSON VALUE, which is what
+            // the other five screens and the shell answer.
+            //
+            // It had been a `Text` holding JSON since R1724, and nothing chose
+            // that: R1724's commit body does not mention the shape, R1729 gave
+            // the sibling screen a `Json` and the four screens after it
+            // followed, and the first one was never moved. So the same
+            // expression was right on five screens and a `TypeError` on this
+            // one, in a wire §2 #2 makes an agent's primary path. One shape is
+            // the repair — a comment saying which shape to expect here would
+            // only have written the trap down.
+            "spec" => Ok(IntrospectValue::Json(spec_json())),
             // ★★★★★ R1981 — where in the document this screen is standing.
             //
             // `through` is the same word `found` publishes for a hit's way in
@@ -16510,7 +16527,12 @@ impl ExternalIntrospect for LabOracle {
                     .to_string(),
                 )
             }
-            "review" => text(review_wire(state).to_string()),
+            // ★ R2129 — the declaration for this path has said `json` since it
+            // was written and the arm answered a `Text` holding JSON. Found by
+            // the census this round built, which compares the two: it is the
+            // `spec` defect with the halves the other way round, and it had no
+            // reader at all, so nothing was ever going to trip over it.
+            "review" => Ok(IntrospectValue::Json(review_wire(state))),
             "gate" => text(
                 serde_json::Value::Array(
                     state

@@ -454,6 +454,42 @@ if ! python3 "$repo_root/tools/painted_addresses.py" --check >&2; then
     exit 1
 fi
 
+# R2129 — one read path, one wire shape. THREE checks over three populations,
+# because they are three different claims and sharing a population is how the
+# first draft of this tool could not catch the defect it was written for.
+#
+#  1. SPLIT, across the assembled product (`hello-analyzer-shell` + the
+#     `hello-*` crates it path-depends on): two screens must not answer one
+#     path name with two `IntrospectValue` variants. PINNED in
+#     `docs/read-path-shapes.tsv` — a new split or one that grew a shape is
+#     refused, a repaired one is dropped with `--write-budget`, so it falls.
+#  2. BROKEN PROMISE, across every `ExternalIntrospect` impl in the workspace:
+#     a `SchemaField` whose own arm contradicts it. ZERO, no budget — a split
+#     needs two screens to agree on which is wrong, a promise is one impl
+#     contradicting itself. The unit is the IMPL, not the file (`external.rs`
+#     holds six).
+#  3. STALE DECODE, across every walk: `json.loads` of a read the screens that
+#     walk drives answer as JSON. That is a `TypeError` waiting for the next
+#     sweep, and the sweep does not gate the push (R835) — this is the half
+#     that does. The walk's screens come from `demo_radius.launched_by`.
+#
+# For 400 rounds `spec` was a `Json` on five screens and a `Text` holding JSON
+# on `hello-node-lab`; nobody chose it (`git log -S` puts the `Text` at R1724
+# with no mention of the shape in its commit body). Check 3 exists because
+# R2129's own repair was populated by a grep, which missed a walk that wraps
+# its decode in a helper — the path literal and the `json.loads` are on
+# different lines, so no line holds both, and a 40-minute sweep found it as a
+# TypeError instead. Reads source with `ast` and a brace-aware scan; boots
+# nothing (~5s, most of it parsing 726 walks and 1200 Rust files).
+step "read path shapes"
+if ! python3 "$repo_root/tools/read_path_shapes.py" --selftest >&2; then
+    echo "pre-push: the read-path-shape census failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/read_path_shapes.py" --check >&2; then
+    exit 1
+fi
+
 # R2107 — no published object names a key twice, over the WHOLE tree.
 #
 # `serde_json::json!` keeps the last of two identical keys without a word, so

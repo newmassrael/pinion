@@ -148,7 +148,7 @@ def body() -> None:
     with isolated_storage_dir("r1689_node_lab_graph") as sdir:
         # ────────────────────────────────────────────────── launch 1
         with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
-            spec = json.loads(q(tf, "spec"))
+            spec = q(tf, "spec")
             # ★★★★★ R2104 — every toolbar seat's address, by its declared word.
             seat_tag = toolbar_seats(spec)
 

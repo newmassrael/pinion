@@ -61,7 +61,6 @@ Run from the workspace root:
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -156,12 +155,11 @@ def spec_is_on_screen(app: RpcSubprocess, name: str, sizes: list) -> None:
     renamed or re-sized in the specification moves this with it, and a pane
     added to the specification and not to the painter fails.
     """
-    # ★ Two spellings again: one screen declares `spec` as `json` and another as
-    # a `string` holding json. Read both rather than picking one, because which
-    # a screen chose is not what this is about.
+    # ★ R2129 — ONE spelling. This used to read both, because the node lab
+    # answered `spec` as a string holding JSON while every other screen answered
+    # a JSON value; the lab was moved onto the JSON value and the absorber went
+    # with it. A screen that regresses is caught by `read path shapes` at push.
     spec = app.query(f"{EXT}/spec")
-    if isinstance(spec, str):
-        spec = json.loads(spec)
     panes = spec.get("panes") if isinstance(spec, dict) else None
     if not panes:
         print(f"[demo] A/{name}: the specification is not organised in panes")
@@ -226,8 +224,6 @@ def what_the_spec_names_stays_on_screen(app: RpcSubprocess, name: str, sizes: li
     this round repaired seen from the paint's side rather than the gesture's.
     """
     spec = app.query(f"{EXT}/spec")
-    if isinstance(spec, str):
-        spec = json.loads(spec)
     design = sizes[0]
     resize_and_settle(app, design)
     declared = named_in_the_spec(spec) & set(rects(app, design))

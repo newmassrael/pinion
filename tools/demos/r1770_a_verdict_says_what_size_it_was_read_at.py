@@ -166,7 +166,7 @@ def drive_the_lab(app: RpcSubprocess) -> None:
     second `add_field` for a key the card already carries.
     """
     app.intervene_painted(f"{EXT}/nav", "lab")
-    enum_key = json.loads(app.query(f"{LAB}/spec"))["enum_key"]
+    enum_key = app.query(f"{LAB}/spec")["enum_key"]
     act(app, f"{LAB}/select", "P-01")
     if enum_key not in {r["key"] for r in json.loads(app.query(f"{LAB}/form"))}:
         act(app, f"{LAB}/add_field", enum_key)

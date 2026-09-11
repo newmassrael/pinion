@@ -46,7 +46,6 @@ Run from the workspace root:
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -75,7 +74,7 @@ def ok(what: str, condition: bool) -> None:
 
 def spec_of(tf: RpcSubprocess) -> dict[str, Any]:
     """The screen's whole specification, as the wire publishes it."""
-    return json.loads(tf.query(f"{EXT}/spec"))
+    return tf.query(f"{EXT}/spec")
 
 
 def derive_stated(node: dict, roles: dict[str, dict]) -> list[str]:

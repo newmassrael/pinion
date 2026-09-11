@@ -219,7 +219,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
     # specification rather than against numbers written down here.
     banner("D — screen A (node graph lab): a real pointer moves a node card")
     with RpcSubprocess("hello-node-lab", visible_window=True, boot_grace=1.5) as app:
-        spec = json.loads(app.query("/external/spec"))
+        spec = app.query("/external/spec")
         ok("D: the screen publishes its own specification", "design" in spec)
         # ★★★★★ R1795 — 1440, where this read 1625. R1791 gave the toolbar the
         # ability to give a group up instead of demanding its whole width, so

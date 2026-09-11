@@ -104,7 +104,7 @@ def body() -> None:
         # presses come out of it. Every inspector address below is looked up by
         # the word the screen declares, so a wrong letter is a `KeyError` naming
         # the word rather than an assertion that the screen did not paint it.
-        spec = json.loads(q(tf, "spec"))
+        spec = q(tf, "spec")
         seat = inspector_seats(spec)
         painted = rects(tf)
         assert seat["rename"] in painted, "the seat that opens it is there"

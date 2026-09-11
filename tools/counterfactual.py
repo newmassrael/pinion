@@ -214,6 +214,19 @@ FAILURE_MARKERS_BY_HARNESS = {
     # this tool prints starts `painted-addresses:`, its green summary included,
     # so a prefix marker would classify a passing run as a failure.
     "painted-addresses ratchet": ("spells a painted address it could ask for",),
+    # ★ R2129 — the second ratchet of that shape, and it needed its own entry
+    # for the reason the one above did: `read_path_shapes.py --check` refuses
+    # with `read-path-shapes: a read path answers two shapes`, which holds no
+    # `FAIL`, no `----` and no `[demo]`. Three counterfactuals that really
+    # caught — the gate red, each split named with its screens — all reported
+    # UNREADABLE until this line existed.
+    #
+    # ⚠ The marker is the SENTENCE, not the `read-path-shapes:` prefix, which
+    # the green summary carries too.
+    "read-path-shapes ratchet": (
+        "a read path answers two shapes",
+        "a walk decodes a read the wire answers as JSON",
+    ),
 }
 
 #: Flattened, for the reader that only needs "does this line name a failure".
@@ -499,6 +512,9 @@ def selftest() -> int:
         "test_hooks.sh": "FAIL: a hook library said the wrong thing",
         "painted-addresses ratchet": (
             "painted-addresses: a walk spells a painted address it could ask for"
+        ),
+        "read-path-shapes ratchet": (
+            "read-path-shapes: a read path answers two shapes"
         ),
     }
     held(

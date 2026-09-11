@@ -1,0 +1,18 @@
+# R2129 — read paths one product publishes in MORE THAN ONE wire shape.
+# One row per screen that publishes a split name, with the shape it
+# answers. Derived by `tools/read_path_shapes.py --write-budget`; do
+# not hand-edit. The gate refuses a NEW split and a split that grew a
+# shape, so this list can only fall.
+#
+# path	crate	shape
+cursor	hello-node-lab	text
+cursor	hello-packet-view	json
+editing	hello-analyzer-shell	bool
+editing	hello-node-lab	text
+said	hello-analyzer-shell	json
+said	hello-key-patterns	text
+said	hello-log-view	text
+said	hello-node-lab	json
+said	hello-packet-view	json
+said	hello-sessions-view	text
+said	hello-topology-view	text
