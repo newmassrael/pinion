@@ -324,6 +324,88 @@ def rust_sites_in(text: str) -> list[tuple[int, str]]:
     return sorted(found)
 
 
+def test_spans(text: str) -> list[tuple[int, int]]:
+    """The 1-based line spans of Rust `text` that a `#[cfg(test)]` item covers.
+
+    ★★★★★ R2144 — **an assertion and a reader are not the same site, and this
+    is what tells them apart.**
+
+    A production reader that spells an address is the defect: a wrong letter
+    compiles, paints, and every query looking for the mark answers nothing.
+    An ASSERTION that spells one is the opposite — a wrong letter fails loudly,
+    and while a family's tests still spell its literals they are the only thing
+    pinning that family's address VALUES (R2137.3 measured the converse: the
+    five fully converted screens have zero assertions and a consistent rename
+    passed 790 tests). So converting an assertion does not repay this debt; it
+    removes a check and creates the other one.
+
+    ⚠⚠ **The obvious rule is wrong, and it fails in the dangerous direction.**
+    The first draft of this classifier took every site at or after the FIRST
+    `#[cfg(test)]` line to be an assertion. Measured on this tree, **54 files
+    declare a top-level item after that marker** — `const WIN_W`, a helper
+    `fn`, a `pub const` fixture — so the rule misread production readers as
+    assertions and UNDERSTATED the reader debt by 60 sites, 42%. An
+    under-count is the direction that hides work, which is why this brace-
+    matches the block instead. Do not "simplify" it back.
+
+    ⚠ Approximate in one direction only, like [`RUST_LITERAL`]: a brace inside
+    a string or a comment inside a `#[cfg(test)]` item can close the span
+    early, which ends it too soon and counts the tail as PRODUCTION. That
+    over-states the reader debt rather than hiding it.
+    """
+    lines = text.splitlines()
+    spans: list[tuple[int, int]] = []
+    for start, line in enumerate(lines):
+        if not re.match(r"\s*#\[cfg\(test\)\]", line):
+            continue
+        depth, opened, cursor = 0, False, start
+        while cursor < len(lines):
+            for char in lines[cursor]:
+                if char == "{":
+                    depth += 1
+                    opened = True
+                elif char == "}":
+                    depth -= 1
+            if opened and depth <= 0:
+                spans.append((start + 1, cursor + 1))
+                break
+            cursor += 1
+    return spans
+
+
+def rust_roles(path: Path, text: str) -> tuple[int, int]:
+    """`(reader, assertion)` counts for the spelled sites in one Rust file.
+
+    A comment line is neither: it is prose about an address, which
+    [`rust_sites_in`] already declines to treat as a literal.
+    """
+    spans = test_spans(text)
+    lines = text.splitlines()
+    reader = assertion = 0
+    for line, _stem in rust_sites_in(text):
+        if lines[line - 1].lstrip().startswith("//"):
+            continue
+        if any(first <= line <= last for first, last in spans):
+            assertion += 1
+        else:
+            reader += 1
+    return reader, assertion
+
+
+def rust_role_totals() -> tuple[int, int]:
+    """`(reader, assertion)` over the whole Rust population."""
+    reader = assertion = 0
+    for path in rust_sources():
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        one, two = rust_roles(path, body)
+        reader += one
+        assertion += two
+    return reader, assertion
+
+
 @functools.lru_cache(maxsize=1)
 def rust_sources() -> tuple[Path, ...]:
     """Every Rust file in the ratchet's Rust population.
@@ -527,6 +609,20 @@ def check() -> int:
         f"painted-addresses: {walk_total} walk + {rust_total} rust spelled "
         f"site(s) in {len(families)} family/ies{trend}; {pinned} family/ies "
         f"pinned at zero in both"
+    )
+    # ★★★★★ R2144 — and WHAT THOSE SITES ARE, which the totals above cannot
+    # say. The ratchet counts a spelled address the same whether a painter
+    # composed it or a test asserted it, and the two want opposite treatment:
+    # a reader is the debt, an assertion is the only value pin a family that
+    # still has one has got. Printed every run because the number this debt is
+    # judged by has a FLOOR it must not cross, and a floor nobody states is a
+    # target nobody can reach.
+    reader, assertion = rust_role_totals()
+    print(
+        f"painted-addresses: of the rust half, {reader} reader(s) and "
+        f"{assertion} assertion(s) — the reducible queue is "
+        f"{walk_total + reader} (walks are all readers), and the census cannot "
+        f"legitimately fall below {assertion}"
     )
     return 0
 
@@ -774,6 +870,53 @@ def selftest() -> int:
             failed += 1
             print(f"FAIL: {label}: rust_needles -> {got}, wanted {want}", file=sys.stderr)
 
+    # ★★★★★ R2144 — the READER/ASSERTION discrimination, against fixtures.
+    # The case that matters most is the third: it is the shape that refuted the
+    # naive "everything after the first #[cfg(test)]" rule on this tree's own
+    # 54 files, and it is what a later simplification would break first.
+    role_cases: list[tuple[str, str, tuple[int, int]]] = [
+        (
+            "a literal in production is a reader",
+            'fn view() { tag("lab.node.T-01"); }\n',
+            (1, 0),
+        ),
+        (
+            "a literal inside a #[cfg(test)] module is an assertion",
+            '#[cfg(test)]\nmod tests {\n  fn t() { assert("lab.node.T-01"); }\n}\n',
+            (0, 1),
+        ),
+        (
+            "★★★★★ a production item AFTER the test module is still a READER — "
+            "the naive first-marker rule called this an assertion, and 54 files "
+            "of this tree have the shape",
+            '#[cfg(test)]\nmod tests {\n  fn t() { assert("lab.node.A"); }\n}\n'
+            'const W: &str = "lab.node.B";\n',
+            (1, 1),
+        ),
+        (
+            "★ a #[cfg(test)] on a single fn covers only that fn",
+            '#[cfg(test)]\nfn helper() { tag("lab.node.A"); }\n'
+            'fn view() { tag("lab.node.B"); }\n',
+            (1, 1),
+        ),
+        (
+            "a comment is neither a reader nor an assertion",
+            '// lab.node.T-01 is the card\nfn view() {}\n',
+            (0, 0),
+        ),
+        (
+            "two test modules both count as assertions",
+            '#[cfg(test)]\nmod a {\n  fn t() { assert("lab.node.A"); }\n}\n'
+            '#[cfg(test)]\nmod b {\n  fn t() { assert("lab.node.B"); }\n}\n',
+            (0, 2),
+        ),
+    ]
+    for label, fixture, want in role_cases:
+        got = rust_roles(Path("fixture.rs"), fixture)
+        if got != want:
+            failed += 1
+            print(f"FAIL: {label}: rust_roles -> {got}, wanted {want}", file=sys.stderr)
+
     # ★★★★★ R2116 — the RUST census's rule, against fixtures for the same
     # reason: what must not rot is the discrimination, not today's families.
     rust_cases: list[tuple[str, str, list[str]]] = [
@@ -1003,7 +1146,14 @@ def selftest() -> int:
                 file=sys.stderr,
             )
 
-    total = len(cases) + len(needle_cases) + len(rust_cases) + 10
+    # ⚠ R2144 — this sum is HAND-MAINTAINED, and adding a case list without
+    # adding it here leaves the printed number covering less than it claims:
+    # the six `role_cases` ran for one edit while the line still said 39. The
+    # trailing `+ 10` is a pre-existing constant for the ad-hoc assertions
+    # above; it is left alone rather than guessed at.
+    total = (
+        len(cases) + len(needle_cases) + len(rust_cases) + len(role_cases) + 10
+    )
     print(f"painted_addresses selftest: {total - failed} of {total} cases OK")
     return 1 if failed else 0
 
