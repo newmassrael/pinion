@@ -211,6 +211,26 @@ pub trait Screen {
     /// reconcile, so a section cannot pass by drawing less of itself.
     fn conformance(&self) -> Option<pinion_core::conformance::DocumentReport>;
 
+    /// ★★★★★ R2134 — **what this screen publishes about its own regions**, so
+    /// a host can describe the page it assembles as one document.
+    ///
+    /// `None` when the screen publishes no such description, which is a
+    /// different fact from publishing an empty one and is kept different
+    /// deliberately: [`pinion_core::voice::compose`] names a `None` in
+    /// [`Composed::undescribed`](pinion_core::voice::Composed::undescribed)
+    /// rather than omitting it, so a hole in an assembled destination's
+    /// description is something a client sees and a gate counts.
+    ///
+    /// Defaulted here, unlike [`conformance`](Self::conformance), because the
+    /// asymmetry runs the other way for this question: *is this section judged*
+    /// is a live question a host's inline page must answer out loud, while a
+    /// page that has never been given a region table answers `None` correctly
+    /// and saying so at every site would be that many hooks writing nothing.
+    /// The host's gate is what makes the silence visible.
+    fn published_regions(&self) -> Option<pinion_core::voice::Published> {
+        None
+    }
+
     /// ★★★★★ R1888 — **why this section publishes no verdict, in its own
     /// words**, asked exactly when [`conformance`](Self::conformance) answers
     /// nothing.

@@ -29760,6 +29760,31 @@ impl WidgetView for NodeLabView {
         Some(judge::conformance())
     }
 
+    /// ★★★★★ R2134 — this screen's own region table, expanded, so a host
+    /// mounting it can publish one description of the page it assembles.
+    ///
+    /// See the capture viewer's answer for the measurement that forced the
+    /// hook. Standing at `lab` in the assembled tool, the wire published the
+    /// host's 23 chrome rows for a window painting 591 regions.
+    ///
+    /// Built from [`spec::VOICES`] and [`spec::SILENCES`] rather than from a
+    /// third list, so a row added to either arrives here without anybody
+    /// remembering to.
+    fn published_regions() -> Option<pinion_core::voice::Published> {
+        Some(pinion_core::voice::Published::new(
+            spec::VOICES.iter().flat_map(|voice| {
+                spec::voice_population(voice.tag, voice.population)
+                    .into_iter()
+                    .map(|tag| (tag, voice.role.to_owned()))
+            }),
+            spec::SILENCES.iter().flat_map(|(tag, population, kind)| {
+                spec::voice_population(tag, *population)
+                    .into_iter()
+                    .map(move |tag| (tag, (*kind).to_owned()))
+            }),
+        ))
+    }
+
     /// ★★★★★ R1808 — **two, and the reason is this screen's specification, not
     /// its size.**
     ///

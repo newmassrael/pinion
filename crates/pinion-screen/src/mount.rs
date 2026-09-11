@@ -99,6 +99,15 @@ impl<V: WidgetView> Screen for Mount<V> {
         V::conformance()
     }
 
+    /// ★★★★★ R2134 — the binding's own region table, for the same reason the
+    /// verdict above is the binding's: a section that describes its regions in
+    /// its own window and describes nothing when mounted would be two builds
+    /// wearing one name, and the assembled page would publish a description
+    /// missing exactly the part a person is looking at.
+    fn published_regions(&self) -> Option<pinion_core::voice::Published> {
+        V::published_regions()
+    }
+
     /// ★★★★★ R1888 — the binding's own sentence, for the same reason the
     /// verdict above is the binding's: a section that explained itself in its
     /// own window and was given the host's guess when mounted would be two

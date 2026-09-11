@@ -1770,6 +1770,73 @@ pub const VOICES: &[VoiceSpec] = &[
 /// something: a census with nothing in this column would be satisfiable by
 /// naming every rectangle, and one with everything in it by naming none.
 ///
+/// ★★★★★ R2134 — **the tags a row of [`VOICES`] or [`SILENCES`] stands for**,
+/// expanded from the table its population names.
+///
+/// ★ Expanded rather than listed, so a ninth role or a sixth field is demanded
+/// the moment it is added to the specification — the property R1651.1 wrote
+/// down after a hand-written population reported a sample as coverage.
+///
+/// ⚠ **It lived in this screen's `#[cfg(test)]` paint module until R2134**, and
+/// that is why the assembled tool could not describe this page: a `{}` template
+/// is not a region until something expands it, the only thing that could was a
+/// test, and so the table was unreachable by any host mounting it. **A
+/// specification whose rows only a test can expand is a specification only a
+/// test can read.** Moved here unchanged; the test module now calls it, so
+/// there is still exactly one expansion.
+///
+/// 🟥 ⚠ **And a first draft of this note said the table was "reconciled against
+/// the paint by this screen's own tests". Measured at R2134: it is not, and
+/// never was.** Nothing in this crate calls
+/// [`pinion_core::voice::reconcile`] — the screen's tests judge its paint
+/// census (what the painter says) and this table is the *other* record, which
+/// nothing compared against it. The first thing the host's composed gate did
+/// was compare them, and found **130 disagreements**: 117 regions this screen
+/// paints that this table does not name, and 13 rows it names that the mounted
+/// page does not honour. See
+/// [[debt-the-node-labs-published-region-table-was-never-reconciled]].
+#[must_use]
+pub fn voice_population(tag: &str, population: Population) -> Vec<String> {
+    let fill = |member: &str| tag.replace("{}", member);
+    match population {
+        Population::One => vec![tag.to_owned()],
+        Population::Roles => ROLES.iter().map(|r| fill(r.name)).collect(),
+        Population::RoleGroups => palette_groups().iter().map(|run| fill(run.label)).collect(),
+        Population::Rail => RAIL.iter().map(|(n, _)| fill(n)).collect(),
+        Population::Nodes => NODES.iter().map(|n| fill(n.id)).collect(),
+        // A link is addressed by the identifier it was minted with, and the
+        // opening graph mints them in the specification's own order.
+        Population::Links => (0..LINKS.len()).map(|i| fill(&i.to_string())).collect(),
+        Population::Fields => FIELDS.iter().map(|f| fill(f.key)).collect(),
+        // ★★★ R1716 — the axis a row is on decides which regions it has, so
+        // the population is the specification's own column rather than a
+        // filter written here. A row that changes axis moves between these
+        // four in one edit, and every gate over them follows.
+        Population::AuthoredFields => FIELDS
+            .iter()
+            .filter(|f| f.source.is_none())
+            .map(|f| fill(f.key))
+            .collect(),
+        Population::DerivedFields => FIELDS
+            .iter()
+            .filter(|f| f.source.is_some())
+            .map(|f| fill(f.key))
+            .collect(),
+        Population::AsideFields => FIELDS
+            .iter()
+            .filter(|f| f.aside.is_some())
+            .map(|f| fill(f.key))
+            .collect(),
+        Population::BadgedFields => FIELDS
+            .iter()
+            .filter(|f| f.source.is_none() || f.applies == "hot")
+            .map(|f| fill(f.key))
+            .collect(),
+        Population::Protocols => PROTOCOLS.iter().map(|p| fill(p)).collect(),
+        Population::PinKinds => PIN_LEGEND.iter().map(|(k, _)| fill(k)).collect(),
+    }
+}
+
 /// The `kind` words are [`pinion_core::voice::SilenceKind`]'s own wire
 /// spellings, so what this table says is what `scene/voice` publishes.
 pub const SILENCES: &[(&str, Population, &str)] = &[

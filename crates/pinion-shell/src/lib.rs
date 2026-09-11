@@ -1617,6 +1617,37 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
         None
     }
 
+    /// ★★★★★ R2134 — **what this binding publishes about its own regions**, so
+    /// a host can describe an assembled page as one document.
+    ///
+    /// The peer of [`conformance`](Self::conformance) one question over: that
+    /// says how much of a written specification the build reproduces, this says
+    /// which regions the build promises a reader and what each one is. A host
+    /// showing this binding as a page paints its own chrome around it, and
+    /// until this hook existed the two halves of what that window says were two
+    /// tables in two binaries with nothing joining them — see
+    /// [`pinion_core::voice::compose`].
+    ///
+    /// # Why the default is `None` rather than an empty table
+    ///
+    /// They are different facts and the difference is the whole reason the
+    /// composition can be honest. `None` is *this screen publishes no
+    /// description of its regions*; `Some(Published::default())` would be *it
+    /// publishes one and it is empty*. Measured on this tree's analysis tool at
+    /// R2134, four of the six mounted screens are the first and none is the
+    /// second, and a composition that could not tell them apart would report a
+    /// third of what the window paints as described-and-silent.
+    ///
+    /// Defaulted rather than required for the reason
+    /// [`conformance`](Self::conformance) is: most bindings here are not
+    /// sections of any assembled application. What stops that being an escape
+    /// hatch is that a host's gate NAMES the screens answering `None`, so the
+    /// hole is counted rather than invisible.
+    #[must_use]
+    fn published_regions() -> Option<pinion_core::voice::Published> {
+        None
+    }
+
     /// ★★★★★ R1888 — **why this binding publishes no verdict, in its own
     /// words.**
     ///

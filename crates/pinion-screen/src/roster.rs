@@ -321,6 +321,16 @@ fn stems_meet(a: &str, b: &str) -> bool {
 
 impl std::error::Error for RosterDefect {}
 
+/// ★★★★★ R2134 — the owner name the host's own rows carry in a composed
+/// description ([`ScreenRoster::published_at`]).
+///
+/// A word and not the host's paint tag, because the host of an assembled
+/// application has no single tag: its chrome is several families and its inline
+/// pages several more, and picking one of them would name a part for the whole.
+/// What a reader needs from this field is *whose table to edit*, and for every
+/// row that did not come from a mounted screen the answer is the same one.
+pub const HOST_OWNER: &str = "host";
+
 /// The destinations of an application, and the screens behind the ones that
 /// have one.
 ///
@@ -1331,6 +1341,67 @@ impl ScreenRoster {
     #[must_use]
     pub fn tag_of(&self, key: &str) -> Option<&'static str> {
         self.screens.get(key).map(|s| s.tag())
+    }
+
+    /// ★★★★★ R2134 — **one published description of the destination `key`**,
+    /// joining what the host declares there with what the screen showing there
+    /// declares about itself.
+    ///
+    /// `host` is the host's own rows already filtered to this destination —
+    /// the host's, because only the host knows which of its chrome rows show
+    /// here, and filtered, because a table describing an application of many
+    /// pages joined against one page would describe every other page's regions
+    /// too (the obligation
+    /// [`reconcile`](pinion_core::voice::reconcile) states in its own doc).
+    ///
+    /// # What this is for, and the measurement that forced it
+    ///
+    /// A window at a mounted destination paints the host's chrome *and* a
+    /// guest's page, and those were two tables in two binaries with nothing
+    /// joining them: a client had to know the mount topology to know a second
+    /// table existed, and the wire never said so. Measured on the analysis tool
+    /// at R2134, standing at each of its six mounted destinations, the host
+    /// published **23** rows at every one of them while the windows painted
+    /// 631, 257, 241, 591, 217 and 407 regions — so the published description
+    /// of an assembled page was describing between 4% and 11% of it.
+    ///
+    /// A screen that publishes no table at all is NAMED in
+    /// [`Composed::undescribed`](pinion_core::voice::Composed::undescribed)
+    /// rather than skipped. At R2134 that is four of those six, and the whole
+    /// reason the hole is a row is that a description which silently omitted
+    /// them would look complete.
+    #[must_use]
+    pub fn published_at(
+        &self,
+        key: &str,
+        host: Option<&pinion_core::voice::Published>,
+    ) -> pinion_core::voice::Composed {
+        let guest = self.screens.get(key);
+        let guest_table = guest.and_then(|screen| screen.published_regions());
+        let mut parts: Vec<(&str, Option<&pinion_core::voice::Published>)> =
+            vec![(HOST_OWNER, host)];
+        if let Some(screen) = guest {
+            parts.push((screen.tag(), guest_table.as_ref()));
+        }
+        pinion_core::voice::compose(&parts)
+    }
+
+    /// Every mounted destination whose screen publishes no region table
+    /// (R2134), ascending.
+    ///
+    /// The census behind the ratchet a host keeps: the list can only shrink,
+    /// and a screen mounted without a table joins it loudly rather than
+    /// arriving as a page nobody describes.
+    #[must_use]
+    pub fn undescribed_keys(&self) -> Vec<&str> {
+        let mut out: Vec<&str> = self
+            .screens
+            .iter()
+            .filter(|(_, screen)| screen.published_regions().is_none())
+            .map(|(key, _)| key.as_str())
+            .collect();
+        out.sort_unstable();
+        out
     }
 
     /// ★ R1808 — how many frames the section at `key` needs to show all of what

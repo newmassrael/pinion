@@ -168,6 +168,18 @@ pub const DEFAULTED: &[(&str, &str)] = &[
          it was added: all four mounted screens of the analysis tool needed to \
          override it, because a screen's marks are not under its root tag",
     ),
+    (
+        "published_regions",
+        "★★★★★ R2134 — most bindings in this tree are not sections of any \
+         assembled application and have no region table to publish, so \
+         requiring an answer would be ~225 sites writing `None`. What keeps it \
+         from being an escape hatch is NOT the default: a `None` is NAMED in \
+         the composed description's `undescribed` list, so a host's gate counts \
+         the screens that answer it and holds the count to a roster that can \
+         only shrink. Measured the round it was added: four of the analysis \
+         tool's six mounted screens answer `None`, and the gate says so by name \
+         rather than skipping them the way the old one did",
+    ),
 ];
 
 #[cfg(test)]

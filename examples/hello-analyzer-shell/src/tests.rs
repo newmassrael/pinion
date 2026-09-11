@@ -1795,6 +1795,89 @@ fn census_of_the_open_destination() -> pinion_core::voice::VoiceCensus {
 /// demand every other page's regions here. Both obligations are
 /// [`pinion_core::voice::reconcile`]'s, stated in its own documentation, and
 /// this is where they are met.
+/// ★★★★★ R2134 — **what the composed description still owes, per destination.**
+///
+/// Zero is the rule and an entry here is the exception, written down with its
+/// number so it can only fall. A destination absent from this table must
+/// reconcile exactly.
+///
+/// # Why `lab` has one and why it is not a failure of this round
+///
+/// Composing the host's rows with a mounted screen's is what made these two
+/// records comparable for the first time. The first thing that comparison did
+/// was audit two tables **neither of which had ever been reconciled against its
+/// own paint** — measured at R2134, nothing in either guest crate calls
+/// [`pinion_core::voice::reconcile`], so each had the painter's record judged by
+/// its own tests and the published record judged by nothing.
+///
+/// The capture viewer's table survived that audit exactly: **631 painted
+/// regions, 0 disagreements**. The node lab's did not, by **130** — 117 regions
+/// it paints that its table does not name (`lab.faults.*` 24, `lab.toolbar.*`
+/// 10, `lab.rail.*` 9, the protocol captions 5, and so on) and 13 rows it names
+/// that a mounted page does not honour, which are its own chrome, replaced here
+/// by the host's.
+///
+/// That is a defect in one screen's table, not in the composition, and it is
+/// pinned rather than skipped because a skip is what hid it for 266 rounds ⇒
+/// [[debt-the-node-labs-published-region-table-was-never-reconciled]].
+const COMPOSED_BUDGET: &[(&str, usize)] = &[("lab", 130)];
+
+/// One destination's composed description, and what it disagrees with the paint
+/// about (R2134).
+///
+/// Its own function because it is its own job: this builds the *document* — the
+/// census over every state that changes what is painted, joined against the
+/// host's rows and the mounted screen's — while its caller decides what a
+/// disagreement *means* against the budget. Splitting them by subject rather
+/// than to meet a line count is this tree's rule (R2122), and the seam is the
+/// honest one: everything here is about one page, and nothing here knows there
+/// are others.
+fn what_this_destination_owes(
+    owner: &Owner,
+    state: &std::rc::Rc<super::ShellState>,
+    screens: &pinion_screen::ScreenRoster,
+    key: &str,
+    compared: &mut usize,
+) -> (pinion_core::voice::Composed, Vec<String>) {
+    let mut nodes = Vec::new();
+    // The census is the UNION over the status slot's two occupancies: a region
+    // painted in one of them is one this page has, and a census of a single
+    // moment reports the other occupant as undeclared.
+    for holding in [true, false] {
+        if holding {
+            state.say(pinion_core::utterance::Utterance::done(
+                "a sentence the slot is holding",
+            ));
+        } else {
+            owner.tick_animations(state.toast.life() + 1.0);
+        }
+        assert_eq!(
+            state.toast.showing().is_some(),
+            holding,
+            "the slot's occupancy is what this loop varies",
+        );
+        nodes.extend(census_of_the_open_destination().nodes);
+    }
+    let census = pinion_core::voice::VoiceCensus { nodes };
+    // ★★★★★ R2134 — THE COMPOSITION, built through the same two functions the
+    // WIRE publishes through: `host_published_at` filters this host's rows to
+    // this page, and the roster joins whatever is mounted here. The gate used to
+    // expand and filter the two tables itself, which made what is CHECKED and
+    // what is PUBLISHED two derivations of one fact — the very defect the
+    // composition closes one level up. At an unmounted destination this is the
+    // host's table unchanged, so nothing already being judged changed.
+    let here = super::host_published_at(key);
+    let composed = screens.published_at(key, Some(&here));
+    let declared_voices = composed.voices();
+    let declared_silences = composed.silences();
+    *compared += declared_voices.len() + declared_silences.len();
+    let found = pinion_core::voice::reconcile(&census, &declared_voices, &declared_silences)
+        .into_iter()
+        .map(|d| format!("{key}: {} {}", d.tag, d.mismatch.sentence()))
+        .collect();
+    (composed, found)
+}
+
 #[test]
 fn r1868_what_a_destination_paints_is_what_it_publishes_about_itself() {
     let owner = Owner::new();
@@ -1803,77 +1886,59 @@ fn r1868_what_a_destination_paints_is_what_it_publishes_about_itself() {
         let roster = spec::destinations();
         let screens = super::screen_roster();
         let mut wrong: Vec<String> = Vec::new();
+        let mut improved: Vec<String> = Vec::new();
         let mut compared = 0_usize;
         let mut destinations = 0_usize;
         for destination in roster.open() {
             let key = destination.key.as_ref();
-            // ⚠ A destination whose page is a MOUNTED SCREEN is not this
-            // screen's to reconcile, and the first draft of this gate did not
-            // know that: it reported **728 disagreements**, every one of them a
-            // guest's own region (`pv.*` at `packets`), because the host's table
-            // names none of them and must not —
-            // `r1695_every_open_destination_owns_at_least_one_declared_region`
-            // states that partition and asserts it. What this gate judges is the
-            // host: its chrome, and the pages it paints itself.
+            // ★★★★★ R2134 — a mounted destination is JUDGED now, against the
+            // COMPOSED description: the host's rows for this page joined with
+            // the mounted screen's own. The skip that used to be here — which
+            // took every mounted destination out of this gate, and is what the
+            // debt named — is gone. What made removing it possible is not this
+            // gate: it is that a screen can now be ASKED what it publishes
+            // (`Screen::published_regions`), so the two tables that lived in two
+            // binaries are one document.
             //
-            // ★ The residue that leaves, stated rather than hidden: a mounted
-            // destination's regions are reconciled against the GUEST's table by
-            // the guest's own tests, and nothing reconciles the two tables
-            // TOGETHER — the composed screen has no single published
-            // description. That is a spec question, not a gate one, and it is
-            // registered rather than papered over here.
-            if screens.is_mounted(key) {
+            // A screen that publishes no table at all is still skipped, and
+            // NAMED rather than silently passed over: the roster assertion at
+            // the end holds that list to a set that can only shrink.
+            if screens.undescribed_keys().contains(&key) {
                 continue;
             }
             destinations += 1;
             assert!(state.go(key).is_ok(), "the rail must reach {key}");
-            let mut nodes = Vec::new();
-            for holding in [true, false] {
-                if holding {
-                    state.say(pinion_core::utterance::Utterance::done(
-                        "a sentence the slot is holding",
-                    ));
-                } else {
-                    owner.tick_animations(state.toast.life() + 1.0);
-                }
-                assert_eq!(
-                    state.toast.showing().is_some(),
-                    holding,
-                    "the slot's occupancy is what this loop varies",
-                );
-                nodes.extend(census_of_the_open_destination().nodes);
+            let (composed, found) =
+                what_this_destination_owes(&owner, &state, &screens, key, &mut compared);
+            // ★ Nothing may be claimed by two tables. The union would hide
+            // this — one tag, two owners, and whichever sorted first would
+            // silently win — so it is asserted rather than resolved.
+            assert!(
+                composed.contested().is_empty(),
+                "at {key}: {:?} is claimed by more than one published table, so \
+                 the composed description has no owner for it",
+                composed.contested(),
+            );
+            // ★★★★★ R2134 — the budget, per destination. Zero everywhere the
+            // composition is whole; a pinned number where it is not, so the gap
+            // is a figure that can only fall rather than a skip that says
+            // nothing. See [`COMPOSED_BUDGET`].
+            let budget = COMPOSED_BUDGET
+                .iter()
+                .find(|(at, _)| *at == key)
+                .map_or(0, |(_, owed)| *owed);
+            assert!(
+                found.len() <= budget,
+                "at {key}: {} disagreement(s) against a budget of {budget} — the \
+                 composed description got WORSE:\n  {}",
+                found.len(),
+                found.join("\n  "),
+            );
+            if found.len() < budget {
+                improved.push(format!("{key}: {} of {budget}", found.len()));
             }
-            let census = pinion_core::voice::VoiceCensus { nodes };
-            let declared_voices: std::collections::BTreeSet<String> = spec::VOICES
-                .iter()
-                .filter(|voice| voice.at.shows_at(key))
-                .flat_map(|voice| {
-                    voice
-                        .population
-                        .members()
-                        .into_iter()
-                        .map(|member| voice.tag.replace("{}", &member))
-                })
-                .collect();
-            let declared_silences: std::collections::BTreeMap<String, String> = spec::SILENCES
-                .iter()
-                .filter(|(_, _, _, at)| at.shows_at(key))
-                .flat_map(|(tag, population, kind, _)| {
-                    population
-                        .members()
-                        .into_iter()
-                        .map(move |member| (tag.replace("{}", &member), (*kind).to_owned()))
-                })
-                .collect();
-            compared += declared_voices.len() + declared_silences.len();
-            for disagreement in
-                pinion_core::voice::reconcile(&census, &declared_voices, &declared_silences)
-            {
-                wrong.push(format!(
-                    "{key}: {} {}",
-                    disagreement.tag,
-                    disagreement.mismatch.sentence(),
-                ));
+            if budget == 0 {
+                wrong.extend(found);
             }
         }
         assert!(
@@ -1883,6 +1948,16 @@ fn r1868_what_a_destination_paints_is_what_it_publishes_about_itself() {
              window does not do:\n  {}",
             wrong.len(),
             wrong.join("\n  "),
+        );
+        // ★ A budget that has room left is a budget nobody lowered. Refusing
+        // here is what makes the number fall rather than drift: the repair and
+        // the pin land in one commit, which is the discipline every other
+        // ratchet in this tree keeps.
+        assert!(
+            improved.is_empty(),
+            "a destination now disagrees LESS than its pinned budget — lower the \
+             budget in the same commit as the repair:\n  {}",
+            improved.join("\n  "),
         );
         // ★ The premise, both halves: a reconciliation over two empty tables
         // agrees with everything, and a loop that skipped every destination
@@ -1895,6 +1970,32 @@ fn r1868_what_a_destination_paints_is_what_it_publishes_about_itself() {
         assert!(
             compared > 0,
             "no declaration was compared at all, so the verdict is vacuous",
+        );
+        // ★★★★★ R2134 — **the hole, counted.** A mounted screen that publishes
+        // no region table cannot be reconciled here, and the old gate expressed
+        // that by skipping every mounted destination — which made the absence
+        // indistinguishable from the composition being missing. It is a named
+        // roster now, and a ratchet: a screen mounted without a table joins this
+        // list loudly, and one that gains a table must leave it.
+        //
+        // ⚠ These four are not failing a check. They have the FIRST of the two
+        // records a region needs — their own tests judge what they paint — and
+        // no second one, so there is nothing for `reconcile` to compare against
+        // anywhere, in their own binary or here.
+        assert_eq!(
+            screens.undescribed_keys(),
+            ["keys", "logs", "sessions", "topology"],
+            "★ the screens publishing no description of their regions are not \
+             the ones this gate was written against — a screen that gained a \
+             table must leave this list, and one mounted without a table must \
+             not join it silently",
+        );
+        // ★ And the list must not be everything, or the assertion above is a
+        // description of a gate that judges nothing.
+        assert!(
+            screens.undescribed_keys().len() < screens.mounted_keys().count(),
+            "every mounted screen is undescribed, so the composition this gate \
+             exists to judge has nothing to join",
         );
     });
 }

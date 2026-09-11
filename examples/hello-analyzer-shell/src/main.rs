@@ -13489,7 +13489,90 @@ fn spec_json() -> serde_json::Value {
                 "at": where_word(*at),
             }))
         }).collect::<Vec<_>>(),
+        // ★★★★★ R2134 — **each destination read as ONE published description.**
+        // See `composed_regions_json`.
+        "composed": composed_regions_json(),
     })
+}
+
+/// ★★★★★ R2134 — **every open destination, described as the one page a person
+/// actually stands in front of.**
+///
+/// The keys above describe the HOST. At a destination whose page is a mounted
+/// screen, the window paints the host's chrome *and* that screen, and until this
+/// round the wire said nothing about the second half: a client had to know the
+/// mount topology to know a second table existed, and then go and find it.
+/// Measured at R2134, standing at each of the six mounted destinations, this
+/// wire published **23** rows while the windows painted 631, 257, 241, 591, 217
+/// and 407 regions.
+///
+/// Every row carries its `owner`, which is the field that makes this a
+/// composition rather than a concatenation: a client that finds a row wrong
+/// needs to know whose table to edit, and at an assembled destination the tag
+/// does not say. `undescribed` names the screens showing there that publish no
+/// table at all — four of the six, at R2134 — because a description that
+/// silently omitted them would look complete while covering a tenth of the page.
+/// ★★★★★ R2134 — **this host's own region rows for one destination**, filtered
+/// to it.
+///
+/// Filtered here and nowhere else: a table describing an application of many
+/// pages, joined against one page, would put every other page's regions into
+/// that page's description — the obligation
+/// [`pinion_core::voice::reconcile`] states in its own documentation and which
+/// this is the one place to meet.
+///
+/// One function because it has two callers that must not drift: the wire below
+/// and the gate that judges the wire
+/// (`r1868_what_a_destination_paints_is_what_it_publishes_about_itself`). Two
+/// copies of this filter would be a published description and a checked
+/// description free to disagree, which is the exact class of defect the
+/// composition exists to close one level up.
+fn host_published_at(key: &str) -> pinion_core::voice::Published {
+    pinion_core::voice::Published::new(
+        spec::VOICES
+            .iter()
+            .filter(|voice| voice.at.shows_at(key))
+            .flat_map(|voice| {
+                voice
+                    .population
+                    .members()
+                    .into_iter()
+                    .map(move |member| (voice.tag.replace("{}", &member), voice.role.to_owned()))
+            }),
+        spec::SILENCES
+            .iter()
+            .filter(|(_, _, _, at)| at.shows_at(key))
+            .flat_map(|(tag, population, kind, _)| {
+                population
+                    .members()
+                    .into_iter()
+                    .map(move |member| (tag.replace("{}", &member), (*kind).to_owned()))
+            }),
+    )
+}
+
+fn composed_regions_json() -> serde_json::Value {
+    let screens = screen_roster();
+    let roster = spec::destinations();
+    let mut out = serde_json::Map::new();
+    for destination in roster.open() {
+        let key = destination.key.as_ref();
+        let here = host_published_at(key);
+        let composed = screens.published_at(key, Some(&here));
+        out.insert(
+            key.to_owned(),
+            serde_json::json!({
+                "regions": composed.regions.iter().map(|row| serde_json::json!({
+                    "tag": row.tag,
+                    "owner": row.owner,
+                    "voice": row.voice,
+                    "silence": row.silence,
+                })).collect::<Vec<_>>(),
+                "undescribed": composed.undescribed,
+            }),
+        );
+    }
+    serde_json::Value::Object(out)
 }
 
 /// ★★★★★ R2110 — the addresses the palette panel paints under — see the note

@@ -7939,50 +7939,17 @@ fn voice_of(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> pinion_core::voi
 /// by this gate the moment it is added to the specification — the property
 /// R1651.1 wrote down after a hand-written population reported a sample as
 /// coverage.
+/// ⚠ ★★★★★ R2134 — the body moved to [`spec::voice_population`] and this is
+/// the call.
+///
+/// It lived here, under `#[cfg(test)]`, for the whole life of this table — so
+/// the screen's published region table had **no expander outside its own test
+/// binary** and could not be handed to anything, which is the structural reason
+/// the assembled tool's description of this page was the host's chrome alone.
+/// A specification whose rows only a test can expand is a specification only a
+/// test can read.
 fn voice_population(tag: &str, population: spec::Population) -> Vec<String> {
-    let fill = |member: &str| tag.replace("{}", member);
-    match population {
-        spec::Population::One => vec![tag.to_owned()],
-        spec::Population::Roles => spec::ROLES.iter().map(|r| fill(r.name)).collect(),
-        spec::Population::RoleGroups => spec::palette_groups()
-            .iter()
-            .map(|run| fill(run.label))
-            .collect(),
-        spec::Population::Rail => spec::RAIL.iter().map(|(n, _)| fill(n)).collect(),
-        spec::Population::Nodes => spec::NODES.iter().map(|n| fill(n.id)).collect(),
-        // A link is addressed by the identifier it was minted with, and the
-        // opening graph mints them in the specification's own order.
-        spec::Population::Links => (0..spec::LINKS.len())
-            .map(|i| fill(&i.to_string()))
-            .collect(),
-        spec::Population::Fields => spec::FIELDS.iter().map(|f| fill(f.key)).collect(),
-        // ★★★ R1716 — the axis a row is on decides which regions it has, so
-        // the population is the specification's own column rather than a
-        // filter written here. A row that changes axis moves between these
-        // four in one edit, and every gate over them follows.
-        spec::Population::AuthoredFields => spec::FIELDS
-            .iter()
-            .filter(|f| f.source.is_none())
-            .map(|f| fill(f.key))
-            .collect(),
-        spec::Population::DerivedFields => spec::FIELDS
-            .iter()
-            .filter(|f| f.source.is_some())
-            .map(|f| fill(f.key))
-            .collect(),
-        spec::Population::AsideFields => spec::FIELDS
-            .iter()
-            .filter(|f| f.aside.is_some())
-            .map(|f| fill(f.key))
-            .collect(),
-        spec::Population::BadgedFields => spec::FIELDS
-            .iter()
-            .filter(|f| f.source.is_none() || f.applies == "hot")
-            .map(|f| fill(f.key))
-            .collect(),
-        spec::Population::Protocols => spec::PROTOCOLS.iter().map(|p| fill(p)).collect(),
-        spec::Population::PinKinds => spec::PIN_LEGEND.iter().map(|(k, _)| fill(k)).collect(),
-    }
+    spec::voice_population(tag, population)
 }
 
 /// ★★★★★ R1691 — **every addressable region of this screen is classified**, and

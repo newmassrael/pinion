@@ -5362,6 +5362,38 @@ impl WidgetView for PacketView {
     fn conformance() -> Option<pinion_core::conformance::DocumentReport> {
         Some(judge::conformance())
     }
+
+    /// ★★★★★ R2134 — this screen's own region table, expanded, so a host
+    /// mounting it can publish one description of the page it assembles.
+    ///
+    /// The two tables were already here and already reconciled against this
+    /// screen's paint by its own tests. What was missing is that a host had no
+    /// way to ASK for them: standing at `packets` in the assembled tool, the
+    /// wire published the host's 23 chrome rows for a window painting 631
+    /// regions, and the host's own paint-versus-publish gate skipped the
+    /// destination entirely because it could not describe what it was showing.
+    ///
+    /// Built from [`spec::VOICES`] and [`spec::SILENCES`] rather than from a
+    /// third list, so a row added to either arrives here without anybody
+    /// remembering to — which is the rule that keeps this from becoming the
+    /// third record of one promise.
+    fn published_regions() -> Option<pinion_core::voice::Published> {
+        Some(pinion_core::voice::Published::new(
+            spec::VOICES.iter().flat_map(|voice| {
+                voice
+                    .population
+                    .members()
+                    .into_iter()
+                    .map(move |member| (voice.tag.replace("{}", &member), voice.role.to_owned()))
+            }),
+            spec::SILENCES.iter().flat_map(|(tag, population, kind)| {
+                population
+                    .members()
+                    .into_iter()
+                    .map(move |member| (tag.replace("{}", &member), (*kind).to_owned()))
+            }),
+        ))
+    }
 }
 
 /// Run the capture viewer as an application of its own.

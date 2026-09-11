@@ -944,6 +944,203 @@ pub struct Disagreement {
     pub mismatch: Mismatch,
 }
 
+/// ★★★★★ R2134 — **what one screen publishes about its own regions.**
+///
+/// The value a screen hands a host so the host can describe an assembled page
+/// without knowing how that screen spells anything. Two maps rather than a set
+/// and a map, because a region is either announced *as a role* or quiet *for a
+/// reason*, and both words are what a reader acts on.
+///
+/// This is the second of the two records [`reconcile`] compares — the published
+/// one. A screen with no such table has no second record at all, which is a
+/// state [`compose`] names rather than treats as empty.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Published {
+    /// Region tag -> the role it announces as.
+    pub voices: BTreeMap<String, String>,
+    /// Region tag -> the kind of silence it is allowed.
+    pub silences: BTreeMap<String, String>,
+}
+
+impl Published {
+    /// Build one from already-expanded rows.
+    ///
+    /// Takes iterators of owned pairs because every caller in this tree expands
+    /// a `{}` template over a family first — the expansion is the screen's own
+    /// and must not be re-derived here.
+    #[must_use]
+    pub fn new(
+        voices: impl IntoIterator<Item = (String, String)>,
+        silences: impl IntoIterator<Item = (String, String)>,
+    ) -> Self {
+        Self {
+            voices: voices.into_iter().collect(),
+            silences: silences.into_iter().collect(),
+        }
+    }
+
+    /// How many regions this describes.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.voices.len() + self.silences.len()
+    }
+
+    /// Whether it describes none.
+    ///
+    /// ⚠ Not the same fact as *this screen publishes nothing*: an empty table
+    /// is a screen that has one and declares no regions in it, and a screen
+    /// with no table at all is [`compose`]'s `None`. Collapsing the two is what
+    /// would let a missing description read as a described emptiness.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// ★★★★★ R2134 — one region of an assembled page, and **which record declared
+/// it**.
+///
+/// The field that makes this more than a union: R1867 met "one promise, two
+/// records" and a composition without an owner would make it three. A reader
+/// who finds a row wrong needs to know whose table to edit, and at an assembled
+/// destination that is not answerable from the tag — the host and its guest
+/// spell their own families and a third screen could later spell either.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposedRegion {
+    /// The region, spelled as every other surface spells it.
+    pub tag: String,
+    /// Whose published table this row came out of — the host's name, or the
+    /// mounted screen's.
+    pub owner: String,
+    /// The role it announces as, when it speaks.
+    pub voice: Option<String>,
+    /// The kind of silence it is allowed, when it is quiet.
+    pub silence: Option<String>,
+}
+
+/// ★★★★★ R2134 — **an assembled destination read as one published
+/// description.**
+///
+/// What a client standing at a page needs and could not get: the window there
+/// paints the host's chrome *and* a mounted screen's page, and until this
+/// existed those were two tables in two binaries with nothing joining them. A
+/// client had to know the mount topology to know there was a second table, and
+/// the wire said nothing about it.
+///
+/// # `undescribed` is the point, not a footnote
+///
+/// A screen showing at this destination that publishes **no** table at all is
+/// named here. Measured on the analysis tool at R2134, that is **four of the
+/// six** mounted screens — so a composition that silently omitted them would
+/// publish a description that looks complete and covers a third of what the
+/// window paints. The hole is a row of its own so that a client can see it, a
+/// gate can count it, and the count can only fall.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Composed {
+    /// Every described region, sorted by tag then owner, so two runs read the
+    /// same.
+    pub regions: Vec<ComposedRegion>,
+    /// The screens showing here that publish no description of their regions.
+    pub undescribed: Vec<String>,
+}
+
+impl Composed {
+    /// The announced regions, in the shape [`reconcile`] takes.
+    #[must_use]
+    pub fn voices(&self) -> BTreeSet<String> {
+        self.regions
+            .iter()
+            .filter(|row| row.voice.is_some())
+            .map(|row| row.tag.clone())
+            .collect()
+    }
+
+    /// The allowed silences, in the shape [`reconcile`] takes.
+    #[must_use]
+    pub fn silences(&self) -> BTreeMap<String, String> {
+        self.regions
+            .iter()
+            .filter_map(|row| row.silence.clone().map(|kind| (row.tag.clone(), kind)))
+            .collect()
+    }
+
+    /// Every region this description carries that two of its parts both claim.
+    ///
+    /// ★ Empty is the expected answer and the reason this is published rather
+    /// than asserted internally: two screens declaring one tag is the failure
+    /// mode a union hides, and the composition must be able to *report* it
+    /// instead of picking a winner. A tag claimed twice is a tag whose owner is
+    /// undecided, which is precisely what [`ComposedRegion::owner`] exists to
+    /// prevent.
+    #[must_use]
+    pub fn contested(&self) -> Vec<&ComposedRegion> {
+        let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
+        for row in &self.regions {
+            *seen.entry(row.tag.as_str()).or_default() += 1;
+        }
+        self.regions
+            .iter()
+            .filter(|row| seen.get(row.tag.as_str()).copied().unwrap_or(0) > 1)
+            .collect()
+    }
+}
+
+/// ★★★★★ R2134 — **join the tables of everything showing at one destination.**
+///
+/// `parts` is `(owner, its published table)` per screen contributing to this
+/// page — the host first by convention, then whatever is mounted. `None` for a
+/// screen that publishes no table, which becomes a named entry in
+/// [`Composed::undescribed`] rather than nothing at all.
+///
+/// # Why the host cannot do this by concatenating
+///
+/// It could, and the result would be a set of tags with no owner on any of
+/// them. The three questions this composition had to answer are the three the
+/// debt that asked for it wrote down: whether the guest's table travels through
+/// the host's wire (it does, here), what says which record owns a region (this
+/// function's first tuple element, carried onto every row), and whose the host
+/// chrome is when it paints *over* a guest page (the host's — it is the host
+/// that paints it, and it arrives in `parts` under the host's name).
+#[must_use]
+pub fn compose(parts: &[(&str, Option<&Published>)]) -> Composed {
+    let mut regions: Vec<ComposedRegion> = Vec::new();
+    let mut undescribed: Vec<String> = Vec::new();
+    for (owner, published) in parts {
+        let Some(published) = published else {
+            undescribed.push((*owner).to_owned());
+            continue;
+        };
+        for (tag, role) in &published.voices {
+            regions.push(ComposedRegion {
+                tag: tag.clone(),
+                owner: (*owner).to_owned(),
+                voice: Some(role.clone()),
+                silence: published.silences.get(tag).cloned(),
+            });
+        }
+        // A tag the screen declares ONLY as a silence. Written as its own pass
+        // rather than merged above, because the two tables are independent and
+        // a silence-only region is the common case — every layout node is one.
+        for (tag, kind) in &published.silences {
+            if published.voices.contains_key(tag) {
+                continue;
+            }
+            regions.push(ComposedRegion {
+                tag: tag.clone(),
+                owner: (*owner).to_owned(),
+                voice: None,
+                silence: Some(kind.clone()),
+            });
+        }
+    }
+    regions.sort_by(|a, b| a.tag.cmp(&b.tag).then_with(|| a.owner.cmp(&b.owner)));
+    undescribed.sort();
+    Composed {
+        regions,
+        undescribed,
+    }
+}
+
 /// Reconcile what a screen PAINTS with what it PUBLISHES about its own regions.
 ///
 /// ★★★★★ R1868 — a screen's voice is written down **twice**: once by the
