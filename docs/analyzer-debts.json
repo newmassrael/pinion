@@ -179,18 +179,6 @@
       ]
     },
     {
-      "name": "debt-a-declared-type-is-an-untyped-string",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "ordinary",
-      "why": [
-        "links analyzer-tool-capability-spec"
-      ]
-    },
-    {
       "name": "debt-a-definition-can-be-renamed-from-the-wire-and-from-no-control",
       "substituted": false,
       "blocked_by": "buildable",

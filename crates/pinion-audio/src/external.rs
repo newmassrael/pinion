@@ -554,7 +554,7 @@ pub const RT_EXTERNAL_FIELDS: &[SchemaField] = &[
     SchemaField::new("attenuation", "json"),
     // The full-pool policy, read from the control-thread mirror; driven
     // via `invoke set_voice_policy`.
-    SchemaField::new("voice_policy", "text"),
+    SchemaField::new("voice_policy", "string"),
     // R1637 — the driving verbs, declared. The type doc above this list
     // described all ten of them in PROSE ("**invoke** drives the audio thread
     // over the command queue: `play` a named clip, `stop` a voice id, …") while

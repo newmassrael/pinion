@@ -5617,7 +5617,7 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::new("remedies", "string"),
         SchemaField::new("steppers", "string"),
         SchemaField::new("toast", "string"),
-        SchemaField::new("said", "object"),
+        SchemaField::new("said", "json"),
         // ★★★★★ R1790 — how long what is being said has left, so a gate advances
         // time by asking rather than by pinning a number this screen owns.
         SchemaField::new("saying", "json"),

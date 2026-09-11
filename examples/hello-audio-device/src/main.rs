@@ -184,11 +184,11 @@ const TONE_AMPLITUDE: f32 = 0.9;
 /// consequences (the old stream stops, live voices are lost), not a slot to poke —
 /// so it is a verb, and the reads report the outcome.
 const DEVICE_FIELDS: &[SchemaField] = &[
-    SchemaField::new("device", "text"),
+    SchemaField::new("device", "string"),
     SchemaField::new("devices", "json"),
     SchemaField::new("sample_rate", "int"),
     SchemaField::new("channels", "int"),
-    SchemaField::new("sample_format", "text"),
+    SchemaField::new("sample_format", "string"),
     SchemaField::new("stream_errors", "int"),
     // The WORLD pose the game owns (see `set_camera` / [`AudioFollowClock`]).
     // Read-only like the rest: it is moved with `invoke set_camera`, because a
@@ -203,7 +203,7 @@ const DEVICE_FIELDS: &[SchemaField] = &[
     // doc above already calls `set_device` "a verb, and the reads report the
     // outcome"; saying so in prose is not declaring it, and until now the
     // §2 #2 primary path could call it and could not find it.
-    SchemaField::action("set_device", "text"),
+    SchemaField::action("set_device", "string"),
     SchemaField::action("set_camera", "null"),
     SchemaField::action("set_emitter", "null"),
 ];

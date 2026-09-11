@@ -347,15 +347,15 @@ impl ExternalIntrospect for PresetCommandExternal {
                     // The stored preset names, in order (a JSON array of strings).
                     SchemaField::new("names", "json"),
                     // The name of the currently-applied preset.
-                    SchemaField::new("active", "text"),
+                    SchemaField::new("active", "string"),
                     // The last command's outcome (e.g. "applied 'wide'",
                     // "rejected 'corrupt': ...").
-                    SchemaField::new("status", "text"),
+                    SchemaField::new("status", "string"),
                     // The stored preset count.
                     SchemaField::new("count", "int"),
                     // The live topology as a serialized blob — proof of what is
                     // actually applied, independent of the painted rects.
-                    SchemaField::new("active_blob", "text"),
+                    SchemaField::new("active_blob", "string"),
                     // R1895 — name, provenance and whether a row can be deleted.
                     SchemaField::new("arrangements", "json"),
                     // Command surface: `apply` / `save` / `delete` a named preset.

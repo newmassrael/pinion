@@ -21,7 +21,7 @@ mention of the shape in its commit body, R1729 gave the sibling screen a
 `Json`, and the four screens after it followed a decision that was never
 written down. ⇒ this is the gate that would have said so at the fifth.
 
-# THREE checks over THREE populations, and only one of them has a budget
+# FOUR checks over FOUR populations, and only one of them has a budget
 
 ★★★★★ The populations are separate because the claims are. The first draft
 gave all of them the product's seven crates, and that is the defect R2128 had
@@ -59,6 +59,27 @@ the very walk this round was written about.
    that walk drives answer as JSON, which is a `TypeError` waiting for the next
    sweep. ZERO, no budget. The sweep does not gate the push (R835); this is the
    half that does.
+4. **OFF-VOCABULARY TYPE WORD — across every source that spells a schema
+   constructor.** R2131. A declared word no `SchemaType` variant spells. ZERO,
+   no budget, and the legal spellings are read off `SchemaType::as_str` rather
+   than listed here, so the gate cannot drift from the framework.
+
+   ★★★★★ **The widest population of the four, and it earns the width twice.**
+   It is not scoped to `ExternalIntrospect` impls, because "is this word in the
+   vocabulary?" has meaning wherever the word is written — a const table in a
+   module with no impl, a test fixture, a `SchemaArg` in a helper — whereas
+   "does this surface contradict itself?" needs a surface. And it is not scoped
+   to READS: `SchemaArg` and the invoke channel spell the same vocabulary.
+
+   ⚠⚠ **It exists because the compiler's own refusal arrives too late.** Since
+   R2131 `SchemaType::parse` panics in a `const fn`, and the expectation
+   carried into that round was that an unknown word is therefore a compile
+   error at the declaration line. Measured: true for `const ITEM: SchemaField =
+   ..`, and NOT true for `IntrospectSchema::new(const { &[..] })`, which is the
+   shape essentially every surface here uses — an inline `const {}` block is
+   evaluated at codegen, and `cargo check` and `cargo clippy` do not codegen.
+   ⇒ the compiler closes the vocabulary at BUILD time; this closes it at the
+   gate. See [`type_tokens_declared`] for the table.
 
 # The derivation
 
@@ -149,27 +170,21 @@ PRODUCT = "hello-analyzer-shell"
 #: The file that owns which variants are the same shape.
 CORE_EXTERNAL = ROOT / "crates" / "pinion-core" / "src" / "external.rs"
 
-#: ★★★★★ The correspondence between the framework's TWO renderings of one
-#: fact, and the only part of the shape vocabulary still written down here.
+#: ★★★★★ R2131 — THE SECOND HAND TABLE IS GONE TOO, and this one was joined to
+#: the wrong half of the framework.
 #:
-#: `IntrospectValue::kind()` answers a fragment a person reads in a sentence
-#: ("a whole number"); a `SchemaField` declares a token an agent matches on
-#: ("int"). `kind()`'s own docstring says this in as many words -- *"One fact,
-#: two renderings, held to opposite rules"* -- so this table is the join
-#: between two things the framework declares, not a vocabulary this file
-#: invented. `selftest` asserts it TOTAL against the derived grouping, so a
-#: variant added to `kind()` or a reworded arm fails here instead of silently
-#: grading a screen against a word that no longer exists.
+#: It read: `IntrospectValue::kind()` answers a fragment a person reads in a
+#: sentence ("a whole number"), a `SchemaField` declares a token an agent
+#: matches on ("int"), and this table was the join. `kind()`'s own docstring
+#: says the two renderings are held to *opposite* rules -- so a census deriving
+#: a machine vocabulary was reading the PERSON-facing words and re-spelling the
+#: machine ones. It worked, and it was one reworded sentence away from not
+#: working; `selftest` held it total precisely because nothing else could.
 #:
-#: `null` is deliberately absent: no `SchemaField` declares it, and a path that
-#: can answer `Null` declares the type of the value it answers otherwise.
-_SCHEMA_TOKEN_FOR_KIND: dict[str, str] = {
-    "json": "json",
-    "a boolean": "bool",
-    "a whole number": "int",
-    "a number": "float",
-    "text": "text",
-}
+#: R2131 gave the framework a machine-side answer, `SchemaType`, so
+#: [`variant_groups`] now reads `SchemaType::of` directly and the join has no
+#: middle. The exclusion of `null` that this table made by omission is now made
+#: by name, which is the difference between a rule and a gap.
 
 #: Local one-word constructors the SCREENS wrap a variant in. Unlike the table
 #: above these are not the framework's — each is a closure or helper a screen
@@ -182,17 +197,20 @@ _HELPERS: tuple[tuple[str, str], ...] = (
     ("plain", "text"),
 )
 
-#: The word a `SchemaField` declares, and the arm shape that keeps its promise.
-#: Only the words this product actually declares for READS are listed; a word
-#: that is not here is not compared, because inventing the mapping for one
-#: would be this file deciding the framework's vocabulary.
-_DECLARED_AS: dict[str, str] = {
-    "json": "json",
-    "string": "text",
-    "bool": "bool",
-    "int": "int",
-    "float": "float",
-}
+#: ★★★★★ R2131 — THIS TABLE IS GONE. It listed the word a `SchemaField`
+#: declares against the arm shape that keeps its promise, by hand, and the
+#: comment justifying the hand-writing read as principle: *inventing the
+#: mapping for one would be this file deciding the framework's vocabulary.*
+#: True, and the conclusion was backwards — the framework did not HAVE a
+#: vocabulary to defer to, because `SchemaField.ty` was `&'static str`. So this
+#: file was deciding it anyway, in silence, five words at a time, and every word
+#: outside the five was skipped rather than compared.
+#:
+#: R2131 closed the vocabulary as `pinion_core::external::SchemaType`, and
+#: [`declared_as`] now READS it — `SchemaType::as_str` for the token, plus
+#: `SchemaType::of` and `IntrospectValue::kind` for the arm it admits. Deriving
+#: is what makes "the framework's vocabulary" a thing this tool can defer to
+#: instead of a thing it asserts.
 
 _ARM = re.compile(
     r"^[ \t]*((?:\"[A-Za-z_0-9]+\"[ \t]*\|[ \t]*)*\"[A-Za-z_0-9]+\")[ \t]*=>[ \t]*",
@@ -337,50 +355,138 @@ def arms(block: str) -> list[tuple[tuple[str, ...], str]]:
     return out
 
 
+#: The `SchemaType` variants that are not an ARM SHAPE, and why each is not.
+#:
+#: Spelled out rather than left to fall through a lookup, because that is the
+#: difference between a rule and a gap: the table this replaced excluded `null`
+#: by simply not listing it, and an omission cannot say whether it was a
+#: decision or an oversight.
+_NOT_A_READ_SHAPE: dict[str, str] = {
+    # An answer carrying no value. A path that can answer `Null` still declares
+    # the type it answers otherwise, so `Null` grades nothing -- and
+    # `SchemaType::admits` says the same thing from the framework's side.
+    "Null": "an absent value, not a shape",
+    # The placeholder a `const fn` composer overwrites; never declared.
+    "Unset": "a slot nobody has written yet",
+}
+
+
 def variant_groups(core_source: str) -> dict[str, str]:
     """`IntrospectValue` variant -> the shape token it satisfies, DERIVED.
 
-    ★★★★★ Read off `IntrospectValue::kind()` rather than written down, because
-    writing it down is how this tool's own first defect happened: it classified
-    `Raw` as a seventh word when `kind()` already answers
-    `Json(_) | Raw(_) => "json"`, and two CORRECT surfaces read as broken
-    promises. A census that invents a vocabulary the framework does not have
-    reports its own invention.
+    ★★★★★ Derived rather than written down, because writing it down is how this
+    tool's own first defect happened: it classified `Raw` as a seventh word when
+    the framework already groups `Json(_) | Raw(_)`, and two CORRECT surfaces
+    read as broken promises. A census that invents a vocabulary the framework
+    does not have reports its own invention.
 
-    `kind()` is the right source and says so itself: it carries no wildcard on
-    purpose, so the round that adds a variant meets a compile error there — and
-    therefore this derivation sees every variant the enum has, not every
-    variant somebody remembered.
+    ⚠⚠ R2131 MOVED THE SOURCE, and the old one was the wrong half of the
+    framework. This used to read `IntrospectValue::kind()` and join its answers
+    through a hand table — but `kind()` answers *person* words ("a whole
+    number") and its own docstring insists they are held to opposite rules from
+    the schema's tokens. A machine vocabulary was being recovered from prose, so
+    a reworded sentence could have moved it.
 
-    The person-words `kind()` answers are joined to the schema's tokens through
-    [`_SCHEMA_TOKEN_FOR_KIND`], which `selftest` holds total in both directions.
+    `SchemaType::of` is the machine-side answer and did not exist until R2131.
+    It is the right source for the same reason `kind()` was: it carries no
+    wildcard on purpose, so the round that adds an `IntrospectValue` variant
+    meets a compile error there — and therefore this sees every variant the enum
+    has, not every variant somebody remembered.
+
+    The shape token is the `SchemaType` variant lowercased, which is an identity
+    rather than a coincidence: the census's shapes and the framework's types are
+    the same partition of the same enum. Note `Text` -> `text` while the token
+    it DECLARES is `string` — the two differ, on purpose, and [`declared_as`] is
+    where they are joined.
     """
-    mask = code_mask(core_source)
-    head = re.search(r"fn kind\(\s*&self\s*\)", core_source)
+    return {
+        value_variant: schema_variant.lower()
+        for value_variant, schema_variant in schema_type_of(core_source).items()
+        if schema_variant not in _NOT_A_READ_SHAPE
+    }
+
+
+def _match_block(source: str, signature: str, subject: str) -> str:
+    """The body of the `match <subject> {` that opens a fn matching `signature`."""
+    mask = code_mask(source)
+    head = re.search(signature, source)
     if not head:
-        return {}
-    start = core_source.find("match self {", head.end())
+        return ""
+    opener = f"match {subject} {{"
+    start = source.find(opener, head.end())
     if start < 0:
-        return {}
-    i = start + len("match self {")
-    depth = 1
-    while i < len(core_source) and depth:
+        return ""
+    i, depth = start + len(opener), 1
+    while i < len(source) and depth:
         if mask[i]:
-            depth += {"{": 1, "}": -1}.get(core_source[i], 0)
+            depth += {"{": 1, "}": -1}.get(source[i], 0)
         i += 1
-    block = core_source[start + len("match self {") : i - 1]
+    return source[start + len(opener) : i - 1]
+
+
+def schema_type_tokens(core_source: str) -> dict[str, str]:
+    """`SchemaType` variant -> the wire token it publishes, read off `as_str`."""
     out: dict[str, str] = {}
-    for line in block.splitlines():
+    for line in _match_block(
+        core_source, r"fn as_str\(\s*self\s*\)", "self"
+    ).splitlines():
+        arm = re.match(r'\s*Self::(\w+)\s*=>\s*"([^"]*)"', line)
+        if arm:
+            out[arm.group(1)] = arm.group(2)
+    return out
+
+
+def schema_type_of(core_source: str) -> dict[str, str]:
+    """`IntrospectValue` variant -> the `SchemaType` variant, read off `of`."""
+    out: dict[str, str] = {}
+    for line in _match_block(
+        core_source, r"fn of\(value: &IntrospectValue\)", "value"
+    ).splitlines():
         arm = re.match(
-            r"\s*((?:Self::\w+(?:\(_?\))?\s*\|\s*)*Self::\w+(?:\(_?\))?)\s*=>\s*\"([^\"]+)\"",
+            r"\s*((?:IntrospectValue::\w+(?:\(_?\))?\s*\|\s*)*"
+            r"IntrospectValue::\w+(?:\(_?\))?)\s*=>\s*Self::(\w+)",
             line,
         )
         if not arm:
             continue
-        for variant in re.findall(r"Self::(\w+)", arm.group(1)):
-            token = _SCHEMA_TOKEN_FOR_KIND.get(arm.group(2))
-            if token:
-                out[variant] = token
+        for variant in re.findall(r"IntrospectValue::(\w+)", arm.group(1)):
+            out[variant] = arm.group(2)
+    return out
+
+
+def declared_as(core_source: str) -> dict[str, str]:
+    """The declared TOKEN -> the arm shape that keeps its promise, DERIVED.
+
+    ★★★★★ R2131 — the hand table this replaces is described where it used to
+    sit. The chain is three links, each read off the framework rather than
+    restated here:
+
+    | link | source |
+    |---|---|
+    | `IntrospectValue` variant -> shape | `kind()`, via [`variant_groups`] |
+    | `IntrospectValue` variant -> `SchemaType` | `SchemaType::of` |
+    | `SchemaType` -> wire token | `SchemaType::as_str` |
+
+    Composing them answers *what must an arm answer for this declared word to
+    be kept*, and it answers it for every word the vocabulary has — which is
+    the property the hand table could not have. A word missing here is now a
+    word the ENUM does not carry, and since R2131 the enum is what the compiler
+    holds callers to, so such a word cannot be declared at all.
+
+    `null` drops out on its own and correctly: `kind()` answers `"null"`, which
+    is not a shape any read arm is classified as, so a path declaring `null`
+    has nothing to be compared against. That is the same exclusion the hand
+    table made deliberately, arrived at rather than remembered.
+    """
+    groups = variant_groups(core_source)
+    tokens = schema_type_tokens(core_source)
+    of = schema_type_of(core_source)
+    out: dict[str, str] = {}
+    for value_variant, shape in groups.items():
+        schema_variant = of.get(value_variant)
+        token = tokens.get(schema_variant) if schema_variant else None
+        if token:
+            out[token] = shape
     return out
 
 
@@ -518,29 +624,59 @@ def declared_types(source: str) -> dict[str, str]:
     surface telling a client something false, which is worse than an arm
     disagreeing with another screen: there is no second screen to compare it
     with.
+
+    ⚠⚠ R2131 — THE TYPE CLASS IS `[A-Za-z_0-9]*`, AND THE OLD `[a-z]+` WAS A
+    HOLE BELOW R2130's PIN. A token with a digit in it did not fail to match the
+    type group; it failed to match the whole pattern, so the declaration was not
+    *skipped* — it was INVISIBLE, counted neither among the examined nor among
+    the pinned unexamined, and `0 broken over 843 examined and 45 pinned` was a
+    statement about a population with a silent hole in it.
+
+    Measured: `crates/pinion-shell/tests/dispatch_core.rs` declared
+    `SchemaField::new("value", "i32")`, a fifth off-vocabulary word. R2130 saw
+    `i32` in a regex census, judged it an artifact of `re.S` matching across
+    lines, and dismissed it — the dismissal was wrong, and nothing here could
+    have contradicted it, because this extractor could not see the site either.
+    ⇒ ★ a population defined by a pattern is only as wide as the pattern, so the
+    pattern is part of the claim.
+
+    The empty string is allowed (`*`, not `+`): `SchemaField::EMPTY` and the
+    composers that spell `SchemaField::new("", "")` declare `SchemaType::Unset`,
+    and an extractor that could not see those would have the same hole again.
     """
     return {
         m.group(1): m.group(2)
         for m in re.finditer(
-            r"SchemaField::new\(\s*\"([A-Za-z_0-9]+)\"\s*,\s*\"([a-z]+)\"", source
+            r"SchemaField::new\(\s*\"([A-Za-z_0-9.<>]*)\"\s*,\s*\"([A-Za-z_0-9]*)\"",
+            source,
         )
     }
 
 
 def broken_promises(
-    declared: dict[str, str], answered: dict[str, str]
+    declared: dict[str, str],
+    answered: dict[str, str],
+    vocabulary: dict[str, str],
 ) -> dict[str, tuple[str, str]]:
     """`name -> (declared word, answered shape)` where the two disagree.
 
     A shape the census could not classify is not a disagreement, for the reason
     it is not a split: `unknown` is this census's limit, not the screen's
-    defect. A declared word with no entry in `_DECLARED_AS` is likewise left
-    alone — the vocabulary is the framework's and may grow.
+    defect.
+
+    A declared word absent from `vocabulary` is still left alone here and
+    counted by [`unknown_tokens`] instead — but since R2131 that is a much
+    stronger statement than it was. `vocabulary` is now DERIVED from
+    `SchemaType` rather than hand-listed, and `SchemaType` is what the compiler
+    holds every declaration to, so a word outside it can no longer be declared
+    at all. The branch is kept because the derivation can legitimately exclude a
+    word (`null` has no read shape), not because the vocabulary might grow
+    behind this tool's back.
     """
     out: dict[str, tuple[str, str]] = {}
     for name, word in declared.items():
         shape = answered.get(name)
-        want = _DECLARED_AS.get(word)
+        want = vocabulary.get(word)
         if shape in (None, "unknown", "mixed") or want is None:
             continue
         if want != shape:
@@ -548,7 +684,11 @@ def broken_promises(
     return out
 
 
-def unknown_tokens(declared: dict[str, str], answered: dict[str, str]) -> dict[str, int]:
+def unknown_tokens(
+    declared: dict[str, str],
+    answered: dict[str, str],
+    vocabulary: dict[str, str],
+) -> dict[str, int]:
     """The declared words this file has no shape for, counted by word.
 
     🟥 THE SILENCE THIS REPLACES WAS A HOLE, NOT A BLIND SPOT. `broken_promises`
@@ -560,20 +700,124 @@ def unknown_tokens(declared: dict[str, str], answered: dict[str, str]) -> dict[s
     `text` where the tree declares `string`. One of the pairs it hid was a real
     contradiction -- two paths declared `object` whose arms answer a `Text`.
 
-    ⚠ The repair is NOT to add the synonyms to [`_DECLARED_AS`]. That would
-    compare all of them and make the number look right while blessing a split
+    ⚠ The repair was NOT to add the synonyms to the table. That would compare
+    all of them and make the number look right while blessing a split
     vocabulary and putting it back out of sight -- which is precisely the door
     `screen_spec` used to be, and what let this class live 400 rounds. A census
     counts what it cannot read; it does not absorb it.
 
-    ⇒ [[debt-a-declared-type-is-an-untyped-string]] is the root: `SchemaField.ty`
-    is a `&'static str`, so a synonym is spellable at all.
+    ✅ R2131 TOOK THE OTHER REPAIR AND THIS NOW COUNTS ZERO. `SchemaField.ty` is
+    a closed `SchemaType`, the five synonyms (`boolean` 46, `text` 20,
+    `number` 17, `object` 13, `i32` 1) were canonicalised, and `vocabulary` is
+    derived from the enum by [`declared_as`]. Two of those declarations were
+    real broken promises the gap had been hiding -- `said` in
+    `hello-key-patterns` and `hello-log-view` declared `object` over an arm
+    answering `Text` -- and both are repaired rather than reclassified.
+
+    ⚠ IT IS KEPT, NOT DELETED, and the reason is the one this file keeps
+    learning: a count that can only be zero is still the thing that says so.
+    `declared_as` excludes a token with no read shape (`null`), and a future
+    `SchemaType` variant reaches declarations before it reaches `kind()`. This
+    is what would report that, and R2130's pin is what refuses it.
     """
     out: dict[str, int] = {}
     for name, word in declared.items():
-        if name in answered and word not in _DECLARED_AS:
+        if name in answered and word not in vocabulary:
             out[word] = out.get(word, 0) + 1
     return out
+
+
+#: Every constructor that takes a type token, and WHICH argument it is.
+#:
+#: `SchemaArg`'s are here for the reason its own doc gives — the argument's type
+#: is "in the same vocabulary as `SchemaField::ty`" — and since R2131 that is
+#: the same `SchemaType`, so a census of one that skipped the other would be
+#: measuring half a vocabulary.
+_TYPED_CONSTRUCTORS: dict[str, int] = {
+    "SchemaField::new": 1,
+    "SchemaField::action": 1,
+    "SchemaField::parametric": 1,
+    "SchemaField::action_with": 1,
+    "SchemaField::send": 0,
+    "SchemaArg::key": 1,
+    "SchemaArg::open": 1,
+    "SchemaArg::one_of": 1,
+    "SchemaArg::one_of_with": 1,
+}
+
+_STRING_LITERAL = re.compile(r'^"([^"\\]*)"$')
+
+
+def type_tokens_declared(source: str) -> dict[str, int]:
+    """Every type token this source spells, counted — arguments SPLIT, not grepped.
+
+    ★★★★★ R2131 — THE ONE GATE THAT DOES NOT WAIT FOR CODEGEN, and it exists
+    because of a measurement that contradicted the round's own plan.
+
+    Closing the vocabulary made `SchemaType::parse` panic in a `const fn`, and
+    the claim carried forward from R2130 was that an unknown word therefore
+    becomes "a compile error AT THE DECLARATION LINE". Measured on the real
+    tree, that is true of only one of the two shapes a schema is written in:
+
+    | shape | `cargo check` (`--emit=metadata`) | a build |
+    |---|:--:|:--:|
+    | `const ITEM: SchemaField = SchemaField::new(..)` | refuses | refuses |
+    | `IntrospectSchema::new(const { &[SchemaField::new(..)] })` | **passes** | refuses |
+
+    An inline `const {}` block in a fn body is evaluated at codegen, which
+    `cargo check` and `cargo clippy` do not do — and the second shape is what
+    essentially every surface in this tree uses. R2130's experiment used the
+    first, which is why the generalisation looked safe. ⇒ the compiler closes
+    the vocabulary at BUILD time, and between an edit and a build there was
+    nothing. This is that nothing.
+
+    It also reaches two populations the compiler's own refusal does not: a crate
+    no profile builds, and `SchemaArg`, whose tokens sit in the same vocabulary.
+
+    Arguments are split by depth on a comment- and string-masked source rather
+    than matched by a regex, because the tokens are at a fixed ARGUMENT INDEX
+    and not at a fixed distance: `SchemaField::action_with(path, ty, form,
+    args)` puts a slice after the token, and `re.S` across a call is how R2130
+    came to report a word that was not there while missing one that was.
+    """
+    mask = code_mask(source)
+    out: dict[str, int] = {}
+    for name, index in _TYPED_CONSTRUCTORS.items():
+        for head in re.finditer(re.escape(name) + r"\s*\(", source):
+            if not mask[head.start()]:
+                continue
+            open_at = source.index("(", head.end() - 1)
+            close_at = _balanced(source, mask, open_at, "(", ")")
+            if close_at < 0:
+                continue
+            depth, cuts, at = 0, [open_at + 1], open_at
+            while at < close_at:
+                if mask[at]:
+                    if source[at] in "([{":
+                        depth += 1
+                    elif source[at] in ")]}":
+                        depth -= 1
+                    elif source[at] == "," and depth == 1:
+                        cuts.append(at)
+                at += 1
+            args = [
+                source[a + 1 if n else a : b].strip()
+                for n, (a, b) in enumerate(zip(cuts, cuts[1:] + [close_at - 1]))
+            ]
+            if len(args) <= index:
+                continue
+            literal = _STRING_LITERAL.match(args[index])
+            # A non-literal is a `const` spelled elsewhere; it reaches this
+            # census through that definition's own site, so counting the
+            # forwarding call would double-count it.
+            if literal:
+                out[literal.group(1)] = out.get(literal.group(1), 0) + 1
+    return out
+
+
+def off_vocabulary(counted: dict[str, int], spellings: set[str]) -> dict[str, int]:
+    """The declared tokens no `SchemaType` variant spells."""
+    return {word: n for word, n in counted.items() if word not in spellings}
 
 
 def decoding_sites(source: str) -> tuple[list[tuple[int, str]], int]:
@@ -799,6 +1043,17 @@ def render_unseen(now: dict[str, int]) -> str:
         "# instead; then these rows go to zero because there is nothing left",
         "# to skip.",
         "#",
+        "# ✅ R2131 DID THAT, and the type-word rows are gone. `SchemaField.ty`",
+        "# is a closed `SchemaType`, the five synonyms were canonicalised, and",
+        "# the two mismatches the gap hid are repaired. The examined population",
+        "# rose 843 -> 873: 29 that had been skipped, plus one the extractor's",
+        "# own `[a-z]+` type class had made INVISIBLE rather than skipped.",
+        "#",
+        "# ⚠ What is left is the OTHER cause, and it is not a vocabulary",
+        "# problem: an arm that hands its answer to a helper cannot be followed",
+        "# by a text census at all ⇒ that half belongs to",
+        "# debt-nothing-ties-a-declared-type-to-the-answered-variant.",
+        "#",
         "# kind\tcount",
     ]
     lines += [f"{kind}\t{n}" for kind, n in sorted(now.items())]
@@ -862,6 +1117,41 @@ def read_core_source() -> str:
 def read_walks() -> list[Path]:
     """Every demo walk, in a stable order."""
     return sorted((ROOT / "tools" / "demos").glob("*.py"))
+
+
+def declaration_sources() -> list[Path]:
+    """Every workspace source that spells a schema constructor.
+
+    ⚠ A WIDER POPULATION THAN [`promise_sources`], deliberately — that one asks
+    "does this surface contradict itself?", which only has meaning where there
+    is an `ExternalIntrospect` impl to contradict. This asks "is this word in
+    the vocabulary?", which has meaning wherever the word is written: a const
+    table in a module with no impl, a test fixture, a `SchemaArg` in a helper.
+    Two questions, two populations. Sharing one would answer the narrower
+    question under the wider one's name, which is the defect R2128 paid for and
+    R2129 paid for again.
+    """
+    out: list[Path] = []
+    for root in (ROOT / "crates", ROOT / "examples"):
+        for path in sorted(root.rglob("*.rs")):
+            if "Schema" in path.read_text(encoding="utf-8"):
+                out.append(path)
+    return out
+
+
+def vocabulary_census() -> tuple[dict[str, dict[str, int]], dict[str, int], set[str]]:
+    """`(off-vocabulary sites by file, every token counted, the legal spellings)`."""
+    spellings = set(schema_type_tokens(read_core_source()).values())
+    offenders: dict[str, dict[str, int]] = {}
+    counted: dict[str, int] = {}
+    for source_path in declaration_sources():
+        here = type_tokens_declared(source_path.read_text(encoding="utf-8"))
+        for word, n in here.items():
+            counted[word] = counted.get(word, 0) + n
+        bad = off_vocabulary(here, spellings)
+        if bad:
+            offenders[str(source_path.relative_to(ROOT))] = bad
+    return offenders, counted, spellings
 
 
 def stale_decodes(
@@ -964,7 +1254,9 @@ def promise_census() -> tuple[dict[str, tuple[str, str]], int, int, dict[str, in
     holds six, and pairing per file compared one fixture's `count` declaration
     with another fixture's arm.
     """
-    groups = variant_groups(read_core_source())
+    core_source = read_core_source()
+    groups = variant_groups(core_source)
+    vocabulary = declared_as(core_source)
     broken: dict[str, tuple[str, str]] = {}
     unreadable: dict[str, int] = {}
     impls = compared = 0
@@ -975,14 +1267,14 @@ def promise_census() -> tuple[dict[str, tuple[str, str]], int, int, dict[str, in
             impls += 1
             here = answered_here(impl_body, groups)
             declared = declared_types(schema_text(impl_body, consts))
-            skipped = unknown_tokens(declared, here)
+            skipped = unknown_tokens(declared, here, vocabulary)
             # ★ `compared` means COMPARED. It used to count every declaration
             # with an arm, skipped ones included, so the round's own ledger said
             # "872 checked ... 0 broken" when 29 of them were never looked at.
             compared += sum(1 for name in declared if name in here) - sum(skipped.values())
             for word, n in skipped.items():
                 unreadable[word] = unreadable.get(word, 0) + n
-            for name, pair in broken_promises(declared, here).items():
+            for name, pair in broken_promises(declared, here, vocabulary).items():
                 broken[f"{source_path.relative_to(ROOT)}::{name}"] = pair
     return broken, impls, compared, unreadable
 
@@ -998,6 +1290,36 @@ def check() -> int:
     shared = sum(1 for by in published.values() if len(by) > 1)
     blind = sum(1 for by in published.values() if "unknown" in by.values())
     stale, unreadable = stale_decodes(published)
+    off_spelling, all_tokens, spellings = vocabulary_census()
+
+    # ★★★★★ R2131 — FIRST, because it is the cheapest and it is the one the
+    # compiler does not answer until codegen. See `type_tokens_declared` for the
+    # measurement: an inline `const {}` block — the shape every surface here
+    # uses — is not evaluated by `cargo check` or `cargo clippy`, so between an
+    # edit and a full build a synonym is invisible to every gate but this one.
+    #
+    # ZERO, with no budget, and it is not a judgement call: the legal spellings
+    # are read off `SchemaType::as_str`, so this compares the tree against the
+    # framework rather than against a list kept here.
+    if off_spelling:
+        print(
+            "read-path-shapes: a schema declares a type word outside the "
+            "closed vocabulary",
+            file=sys.stderr,
+        )
+        for where, words in sorted(off_spelling.items()):
+            spread = ", ".join(f"{w} x{n}" for w, n in sorted(words.items()))
+            print(f"  {where}: {spread}", file=sys.stderr)
+        print(
+            "read-path-shapes: the vocabulary is `SchemaType` and its spellings\n"
+            f"                  are {sorted(spellings)!r}.\n"
+            "                  Spell the canonical word. Do NOT add a variant to\n"
+            "                  make the word legal unless the framework really\n"
+            "                  gained a type -- a synonym is what R2131 removed,\n"
+            "                  and the gap it left was hiding two real defects.",
+            file=sys.stderr,
+        )
+        return 1
 
     # ★ ZERO, not a pin. A split needs two screens to agree on which is wrong;
     # a broken promise is one screen contradicting ITSELF in one file, so
@@ -1100,6 +1422,9 @@ def check() -> int:
         f"over the {compared} examined and {sum(unseen.values())} pinned unexamined, "
         f"{sum(untyped.values())} skipped for a type word this census has no "
         f"shape for {dict(sorted(untyped.items()))}; "
+        f"{sum(all_tokens.values())} type token(s) declared tree-wide over "
+        f"{len(declaration_sources())} source(s), 0 outside the "
+        f"{len(spellings)}-word vocabulary; "
         f"{len(read_walks())} walk(s) read for a stale decode, 0 found, "
         f"{unreadable} site(s) with no path this derivation could resolve"
     )
@@ -1141,13 +1466,58 @@ def selftest() -> int:
     # The join must be total in BOTH directions: a token with no kind word is a
     # word this file invented, and a kind word with no token is a variant the
     # census would grade against nothing.
-    kinds_named = set(_SCHEMA_TOKEN_FOR_KIND.values())
-    case("the join produces every token the census uses", kinds_named, set(groups.values()))
+    # ★★★★★ R2131 — the grouping is now read off `SchemaType::of`, so what is
+    # asserted is that the NEW source reproduces what the hand table produced.
+    # A derivation that merely returns something is not a replacement; this is
+    # what says it returned the same thing.
+    case(
+        "the grouping derived off SchemaType is the one the hand table had",
+        groups,
+        {
+            "Bool": "bool",
+            "Float": "float",
+            "Int": "int",
+            "Json": "json",
+            "Raw": "json",
+            "Text": "text",
+        },
+    )
+    case(
+        "and Null is excluded BY NAME, not by falling through",
+        sorted(_NOT_A_READ_SHAPE),
+        ["Null", "Unset"],
+    )
+    kinds_named = set(groups.values())
+    vocabulary = declared_as(read_core_source())
     case(
         "and every declared word maps onto one of them",
-        set(_DECLARED_AS.values()) - kinds_named,
+        set(vocabulary.values()) - kinds_named,
         set(),
     )
+    # ★★★★★ R2131 — the derivation replaces the hand table, so what is asserted
+    # is that it produces the SAME join, not that it produces something.
+    case(
+        "the vocabulary is derived off SchemaType, not written down",
+        vocabulary,
+        {"json": "json", "string": "text", "bool": "bool", "int": "int", "float": "float"},
+    )
+    tokens = schema_type_tokens(read_core_source())
+    case(
+        "every SchemaType variant has exactly one spelling",
+        len(set(tokens.values())),
+        len(tokens),
+    )
+    case(
+        "and the synonyms R2131 removed are not spellings",
+        sorted(set(tokens.values()) & {"boolean", "number", "text", "object", "i32"}),
+        [],
+    )
+    # `null` and the placeholder are real variants with no READ shape, so they
+    # must be in the enum and absent from the join. Asserting both directions is
+    # what keeps "absent" from meaning "the derivation quietly found nothing".
+    case("null is a type", tokens.get("Null"), "null")
+    case("but not a read shape", "null" in vocabulary, False)
+    case("the placeholder spells empty", tokens.get("Unset"), "")
 
     case("a json arm", shape_of("Ok(IntrospectValue::Json(spec_json()))", groups), "json")
     case("a text arm", shape_of("text(spec_json().to_string())", groups), "text")
@@ -1290,29 +1660,112 @@ def selftest() -> int:
     )
     case(
         "a declaration kept is not a promise broken",
-        broken_promises({"spec": "json"}, {"spec": "json"}),
+        broken_promises({"spec": "json"}, {"spec": "json"}, vocabulary),
         {},
     )
     case(
         "a declaration contradicted is",
-        broken_promises({"spec": "string"}, {"spec": "json"}),
+        broken_promises({"spec": "string"}, {"spec": "json"}, vocabulary),
         {"spec": ("string", "json")},
     )
     case(
         "an unclassifiable arm breaks no promise",
-        broken_promises({"spec": "json"}, {"spec": "unknown"}),
+        broken_promises({"spec": "json"}, {"spec": "unknown"}, vocabulary),
         {},
     )
     case(
         "a declared word this file does not know is left alone",
-        broken_promises({"spec": "blob"}, {"spec": "json"}),
+        broken_promises({"spec": "blob"}, {"spec": "json"}, vocabulary),
         {},
+    )
+    case(
+        "and IS counted, rather than vanishing",
+        unknown_tokens({"spec": "blob"}, {"spec": "json"}, vocabulary),
+        {"blob": 1},
     )
     case(
         "a Raw answer keeps a `json` promise",
         broken_promises(
-            {"frame": "json"}, {"frame": shape_of("Ok(IntrospectValue::raw(r))", groups)}
+            {"frame": "json"},
+            {"frame": shape_of("Ok(IntrospectValue::raw(r))", groups)},
+            vocabulary,
         ),
+        {},
+    )
+    # ★★★★★ R2131 — THE HOLE BELOW R2130's PIN, as a test. `i32` was not
+    # skipped, it was invisible: the old `[a-z]+` type class made the whole
+    # `SchemaField::new` fail to match, so the declaration entered neither
+    # population. The two cases are the two ways that mattered — a digit in the
+    # token, and the empty placeholder.
+    case(
+        "a type word with a digit is EXTRACTED, so it can be counted",
+        declared_types('SchemaField::new("value", "i32")'),
+        {"value": "i32"},
+    )
+    case(
+        "and then counted rather than swallowed",
+        unknown_tokens({"value": "i32"}, {"value": "int"}, vocabulary),
+        {"i32": 1},
+    )
+    case(
+        "the empty placeholder is extracted too",
+        declared_types('SchemaField::new("", "")'),
+        {"": ""},
+    )
+
+    # ★★★★★ R2131 — the tree-wide vocabulary gate, the one that does not wait
+    # for codegen. Its failing path is written FIRST, because an assertion with
+    # no way to fail is one this project deletes rather than keeps.
+    legal = set(schema_type_tokens(read_core_source()).values())
+    case(
+        "a synonym anywhere is off-vocabulary",
+        off_vocabulary(
+            type_tokens_declared('SchemaField::new("on", "boolean");'), legal
+        ),
+        {"boolean": 1},
+    )
+    case(
+        "and the canonical word is not",
+        off_vocabulary(type_tokens_declared('SchemaField::new("on", "bool");'), legal),
+        {},
+    )
+    # The argument-INDEX property: `action_with` puts a slice after the token,
+    # so a census reading "the literal after the path" would take `form` here.
+    case(
+        "the token is taken by argument index, not by distance",
+        type_tokens_declared(
+            'SchemaField::action_with("set", "null", ArgForm::Path, &["x"])'
+        ),
+        {"null": 1},
+    )
+    case(
+        "`send` declares its RETURN at index 0",
+        type_tokens_declared('SchemaField::send("bool")'),
+        {"bool": 1},
+    )
+    case(
+        "a SchemaArg token counts too -- one vocabulary, one census",
+        type_tokens_declared('SchemaArg::open("n", "number")'),
+        {"number": 1},
+    )
+    case(
+        "a comma inside a nested call does not split an argument",
+        type_tokens_declared('SchemaField::parametric("c.<r>", "int", &[a(x, y)])'),
+        {"int": 1},
+    )
+    case(
+        "a constructor named in a comment is not a declaration",
+        type_tokens_declared('// SchemaField::new("on", "boolean")\n'),
+        {},
+    )
+    case(
+        "nor is one inside a string",
+        type_tokens_declared('let s = "SchemaField::new(\\"on\\", \\"boolean\\")";\n'),
+        {},
+    )
+    case(
+        "a token passed as a const is left to its own definition",
+        type_tokens_declared('SchemaField::new("on", WORD)'),
         {},
     )
 
@@ -1431,19 +1884,48 @@ def selftest() -> int:
     require("no screen contradicts its own declaration", not promises, f"{promises}")
     require("the promise census reads the whole workspace, not the product", impls > len(crates))
     require("and it compares declarations, rather than finding none", compared > 100)
-    # ★★★★★ The skipped ones are ASSERTED to be visible, not asserted to be
-    # zero. They are not zero — the schema vocabulary has synonyms — and a
-    # census that demanded zero here would be demanding the defect be hidden.
-    # What must hold is that it can SAY so: the words are named and counted.
+    # ★★★★★ R2131 FLIPPED THIS ASSERTION, AND THE FLIP IS THE ROUND.
+    #
+    # It used to require that the skipped words be NON-EMPTY — "asserted to be
+    # visible, not asserted to be zero" — because the vocabulary had synonyms
+    # and a census demanding zero would have been demanding the defect be
+    # hidden. That was right while the only way to reach zero was to teach this
+    # file the synonyms. R2131 reached zero the other way: `SchemaField.ty` is a
+    # closed `SchemaType`, so the synonyms are not spellable and there is
+    # nothing left to skip.
+    #
+    # ⚠ The failing path did not move to "nothing can fail". It moved UP, to
+    # the pure cases above, which hold that an unknown word is still extracted
+    # and still counted — `blob` and `i32` both. If this ever rises again it is
+    # a real widening of the vocabulary, and R2130's pin refuses it first.
     require(
-        "the type words this census cannot read are named, not swallowed",
-        bool(unreadable) and all(n > 0 for n in unreadable.values()),
+        "no declaration is skipped for a type word: the vocabulary is closed",
+        not unreadable,
         f"{unreadable}",
     )
     require(
         "and none of them is a word the census claims to know",
-        not (set(unreadable) & set(_DECLARED_AS)),
-        f"{sorted(set(unreadable) & set(_DECLARED_AS))}",
+        not (set(unreadable) & set(vocabulary)),
+        f"{sorted(set(unreadable) & set(vocabulary))}",
+    )
+    # ★★★★★ R2131 — the ORACLE half, aimed at the real tree. R2130.1 was opened
+    # by exactly this gap: a pure rule had cases and its oracle had none, so
+    # nothing said whether the rule was ever pointed at anything.
+    off_spelling, all_tokens, spellings = vocabulary_census()
+    require(
+        "no source declares a type word outside the vocabulary",
+        not off_spelling,
+        f"{off_spelling}",
+    )
+    require(
+        "and the census actually read the tree, rather than finding nothing",
+        sum(all_tokens.values()) > 1000 and len(declaration_sources()) > 50,
+        f"{sum(all_tokens.values())} token(s) over {len(declaration_sources())} source(s)",
+    )
+    case(
+        "the spellings come off SchemaType, so the gate cannot drift from it",
+        spellings,
+        set(schema_type_tokens(read_core_source()).values()),
     )
     walks_stale, walks_blind = stale_decodes(published)
     require("no walk decodes a read the wire answers as JSON", not walks_stale)

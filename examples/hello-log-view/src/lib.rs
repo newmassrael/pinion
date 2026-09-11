@@ -1573,7 +1573,11 @@ impl ExternalIntrospect for ViewOracle {
                     SchemaField::new("query", "string"),
                     SchemaField::new("query_fault", "string"),
                     SchemaField::new("why_hidden", "json"),
-                    SchemaField::new("said", "object"),
+                    // R2131 — `string`, not the `object` this declared until the
+                    // vocabulary closed. See the same repair in
+                    // `hello-key-patterns`: the arm answers `Text`, and the word
+                    // was never compared because the census had no shape for it.
+                    SchemaField::new("said", "string"),
                     SchemaField::parametric(
                         "hit.<x>.<y>",
                         "string",

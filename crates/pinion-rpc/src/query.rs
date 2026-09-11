@@ -163,7 +163,7 @@ fn schema_value(intro: &dyn ExternalIntrospect) -> IntrospectValue {
 fn field_value(f: &pinion_core::external::SchemaField) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("path".to_owned(), Value::from(f.path));
-    obj.insert("type".to_owned(), Value::from(f.ty));
+    obj.insert("type".to_owned(), Value::from(f.ty.as_str()));
     // R1504 — the channel, present only where it is not the default. A reader
     // that does not know the key sees the shape it always saw; one that does can
     // tell `set_section_alignment` from a path it can read, which before this

@@ -1023,6 +1023,186 @@ impl ArgCase {
     }
 }
 
+/// ★★★★★ R2131 §5.12 §5.7 — **the closed vocabulary a schema declares a type
+/// in.**
+///
+/// [`SchemaField::ty`] and [`SchemaArg::ty`] were `&'static str`, so *any* word
+/// was a legal type token. Two consequences follow from that one line, and both
+/// were measured rather than argued:
+///
+/// - **Synonyms were spellable, and five got spelled.** `boolean` (46 sites),
+///   `text` (20), `number` (17), `object` (13) and `i32` (1) named types the
+///   rest of the tree spells `bool`, `string`, `int`, `json` and `int`.
+/// - **The split hid a real defect.** `tools/read_path_shapes.py` compares each
+///   declaration with the arm that answers it and *skips* a word it has no
+///   shape for, so none of those was ever compared — and two of them (`said` in
+///   `hello-key-patterns` and `hello-log-view`) declared `object` over an arm
+///   answering [`IntrospectValue::Text`]. The open vocabulary is what kept the
+///   census quiet about them, so the spelling split was not merely untidy: it
+///   concealed the thing the census exists to find.
+///
+/// # Why the constructors still take `&'static str`
+///
+/// Because closing the set and rewriting every call site are different jobs,
+/// and only the first one is this type's. [`parse`](Self::parse) is a
+/// `const fn`, so a word outside the vocabulary stops the build **at the
+/// declaration line** while the ~2,000 sites already spelling a canonical word
+/// are untouched and still read as the token they publish.
+///
+/// # Why this one is not `#[non_exhaustive]`
+///
+/// Unlike most public types here, deliberately. The point of the enum *is* that
+/// the set is closed: a `_` arm forced on a downstream `match` would re-open at
+/// the reader the exact hole this closes at the writer. Widening the wire
+/// vocabulary is a thing every reader should be made to look at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemaType {
+    /// The placeholder's non-type: the fill value a `const fn` composer writes
+    /// before overwriting a slot ([`SchemaField::EMPTY`]). Spelled `""`, and it
+    /// renders as `""` on the wire so an un-overwritten slot shows up as a
+    /// blank row rather than as something plausible. Never declare it.
+    Unset,
+    /// [`IntrospectValue::Null`] — an answer that carries no value. On the
+    /// invoke channel this is the ordinary "returns nothing" (24 sites).
+    Null,
+    /// [`IntrospectValue::Bool`].
+    Bool,
+    /// [`IntrospectValue::Int`].
+    Int,
+    /// [`IntrospectValue::Float`].
+    Float,
+    /// [`IntrospectValue::Text`]. Spelled `"string"` — the token is the wire's
+    /// and the variant name is the value's, which is why they differ here and
+    /// only here.
+    Text,
+    /// [`IntrospectValue::Json`] or [`IntrospectValue::Raw`]: both are JSON, one
+    /// already encoded, and a schema cannot tell a client which it will get.
+    Json,
+}
+
+impl SchemaType {
+    /// The canonical wire spelling — the **one** token this type publishes.
+    ///
+    /// Round-trips with [`parse`](Self::parse) in both directions, which
+    /// `r2131_the_vocabulary_is_closed_and_round_trips` holds.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unset => "",
+            Self::Null => "null",
+            Self::Bool => "bool",
+            Self::Int => "int",
+            Self::Float => "float",
+            Self::Text => "string",
+            Self::Json => "json",
+        }
+    }
+
+    /// The type a word names, or a **compile error** where the word is not in
+    /// the vocabulary.
+    ///
+    /// ```compile_fail
+    /// # use pinion_core::external::SchemaField;
+    /// // `boolean` is not a spelling of `bool`; there is only one spelling.
+    /// const BAD: SchemaField = SchemaField::new("on", "boolean");
+    /// ```
+    ///
+    /// The positive control, because a `compile_fail` that fails for the wrong
+    /// reason is indistinguishable from one that works — the same line with the
+    /// canonical word must build, and must build *in a `const`*, which is where
+    /// the refusal above happens:
+    ///
+    /// ```
+    /// # use pinion_core::external::{SchemaField, SchemaType};
+    /// const OK: SchemaField = SchemaField::new("on", "bool");
+    /// assert!(matches!(OK.ty, SchemaType::Bool));
+    /// ```
+    ///
+    /// The panic is what closes the set. In a `const` context — which is where
+    /// schemas are built, `IntrospectSchema::new(const { &[..] })` — it is a
+    /// build failure pointing at the declaration. A caller that builds a field
+    /// at run time gets a run-time panic instead, which is the same refusal on
+    /// the only channel left.
+    ///
+    /// ⚠ It does not canonicalise. Accepting `boolean` here and storing
+    /// [`Bool`](Self::Bool) would make every count look right while blessing the
+    /// split vocabulary and putting it back out of sight — which is precisely
+    /// how the two `object`/`Text` mismatches above survived. A vocabulary
+    /// closes by refusing, not by translating.
+    #[must_use]
+    pub const fn parse(word: &'static str) -> Self {
+        let b = word.as_bytes();
+        if schema_bytes::eq(b, b"") {
+            Self::Unset
+        } else if schema_bytes::eq(b, b"null") {
+            Self::Null
+        } else if schema_bytes::eq(b, b"bool") {
+            Self::Bool
+        } else if schema_bytes::eq(b, b"int") {
+            Self::Int
+        } else if schema_bytes::eq(b, b"float") {
+            Self::Float
+        } else if schema_bytes::eq(b, b"string") {
+            Self::Text
+        } else if schema_bytes::eq(b, b"json") {
+            Self::Json
+        } else {
+            panic!(
+                "type token outside the closed vocabulary \
+                 (null/bool/int/float/string/json) — see SchemaType"
+            )
+        }
+    }
+
+    /// The type of a value actually answered.
+    ///
+    /// This is the half a declaration could not be checked against before: the
+    /// relation between a declared token and an answered variant lived in hand
+    /// tables inside `tools/read_path_shapes.py`, one per direction, with
+    /// nothing tying either to this crate. Here it is one `match` the compiler
+    /// holds total.
+    #[must_use]
+    pub const fn of(value: &IntrospectValue) -> Self {
+        match value {
+            IntrospectValue::Null => Self::Null,
+            IntrospectValue::Bool(_) => Self::Bool,
+            IntrospectValue::Int(_) => Self::Int,
+            IntrospectValue::Float(_) => Self::Float,
+            IntrospectValue::Text(_) => Self::Text,
+            IntrospectValue::Json(_) | IntrospectValue::Raw(_) => Self::Json,
+            // ★ No wildcard, for the reason `IntrospectValue::kind` states: a
+            // variant added upstream must fail here rather than ship through a
+            // type somebody guessed.
+        }
+    }
+
+    /// Does a path declared this type keep its promise by answering `value`?
+    ///
+    /// [`Null`](Self::Null) is admitted by every declared type, and that is the
+    /// one asymmetry: a read that has nothing to answer answers `Null`
+    /// regardless of the type it answers otherwise (`text_field`'s `selection`
+    /// is `Null` until there is a selection), so refusing it here would make
+    /// "no value" indistinguishable from a broken promise.
+    ///
+    /// [`Unset`](Self::Unset) admits nothing: a slot a composer left unwritten
+    /// has not promised anything, so nothing can keep its promise.
+    #[must_use]
+    pub const fn admits(self, value: &IntrospectValue) -> bool {
+        if matches!(value, IntrospectValue::Null) {
+            return !matches!(self, Self::Unset);
+        }
+        matches!(
+            (self, Self::of(value)),
+            (Self::Null, Self::Null)
+                | (Self::Bool, Self::Bool)
+                | (Self::Int, Self::Int)
+                | (Self::Float, Self::Float)
+                | (Self::Text, Self::Text)
+                | (Self::Json, Self::Json)
+        )
+    }
+}
+
 /// R1353 §5.12 §2 #2 — the argument a **parametric** [`SchemaField`] takes.
 ///
 /// See [`SchemaField::parametric`] for what parametric means and why it must be
@@ -1034,8 +1214,10 @@ pub struct SchemaArg {
     /// `"pos"`, `"id"`. Not a type — [`Self::ty`] is.
     pub name: &'static str,
     /// The argument's type tag, in the same vocabulary as [`SchemaField::ty`]
-    /// (`"int"`, `"string"`).
-    pub ty: &'static str,
+    /// — literally the same [`SchemaType`] since R2131, which is what makes
+    /// "the same vocabulary" a fact the compiler holds rather than a sentence
+    /// two `&'static str` fields both hoped for.
+    pub ty: SchemaType,
     /// Where the answerable arguments come from.
     pub domain: ArgDomain,
     /// R1638 — the call is well-formed without this argument.
@@ -1058,7 +1240,7 @@ impl SchemaArg {
     pub const fn index(name: &'static str, count_path: &'static str) -> Self {
         Self {
             name,
-            ty: "int",
+            ty: SchemaType::Int,
             domain: ArgDomain::IndexOf(count_path),
             optional: false,
         }
@@ -1070,7 +1252,7 @@ impl SchemaArg {
     pub const fn key(name: &'static str, ty: &'static str, values_path: &'static str) -> Self {
         Self {
             name,
-            ty,
+            ty: SchemaType::parse(ty),
             domain: ArgDomain::ValuesOf(values_path),
             optional: false,
         }
@@ -1087,7 +1269,7 @@ impl SchemaArg {
     ) -> Self {
         Self {
             name,
-            ty,
+            ty: SchemaType::parse(ty),
             domain: ArgDomain::OneOf(values),
             optional: false,
         }
@@ -1098,7 +1280,7 @@ impl SchemaArg {
     pub const fn open(name: &'static str, ty: &'static str) -> Self {
         Self {
             name,
-            ty,
+            ty: SchemaType::parse(ty),
             domain: ArgDomain::Open,
             optional: false,
         }
@@ -1164,7 +1346,7 @@ impl SchemaArg {
     ) -> Self {
         Self {
             name,
-            ty,
+            ty: SchemaType::parse(ty),
             domain: ArgDomain::OneOfWith(cases),
             optional: false,
         }
@@ -1183,7 +1365,7 @@ impl SchemaArg {
     pub fn to_wire(&self) -> serde_json::Value {
         let mut obj = serde_json::Map::new();
         obj.insert("name".to_owned(), serde_json::Value::from(self.name));
-        obj.insert("type".to_owned(), serde_json::Value::from(self.ty));
+        obj.insert("type".to_owned(), serde_json::Value::from(self.ty.as_str()));
         obj.insert("domain".to_owned(), self.domain.to_wire());
         // Present only when true, for the same reason `channel` is: the absent
         // key is the common case and a reader that predates it must keep seeing
@@ -1493,7 +1675,11 @@ pub struct SchemaField {
     /// `query` impl strips.
     pub path: &'static str,
     /// Type tag of the value read at this path.
-    pub ty: &'static str,
+    ///
+    /// R2131 — a [`SchemaType`] rather than the `&'static str` it was, so the
+    /// vocabulary is closed at the declaration instead of being whatever a
+    /// caller typed. [`SchemaType::as_str`] is the token this publishes.
+    pub ty: SchemaType,
     /// The arguments the path takes, in wire order — empty for a plain scalar.
     ///
     /// A slice rather than an `Option<SchemaArg>` because a family can be keyed
@@ -1533,7 +1719,7 @@ impl SchemaField {
     pub const fn new(path: &'static str, ty: &'static str) -> Self {
         Self {
             path,
-            ty,
+            ty: SchemaType::parse(ty),
             args: &[],
             channel: SchemaChannel::Read,
             // A scalar read HAS declared its arity: zero, riding the path.
@@ -1549,7 +1735,7 @@ impl SchemaField {
     pub const fn action(path: &'static str, ty: &'static str) -> Self {
         Self {
             path,
-            ty,
+            ty: SchemaType::parse(ty),
             args: &[],
             channel: SchemaChannel::Invoke,
             // R1638 — silence, not "takes nothing". See `ArgForm::Undeclared`
@@ -1602,7 +1788,7 @@ impl SchemaField {
     ) -> Self {
         Self {
             path,
-            ty,
+            ty: SchemaType::parse(ty),
             args,
             channel: SchemaChannel::Invoke,
             form,
@@ -1669,7 +1855,7 @@ impl SchemaField {
     ) -> Self {
         Self {
             path,
-            ty,
+            ty: SchemaType::parse(ty),
             args,
             channel: SchemaChannel::Read,
             form: ArgForm::Path,
@@ -5693,6 +5879,80 @@ mod tests {
     /// it did not have, which is worse than no test. The invariant the whole
     /// model rests on (that `"cell.<row>.<col>"` really does take `row` then
     /// `col`) now gets checked where it is actually written.
+    /// ★★★★★ R2131 — the vocabulary is closed, and the two directions agree.
+    ///
+    /// `parse` refusing an unknown word is the gate, but a gate with no failing
+    /// path is an assertion this project deletes rather than keeps, and the
+    /// failing path here is a *compile* error — which a runtime test cannot
+    /// reach. It is written instead as the `compile_fail` doctest on
+    /// [`SchemaType::parse`], and what stays here is the property that makes the
+    /// refusal meaningful: every variant has exactly ONE spelling, and that
+    /// spelling parses back to the variant it came from. A second spelling
+    /// could only enter by someone adding an `eq` arm to `parse` without a
+    /// variant to carry it, and this is what would catch that.
+    #[test]
+    fn r2131_the_vocabulary_is_closed_and_round_trips() {
+        // Exhaustive by construction: a variant added without a row here is a
+        // variant `as_str` must also have been taught, and the match in
+        // `as_str` is what the compiler holds total.
+        let every = [
+            SchemaType::Unset,
+            SchemaType::Null,
+            SchemaType::Bool,
+            SchemaType::Int,
+            SchemaType::Float,
+            SchemaType::Text,
+            SchemaType::Json,
+        ];
+        for t in every {
+            assert_eq!(
+                SchemaType::parse(t.as_str()),
+                t,
+                "{:?} does not round-trip through its own token {:?}",
+                t,
+                t.as_str()
+            );
+        }
+        let mut tokens: Vec<&str> = every.iter().map(|t| t.as_str()).collect();
+        tokens.sort_unstable();
+        let spellings = tokens.len();
+        tokens.dedup();
+        assert_eq!(
+            tokens.len(),
+            spellings,
+            "two variants share a spelling: {tokens:?}"
+        );
+
+        // The synonyms R2131 removed. Each is a word the tree actually spelled,
+        // and each must now be absent — named one by one rather than as a count,
+        // so a re-admitted word says which it was.
+        for gone in ["boolean", "number", "text", "object", "i32"] {
+            assert!(
+                !tokens.contains(&gone),
+                "`{gone}` is spellable again — it was a synonym, and the point \
+                 of the closed set is that a type has one name"
+            );
+        }
+
+        // `of` and `admits` are the relation the census had to keep in two hand
+        // tables. Null is admitted by every declared type but `Unset`, which is
+        // the documented asymmetry.
+        assert_eq!(SchemaType::of(&IntrospectValue::Int(1)), SchemaType::Int);
+        assert_eq!(
+            SchemaType::of(&IntrospectValue::Text(String::new())),
+            SchemaType::Text,
+            "the `Text` variant publishes the token `string`"
+        );
+        assert!(SchemaType::Json.admits(&IntrospectValue::Null));
+        assert!(!SchemaType::Unset.admits(&IntrospectValue::Null));
+        assert!(!SchemaType::Json.admits(&IntrospectValue::Text(String::new())));
+        assert!(
+            SchemaType::Json.admits(&IntrospectValue::Json(serde_json::Value::Object(
+                serde_json::Map::new()
+            )))
+        );
+    }
+
     #[test]
     fn r1353_1_every_real_declaration_matches_its_template() {
         fn placeholders(t: &str) -> Vec<String> {

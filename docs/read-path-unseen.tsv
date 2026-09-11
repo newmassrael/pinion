@@ -11,9 +11,16 @@
 # instead; then these rows go to zero because there is nothing left
 # to skip.
 #
+# ✅ R2131 DID THAT, and the type-word rows are gone. `SchemaField.ty`
+# is a closed `SchemaType`, the five synonyms were canonicalised, and
+# the two mismatches the gap hid are repaired. The examined population
+# rose 843 -> 873: 29 that had been skipped, plus one the extractor's
+# own `[a-z]+` type class had made INVISIBLE rather than skipped.
+#
+# ⚠ What is left is the OTHER cause, and it is not a vocabulary
+# problem: an arm that hands its answer to a helper cannot be followed
+# by a text census at all ⇒ that half belongs to
+# debt-nothing-ties-a-declared-type-to-the-answered-variant.
+#
 # kind	count
-type-word:boolean	2
-type-word:number	4
-type-word:object	7
-type-word:text	16
 unclassified-arm	16

@@ -1346,8 +1346,8 @@ impl ExternalIntrospect for TextFieldExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("text", "string"),
-                    SchemaField::new("caret", "number"),
-                    SchemaField::new("selection", "object"),
+                    SchemaField::new("caret", "int"),
+                    SchemaField::new("selection", "json"),
                     // R769.1 §5.36 §5.22 — applied rich-text formatting as a JSON
                     // array of `{start, end, style}` runs (the same shape the
                     // field's Text node carries in `scene/snapshot`), so an AI
@@ -1371,7 +1371,7 @@ impl ExternalIntrospect for TextFieldExternal {
                     // the X11 / Wayland "middle-click pastes the PRIMARY
                     // selection" convention so AI clients can drive the
                     // same code path the shell's middle-click handler hits.
-                    SchemaField::action("paste-primary", "boolean"),
+                    SchemaField::action("paste-primary", "bool"),
                     // R768 §5.36 §5.22 — rich-text formatting actions over a
                     // byte range. `apply-style` takes Json
                     // `{"start": int, "end": int, "fg": "#rrggbb", "size"?: int}`
@@ -1383,8 +1383,8 @@ impl ExternalIntrospect for TextFieldExternal {
                     // toolbar's apply-to-selection click.
                     //
                     // [`StyleRun`]: crate::scene::StyleRun
-                    SchemaField::action("apply-style", "boolean"),
-                    SchemaField::action("clear-style", "boolean"),
+                    SchemaField::action("apply-style", "bool"),
+                    SchemaField::action("clear-style", "bool"),
                     // R1769 — takes back exactly what the `configuration` slot
                     // above answered.
                     SchemaField::action_with(
@@ -1397,7 +1397,7 @@ impl ExternalIntrospect for TextFieldExternal {
                     // strikethrough) over the selection / caret, preserving the run's
                     // other fields (the AI-first peer of the toolbar B / I toggle —
                     // mergeCharFormat). Text arg = the field name; returns the new state.
-                    SchemaField::action("toggle-format", "boolean"),
+                    SchemaField::action("toggle-format", "bool"),
                     // R903 §5.22 — find &amp; replace. `find_query` /
                     // `find_case_sensitive` / `find_whole_word` are query+intervene
                     // (the needle + its flags); `find_matches` is a derived read
@@ -1409,20 +1409,20 @@ impl ExternalIntrospect for TextFieldExternal {
                     // (returns the count). The AI-first peer of the find bar's
                     // keyboard.
                     SchemaField::new("find_query", "string"),
-                    SchemaField::new("find_case_sensitive", "boolean"),
-                    SchemaField::new("find_whole_word", "boolean"),
+                    SchemaField::new("find_case_sensitive", "bool"),
+                    SchemaField::new("find_whole_word", "bool"),
                     SchemaField::new("find_matches", "json"),
-                    SchemaField::action("find-next", "object"),
-                    SchemaField::action("find-prev", "object"),
-                    SchemaField::action("replace", "boolean"),
-                    SchemaField::action("replace-all", "number"),
+                    SchemaField::action("find-next", "json"),
+                    SchemaField::action("find-prev", "json"),
+                    SchemaField::action("replace", "bool"),
+                    SchemaField::action("replace-all", "int"),
                     // R926 §5.22 — matching-bracket read. Derived from the live
                     // buffer + caret: `{"open": int, "close": int}` when the
                     // caret sits adjacent to a balanced bracket, `Null`
                     // otherwise. The AI-first peer of the editor's
                     // matching-brace highlight — an agent reasoning about code
                     // structure reads where a brace closes without re-scanning.
-                    SchemaField::new("bracket_match", "object"),
+                    SchemaField::new("bracket_match", "json"),
                     // R933 §5.36 — code-folding surface. `fold_regions` is a
                     // derived read: a JSON array of `{open, close, start_line,
                     // end_line, collapsed}`, one per foldable bracket block (≥ 2
@@ -1432,31 +1432,31 @@ impl ExternalIntrospect for TextFieldExternal {
                     // toggle?), `fold-all` / `unfold-all` (arg `Null`) return the
                     // resulting collapsed-region `Int` count.
                     SchemaField::new("fold_regions", "json"),
-                    SchemaField::action("toggle-fold", "boolean"),
-                    SchemaField::action("fold-all", "number"),
-                    SchemaField::action("unfold-all", "number"),
+                    SchemaField::action("toggle-fold", "bool"),
+                    SchemaField::action("fold-all", "int"),
+                    SchemaField::action("unfold-all", "int"),
                     // R938 §5.22 — multi-line indent / dedent (the Tab / Shift+Tab
                     // twins). `Null` arg; returns `Bool` (did the lines shift?). R941 —
                     // schema-listed (R938 added the verbs but not the slots — cleared here).
-                    SchemaField::action("indent", "boolean"),
-                    SchemaField::action("dedent", "boolean"),
+                    SchemaField::action("indent", "bool"),
+                    SchemaField::action("dedent", "bool"),
                     // R939 §5.22 — line-comment toggle (the Ctrl+/ twin). `Null` arg;
                     // returns `Bool` (R941 — schema-listed, cleared with the above).
-                    SchemaField::action("toggle-comment", "boolean"),
+                    SchemaField::action("toggle-comment", "bool"),
                     // R941 §5.22 — go-to-line navigation. `line_count` is the logical
                     // (newline-delimited) line count (the navigation bound + a gutter /
                     // prompt max); `go-to-line` (arg = a 1-based line `Int`) jumps the
                     // caret to that line's start and returns the resolved (clamped) line.
-                    SchemaField::new("line_count", "number"),
-                    SchemaField::action("go-to-line", "number"),
+                    SchemaField::new("line_count", "int"),
+                    SchemaField::action("go-to-line", "int"),
                     // R945 §5.22 — line manipulation (the Alt+Up / Alt+Down move +
                     // Shift+Alt copy twins). `Null` arg; each returns `Bool` (did the
                     // buffer change? a boundary move — first line up, last line down —
                     // is `false`).
-                    SchemaField::action("move-line-up", "boolean"),
-                    SchemaField::action("move-line-down", "boolean"),
-                    SchemaField::action("duplicate-line-up", "boolean"),
-                    SchemaField::action("duplicate-line-down", "boolean"),
+                    SchemaField::action("move-line-up", "bool"),
+                    SchemaField::action("move-line-down", "bool"),
+                    SchemaField::action("duplicate-line-up", "bool"),
+                    SchemaField::action("duplicate-line-down", "bool"),
                     // R951 §5.36 §5.22 — active typing mark (collapsed-caret formatting,
                     // ProseMirror `storedMarks`). `style_at_caret` reads the style the
                     // next char would carry (armed mark, else inherited-from-left) as
@@ -1469,8 +1469,8 @@ impl ExternalIntrospect for TextFieldExternal {
                     // typing — `apply-style` remains the selection path.
                     SchemaField::new("style_at_caret", "json"),
                     SchemaField::new("pending_style", "json"),
-                    SchemaField::action("mark", "boolean"),
-                    SchemaField::action("clear-mark", "boolean"),
+                    SchemaField::action("mark", "bool"),
+                    SchemaField::action("clear-mark", "bool"),
                 ]
             },
         )
@@ -3108,50 +3108,50 @@ mod tests {
             &[
                 SchemaField::new("state", "string"),
                 SchemaField::new("text", "string"),
-                SchemaField::new("caret", "number"),
-                SchemaField::new("selection", "object"),
+                SchemaField::new("caret", "int"),
+                SchemaField::new("selection", "json"),
                 SchemaField::new("style_runs", "json"),
                 SchemaField::new("preedit", "string"),
                 SchemaField::new("configuration", "json"),
                 SchemaField::send("string"),
                 SchemaField::action("key", "string"),
                 SchemaField::action("composition", "string"),
-                SchemaField::action("paste-primary", "boolean"),
-                SchemaField::action("apply-style", "boolean"),
-                SchemaField::action("clear-style", "boolean"),
+                SchemaField::action("paste-primary", "bool"),
+                SchemaField::action("apply-style", "bool"),
+                SchemaField::action("clear-style", "bool"),
                 SchemaField::action_with(
                     "resume",
                     "json",
                     ArgForm::Scalar,
                     const { &[SchemaArg::open("configuration", "json")] },
                 ),
-                SchemaField::action("toggle-format", "boolean"),
+                SchemaField::action("toggle-format", "bool"),
                 SchemaField::new("find_query", "string"),
-                SchemaField::new("find_case_sensitive", "boolean"),
-                SchemaField::new("find_whole_word", "boolean"),
+                SchemaField::new("find_case_sensitive", "bool"),
+                SchemaField::new("find_whole_word", "bool"),
                 SchemaField::new("find_matches", "json"),
-                SchemaField::action("find-next", "object"),
-                SchemaField::action("find-prev", "object"),
-                SchemaField::action("replace", "boolean"),
-                SchemaField::action("replace-all", "number"),
-                SchemaField::new("bracket_match", "object"),
+                SchemaField::action("find-next", "json"),
+                SchemaField::action("find-prev", "json"),
+                SchemaField::action("replace", "bool"),
+                SchemaField::action("replace-all", "int"),
+                SchemaField::new("bracket_match", "json"),
                 SchemaField::new("fold_regions", "json"),
-                SchemaField::action("toggle-fold", "boolean"),
-                SchemaField::action("fold-all", "number"),
-                SchemaField::action("unfold-all", "number"),
-                SchemaField::action("indent", "boolean"),
-                SchemaField::action("dedent", "boolean"),
-                SchemaField::action("toggle-comment", "boolean"),
-                SchemaField::new("line_count", "number"),
-                SchemaField::action("go-to-line", "number"),
-                SchemaField::action("move-line-up", "boolean"),
-                SchemaField::action("move-line-down", "boolean"),
-                SchemaField::action("duplicate-line-up", "boolean"),
-                SchemaField::action("duplicate-line-down", "boolean"),
+                SchemaField::action("toggle-fold", "bool"),
+                SchemaField::action("fold-all", "int"),
+                SchemaField::action("unfold-all", "int"),
+                SchemaField::action("indent", "bool"),
+                SchemaField::action("dedent", "bool"),
+                SchemaField::action("toggle-comment", "bool"),
+                SchemaField::new("line_count", "int"),
+                SchemaField::action("go-to-line", "int"),
+                SchemaField::action("move-line-up", "bool"),
+                SchemaField::action("move-line-down", "bool"),
+                SchemaField::action("duplicate-line-up", "bool"),
+                SchemaField::action("duplicate-line-down", "bool"),
                 SchemaField::new("style_at_caret", "json"),
                 SchemaField::new("pending_style", "json"),
-                SchemaField::action("mark", "boolean"),
-                SchemaField::action("clear-mark", "boolean"),
+                SchemaField::action("mark", "bool"),
+                SchemaField::action("clear-mark", "bool"),
             ],
         );
     }
@@ -4414,7 +4414,7 @@ mod r56_1_d_tests {
             schema
                 .fields
                 .iter()
-                .any(|f| f.path == "key" && f.ty == "string"),
+                .any(|f| f.path == "key" && f.ty == crate::external::SchemaType::Text),
             "key slot must be in schema",
         );
     }

@@ -1563,9 +1563,9 @@ impl ExternalIntrospect for TableExternal {
                     SchemaField::new("cell_selection", "string"),
                     SchemaField::new("cell_selection_count", "int"),
                     SchemaField::new("cell_selection_tsv", "string"),
-                    SchemaField::action("select-cell", "boolean"),
-                    SchemaField::action("extend-cell", "boolean"),
-                    SchemaField::action("clear-cell-selection", "boolean"),
+                    SchemaField::action("select-cell", "bool"),
+                    SchemaField::action("extend-cell", "bool"),
+                    SchemaField::action("clear-cell-selection", "bool"),
                     // R1787 §5.38 — tabular export. `export_dialects` is the
                     // roster this surface writes, each entry saying whether
                     // that dialect can carry ANY cell unchanged, so a client

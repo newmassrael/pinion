@@ -3637,7 +3637,7 @@ impl ExternalIntrospect for ViewOracle {
                     SchemaField::new("visible_fields", "json"),
                     SchemaField::new("saved", "json"),
                     SchemaField::new("folded", "json"),
-                    SchemaField::new("said", "object"),
+                    SchemaField::new("said", "json"),
                     // ★★★★★ R1790 — how long what is being said has left.
                     SchemaField::new("saying", "json"),
                     SchemaField::new("cursor", "json"),

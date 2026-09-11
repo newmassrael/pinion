@@ -267,11 +267,11 @@ impl ReorderModel {
         SchemaField::new("order", "json"),
         SchemaField::new("preview", "json"),
         SchemaField::new("focused_index", "int"),
-        SchemaField::new("grabbed", "boolean"),
+        SchemaField::new("grabbed", "bool"),
         SchemaField::action("send", "string"),
         SchemaField::action("move", "int"),
         SchemaField::action("move_section", "string"),
-        SchemaField::action("grab", "boolean"),
+        SchemaField::action("grab", "bool"),
         SchemaField::action("grab_cancel", "string"),
     ];
 

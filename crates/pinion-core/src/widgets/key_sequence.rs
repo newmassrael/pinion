@@ -546,8 +546,8 @@ impl ExternalIntrospect for KeySequenceEditExternal {
                     SchemaField::new("sequence", "string"),
                     SchemaField::new("in_flight", "string"),
                     SchemaField::new("pending", "string"),
-                    SchemaField::new("max_len", "number"),
-                    SchemaField::new("revision", "number"),
+                    SchemaField::new("max_len", "int"),
+                    SchemaField::new("revision", "int"),
                     SchemaField::action_with(
                         "send",
                         "string",

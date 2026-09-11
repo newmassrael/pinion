@@ -887,10 +887,10 @@ const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::new("default_section_size", "int"),
     SchemaField::new("min_section_size", "int"),
     SchemaField::new("max_section_size", "int"),
-    SchemaField::new("cascading_section_resizes", "boolean"),
-    SchemaField::new("stretch_last_section", "boolean"),
-    SchemaField::new("sections_movable", "boolean"),
-    SchemaField::new("sections_clickable", "boolean"),
+    SchemaField::new("cascading_section_resizes", "bool"),
+    SchemaField::new("stretch_last_section", "bool"),
+    SchemaField::new("sections_movable", "bool"),
+    SchemaField::new("sections_clickable", "bool"),
     SchemaField::new("resize_contents_precision", "int"),
     // R1504 — the label rule. The toolkit's `defaultAlignment` is a header scalar its `saveState()`
     // carries; the per-section exception below is the model's and is not
@@ -898,11 +898,11 @@ const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
     SchemaField::new("default_alignment", "string"),
     // R1510 — the highlight rule, the last field the toolkit's `saveState()` carries
     // that this header did not have.
-    SchemaField::new("highlight_sections", "boolean"),
+    SchemaField::new("highlight_sections", "bool"),
     SchemaField::new("sort_indicator", "string"),
     SchemaField::new("sort_indicator_section", "int"),
     SchemaField::new("sort_indicator_order", "string"),
-    SchemaField::new("sort_indicator_shown", "boolean"),
+    SchemaField::new("sort_indicator_shown", "bool"),
     // The projections, and the two inputs a consumer publishes.
     SchemaField::new("hidden", "json"),
     SchemaField::new("hidden_count", "int"),
@@ -954,7 +954,7 @@ const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
     ),
     SchemaField::parametric(
         "section_hidden.<logical>",
-        "boolean",
+        "bool",
         const { &[SchemaArg::index("logical", "count")] },
     ),
     SchemaField::parametric(

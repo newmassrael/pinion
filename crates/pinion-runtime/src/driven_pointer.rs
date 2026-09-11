@@ -345,7 +345,7 @@ mod tests {
 
     impl ExternalIntrospect for Guest {
         fn schema(&self) -> IntrospectSchema {
-            IntrospectSchema::new(const { &[SchemaField::action("send", "text")] })
+            IntrospectSchema::new(const { &[SchemaField::action("send", "string")] })
         }
 
         fn query(&self, _path: &str) -> Result<IntrospectValue, ReadRefusal> {

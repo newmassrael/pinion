@@ -15274,7 +15274,7 @@ const FIELDS: &[SchemaField] = &{
         // what twenty-four existing readers ask for; this is the value, so an
         // agent can ask whether the screen refused without matching a prefix.
         // Two derivations of one record, never two records.
-        SchemaField::new("said", "object"),
+        SchemaField::new("said", "json"),
         // ★★★★★ R1790 — how long what is being said has left.
         SchemaField::new("saying", "json"),
         // ★★★★★ R1791 — **what the toolbar moved, and what is still on the row.**
@@ -15533,7 +15533,7 @@ const FIELDS: &[SchemaField] = &{
             ArgForm::Object,
             const {
                 &[
-                    SchemaArg::open("at", "number"),
+                    SchemaArg::open("at", "int"),
                     // ★★★★★ R1844 — `act` is a DISCRIMINANT now, not just a
                     // closed vocabulary: choosing `check` brings a timeout and
                     // the other four bring nothing, and the case table says so
@@ -15551,7 +15551,7 @@ const FIELDS: &[SchemaField] = &{
             ArgForm::Object,
             const {
                 &[
-                    SchemaArg::open("at", "number"),
+                    SchemaArg::open("at", "int"),
                     SchemaArg::open("lane", "string").optional(),
                 ]
             },

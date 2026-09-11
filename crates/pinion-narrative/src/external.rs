@@ -82,14 +82,14 @@ impl ExternalIntrospect for NarrativeExternal {
         IntrospectSchema::new(
             const {
                 &[
-                    SchemaField::new("telling", "text"),
+                    SchemaField::new("telling", "string"),
                     SchemaField::new("world", "int"),
                     SchemaField::new("scene", "int"),
                     SchemaField::new("world_count", "int"),
                     SchemaField::new("scene_count", "int"),
-                    SchemaField::new("branch_id", "text"),
-                    SchemaField::new("title", "text"),
-                    SchemaField::new("intent", "text"),
+                    SchemaField::new("branch_id", "string"),
+                    SchemaField::new("title", "string"),
+                    SchemaField::new("intent", "string"),
                     SchemaField::new("disclosure_count", "int"),
                     SchemaField::new("disclosures", "json"),
                     SchemaField::new("world_ids", "json"),

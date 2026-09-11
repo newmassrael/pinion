@@ -793,7 +793,7 @@ mod tests {
             schema
                 .fields
                 .iter()
-                .any(|f| f.path == "state" && f.ty == "string")
+                .any(|f| f.path == "state" && f.ty == crate::external::SchemaType::Text)
         );
     }
 

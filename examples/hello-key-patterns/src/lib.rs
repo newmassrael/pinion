@@ -1620,7 +1620,15 @@ impl ExternalIntrospect for ViewOracle {
                     SchemaField::new("query_fault", "string"),
                     SchemaField::new("why_hidden", "json"),
                     SchemaField::new("declarer", "json"),
-                    SchemaField::new("said", "object"),
+                    // R2131 — `string`, not the `object` this declared until the
+                    // vocabulary closed. The arm answers `Text`, so the old word
+                    // was a broken promise; it survived because `object` was
+                    // outside the census's vocabulary and a skipped word is not
+                    // a compared one. The sibling screens answer `said` as
+                    // `Json` — that disagreement is real and is pinned as a
+                    // split in `docs/read-path-shapes.tsv`, a separate question
+                    // from this declaration telling the truth about its own arm.
+                    SchemaField::new("said", "string"),
                     SchemaField::parametric(
                         "hit.<x>.<y>",
                         "string",

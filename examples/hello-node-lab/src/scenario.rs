@@ -158,7 +158,7 @@ pub const ACT_CASES: [ArgCase; Act::ALL.len()] = {
         cases[n] = ArgCase::new(
             act.as_wire_name(),
             if act.needs_timeout() {
-                const { &[SchemaArg::open("timeout", "number")] }
+                const { &[SchemaArg::open("timeout", "int")] }
             } else {
                 &[]
             },

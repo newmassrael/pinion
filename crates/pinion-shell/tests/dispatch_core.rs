@@ -107,7 +107,7 @@ impl External for TestExternal {
 
 impl ExternalIntrospect for TestExternal {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(const { &[SchemaField::new("value", "i32")] })
+        IntrospectSchema::new(const { &[SchemaField::new("value", "int")] })
     }
     fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {

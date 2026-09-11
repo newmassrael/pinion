@@ -1994,7 +1994,7 @@ fn witness_of(state: &std::rc::Rc<ViewState>, slot: &str) -> String {
 /// changes type — the schema is the one place that says so.
 #[cfg(test)]
 fn invoke_for_test(state: &std::rc::Rc<ViewState>, verb: &str, arg: &str) -> Result<(), String> {
-    use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+    use pinion_core::external::{ExternalIntrospect, IntrospectValue, SchemaType};
 
     let mut oracle = super::ViewOracle::new();
     oracle.attach(std::rc::Rc::clone(state));
@@ -2005,7 +2005,7 @@ fn invoke_for_test(state: &std::rc::Rc<ViewState>, verb: &str, arg: &str) -> Res
         .ok_or_else(|| format!("`{verb}` is not a declared action of this screen"))?;
     let value =
         match declared {
-            "int" => IntrospectValue::Int(arg.parse::<i64>().map_err(|_| {
+            SchemaType::Int => IntrospectValue::Int(arg.parse::<i64>().map_err(|_| {
                 format!("`{verb}` declares `int` and the table's argument is {arg:?}")
             })?),
             _ => IntrospectValue::Text(arg.to_owned()),
