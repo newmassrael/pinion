@@ -523,6 +523,34 @@ def broken_promises(
     return out
 
 
+def unknown_tokens(declared: dict[str, str], answered: dict[str, str]) -> dict[str, int]:
+    """The declared words this file has no shape for, counted by word.
+
+    🟥 THE SILENCE THIS REPLACES WAS A HOLE, NOT A BLIND SPOT. `broken_promises`
+    skips a token it does not recognise, and the comment justifying that read as
+    principled -- *the vocabulary is the framework's and may grow*. Measured at
+    R2129.2 it was hiding **29 declarations in four crates**, because the schema
+    vocabulary has SYNONYMS: `text_field.rs` declares `boolean`/`number`/`object`
+    where the tree declares `bool`/`int`/`json`, and `pinion-narrative` declares
+    `text` where the tree declares `string`. One of the pairs it hid was a real
+    contradiction -- two paths declared `object` whose arms answer a `Text`.
+
+    ⚠ The repair is NOT to add the synonyms to [`_DECLARED_AS`]. That would
+    compare all of them and make the number look right while blessing a split
+    vocabulary and putting it back out of sight -- which is precisely the door
+    `screen_spec` used to be, and what let this class live 400 rounds. A census
+    counts what it cannot read; it does not absorb it.
+
+    ⇒ [[debt-a-declared-type-is-an-untyped-string]] is the root: `SchemaField.ty`
+    is a `&'static str`, so a synonym is spellable at all.
+    """
+    out: dict[str, int] = {}
+    for name, word in declared.items():
+        if name in answered and word not in _DECLARED_AS:
+            out[word] = out.get(word, 0) + 1
+    return out
+
+
 def decoding_sites(source: str) -> tuple[list[tuple[int, str]], int]:
     """`([(line, path)], unresolved)` for every `json.loads` of a WIRE READ.
 
@@ -827,7 +855,7 @@ def split_census() -> tuple[dict[str, dict[str, str]], list[str]]:
     return published, crates
 
 
-def promise_census() -> tuple[dict[str, tuple[str, str]], int, int]:
+def promise_census() -> tuple[dict[str, tuple[str, str]], int, int, dict[str, int]]:
     """`(where -> broken promise, impls read, declarations compared)`.
 
     ★★★★★ THE WHOLE WORKSPACE, not the product — the two checks in this file
@@ -843,6 +871,7 @@ def promise_census() -> tuple[dict[str, tuple[str, str]], int, int]:
     """
     groups = variant_groups(read_core_source())
     broken: dict[str, tuple[str, str]] = {}
+    unreadable: dict[str, int] = {}
     impls = compared = 0
     for source_path in promise_sources():
         source = source_path.read_text(encoding="utf-8")
@@ -851,10 +880,16 @@ def promise_census() -> tuple[dict[str, tuple[str, str]], int, int]:
             impls += 1
             here = answered_here(impl_body, groups)
             declared = declared_types(schema_text(impl_body, consts))
-            compared += sum(1 for name in declared if name in here)
+            skipped = unknown_tokens(declared, here)
+            # ★ `compared` means COMPARED. It used to count every declaration
+            # with an arm, skipped ones included, so the round's own ledger said
+            # "872 checked ... 0 broken" when 29 of them were never looked at.
+            compared += sum(1 for name in declared if name in here) - sum(skipped.values())
+            for word, n in skipped.items():
+                unreadable[word] = unreadable.get(word, 0) + n
             for name, pair in broken_promises(declared, here).items():
                 broken[f"{source_path.relative_to(ROOT)}::{name}"] = pair
-    return broken, impls, compared
+    return broken, impls, compared, unreadable
 
 
 # ── the gate ─────────────────────────────────────────────────────────────────
@@ -862,7 +897,7 @@ def promise_census() -> tuple[dict[str, tuple[str, str]], int, int]:
 
 def check() -> int:
     published, crates = split_census()
-    promises, impls, compared = promise_census()
+    promises, impls, compared, untyped = promise_census()
     now = splits(published)
     new, grown, _ = budget_verdict(now, read_budget())
     shared = sum(1 for by in published.values() if len(by) > 1)
@@ -927,7 +962,9 @@ def check() -> int:
         f"of {PRODUCT}; {shared} published by more than one, {len(now)} split, "
         f"{blind} with an arm this census cannot classify; "
         f"{compared} declaration(s) over {impls} impl(s) workspace-wide checked "
-        f"against their arm, 0 broken; "
+        f"against their arm, 0 broken, "
+        f"{sum(untyped.values())} skipped for a type word this census has no "
+        f"shape for {dict(sorted(untyped.items()))}; "
         f"{len(read_walks())} walk(s) read for a stale decode, 0 found, "
         f"{unreadable} site(s) with no path this derivation could resolve"
     )
@@ -1216,11 +1253,25 @@ def selftest() -> int:
     # (`tools/oracle_census.py` is the standing count of this).
     crates = product_crates()
     published, _ = split_census()
-    promises, impls, compared = promise_census()
+    promises, impls, compared, unreadable = promise_census()
     case(f"{PRODUCT} is the root of its own product", crates[0], PRODUCT)
     require("no screen contradicts its own declaration", not promises, f"{promises}")
     require("the promise census reads the whole workspace, not the product", impls > len(crates))
     require("and it compares declarations, rather than finding none", compared > 100)
+    # ★★★★★ The skipped ones are ASSERTED to be visible, not asserted to be
+    # zero. They are not zero — the schema vocabulary has synonyms — and a
+    # census that demanded zero here would be demanding the defect be hidden.
+    # What must hold is that it can SAY so: the words are named and counted.
+    require(
+        "the type words this census cannot read are named, not swallowed",
+        bool(unreadable) and all(n > 0 for n in unreadable.values()),
+        f"{unreadable}",
+    )
+    require(
+        "and none of them is a word the census claims to know",
+        not (set(unreadable) & set(_DECLARED_AS)),
+        f"{sorted(set(unreadable) & set(_DECLARED_AS))}",
+    )
     walks_stale, walks_blind = stale_decodes(published)
     require("no walk decodes a read the wire answers as JSON", not walks_stale)
     # ★ The blind spot is asserted, not merely printed: the round that measured
@@ -1265,8 +1316,11 @@ def main() -> int:
         return 0
     if args.list:
         published, _ = split_census()
-        for where, (word, shape) in sorted(promise_census()[0].items()):
+        promises_seen, _, _, unread_words = promise_census()
+        for where, (word, shape) in sorted(promises_seen.items()):
             print(f"PROMISE {where}\tdeclared={word}, answers={shape}")
+        for word, n in sorted(unread_words.items()):
+            print(f"UNTYPED declared `{word}` x{n}\tno shape for this word")
         walk_stale, walk_blind = stale_decodes(published)
         for walk, line, path in walk_stale:
             print(f"DECODE  {walk}:{line}\tjson.loads of {path}")
