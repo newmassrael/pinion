@@ -445,7 +445,7 @@ impl PolarChart {
                 plot.cy,
                 r,
                 grid,
-                format!("{}.ring.{k}", self.tag_prefix),
+                crate::address::ring_at(&self.tag_prefix, k),
             ));
         }
         for (k, &t) in angular_ticks.iter().enumerate() {
@@ -456,7 +456,7 @@ impl PolarChart {
             out.push(stroke_path(
                 &[(plot.cx, plot.cy), end],
                 grid,
-                format!("{}.spoke.{k}", self.tag_prefix),
+                crate::address::spoke_at(&self.tag_prefix, k),
             ));
         }
         // The rim is this chart's axis line: on a closed axis it is the whole
@@ -470,7 +470,7 @@ impl PolarChart {
                 plot.cy,
                 plot.radius,
                 Stroke::new(style.axis, 1),
-                format!("{}.rim", self.tag_prefix),
+                crate::address::rim(&self.tag_prefix),
             ));
         }
         out
@@ -566,7 +566,7 @@ impl PolarChart {
                 TextAlign::Start,
                 style.label,
                 size,
-                format!("{}.label.r.{k}", self.tag_prefix),
+                crate::address::label_r(&self.tag_prefix, k),
             ));
         }
         let angular_format = self.angular_format(angular_ticks);
@@ -588,7 +588,7 @@ impl PolarChart {
                 TextAlign::Center,
                 style.label,
                 size,
-                format!("{}.label.a.{k}", self.tag_prefix),
+                crate::address::label_a(&self.tag_prefix, k),
             ));
         }
         out

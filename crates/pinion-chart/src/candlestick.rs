@@ -361,14 +361,14 @@ impl CandlestickChart {
             columns: Candle::positions()
                 .into_iter()
                 .map(|at| ChartColumn {
-                    tag: format!("{prefix}.a11y.{}", at.name()),
+                    tag: crate::address::a11y_at(prefix, at.name()),
                     name: at.name().to_owned(),
                 })
                 .collect(),
             rows: visible
                 .iter()
                 .map(|&i| ChartRow {
-                    tag: format!("{prefix}.a11y.r{i}"),
+                    tag: crate::address::a11y_row(prefix, i),
                     name: self.sessions.at(i).unwrap_or_default().to_owned(),
                     cells: Candle::positions()
                         .into_iter()
@@ -377,10 +377,10 @@ impl CandlestickChart {
                             // extremes are the wicks' ends, each drawn as its
                             // own stroke, so all four have a mark to point at.
                             tag: Some(match at {
-                                CandlePosition::High => format!("{prefix}.wick.{i}.hi"),
-                                CandlePosition::Low => format!("{prefix}.wick.{i}.lo"),
+                                CandlePosition::High => crate::address::wick_hi(prefix, i),
+                                CandlePosition::Low => crate::address::wick_lo(prefix, i),
                                 CandlePosition::Open | CandlePosition::Close => {
-                                    format!("{prefix}.candle.{i}")
+                                    crate::address::candle(prefix, i)
                                 }
                             }),
                             value: format_si(self.candles[i].at(at)),
@@ -741,7 +741,7 @@ impl CandlestickChart {
             out.push(stroke_path(
                 &[(body.center, high), (body.center, low)],
                 stroke,
-                format!("{}.ohlc.{i}.range", self.tag_prefix),
+                crate::address::ohlc_range(&self.tag_prefix, i),
             ));
         }
         // Open to the LEFT, close to the RIGHT. That order is the whole of
@@ -755,7 +755,7 @@ impl CandlestickChart {
             out.push(stroke_path(
                 &[(from, y), (to, y)],
                 stroke,
-                format!("{}.ohlc.{i}.{tag}", self.tag_prefix),
+                crate::address::ohlc_part(&self.tag_prefix, i, tag),
             ));
         }
         out
@@ -787,7 +787,7 @@ impl CandlestickChart {
                 (body.left, body.bottom),
             ],
             PathStyle::filled(fill).with_stroke(stroke),
-            format!("{}.candle.{i}", self.tag_prefix),
+            crate::address::candle(&self.tag_prefix, i),
         )];
 
         // The wicks hang off the body edges the axis DID place, so an upper
@@ -800,7 +800,7 @@ impl CandlestickChart {
             out.push(stroke_path(
                 &[(body.center, from), (body.center, y)],
                 stroke,
-                format!("{}.wick.{i}.{tag}", self.tag_prefix),
+                crate::address::wick_part(&self.tag_prefix, i, tag),
             ));
             if self.caps {
                 out.push(stroke_path(

@@ -299,16 +299,16 @@ impl BarChart {
             // to tell this one from, so naming it anything else would announce
             // a distinction that is not there.
             columns: vec![ChartColumn {
-                tag: format!("{}.a11y.series", self.tag_prefix),
+                tag: crate::address::a11y_series(&self.tag_prefix),
                 name: name.to_owned(),
             }],
             rows: visible
                 .iter()
                 .map(|&i| ChartRow {
-                    tag: format!("{}.a11y.r{i}", self.tag_prefix),
+                    tag: crate::address::a11y_row(&self.tag_prefix, i),
                     name: self.bars[i].label.clone(),
                     cells: vec![ChartCell {
-                        tag: Some(format!("{}.bar.{i}", self.tag_prefix)),
+                        tag: Some(crate::address::bar(&self.tag_prefix, i)),
                         value: format_si(self.bars[i].value),
                     }],
                 })
@@ -571,7 +571,7 @@ impl BarChart {
                 } else {
                     base
                 };
-                children.push(box_node(r, color, format!("{}.bar.{i}", self.tag_prefix)));
+                children.push(box_node(r, color, crate::address::bar(&self.tag_prefix, i)));
             }
             // Category label centred under the slot — R1633: for the slots
             // whose labels clear each other. Before this round it was every

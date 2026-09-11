@@ -403,7 +403,7 @@ impl Treemap {
             children.push(box_node(
                 p.rect,
                 color,
-                format!("{}.tile.{i}", self.tag_prefix),
+                crate::address::tile(&self.tag_prefix, i),
             ));
             // In-tile label when the tile is large enough to hold it — drawn in a
             // colour chosen for contrast against the tile fill so it reads on both
@@ -426,7 +426,7 @@ impl Treemap {
                     TextAlign::Start,
                     contrast_text(color),
                     size,
-                    format!("{}.tile.{i}.label", self.tag_prefix),
+                    crate::address::tile_label(&self.tag_prefix, i),
                 ));
             }
         }

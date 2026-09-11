@@ -235,7 +235,7 @@ impl Sparkline {
                     // someone makes rather than one that happens.
                     crate::Interpolation::Linear,
                     color.with_alpha(SPARK_FILL_ALPHA),
-                    format!("{}.area", self.tag_prefix),
+                    crate::address::spark_area(&self.tag_prefix),
                 ));
             }
             // The trend polyline (needs at least two points).
@@ -243,7 +243,7 @@ impl Sparkline {
                 children.push(stroke_path(
                     &g.points,
                     Stroke::new(color, SPARK_STROKE_W),
-                    format!("{}.line", self.tag_prefix),
+                    crate::address::spark_line(&self.tag_prefix),
                 ));
             }
 
@@ -261,7 +261,7 @@ impl Sparkline {
                         my,
                         r,
                         self.mute.shade(g.source(g.min_idx), style.axis),
-                        format!("{}.min", self.tag_prefix),
+                        crate::address::spark_min(&self.tag_prefix),
                     ));
                 }
                 if let Some(&(mx, my)) = g.points.get(g.max_idx) {
@@ -270,7 +270,7 @@ impl Sparkline {
                         my,
                         r,
                         self.mute.shade(g.source(g.max_idx), style.axis),
-                        format!("{}.max", self.tag_prefix),
+                        crate::address::spark_max(&self.tag_prefix),
                     ));
                 }
                 if let Some(&(ex, ey)) = g.points.last() {
@@ -279,7 +279,7 @@ impl Sparkline {
                         ey,
                         r,
                         self.mute.shade(g.source(g.points.len() - 1), base),
-                        format!("{}.end", self.tag_prefix),
+                        crate::address::spark_end(&self.tag_prefix),
                     ));
                 }
             } else if g.points.len() == 1 {
@@ -289,7 +289,7 @@ impl Sparkline {
                         ey,
                         r,
                         self.mute.shade(g.source(0), base),
-                        format!("{}.end", self.tag_prefix),
+                        crate::address::spark_end(&self.tag_prefix),
                     ));
                 }
             }

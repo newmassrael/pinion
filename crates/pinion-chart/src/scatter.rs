@@ -194,7 +194,7 @@ impl ScatterChart {
             .iter()
             .enumerate()
             .map(|(row, &x)| ChartRow {
-                tag: format!("{}.a11y.r{row}", self.tag_prefix),
+                tag: crate::address::a11y_row(&self.tag_prefix, row),
                 name: format_si(x),
                 cells: shown
                     .iter()
@@ -221,7 +221,7 @@ impl ScatterChart {
             columns: shown
                 .iter()
                 .map(|(index, series)| ChartColumn {
-                    tag: format!("{}.a11y.series.{index}", self.tag_prefix),
+                    tag: crate::address::a11y_series_at(&self.tag_prefix, *index),
                     name: series.name.clone(),
                 })
                 .collect(),

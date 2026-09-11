@@ -273,7 +273,7 @@ impl DonutChart {
                 seg.a0,
                 seg.a1,
                 PathStyle::filled(color),
-                format!("{}.slice.{}", self.tag_prefix, seg.slice),
+                crate::address::slice(&self.tag_prefix, seg.slice),
             ));
         }
 

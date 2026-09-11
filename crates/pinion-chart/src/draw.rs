@@ -384,7 +384,7 @@ pub(crate) fn category_label_node(
         TextAlign::Center,
         color,
         size,
-        format!("{prefix}.xlabel.{index}"),
+        crate::address::xlabel(prefix, index),
     )
 }
 
@@ -432,7 +432,7 @@ pub(crate) fn x_tick_labels(
             TextAlign::Center,
             style.label,
             size,
-            format!("{prefix}.label.x.{k}"),
+            crate::address::label_x(prefix, k),
         ));
     }
     out
@@ -725,14 +725,14 @@ pub(crate) fn gridlines(
         out.push(stroke_path(
             &[(left, y), (right, y)],
             stroke,
-            format!("{prefix}.grid.y.{k}"),
+            crate::address::grid_y(prefix, k),
         ));
     }
     for (k, &x) in x_positions.iter().enumerate() {
         out.push(stroke_path(
             &[(x, top), (x, bottom)],
             stroke,
-            format!("{prefix}.grid.x.{k}"),
+            crate::address::grid_x(prefix, k),
         ));
     }
     out
@@ -787,14 +787,14 @@ pub(crate) fn minor_gridlines(
         out.push(stroke_path(
             &[(left, y), (right, y)],
             stroke,
-            format!("{prefix}.grid.minor.y.{k}"),
+            crate::address::grid_minor_y(prefix, k),
         ));
     }
     for (k, &x) in x_positions.iter().enumerate() {
         out.push(stroke_path(
             &[(x, top), (x, bottom)],
             stroke,
-            format!("{prefix}.grid.minor.x.{k}"),
+            crate::address::grid_minor_x(prefix, k),
         ));
     }
     out
@@ -848,7 +848,7 @@ pub(crate) fn y_tick_labels(
             TextAlign::End,
             style.label,
             size,
-            format!("{prefix}.label.y.{k}"),
+            crate::address::label_y(prefix, k),
         ));
     }
     out
@@ -1098,7 +1098,7 @@ pub(crate) fn color_bar(
     // layout the strip lands at zero height and the bar is invisible.
     let mut out = vec![Scene::Box(
         BoxNode::new(rect, BoxStyle::filled(fill).with_gradient(gradient))
-            .with_tag(format!("{prefix}.colorbar.strip"))
+            .with_tag(crate::address::colorbar_strip(prefix))
             .with_layout(absolute(rect)),
     )];
     let size = style.label_size_px.max(1);
@@ -1106,7 +1106,7 @@ pub(crate) fn color_bar(
     // step, so their precision comes from the VALUES — see [`value_decimals`].
     let decimals = value_decimals(&ticks.iter().map(|&(_, v)| v).collect::<Vec<_>>());
     for (k, &(offset, value)) in ticks.iter().enumerate() {
-        let tag = format!("{prefix}.colorbar.tick.{k}");
+        let tag = crate::address::colorbar_tick(prefix, k);
         let text = format_at_decimals(value, decimals);
         #[allow(
             clippy::cast_precision_loss,

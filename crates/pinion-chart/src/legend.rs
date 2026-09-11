@@ -406,7 +406,7 @@ impl Legend {
     /// toggles, and the prefix every entry tag extends.
     #[must_use]
     pub fn tag(&self) -> String {
-        format!("{}.legend", self.tag_prefix)
+        crate::address::legend_root(&self.tag_prefix)
     }
 
     /// The tag entry `index` carries.
@@ -417,7 +417,7 @@ impl Legend {
     /// passing too few tags silently lost the tail of its own legend.
     #[must_use]
     pub fn entry_tag(&self, index: usize) -> String {
-        format!("{}.legend.{index}", self.tag_prefix)
+        crate::address::legend_at(&self.tag_prefix, index)
     }
 
     /// How many entries a row `avail` px wide seats, and how many it drops.
@@ -572,7 +572,7 @@ fn overflow_marker(dropped: usize, x: u32, row_y: u32, style: &ChartStyle, prefi
         TextAlign::Start,
         style.label,
         size,
-        format!("{prefix}.legend.overflow"),
+        crate::address::legend_overflow(prefix),
     )
 }
 
@@ -605,7 +605,7 @@ fn paint_row(
         out.push(crate::draw::box_node(
             Rect::new(entry_x, row_y, swatch, swatch),
             entry.swatch,
-            format!("{prefix}.legend.{i}.swatch"),
+            crate::address::legend_swatch(prefix, i),
         ));
         out.push(label_node(
             entry.label.clone(),
@@ -615,7 +615,7 @@ fn paint_row(
             TextAlign::Start,
             style.label,
             size,
-            format!("{prefix}.legend.{i}.label"),
+            crate::address::legend_label(prefix, i),
         ));
     }
     if fit.hidden > 0 {

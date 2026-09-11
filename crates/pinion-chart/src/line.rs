@@ -1106,14 +1106,14 @@ impl LineChart {
                             baseline_y,
                             self.interpolation,
                             color.with_alpha(style.area_alpha),
-                            format!("{}.focus.area.{i}", self.tag_prefix),
+                            crate::address::focus_area(&self.tag_prefix, i),
                         ));
                     }
                     out.push(curve_stroke_path(
                         &focus,
                         self.interpolation,
                         Stroke::new(color, width).with_cap(StrokeCap::Round),
-                        format!("{}.focus.series.{i}", self.tag_prefix),
+                        crate::address::focus_series(&self.tag_prefix, i),
                     ));
                 }
             }
@@ -1152,7 +1152,7 @@ impl LineChart {
             out.push(stroke_path(
                 pair,
                 Stroke::new(color, width).with_cap(StrokeCap::Round),
-                format!("{}.seg.{k}", crate::address::series(&self.tag_prefix, i)),
+                crate::address::series_seg(&self.tag_prefix, i, k),
             ));
         }
         out

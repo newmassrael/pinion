@@ -359,7 +359,7 @@ impl Timeline {
                 TextAlign::Center,
                 style.label,
                 size,
-                format!("{}.tick.{k}", self.tag_prefix),
+                crate::address::tick(&self.tag_prefix, k),
             ));
         }
 
@@ -371,7 +371,7 @@ impl Timeline {
                 children.push(stroke_path(
                     &[(g.left, band_top), (g.right, band_top)],
                     grid_stroke,
-                    format!("{}.rule.{i}", self.tag_prefix),
+                    crate::address::rule(&self.tag_prefix, i),
                 ));
             }
             // Lane name, vertically centred in its band, right-aligned into the
@@ -385,7 +385,7 @@ impl Timeline {
                 TextAlign::End,
                 style.label,
                 size,
-                format!("{}.lane.{i}.label", self.tag_prefix),
+                crate::address::lane_label(&self.tag_prefix, i),
             ));
 
             let span_top = to_u32(band_top + SPAN_VPAD);
@@ -399,7 +399,7 @@ impl Timeline {
                         // a cross-filter dims.
                         self.mute
                             .shade(self.span_index(i, j), span.color.unwrap_or(color)),
-                        format!("{}.lane.{i}.span.{j}", self.tag_prefix),
+                        crate::address::lane_span(&self.tag_prefix, i, j),
                     ));
                 }
             }

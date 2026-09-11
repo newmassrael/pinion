@@ -313,7 +313,7 @@ impl BoxPlotChart {
             columns: Distribution::positions()
                 .into_iter()
                 .map(|at| ChartColumn {
-                    tag: format!("{prefix}.a11y.{}", at.name()),
+                    tag: crate::address::a11y_at(prefix, at.name()),
                     name: at.label().to_owned(),
                 })
                 .collect(),
@@ -322,7 +322,7 @@ impl BoxPlotChart {
                 .iter()
                 .enumerate()
                 .map(|(i, d)| ChartRow {
-                    tag: format!("{prefix}.a11y.r{i}"),
+                    tag: crate::address::a11y_row(prefix, i),
                     name: d.label().to_owned(),
                     cells: Distribution::positions()
                         .into_iter()
@@ -332,9 +332,9 @@ impl BoxPlotChart {
                             // part of the whisker stroke and has no node, so it
                             // claims none rather than borrowing the box's.
                             tag: match at {
-                                SummaryPosition::Median => Some(format!("{prefix}.median.{i}")),
+                                SummaryPosition::Median => Some(crate::address::median(prefix, i)),
                                 SummaryPosition::LowerQuartile | SummaryPosition::UpperQuartile => {
-                                    Some(format!("{prefix}.box.{i}"))
+                                    Some(crate::address::box_at(prefix, i))
                                 }
                                 SummaryPosition::LowerExtreme | SummaryPosition::UpperExtreme => {
                                     None
@@ -787,7 +787,7 @@ impl BoxPlotChart {
                     color.with_alpha(crate::draw::mul_alpha(color.a, style.area_alpha)),
                 )
                 .with_stroke(stroke),
-                format!("{}.violin.{i}", self.tag_prefix),
+                crate::address::violin(&self.tag_prefix, i),
             ));
         }
         if !self.draws_box_for(i) {
@@ -801,7 +801,7 @@ impl BoxPlotChart {
         out.push(polygon_node(
             &bx.outline,
             PathStyle::filled(color.with_alpha(style.area_alpha)).with_stroke(stroke),
-            format!("{}.box.{i}", self.tag_prefix),
+            crate::address::box_at(&self.tag_prefix, i),
         ));
         out.push(stroke_path(
             &[
@@ -809,7 +809,7 @@ impl BoxPlotChart {
                 (bx.median_right, bx.median_y),
             ],
             stroke,
-            format!("{}.median.{i}", self.tag_prefix),
+            crate::address::median(&self.tag_prefix, i),
         ));
 
         // The whiskers hang off the box edges the axis DID place, so an
@@ -822,7 +822,7 @@ impl BoxPlotChart {
             out.push(stroke_path(
                 &[(bx.center, from), (bx.center, y)],
                 stroke,
-                format!("{}.whisker.{i}.{tag}", self.tag_prefix),
+                crate::address::whisker(&self.tag_prefix, i, tag),
             ));
             out.push(stroke_path(
                 &[(bx.cap_left, y), (bx.cap_right, y)],
@@ -839,7 +839,7 @@ impl BoxPlotChart {
                 y,
                 radius,
                 color,
-                format!("{}.outlier.{i}.{j}", self.tag_prefix),
+                crate::address::outlier(&self.tag_prefix, i, j),
             ));
         }
         out
