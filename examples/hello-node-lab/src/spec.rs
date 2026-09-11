@@ -992,7 +992,17 @@ pub const RAIL_SPEC_JSON: &str = include_str!("../../../docs/analyzer-rail-spec.
 /// would have hidden every one of them, because the column that works is the
 /// one a test naturally drives.
 ///
-/// So [`verb`](OperationSpec::verb) is what an agent uses, [`gesture`] is
+/// ⚠ R2134 — `verb` and `gesture` below are plain code spans rather than
+/// intra-doc links, and that is forced rather than chosen: **any** intra-doc
+/// link in THIS item's own doc makes rustdoc ICE (`collect_intra_doc_links.rs:
+/// 457: no resolution for …`), whether it is spelled through the alias or
+/// through `Operation`'s real path — both were tried. The bug is in resolving a
+/// link inside the doc of a re-export, it was latent until a new public item in
+/// this module changed what rustdoc traverses, and it then blocked a push. The
+/// two names still point a reader at `pinion_core::operation::Operation`, whose
+/// own documentation is where they are defined.
+///
+/// So `verb` is what an agent uses, `gesture` is
 /// whether a person has a way in, and the gate drives BOTH — the second through
 /// this screen's own pointer handlers, never by writing the state, because a
 /// state a test invents can be one no mouse can reach.
@@ -1005,14 +1015,13 @@ pub const RAIL_SPEC_JSON: &str = include_str!("../../../docs/analyzer-rail-spec.
 /// and the gate fails on that too. A table that only listed what works would
 /// leave the sixteen exactly as invisible as they were.
 ///
-/// [`gesture`]: OperationSpec::gesture
 ///
 /// ★★ R1697 — **the shape is the framework's now**, and this is a re-export
 /// rather than a second copy of it. The sibling screen produced the identical
 /// defect three rounds later (a detached panel that could be torn off and not
 /// moved, with every gate on that screen green), which is the second consumer
 /// this table's shape needed — so
-/// [`Operation`](pinion_core::operation::Operation) holds the columns and the
+/// `pinion_core::operation::Operation` holds the columns and the
 /// consistency checks a reader of the table alone can run, and each screen
 /// keeps only its own rows and its own driver.
 pub use pinion_core::operation::Operation as OperationSpec;

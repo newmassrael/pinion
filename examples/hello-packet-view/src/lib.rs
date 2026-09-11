@@ -5373,10 +5373,11 @@ impl WidgetView for PacketView {
     /// regions, and the host's own paint-versus-publish gate skipped the
     /// destination entirely because it could not describe what it was showing.
     ///
-    /// Built from [`spec::VOICES`] and [`spec::SILENCES`] rather than from a
-    /// third list, so a row added to either arrives here without anybody
-    /// remembering to — which is the rule that keeps this from becoming the
-    /// third record of one promise.
+    /// Built from this screen's own `spec::VOICES` and `spec::SILENCES` rather
+    /// than from a third list, so a row added to either arrives here without
+    /// anybody remembering to — which is the rule that keeps this from becoming
+    /// the third record of one promise. (Named rather than linked: that module
+    /// is private, and a public doc linking into it is what CI refuses.)
     fn published_regions() -> Option<pinion_core::voice::Published> {
         Some(pinion_core::voice::Published::new(
             spec::VOICES.iter().flat_map(|voice| {

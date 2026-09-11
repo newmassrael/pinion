@@ -29767,9 +29767,10 @@ impl WidgetView for NodeLabView {
     /// hook. Standing at `lab` in the assembled tool, the wire published the
     /// host's 23 chrome rows for a window painting 591 regions.
     ///
-    /// Built from [`spec::VOICES`] and [`spec::SILENCES`] rather than from a
-    /// third list, so a row added to either arrives here without anybody
-    /// remembering to.
+    /// Built from this screen's own `spec::VOICES` and `spec::SILENCES` rather
+    /// than from a third list, so a row added to either arrives here without
+    /// anybody remembering to. (Named rather than linked: that module is
+    /// private, and a public doc linking into it is what CI refuses.)
     fn published_regions() -> Option<pinion_core::voice::Published> {
         Some(pinion_core::voice::Published::new(
             spec::VOICES.iter().flat_map(|voice| {
