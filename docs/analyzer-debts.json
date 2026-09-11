@@ -95,18 +95,6 @@
       ]
     },
     {
-      "name": "debt-a-card-that-does-not-exist-yet-is-asked-about-by-copying-the-whole-document",
-      "substituted": false,
-      "blocked_by": "buildable",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "unranked",
-      "why": [
-        "links analyzer-debt-repayment-loop"
-      ]
-    },
-    {
       "name": "debt-a-cards-own-facts-live-beside-the-card-instead-of-in-it",
       "substituted": false,
       "blocked_by": "buildable",
@@ -796,6 +784,6 @@
       ]
     }
   ],
-  "unranked": 12,
+  "unranked": 11,
   "undated": 7
 }

@@ -14724,9 +14724,12 @@ fn no_port_at_all_is_not_the_same_answer_as_every_port_refusing() {
     let none = document
         .autowire(ROOT, Socket::new(word, 0), Side::Output, source)
         .expect_err("Num presents no input");
+    // ★ R2133 — the side alone. The `node` this used to check was `source`,
+    // the argument two lines up, so the assertion was that the call echoes its
+    // own input back; the side is the fact the arm actually carries.
     assert!(
-        matches!(none, AutowireError::NoPorts { node, side } if node == source && side == Side::Input),
-        "the arm names the node and the side it has none on: {none:?}"
+        matches!(none, AutowireError::NoPorts { side } if side == Side::Input),
+        "the arm names the side it has none on: {none:?}"
     );
     assert!(
         none.to_string().contains(Side::Input.noun()),

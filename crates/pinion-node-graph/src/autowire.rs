@@ -115,21 +115,45 @@
 //!    that does. Ties keep declaration order, which is the reference's rule and
 //!    the only one a person can predict by looking at the node.
 //!
-//! # What is not here, stated rather than hidden
+//! # ★★★★★ R2133 — and it is asked of a card that does not exist yet
 //!
-//! The question is asked of a node **that exists**. A menu that wanted to grey
-//! out the kinds which will wire nothing would have to ask it of a *kind*, and
-//! that cannot be done in this vocabulary today: every arm of [`ConnectError`]
-//! names [`Socket`]s, and a socket names a [`NodeId`] a node about to be
-//! created does not have yet. Inventing a second refusal vocabulary for the
-//! hypothetical case is precisely the drift this crate refuses elsewhere, so
-//! the question is left open and registered rather than answered badly.
+//! R1987 left this open in as many words, and the paragraph it left here is
+//! worth keeping because it is the whole shape of the repair: *the question is
+//! asked of a node that exists. A menu that wanted to grey out the kinds which
+//! will wire nothing would have to ask it of a kind, and that cannot be done in
+//! this vocabulary today: every arm of [`ConnectError`] names [`Socket`]s, and
+//! a socket names a [`NodeId`] a node about to be created does not have yet.
+//! Inventing a second refusal vocabulary for the hypothetical case is precisely
+//! the drift this crate refuses elsewhere.*
+//!
+//! All of that was right, including the refusal to invent a second vocabulary.
+//! What it did not see is the third option: **generalise the slot** rather than
+//! duplicate the enum. [`ConnectError`] now carries how an end is *named* as a
+//! type parameter defaulting to [`Socket`], so every existing caller is
+//! unchanged, and [`Document::may_autowire_prospect`] instantiates it at
+//! [`Prospect`] — which can say *the arriving card's pin n* and name no node at
+//! all. One vocabulary, one set of arms, one set of sentences; only the
+//! spelling of an end varies.
+//!
+//! The consumer had meanwhile been answering the question the only way it
+//! could, by copying the whole document once per palette row, and both halves
+//! of what that cost were measured before anything was built here:
+//!
+//! * **Time.** 21 roles on the analyzer lab, release: 98.7 µs per read at 10
+//!   cards, 228 µs at 100, 704 µs at 590, **2.10 ms** at 1,580 — linear in the
+//!   card count. Through this call, same machine: **21.4 µs at 1,580**, flat.
+//! * **A number that pointed at nothing.** The copy's `add_node` minted an id
+//!   and it reached the wire: *node 2.0 may not reach **node 10.0*** on a
+//!   document whose cards are 0 through 9. Which is why the reason had to be
+//!   flattened to a string to be published at all — and why a client could
+//!   show a refusal but never branch on it.
 
 use std::fmt;
 
 use crate::model::{
-    ConnectError, Conversion, Document, Link, LinkId, NodeId, NodeKind, Side, Socket, TreeId,
-    crossing,
+    Act, ConnectError, Conversion, Document, EditError, KindPort, Link, LinkId, NodeBody, NodeId,
+    NodeKind, Prospect, Side, Signature, Socket, TreeId, admission_rule, crossing, crossing_rule,
+    crowded_end,
 };
 use crate::split::PortPath;
 
@@ -214,20 +238,28 @@ impl Uptake {
 /// `relink`'s reason: a wire refused for a type that does not cross and one
 /// refused for a cycle are repaired by different actions, and this is the
 /// difference.
+///
+/// `S` is how the refusal names an end, defaulting to [`Socket`]; see
+/// [`ConnectError`] for why it is a parameter (R2133).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Declined<T> {
+pub struct Declined<T, S = Socket> {
     /// The resolved index of the port that declined it.
     pub port: u32,
     /// That port as an address (R1914).
     pub at: PortPath,
     /// Why it declined.
-    pub why: ConnectError<T>,
+    pub why: ConnectError<T, S>,
 }
 
 /// Why a node could not be wired to the pin that created it (R1987).
+///
+/// `S` is how a refusal names an end, defaulting to [`Socket`]. The
+/// instantiation at [`Prospect`] is what
+/// [`Document::may_autowire_prospect`] answers in, and it is one vocabulary
+/// rather than two on purpose — see [`ConnectError`] (R2133).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum AutowireError<T> {
+pub enum AutowireError<T, S = Socket> {
     /// No such tree.
     NoSuchTree(TreeId),
     /// The dangling end or the arriving node is not in that tree.
@@ -239,6 +271,23 @@ pub enum AutowireError<T> {
         /// How many ports that end actually has.
         arity: u32,
     },
+    /// ★★★★★ R2133 — the tree would not take a node of this body **at all**,
+    /// so there is no wiring question to ask.
+    ///
+    /// Exactly what [`Document::add_node`] would refuse with, asked without
+    /// adding anything. Only [`Document::may_autowire_prospect`] can reach it:
+    /// a node the placed question is asked about is already in the tree, so
+    /// the tree has admitted it.
+    NotAdmitted(EditError),
+    /// ★★★★★ R2133 — this body's ports are derived from the links it lands
+    /// among, so there is nothing to answer before it is placed.
+    ///
+    /// A reroute, a beacon, an echo and a stand-in — see
+    /// [`NodeBody::ports_are_derived_from_where_it_lands`]. Its own arm rather
+    /// than a [`Self::NoPorts`], because *not knowable yet* and *never has one*
+    /// are different facts: a palette greys out a card for the second and not
+    /// for the first.
+    PortsNotYetDerivable,
     /// The arriving node presents **no port at all** on the side that would
     /// have to take the wire.
     ///
@@ -247,9 +296,12 @@ pub enum AutowireError<T> {
     /// differently: *this kind never listens* is a choice about the kind, and
     /// *these pins all refused* is a question about the types. The reference
     /// cannot tell them apart — both are its empty hook body.
+    ///
+    /// ⚠ R2133 removed the `node` this carried. It was always the `arriving`
+    /// argument handed straight back — a second copy of what the caller had
+    /// just passed in — and that echo is the one thing that stopped the arm
+    /// being sayable about a node with no [`NodeId`].
     NoPorts {
-        /// The node that has none.
-        node: NodeId,
         /// The side it has none on.
         side: Side,
     },
@@ -258,11 +310,11 @@ pub enum AutowireError<T> {
     NoneTakes {
         /// One entry per port that was offered the wire, in declaration order.
         /// Never empty — that case is [`Self::NoPorts`].
-        declined: Vec<Declined<T>>,
+        declined: Vec<Declined<T, S>>,
     },
 }
 
-impl<T: fmt::Debug> fmt::Display for AutowireError<T> {
+impl<T: fmt::Debug, S: fmt::Display> fmt::Display for AutowireError<T, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoSuchTree(tree) => write!(f, "no tree {tree}"),
@@ -270,12 +322,21 @@ impl<T: fmt::Debug> fmt::Display for AutowireError<T> {
             Self::NoSuchPort { socket, arity } => {
                 write!(f, "{socket} is not there: that end has {arity} port(s)")
             }
+            Self::NotAdmitted(why) => write!(f, "{why}"),
+            Self::PortsNotYetDerivable => f.write_str(
+                "this card's pins depend on what it is wired to, so there is \
+                 nothing to answer until it is placed",
+            ),
             // ★ R1699/R1719 — a refusal says itself, because this sentence
             // reaches a person in a toast and an agent as a rejection's reason.
             // ★ R1987 — `noun`, not `name`. `name` is the wire form a client
             // parses ("in"/"out"), and putting it here read "has no in pin".
-            Self::NoPorts { node, side } => {
-                write!(f, "node {node} has no {} pin to take the wire", side.noun())
+            Self::NoPorts { side } => {
+                write!(
+                    f,
+                    "the arriving card has no {} pin to take the wire",
+                    side.noun()
+                )
             }
             Self::NoneTakes { declined } => {
                 write!(f, "no pin takes the wire")?;
@@ -288,7 +349,7 @@ impl<T: fmt::Debug> fmt::Display for AutowireError<T> {
     }
 }
 
-impl<T: fmt::Debug> std::error::Error for AutowireError<T> {}
+impl<T: fmt::Debug, S: fmt::Debug + fmt::Display> std::error::Error for AutowireError<T, S> {}
 
 /// What an autowire did (R1987).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -409,6 +470,186 @@ impl<K: NodeKind> Document<K> {
         leaving: Side,
         arriving: NodeId,
     ) -> Result<Plan, AutowireError<K::Type>> {
+        let held = self.dangling_ports(tree, dangling, leaving)?;
+        let side = leaving.other();
+        let offered = Self::offered_ports(
+            self.signature(tree, arriving)
+                .ok_or(AutowireError::NoSuchNode(arriving))?,
+            side,
+        )?;
+        Self::plan_over(&held, &offered, dangling, leaving, |index| {
+            let landed = Socket::new(arriving, index);
+            let (from, to) = ends(dangling, leaving, landed);
+            let at = self
+                .path_of(tree, arriving, side, index)
+                .unwrap_or_else(|| PortPath::root(index));
+            // The one authority on whether the pair may be wired. Asked here
+            // rather than re-derived, so a pin this admits is a pin `connect`
+            // admits — which is what makes the verb above able to place without
+            // asking again.
+            let vetted = self
+                .vet(tree, from, to)
+                .map(|crowded| (crowded, self.standing_at(tree, from, to, crowded)));
+            (at, vetted)
+        })
+    }
+
+    /// ★★★★★ R2133 — **which port a card that does not exist yet would take it
+    /// with**, asked without adding the card.
+    ///
+    /// The question a palette asks before a person presses anything: *if I
+    /// pressed this row, would the wire I am holding land?* Until this round
+    /// the only way to answer it was the caller's — `clone()` the whole
+    /// document, `add_node` into the copy, ask
+    /// [`may_autowire`](Self::may_autowire), throw the copy away — once per row
+    /// of the palette.
+    ///
+    /// # What that cost, measured (R2133)
+    ///
+    /// On the analyzer lab, release build, 21 palette roles: **98.7 µs** per
+    /// read of the register at 10 cards, **228 µs** at 100, **704 µs** at 590
+    /// and **2.10 ms** at 1,580 — linear in the document's node count at about
+    /// 1.27 µs per node per read, because each role copies every node. At 1,580
+    /// cards that is an eighth of a 60 Hz frame for one register, and the
+    /// multiplier is the roster: the same graph with a 200-row palette would
+    /// spend a whole frame on it.
+    ///
+    /// This answers on the document itself, so the cost is the ports of one
+    /// candidate and does not grow with the graph at all. Measured through the
+    /// same register on the same machine and build afterwards: **21.2 µs at
+    /// 100 cards, 21.1 at 590, 21.4 at 1,580** — flat, and ~98x at the top of
+    /// that range.
+    ///
+    /// # And the answer is better, not just cheaper
+    ///
+    /// The copy's `add_node` mints a [`NodeId`], and that id then appeared in
+    /// the refusal a client received — measured on the opening graph, *node 2.0
+    /// may not reach node 10.0*, where the document the reader holds has no
+    /// node 10. So the refusal had to be flattened to a **string** before it
+    /// could be published at all. Here the arriving end is
+    /// [`Prospect::Arriving`], which says *the arriving card's pin n* and names
+    /// no node, so the refusal crosses the wire as the structured
+    /// [`ConnectError`] it is and a client can branch on which arm it was.
+    ///
+    /// # Errors
+    ///
+    /// [`AutowireError`] — the tree or the dangling node is not there, the wire
+    /// leaves a port that is not there, the tree would not admit a node of this
+    /// body ([`AutowireError::NotAdmitted`]), the body's ports are not knowable
+    /// before it is placed ([`AutowireError::PortsNotYetDerivable`]), it
+    /// presents no port on that side, or every port on it declined — each with
+    /// its reason.
+    pub fn prospective_uptakes(
+        &self,
+        tree: TreeId,
+        dangling: Socket,
+        leaving: Side,
+        body: &NodeBody<K>,
+    ) -> Result<Vec<Uptake>, AutowireError<K::Type, Prospect>> {
+        let plan = self.plan_prospect(tree, dangling, leaving, body)?;
+        let mut all = Vec::with_capacity(plan.rest.len() + 1);
+        all.push(plan.took);
+        all.extend(plan.rest);
+        Ok(all)
+    }
+
+    /// ★★★★★ R2133 — the best [`Uptake`] of
+    /// [`prospective_uptakes`](Self::prospective_uptakes), which is
+    /// [`may_autowire`](Self::may_autowire)'s question asked of a card that
+    /// does not exist yet.
+    ///
+    /// Not a prediction of what the press will do: it is the same rules on the
+    /// same graph with the same ports, and
+    /// `r2133_asking_before_the_card_exists_answers_what_asking_after_does` is
+    /// the gate that holds the two to each other over a population.
+    ///
+    /// # Errors
+    ///
+    /// [`AutowireError`] — exactly what
+    /// [`prospective_uptakes`](Self::prospective_uptakes) answers.
+    pub fn may_autowire_prospect(
+        &self,
+        tree: TreeId,
+        dangling: Socket,
+        leaving: Side,
+        body: &NodeBody<K>,
+    ) -> Result<Uptake, AutowireError<K::Type, Prospect>> {
+        self.plan_prospect(tree, dangling, leaving, body)
+            .map(|plan| plan.took)
+    }
+
+    /// The prospective half of the one decision (R2133).
+    ///
+    /// The two graph rules [`Document::vet`] adds to the pair rules — a self
+    /// link and a cycle — are the two this cannot reach and does not need to:
+    /// the arriving node is not the dangling one, so no pair here is a self
+    /// link, and a node with no links is on no path, so none of them can close
+    /// a cycle. That is why the rules below are the whole vet and not a weaker
+    /// one, and `r2133_the_two_rules_a_prospective_pair_cannot_break` is what
+    /// says so out loud.
+    fn plan_prospect(
+        &self,
+        tree: TreeId,
+        dangling: Socket,
+        leaving: Side,
+        body: &NodeBody<K>,
+    ) -> Result<Plan, AutowireError<K::Type, Prospect>> {
+        // The dangling end first, for the order `dangling_ports` records.
+        let held = self.dangling_ports(tree, dangling, leaving)?;
+        // Asked the way `add_node` asks it, so a card the palette would be
+        // refused outright is not reported as a wiring problem.
+        self.may(tree, Act::Create(body))
+            .map_err(AutowireError::NotAdmitted)?;
+        let offered = Self::offered_ports(
+            self.prospective_signature(tree, body)
+                .ok_or(AutowireError::PortsNotYetDerivable)?,
+            leaving.other(),
+        )?;
+        let leaving_kind = self.kind_at(tree, dangling.node);
+        let arriving_kind = body.kind();
+        Self::plan_over(&held, &offered, dangling, leaving, |index| {
+            let (from, to) = ends(
+                Prospect::Placed(dangling),
+                leaving,
+                Prospect::Arriving(index),
+            );
+            let (source, sink) = pair::<K>(&held, dangling.port, &offered, index, leaving);
+            let (source_kind, sink_kind) = match leaving {
+                Side::Output => (leaving_kind, arriving_kind),
+                Side::Input => (arriving_kind, leaving_kind),
+            };
+            let vetted = crossing_rule::<K, _>(source, sink, &from, &to)
+                .and_then(|()| admission_rule::<K, _>(source_kind, sink_kind, &from, &to))
+                .map(|()| {
+                    let crowded = crowded_end::<K>(source, sink);
+                    (
+                        crowded,
+                        self.prospective_standing(tree, dangling, leaving, crowded),
+                    )
+                });
+            // A node that does not exist yet declares no split, so every one of
+            // its ports is at its root index — which is exactly what
+            // `add_node` would leave `path_of` answering.
+            (PortPath::root(index), vetted)
+        })
+    }
+
+    /// The ports at the **dangling** end, with the two ways that end is not
+    /// there (R2133).
+    ///
+    /// Shared by the placed question and the prospective one because it is
+    /// about the WIRE, which is the same wire in both — and asked FIRST by
+    /// both, because that is the order the refusals were in before this was
+    /// extracted: a call naming a tree that does not exist answers about the
+    /// node it was dragged from, which is the sentence `signature` gives, and
+    /// `r1987_a_wire_from_a_pin_that_is_not_there_is_refused_at_that_end`
+    /// asserts exactly that.
+    fn dangling_ports<S>(
+        &self,
+        tree: TreeId,
+        dangling: Socket,
+        leaving: Side,
+    ) -> Result<Vec<KindPort<K>>, AutowireError<K::Type, S>> {
         let held = self
             .signature(tree, dangling.node)
             .ok_or(AutowireError::NoSuchNode(dangling.node))?;
@@ -423,40 +664,53 @@ impl<K: NodeKind> Document<K> {
                 arity,
             });
         }
-        let offered = self
-            .signature(tree, arriving)
-            .ok_or(AutowireError::NoSuchNode(arriving))?;
-        let side = leaving.other();
+        Ok(held)
+    }
+
+    /// The candidate's ports on the side that would have to take the wire, or
+    /// the fact that it has none (R2133).
+    fn offered_ports<S>(
+        offered: Signature<K>,
+        side: Side,
+    ) -> Result<Vec<KindPort<K>>, AutowireError<K::Type, S>> {
         let offered = match side {
             Side::Input => offered.inputs,
             Side::Output => offered.outputs,
         };
         if offered.is_empty() {
-            return Err(AutowireError::NoPorts {
-                node: arriving,
-                side,
-            });
+            return Err(AutowireError::NoPorts { side });
         }
+        Ok(offered)
+    }
+
+    /// The preference, the order and the *never empty* guarantee — the part of
+    /// the decision that is the same whether the arriving node exists (R2133).
+    ///
+    /// `vet_pin` is the part that is not: it names the two ends, addresses the
+    /// candidate and applies the rules, which is where the two questions
+    /// genuinely differ. Everything after it is here once, so the two cannot
+    /// rank pins differently or disagree about which of the two "nothing takes
+    /// it" facts happened.
+    ///
+    /// An associated function rather than a method: every fact it reads comes
+    /// through its arguments, and the document it does NOT touch is the point —
+    /// whatever the graph is, the ranking is the same ranking.
+    fn plan_over<S>(
+        held: &[KindPort<K>],
+        offered: &[KindPort<K>],
+        dangling: Socket,
+        leaving: Side,
+        mut vet_pin: impl FnMut(u32) -> (PortPath, VettedPin<K, S>),
+    ) -> Result<Plan, AutowireError<K::Type, S>> {
         let mut uptakes: Vec<(Uptake, Option<Side>)> = Vec::new();
-        let mut declined: Vec<Declined<K::Type>> = Vec::new();
+        let mut declined: Vec<Declined<K::Type, S>> = Vec::new();
         for index in 0..u32::try_from(offered.len()).unwrap_or(u32::MAX) {
-            let landed = Socket::new(arriving, index);
-            let (from, to) = ends(dangling, leaving, landed);
-            let at = self
-                .path_of(tree, arriving, side, index)
-                .unwrap_or_else(|| PortPath::root(index));
-            // The one authority on whether the pair may be wired. Asked here
-            // rather than re-derived, so a pin this admits is a pin `connect`
-            // admits — which is what makes the verb above able to place without
-            // asking again.
-            match self.vet(tree, from, to) {
-                Ok(crowded) => {
-                    // `vet` passed, so the crossing is not refused: the only
+            let (at, vetted) = vet_pin(index);
+            match vetted {
+                Ok((crowded, displaces)) => {
+                    // The vet passed, so the crossing is not refused: the only
                     // two answers left are the two arms of `Arrival`.
-                    let (source, sink) = match leaving {
-                        Side::Input => (&offered[index as usize], &held[dangling.port as usize]),
-                        Side::Output => (&held[dangling.port as usize], &offered[index as usize]),
-                    };
+                    let (source, sink) = pair::<K>(held, dangling.port, offered, index, leaving);
                     let arrival = match crossing::<K>(source, sink) {
                         Conversion::Converted(_) => Arrival::Converted,
                         Conversion::Direct | Conversion::Refused => Arrival::Unchanged,
@@ -466,7 +720,7 @@ impl<K: NodeKind> Document<K> {
                             port: index,
                             at,
                             arrival,
-                            displaces: self.standing_at(tree, from, to, crowded),
+                            displaces,
                         },
                         crowded,
                     ));
@@ -490,6 +744,33 @@ impl<K: NodeKind> Document<K> {
             crowded,
             rest: uptakes.map(|(one, _)| one).collect(),
         })
+    }
+
+    /// What a prospective wire would evict (R2133).
+    ///
+    /// The arriving end is a card that does not exist, so it holds no link and
+    /// nothing there can give way; the dangling end is real and may. Which of
+    /// the two `crowded` names is decided by one comparison: `ends` puts the
+    /// dangling socket on the side the wire is LEAVING from, so the dangling
+    /// end is the crowded one exactly when the two agree.
+    fn prospective_standing(
+        &self,
+        tree: TreeId,
+        dangling: Socket,
+        leaving: Side,
+        crowded: Option<Side>,
+    ) -> Option<Link> {
+        if crowded? != leaving {
+            return None;
+        }
+        let links = self.tree(tree)?.links();
+        links
+            .iter()
+            .find(|held| match leaving {
+                Side::Output => held.from == dangling,
+                Side::Input => held.to == dangling,
+            })
+            .copied()
     }
 
     /// The link a new one at this pair would evict, which is **occupancy** and
@@ -534,9 +815,43 @@ struct Plan {
 ///
 /// One place, so the question and the verb cannot orient the pair differently —
 /// which would make the verb wire the mirror image of what it was told.
-const fn ends(dangling: Socket, leaving: Side, landed: Socket) -> (Socket, Socket) {
+///
+/// ★ R2133 — generic in how an end is named, so the prospective question
+/// orients its pair through this same function rather than through a second
+/// copy of the `match`. The mirror-image bug this exists to prevent is exactly
+/// the one a second copy would reintroduce.
+fn ends<S>(dangling: S, leaving: Side, landed: S) -> (S, S) {
     match leaving {
         Side::Output => (dangling, landed),
         Side::Input => (landed, dangling),
     }
 }
+
+/// The producing and consuming PORTS of a candidate pair (R2133).
+///
+/// The mirror of [`ends`] one level down, and separate from it because the
+/// ports come out of two different lists while the ends are two values of one
+/// type. Written once for the same reason: the two questions must not orient
+/// their ports differently from each other or from the wire.
+fn pair<'a, K: NodeKind>(
+    held: &'a [KindPort<K>],
+    dangling_port: u32,
+    offered: &'a [KindPort<K>],
+    index: u32,
+    leaving: Side,
+) -> (&'a KindPort<K>, &'a KindPort<K>) {
+    let (held, offered) = (&held[dangling_port as usize], &offered[index as usize]);
+    match leaving {
+        Side::Output => (held, offered),
+        Side::Input => (offered, held),
+    }
+}
+
+/// What a vet says about one candidate pin: which end's limit the wire would
+/// exceed, and the link that would actually go (R2133).
+///
+/// A named alias because it is the return of the closure the two planners hand
+/// to [`Document::plan_over`](Document::plan_over), and an unnamed nested
+/// `Result<(Option<Side>, Option<Link>), _>` in a function signature is the
+/// kind of type nobody reads twice.
+type VettedPin<K, S> = Result<(Option<Side>, Option<Link>), ConnectError<<K as NodeKind>::Type, S>>;

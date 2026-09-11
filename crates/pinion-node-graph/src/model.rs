@@ -244,6 +244,45 @@ impl fmt::Display for Socket {
     }
 }
 
+/// ★★★★★ R2133 — **one end of a pair, when the node at one of them does not
+/// exist yet.**
+///
+/// The instantiation of [`ConnectError`]'s `S` that
+/// [`Document::may_autowire_prospect`] answers in. A palette asking *would a
+/// card of this kind take the wire I am holding* is asking about a node with no
+/// [`NodeId`], and until this round the only way to name that end was to add
+/// the card to a throwaway copy of the document and publish the copy's id.
+///
+/// Measured on the lab's opening graph before this existed: the reason that
+/// reached the wire read *node 2.0 may not reach **node 10.0*** — and the
+/// document a reader holds has nodes 0 through 9. `10` was the copy's
+/// `next_node`, so it named no node at all, and it is exactly the id the next
+/// card created will be given.
+///
+/// [`Self::Arriving`] carries a port index and no node, which is that fact made
+/// **representable** rather than faked with a number: there is only one node it
+/// could be, and the caller named it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Prospect {
+    /// A port of a node that is in the tree.
+    Placed(Socket),
+    /// A port of the node that **would arrive**, by its index on the side that
+    /// would take the wire.
+    Arriving(u32),
+}
+
+impl fmt::Display for Prospect {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Placed(socket) => write!(f, "{socket}"),
+            // No number for the node half, on purpose: a reader who sees one
+            // will try to resolve it, and that is the defect this type exists
+            // to remove.
+            Self::Arriving(port) => write!(f, "the arriving card's pin {port}"),
+        }
+    }
+}
+
 /// A directed link inside one tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Link {
@@ -2223,6 +2262,107 @@ pub fn crossing<K: NodeKind>(from: &KindPort<K>, to: &KindPort<K>) -> Conversion
     }
 }
 
+/// ★★★★★ R2133 — **the crossing rule as a refusal**, asked of two ports and
+/// nothing else.
+///
+/// [`Document::vet`] and [`Document::may_autowire_prospect`] are its two
+/// callers, and they are two callers precisely because the second one's
+/// consuming end belongs to a node that is **not in the tree**. Everything this
+/// rule needs is in the two ports, so it does not need to know where either of
+/// them lives — which is the whole reason the prospective question can be
+/// answered without copying the document.
+///
+/// `crossing` stays the one authority on whether the pair may be wired
+/// (R1593's directed type relation, widened by R1599 to cover the flow); the
+/// match below only chooses which refusal to *name*. Stating the mixed-flow
+/// rule here as well would be a second copy free to disagree with it, which is
+/// what a counterfactual on `crossing`'s mixed arm found: the refusal held with
+/// that arm removed, because the call site was deciding it independently.
+///
+/// # Errors
+///
+/// [`ConnectError::TypeMismatch`] or [`ConnectError::FlowMismatch`].
+pub(crate) fn crossing_rule<K: NodeKind, S: Clone>(
+    source: &KindPort<K>,
+    sink: &KindPort<K>,
+    from: &S,
+    to: &S,
+) -> Result<(), ConnectError<K::Type, S>> {
+    if !crossing::<K>(source, sink).is_refused() {
+        return Ok(());
+    }
+    Err(match (source.value_type(), sink.value_type()) {
+        (Some(out), Some(into)) => ConnectError::TypeMismatch {
+            from: from.clone(),
+            from_type: out.clone(),
+            to: to.clone(),
+            to_type: into.clone(),
+        },
+        // Exactly one end carries control: two control ports cross directly and
+        // are never refused, so that pair cannot arrive here — asserted by
+        // `r1599_control_to_control_is_the_one_pair_with_no_type_question`.
+        (source_type, _) => ConnectError::FlowMismatch {
+            from: from.clone(),
+            to: to.clone(),
+            control_end: if source_type.is_none() {
+                Side::Output
+            } else {
+                Side::Input
+            },
+        },
+    })
+}
+
+/// ★★★★★ R1885 — **the taxonomy's verdict on a PAIR of kinds**, asked of the
+/// two kinds rather than of two places in a tree (R2133).
+///
+/// `None` for an end whose body carries no kind: a group instance, an interface
+/// end, a frame, a delay and the derived bodies are this crate's, so there is
+/// nothing to ask, and [`Admission::Allowed`] is the honest answer rather than
+/// an omission.
+pub(crate) fn admits_pair<K: NodeKind>(out: Option<&K>, into: Option<&K>) -> Admission {
+    match (out, into) {
+        (Some(out), Some(into)) => K::admits(out, into),
+        _ => Admission::Allowed,
+    }
+}
+
+/// [`admits_pair`] as a refusal, for the two callers that vet a pair (R2133).
+///
+/// # Errors
+///
+/// [`ConnectError::Incompatible`], carrying the application's own sentence.
+pub(crate) fn admission_rule<K: NodeKind, S: Clone>(
+    out: Option<&K>,
+    into: Option<&K>,
+    from: &S,
+    to: &S,
+) -> Result<(), ConnectError<K::Type, S>> {
+    match admits_pair::<K>(out, into) {
+        Admission::Allowed => Ok(()),
+        Admission::Refused(refusal) => Err(ConnectError::Incompatible {
+            from: from.clone(),
+            to: to.clone(),
+            refusal,
+        }),
+    }
+}
+
+/// ★ R1599 — **which end's limit a new link at this pair would exceed**, which
+/// is a property of the two ports alone (R2133).
+///
+/// The two flows put it on opposite ends: a value INPUT takes one producer, a
+/// control OUTPUT takes one successor.
+pub(crate) fn crowded_end<K: NodeKind>(source: &KindPort<K>, sink: &KindPort<K>) -> Option<Side> {
+    if sink.multiplicity(Side::Input) == Multiplicity::One {
+        Some(Side::Input)
+    } else if source.multiplicity(Side::Output) == Multiplicity::One {
+        Some(Side::Output)
+    } else {
+        None
+    }
+}
+
 /// ★ R1934 — a pair that crosses **because the link is what decides it**.
 ///
 /// The same value as a control pair's [`Conversion::Direct`] and a different
@@ -2536,6 +2676,43 @@ pub enum NodeBody<K: NodeKind> {
     /// wrong on its own, and the crate would be detecting that instead of it
     /// being unrepresentable.
     StandIn(Represented),
+}
+
+impl<K: NodeKind> NodeBody<K> {
+    /// The application kind this body carries, or `None` when it carries none
+    /// (R2133).
+    ///
+    /// The structural and derived arms are this crate's own furniture, so there
+    /// is no taxonomy to ask about them — see [`Document::admission`], which is
+    /// what reads this.
+    #[must_use]
+    pub const fn kind(&self) -> Option<&K> {
+        match self {
+            Self::Kind(kind) => Some(kind),
+            _ => None,
+        }
+    }
+
+    /// ★★★★★ R2133 — **whether the ports of a node with this body can be known
+    /// before it is placed.**
+    ///
+    /// Four bodies derive their ports from the links they land among — a
+    /// reroute and a beacon from the chain they pass, an echo from the beacon
+    /// it names, a stand-in from its members — so a node carrying one presents
+    /// nothing until it is in a graph. The other five are functions of the body
+    /// alone (and, for a group instance and an interface end, of the tree),
+    /// which is what [`Document::prospective_signature`] answers.
+    ///
+    /// Stated as a predicate on the body rather than left as a `None` a caller
+    /// has to interpret: *this cannot be known yet* and *this has no ports* are
+    /// different facts, and a palette greys out a card for only one of them.
+    #[must_use]
+    pub const fn ports_are_derived_from_where_it_lands(&self) -> bool {
+        matches!(
+            self,
+            Self::Reroute | Self::Beacon | Self::Echo(_) | Self::StandIn(_)
+        )
+    }
 }
 
 /// What a [`NodeBody::StandIn`] stands in for (R2004).
@@ -3923,11 +4100,83 @@ impl<K: NodeKind> Document<K> {
     pub(crate) fn declared_signature(&self, tree: TreeId, node: NodeId) -> Option<Signature<K>> {
         let host = self.tree(tree)?;
         let node = host.node(node)?;
+        // ★ R2133 — the five bodies whose ports are a function of the body go
+        // through `prospective_signature`, which is the same derivation asked
+        // of a body that is not placed. One spelling, so a card that is asked
+        // about before it exists and the card that then arrives cannot present
+        // different ports.
+        if let Some(declared) = self.prospective_ports(tree, &node.body, &node.items) {
+            return Some(declared);
+        }
         Some(match &node.body {
+            // R1934 — one in, one out, both carrying what the chain this
+            // reroute belongs to decided. Derived and not authored, which is
+            // why this arm needs the whole document where `Delay` needed only
+            // the body: see [`Document::passing_flow`].
+            //
+            // R1935 — a beacon is the same shape for the same reason, and
+            // shares the arm rather than copying the derivation.
+            NodeBody::Reroute | NodeBody::Beacon => self.passing_signature(tree, node.id),
+            // R1935 — an echo has NO input: the value reaches it by name, and
+            // an input port would be a place to wire one, which is precisely
+            // the edge this body exists to do without.
+            NodeBody::Echo(_) => self.echo_signature(tree, node.id),
+            // R2004 — the signature its members SHARE, derived for the same
+            // reason the two above are and with a sharper consequence: these
+            // ports are what the expansion maps through.
+            NodeBody::StandIn(_) => self.stand_in_signature(tree, node.id),
+            // The five above are exactly the complement of
+            // `ports_are_derived_from_where_it_lands`, so this arm is
+            // unreachable — and it is a `None` rather than a panic because an
+            // unreachable arm that cannot be tested must not be one that
+            // aborts. `r2133_the_two_signature_derivations_partition_the_bodies`
+            // is what keeps the two halves a partition.
+            _ => return None,
+        })
+    }
+
+    /// ★★★★★ R2133 — **the ports a node of this body WOULD present**, asked
+    /// without adding it.
+    ///
+    /// What a palette needs before it creates a card: the signature half of
+    /// [`may_autowire_prospect`](Self::may_autowire_prospect), published on its
+    /// own because a chooser wants it for other reasons too (how many pins to
+    /// draw on a preview, whether a kind produces anything at all).
+    ///
+    /// `None` when the body's ports are derived from the links it lands among
+    /// — see [`NodeBody::ports_are_derived_from_where_it_lands`], which is the
+    /// predicate that says so without having to call this and interpret a
+    /// missing answer — or when the tree, or a group instance's definition, is
+    /// not there.
+    ///
+    /// The node's own items are what a *placed* node splices in
+    /// ([`Document::signature`]); a node that does not exist yet has none, so
+    /// this answers the kind's declared minimum, which is exactly what
+    /// [`Document::add_node`] would give it.
+    #[must_use]
+    pub fn prospective_signature(&self, tree: TreeId, body: &NodeBody<K>) -> Option<Signature<K>> {
+        self.prospective_ports(tree, body, &Items::default())
+    }
+
+    /// The derivation behind [`prospective_signature`](Self::prospective_signature)
+    /// and the five body arms of
+    /// [`declared_signature`](Self::declared_signature) (R2133).
+    ///
+    /// Takes the items explicitly because that is the whole difference between
+    /// the two callers: a placed node splices in what was authored on it, and a
+    /// prospective one has nothing authored yet.
+    fn prospective_ports(
+        &self,
+        tree: TreeId,
+        body: &NodeBody<K>,
+        items: &Items<K::Type>,
+    ) -> Option<Signature<K>> {
+        let host = self.tree(tree)?;
+        Some(match body {
             // R1632 — a kind's own lists are the FIXED part, and the node's
             // items are spliced into them. A kind that declares no run splices
             // nothing, which is why the ordinary case reads the same as before.
-            NodeBody::Kind(kind) => resolve(kind, &node.items),
+            NodeBody::Kind(kind) => resolve(kind, items),
             NodeBody::Group(inner) => {
                 let definition = self.tree(*inner)?;
                 Signature {
@@ -3960,22 +4209,10 @@ impl<K: NodeKind> Document<K> {
                 inputs: vec![Port::new("In", ty.clone())],
                 outputs: vec![Port::new("Out", ty.clone())],
             },
-            // R1934 — one in, one out, both carrying what the chain this
-            // reroute belongs to decided. Derived and not authored, which is
-            // why this arm needs the whole document where `Delay` needed only
-            // the body: see [`Document::passing_flow`].
-            //
-            // R1935 — a beacon is the same shape for the same reason, and
-            // shares the arm rather than copying the derivation.
-            NodeBody::Reroute | NodeBody::Beacon => self.passing_signature(tree, node.id),
-            // R1935 — an echo has NO input: the value reaches it by name, and
-            // an input port would be a place to wire one, which is precisely
-            // the edge this body exists to do without.
-            NodeBody::Echo(_) => self.echo_signature(tree, node.id),
-            // R2004 — the signature its members SHARE, derived for the same
-            // reason the two above are and with a sharper consequence: these
-            // ports are what the expansion maps through.
-            NodeBody::StandIn(_) => self.stand_in_signature(tree, node.id),
+            // The four whose ports are a fact about where the node sits.
+            NodeBody::Reroute | NodeBody::Beacon | NodeBody::Echo(_) | NodeBody::StandIn(_) => {
+                return None;
+            }
         })
     }
 
@@ -4686,10 +4923,10 @@ impl<K: NodeKind> Document<K> {
     pub fn admission(&self, tree: TreeId, from: Socket, to: Socket) -> Option<Admission> {
         let source = self.tree(tree)?.node(from.node)?;
         let sink = self.tree(tree)?.node(to.node)?;
-        match (&source.body, &sink.body) {
-            (NodeBody::Kind(out), NodeBody::Kind(into)) => Some(K::admits(out, into)),
-            _ => Some(Admission::Allowed),
-        }
+        // ★ R2133 — through `admits_pair`, which is what `vet` asks too. The
+        // dispatch used to be written out here as well, so this surface and the
+        // refusal were two spellings of one rule.
+        Some(admits_pair::<K>(source.body.kind(), sink.body.kind()))
     }
 
     /// The crossing along an existing link, which is what its value went
@@ -4987,36 +5224,12 @@ impl<K: NodeKind> Document<K> {
                 socket: to,
                 arity: u32::try_from(in_ports.len()).unwrap_or(u32::MAX),
             })?;
-        // `crossing` is the ONE authority on whether the pair may be wired —
-        // R1593's directed type relation, widened by R1599 to cover the flow —
-        // and the match below only chooses which refusal to *name*. Stating the
-        // mixed-flow rule here as well would be a second copy free to disagree
-        // with it, which is what a counterfactual on `crossing`'s mixed arm
-        // found: the refusal held with that arm removed, because this site was
-        // deciding it independently.
-        if crossing::<K>(source, sink).is_refused() {
-            return Err(match (source.value_type(), sink.value_type()) {
-                (Some(out), Some(into)) => ConnectError::TypeMismatch {
-                    from,
-                    from_type: out.clone(),
-                    to,
-                    to_type: into.clone(),
-                },
-                // Exactly one end carries control: two control ports cross
-                // directly and are never refused, so that pair cannot arrive
-                // here — asserted by `r1599_control_to_control_is_the_one_pair_
-                // with_no_type_question`.
-                (source_type, _) => ConnectError::FlowMismatch {
-                    from,
-                    to,
-                    control_end: if source_type.is_none() {
-                        Side::Output
-                    } else {
-                        Side::Input
-                    },
-                },
-            });
-        }
+        // ★ R2133 — the crossing rule is `crossing_rule`'s now, because the
+        // prospective question asks the same rule of a node that is not in the
+        // tree. Extracted rather than copied: a second spelling of it would be
+        // free to disagree, and the disagreement would be silent because both
+        // spellings would still be producing links.
+        crossing_rule::<K, _>(source, sink, &from, &to)?;
         if from.node == to.node {
             return Err(ConnectError::SelfLink(from.node));
         }
@@ -5027,13 +5240,16 @@ impl<K: NodeKind> Document<K> {
         // Asked after the self-link check on purpose: a node is required to
         // admit its own kind, so asking first would make a self-link's refusal
         // depend on the taxonomy rather than on the graph.
-        if let Some(Admission::Refused(why)) = self.admission(tree, from, to) {
-            return Err(ConnectError::Incompatible {
-                from,
-                to,
-                refusal: why,
-            });
-        }
+        //
+        // ★ R2133 — the taxonomy's half is `admission_rule`'s, for the reason
+        // above; what stays here is reading the two BODIES out of the tree,
+        // which is the half a node that is not in it cannot do.
+        admission_rule::<K, _>(
+            self.kind_at(tree, from.node),
+            self.kind_at(tree, to.node),
+            &from,
+            &to,
+        )?;
         // R1599 — **only a value link may not close a cycle.** A cycle through
         // control links is not a contradiction, it is a LOOP: the thing every
         // real execution graph is built to express. So the acyclicity check
@@ -5072,16 +5288,19 @@ impl<K: NodeKind> Document<K> {
             return Err(ConnectError::WouldCycle { path });
         }
 
-        // R1599 — which end has to give way is the port's own limit, and the
-        // two flows put it on opposite ends: a value INPUT takes one producer,
-        // a control OUTPUT takes one successor.
-        Ok(if sink.multiplicity(Side::Input) == Multiplicity::One {
-            Some(Side::Input)
-        } else if source.multiplicity(Side::Output) == Multiplicity::One {
-            Some(Side::Output)
-        } else {
-            None
-        })
+        // R1599 — which end has to give way is the port's own limit, and since
+        // R2133 that is `crowded_end`'s, for the prospective question's reason.
+        Ok(crowded_end::<K>(source, sink))
+    }
+
+    /// The application kind at a node, or `None` when its body carries none
+    /// (R2133).
+    ///
+    /// The one reader of a body's kind for the pair rules, so
+    /// [`admission`](Self::admission) and [`vet`](Self::vet) cannot come to
+    /// different conclusions about what a structural body admits.
+    pub(crate) fn kind_at(&self, tree: TreeId, node: NodeId) -> Option<&K> {
+        self.tree(tree)?.node(node)?.body.kind()
     }
 
     /// Take the link at `at` out of the tree's order, answering it.
@@ -6597,29 +6816,48 @@ impl std::error::Error for EditError {}
 
 /// Why two sockets could not be linked.
 ///
-/// Every arm names the sockets it is about. A wire that is refused without
+/// Every arm names the ends it is about. A wire that is refused without
 /// saying which end was wrong leaves the user to guess, which is the whole
 /// reason this is not a `bool`.
+///
+/// ★★★★★ R2133 — **`S` is how an end is NAMED**, and it defaults to [`Socket`]
+/// so that every caller who is wiring two nodes that exist writes
+/// `ConnectError<T>` exactly as before.
+///
+/// The parameter exists because one end of a pair may belong to a node that is
+/// **not in the tree yet** — the question a palette asks before it creates a
+/// card ([`Document::may_autowire_prospect`]). Until this round that end could
+/// only be named with a [`NodeId`] borrowed from a throwaway copy of the
+/// document, which means nothing outside that copy: measured on the lab's
+/// opening graph, the reason published on the wire read *node 2.0 may not reach
+/// **node 10.0*** while the document a reader holds has nodes 0 through 9 and
+/// no node 10 at all.
+///
+/// Generalising the slot rather than adding a second refusal enum is what keeps
+/// there being **one** refusal vocabulary: the arms, their meanings and their
+/// sentences are shared, and only the spelling of an end varies. See
+/// [`Prospect`] for the instantiation that can say *the node that would
+/// arrive*.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum ConnectError<T> {
+pub enum ConnectError<T, S = Socket> {
     /// One end names a node that is not in the tree.
-    NoSuchNode(Socket),
+    NoSuchNode(S),
     /// One end names a port the node does not have.
     NoSuchPort {
         /// The offending socket.
-        socket: Socket,
+        socket: S,
         /// How many ports that end actually has.
         arity: u32,
     },
     /// The two ports carry different types.
     TypeMismatch {
-        /// The producing socket.
-        from: Socket,
+        /// The producing end.
+        from: S,
         /// What it produces.
         from_type: T,
-        /// The consuming socket.
-        to: Socket,
+        /// The consuming end.
+        to: S,
         /// What it expects.
         to_type: T,
     },
@@ -6630,10 +6868,10 @@ pub enum ConnectError<T> {
     /// differently: a type mismatch means find a conversion, a flow mismatch
     /// means you have wired an execution pin to a number.
     FlowMismatch {
-        /// The producing socket.
-        from: Socket,
-        /// The consuming socket.
-        to: Socket,
+        /// The producing end.
+        from: S,
+        /// The consuming end.
+        to: S,
         /// Which end carries control — the other carries a value.
         control_end: Side,
     },
@@ -6644,10 +6882,10 @@ pub enum ConnectError<T> {
     /// type mismatch by finding a conversion and fixes this by changing one of
     /// the two ends, and [`Refusal::end`] says which.
     Incompatible {
-        /// The producing socket.
-        from: Socket,
-        /// The consuming socket.
-        to: Socket,
+        /// The producing end.
+        from: S,
+        /// The consuming end.
+        to: S,
         /// Which end to change, and the application's sentence saying why.
         refusal: Refusal,
     },
@@ -6661,12 +6899,15 @@ pub enum ConnectError<T> {
     },
 }
 
-impl<T: fmt::Debug> fmt::Display for ConnectError<T> {
+impl<T: fmt::Debug, S: fmt::Display> fmt::Display for ConnectError<T, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoSuchNode(socket) => write!(f, "no such node for {socket}"),
+            // ★ R2133 — the index comes out of the end's own display rather
+            // than off a `.port` field, because an end is now whatever `S` is
+            // and only `S` knows how to spell itself.
             Self::NoSuchPort { socket, arity } => {
-                write!(f, "{socket} names port {} of {arity}", socket.port)
+                write!(f, "{socket} is not there: that end has {arity} port(s)")
             }
             Self::TypeMismatch {
                 from,
@@ -6713,4 +6954,4 @@ impl<T: fmt::Debug> fmt::Display for ConnectError<T> {
     }
 }
 
-impl<T: fmt::Debug> std::error::Error for ConnectError<T> {}
+impl<T: fmt::Debug, S: fmt::Debug + fmt::Display> std::error::Error for ConnectError<T, S> {}

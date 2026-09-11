@@ -307,8 +307,8 @@ pub use model::{
     Described, Description, Document, DroppedLink, EditError, Flow, Found, InZone, Instance,
     Interface, InterfaceSide, Judged, KindPort, Link, LinkId, Matched, Multiplicity, Node,
     NodeAddress, NodeBody, NodeId, NodeKind, PairError, Port, PortRef, PortValueError,
-    PortValueResult, ROOT, Refusal, Relabelled, Removed, Represented, Seed, Side, Signature,
-    Socket, Tree, TreeId, crossing,
+    PortValueResult, Prospect, ROOT, Refusal, Relabelled, Removed, Represented, Seed, Side,
+    Signature, Socket, Tree, TreeId, crossing,
 };
 pub use naming::{Labelled, NameSource, PortName};
 pub use naming_scope::{Copying, Naming};

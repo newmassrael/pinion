@@ -34,6 +34,121 @@ fn state() -> LabState {
     LabState::opening()
 }
 
+/// ★★★★★ R2133 — **the waiting wire's roster names no card the document does
+/// not have**, and says which refusal it was.
+///
+/// The defect this round closed, held where it actually reached a reader.
+/// R1987 answered this register by copying the whole document once per role,
+/// adding the card to the copy and asking there — so every refusing row carried
+/// a [`NodeId`] the copy had just minted. Measured on this opening graph before
+/// the repair, all nineteen refusals read *node 2.0 may not reach **node
+/// 10.0*** while the document holds cards 0 through 9: `10` was the copy's
+/// `next_node`, which is the id the NEXT card created will be handed, so a
+/// reader who resolved it afterwards would be shown an unrelated card.
+///
+/// Both halves are asserted. The sentence must name only cards that are there,
+/// and the row must carry the **arm** as well — a client could previously only
+/// print the reason, because a structured refusal full of meaningless ids is
+/// worse than a string.
+#[test]
+fn r2133_the_waiting_roster_names_no_card_the_document_does_not_have() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let here = state.here();
+        let held: BTreeSet<u32> = state
+            .doc
+            .borrow()
+            .tree(here)
+            .expect("a tree")
+            .nodes()
+            .map(|n| n.id.0)
+            .collect();
+        let from = *state.cards().first().expect("the opening graph has cards");
+        state.pending_wire.set(Some(super::PendingWire {
+            from,
+            port: 0,
+            at: (100, 100),
+        }));
+
+        let waiting = super::waiting_wire(&state);
+        let roles = waiting["roles"].as_array().expect("a roster");
+        assert_eq!(roles.len(), Role::ALL.len(), "one row per role: {waiting}");
+
+        let mut taking = 0_u32;
+        let mut refusing = 0_u32;
+        let mut named_cards = 0_u32;
+        for row in roles {
+            if row["takes"] == serde_json::Value::Bool(true) {
+                taking += 1;
+                continue;
+            }
+            refusing += 1;
+            let arm = row["refusal"].as_str().expect("a refusal arm: {row}");
+            assert!(
+                [
+                    "gone",
+                    "no-such-pin",
+                    "not-admitted",
+                    "pins-not-known-yet",
+                    "no-accept-pin",
+                    "type-mismatch",
+                    "flow-mismatch",
+                    "pair-refused",
+                    "refused",
+                ]
+                .contains(&arm),
+                "★ the arm is from the published vocabulary: {row}"
+            );
+            let said = row["because"].as_str().expect("a sentence");
+            for named in cards_named_in(said) {
+                named_cards += 1;
+                assert!(
+                    held.contains(&named),
+                    "★ the refusal names card {named}, which this document does \
+                     not have ({held:?}): {said}"
+                );
+            }
+        }
+        // ★★★★★ And the scan must actually find cards, or the loop above holds
+        // vacuously and this test would pass on a sentence naming nothing at
+        // all — which is the failure mode a `contains` check cannot see. The
+        // sentences DO name the card the wire is leaving; it is the ARRIVING
+        // end that names none, and that is the difference being asserted.
+        assert!(
+            named_cards > 0,
+            "★ no sentence named a card, so the check above ran over nothing: \
+             {waiting}"
+        );
+        // ★ R1845's rule — both outcomes must be in the population, or the
+        // assertion above holds over nothing. A roster that refused everything
+        // is also the shape R2084 found and fixed.
+        assert!(
+            taking > 0 && refusing > 0,
+            "the roster must reach both answers: {taking} take it, {refusing} \
+             refuse: {waiting}"
+        );
+    });
+}
+
+/// Every card a refusal's sentence names, by id (R2133).
+///
+/// The sentence spells a placed end `node <id>.<pin>` ([`Socket`]'s own
+/// display) and the arriving end *the arriving card's pin n*, which carries no
+/// id at all — so anything this finds must be a card the document holds.
+fn cards_named_in(sentence: &str) -> Vec<u32> {
+    sentence
+        .match_indices("node ")
+        .filter_map(|(at, word)| {
+            let digits: String = sentence[at + word.len()..]
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
+            digits.parse().ok()
+        })
+        .collect()
+}
+
 /// ★★★★★ R1726 — **a card you picked up stays in front after you put it down.**
 ///
 /// The owner's report, and the half a transient lift does not answer. Measured

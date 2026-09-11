@@ -11,17 +11,17 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Act, Admission, Admits, AdoptError, Align, Appearance, Archive, Arrival, AutowireError, Axis,
     BeaconError, BreakError, Breakpoints, Bringup, Camera, Carried, Carrying, Command, Composition,
-    Condition, ConnectError, Container, Control, Conversion, Copying, Crossings, Definitions,
-    Direction, Discovery, Distribute, Document, Drawn, Dropped, DuplicateError, Edge, EditError,
-    EditPath, Extent, ExtractError, Fit, Flow, Focus, ForceError, Fragment, GroupError, Grow, Halt,
-    InsertError, Inspectable, Instance, InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer,
-    Machine, Margin, Multiplicity, Naming, NestError, Node, NodeAddress, NodeBody, NodeId,
-    NodeKind, NodeSite, ObserveError, Occurrence, Organic, Orphaned, ParentError, Passing,
-    PathError, Port, PortPath, PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled,
-    Relatedness, RelinkError, Renamed, RepartitionError, RetypeError, Route, RunError, SectionId,
-    SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing, Stop, Straighten,
-    Stride, SwapError, SwitchRefusal, Tick, Tie, Timeline, Tint, TreeId, Unframed, UngroupError,
-    Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
+    Condition, ConnectError, Container, Control, Conversion, Copying, Crossings, Declined,
+    Definitions, Direction, Discovery, Distribute, Document, Drawn, Dropped, DuplicateError, Edge,
+    EditError, EditPath, Extent, ExtractError, Fit, Flow, Focus, ForceError, Fragment, GroupError,
+    Grow, Halt, InsertError, Inspectable, Instance, InterfaceSide, Item, ItemError, Layered,
+    LinkId, LinkLayer, Machine, Margin, Multiplicity, Naming, NestError, Node, NodeAddress,
+    NodeBody, NodeId, NodeKind, NodeSite, ObserveError, Occurrence, Organic, Orphaned, ParentError,
+    Passing, PathError, Port, PortPath, PortRef, PortSite, PortValueError, Prospect, ROOT, Reach,
+    Relabelled, Relatedness, RelinkError, Renamed, RepartitionError, RetypeError, Route, RunError,
+    SectionId, SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing, Stop,
+    Straighten, Stride, SwapError, SwitchRefusal, Tick, Tie, Timeline, Tint, TreeId, Unframed,
+    UngroupError, Unreadable, Uptake, Violation, WatchError, Watches, ZoomRange, crossing,
 };
 use crate::{AdvancedView, ClassSource, Classified, Classify, ClassifyError, Hidden, PortClass};
 use crate::{Alone, Represented, StandInError};
@@ -15022,7 +15022,12 @@ fn r1924_a_relink_refusal_says_itself_rather_than_its_debug_spelling() {
         .unwrap_err();
     let sentence = format!("{why}");
     assert!(
-        sentence.contains("cannot feed itself") || sentence.contains("names port"),
+        // ★ R2133 — `is not there`, where this read `names port`. Generalising
+        // [`ConnectError`] over how an end is named took `.port` away from the
+        // sentence (only `S` knows how to spell itself), so the arm now says
+        // what [`AutowireError::NoSuchPort`] has always said — one fact, one
+        // sentence, which is the better end of the trade rather than a cost.
+        sentence.contains("cannot feed itself") || sentence.contains("is not there"),
         "the refusal reads as a sentence: {sentence}"
     );
     for spelling in ["SelfLink", "NoSuchPort", "NodeId(", "Socket {"] {
@@ -19518,10 +19523,10 @@ fn r1987_no_pin_at_all_is_not_the_same_answer_as_every_pin_refusing() {
 
     assert_eq!(
         document.autowire_uptakes(ROOT, Socket::new(level, 0), Side::Output, source),
-        Err(AutowireError::NoPorts {
-            node: source,
-            side: Side::Input,
-        }),
+        // ★ R2133 — the arm no longer echoes back the `arriving` argument the
+        // line above just passed it; that echo was what stopped it being
+        // sayable about a card with no id.
+        Err(AutowireError::NoPorts { side: Side::Input }),
         "★ Level produces and never consumes, so there is no pin to offer"
     );
 
@@ -19796,6 +19801,433 @@ fn r1987_a_refusal_a_person_reads_uses_the_prose_word_not_the_wire_token() {
              start accepting it because a sentence was improved"
         );
     }
+}
+
+// ── R2133 — the same question, asked before the card exists ─────────────────
+
+/// One refusal, renamed from the trial copy's spelling into the prospective
+/// one (R2133).
+///
+/// The translation is written HERE, in the test, on purpose: it is the claim
+/// the agreement gate below is making — *the copy's answer and the prospective
+/// answer are the same refusal, and the only difference is how the arriving
+/// end is spelled*. Writing it in the crate would let the two paths share a
+/// conversion and agree by construction, which is exactly what must not be
+/// assumed.
+fn as_prospect<T>(why: ConnectError<T, Socket>, trial: NodeId) -> ConnectError<T, Prospect> {
+    let end = |socket: Socket| {
+        if socket.node == trial {
+            Prospect::Arriving(socket.port)
+        } else {
+            Prospect::Placed(socket)
+        }
+    };
+    match why {
+        ConnectError::NoSuchNode(socket) => ConnectError::NoSuchNode(end(socket)),
+        ConnectError::NoSuchPort { socket, arity } => ConnectError::NoSuchPort {
+            socket: end(socket),
+            arity,
+        },
+        ConnectError::TypeMismatch {
+            from,
+            from_type,
+            to,
+            to_type,
+        } => ConnectError::TypeMismatch {
+            from: end(from),
+            from_type,
+            to: end(to),
+            to_type,
+        },
+        ConnectError::FlowMismatch {
+            from,
+            to,
+            control_end,
+        } => ConnectError::FlowMismatch {
+            from: end(from),
+            to: end(to),
+            control_end,
+        },
+        ConnectError::Incompatible { from, to, refusal } => ConnectError::Incompatible {
+            from: end(from),
+            to: end(to),
+            refusal,
+        },
+        ConnectError::SelfLink(node) => ConnectError::SelfLink(node),
+        ConnectError::WouldCycle { path } => ConnectError::WouldCycle { path },
+    }
+}
+
+/// [`as_prospect`] for the whole answer (R2133).
+fn autowire_as_prospect<T>(
+    why: AutowireError<T, Socket>,
+    trial: NodeId,
+) -> AutowireError<T, Prospect> {
+    match why {
+        AutowireError::NoneTakes { declined } => AutowireError::NoneTakes {
+            declined: declined
+                .into_iter()
+                .map(|one| Declined {
+                    port: one.port,
+                    at: one.at,
+                    why: as_prospect(one.why, trial),
+                })
+                .collect(),
+        },
+        AutowireError::NoSuchTree(tree) => AutowireError::NoSuchTree(tree),
+        AutowireError::NoSuchNode(node) => AutowireError::NoSuchNode(node),
+        AutowireError::NoSuchPort { socket, arity } => AutowireError::NoSuchPort { socket, arity },
+        AutowireError::NotAdmitted(why) => AutowireError::NotAdmitted(why),
+        AutowireError::PortsNotYetDerivable => AutowireError::PortsNotYetDerivable,
+        AutowireError::NoPorts { side } => AutowireError::NoPorts { side },
+    }
+}
+
+/// What the caller had to do before R2133, kept as the thing being compared
+/// against: copy the document, add the card, ask, throw the copy away.
+///
+/// Not a fallback and not called by anything the crate ships — it exists so
+/// the gate below has a second, independent answer to hold the new one to.
+fn by_copying<K: NodeKind>(
+    document: &Document<K>,
+    tree: TreeId,
+    dangling: Socket,
+    leaving: Side,
+    body: &NodeBody<K>,
+) -> (Result<Uptake, AutowireError<K::Type, Prospect>>, NodeId) {
+    let mut trial = document.clone();
+    match trial.add_node(tree, body.clone(), 0, 0) {
+        Ok(card) => (
+            trial
+                .may_autowire(tree, dangling, leaving, card)
+                .map_err(|why| autowire_as_prospect(why, card)),
+            card,
+        ),
+        Err(why) => (Err(AutowireError::NotAdmitted(why)), NodeId(u32::MAX)),
+    }
+}
+
+/// ★★★★★ R2133 — **asking before the card exists answers what asking after it
+/// exists answers**, over a population rather than a case.
+///
+/// This is the whole claim of the round. [`Document::may_autowire_prospect`]
+/// is not a second, weaker rule for the hypothetical case — the drift this
+/// crate refuses everywhere — it is the same rules on the same graph, so its
+/// answer must be indistinguishable from the copy-and-add the lab was doing,
+/// down to the chosen pin, its address, how the value arrives and what it
+/// would evict.
+///
+/// Two taxonomies, because they refuse for different reasons and a sweep over
+/// one would leave the other's rule unchecked: `LOp` refuses on the **type**
+/// relation, `Peer` has a single type and can only refuse on the **pair** rule
+/// (R1885). The counts at the end are R1985's rule — a sweep that never
+/// reached a refusal would hold this vacuously.
+#[test]
+fn r2133_asking_before_the_card_exists_answers_what_asking_after_does() {
+    let mut agreed = 0_u32;
+    let mut refusals = 0_u32;
+    let mut displacing = 0_u32;
+
+    let kinds = [
+        LOp::Level(1),
+        LOp::Swatch([1, 1, 1]),
+        LOp::Sum,
+        LOp::Cross,
+        LOp::Meter,
+        LOp::Wash,
+        LOp::Sink,
+    ];
+    // A document with a link already on it, so a drag off an INPUT can find a
+    // pin whose limit the new wire exceeds — which is the only way `displaces`
+    // is anything but `None` here, and therefore the only way the two answers
+    // can disagree about it.
+    let mut document: Document<LOp> = Document::new("root");
+    let level = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(4)), 0, 0)
+        .unwrap();
+    let swatch = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Swatch([1, 2, 3])), 0, 120)
+        .unwrap();
+    let sum = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Sum), 300, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(swatch, 0), Socket::new(sum, 0))
+        .expect("a vector reaches Sum's first pin");
+
+    for node in [level, swatch, sum] {
+        for leaving in Side::ALL {
+            let signature = document.signature(ROOT, node).expect("a signature");
+            let arity = match leaving {
+                Side::Input => signature.inputs.len(),
+                Side::Output => signature.outputs.len(),
+            };
+            for port in 0..u32::try_from(arity).unwrap() {
+                let dangling = Socket::new(node, port);
+                for kind in &kinds {
+                    let body = NodeBody::Kind(kind.clone());
+                    let (copied, trial) = by_copying(&document, ROOT, dangling, leaving, &body);
+                    let asked = document.may_autowire_prospect(ROOT, dangling, leaving, &body);
+                    assert_eq!(
+                        asked, copied,
+                        "★ {kind:?} arriving at {dangling} leaving {leaving:?}: the \
+                         prospective answer and the copy's disagree (trial was \
+                         {trial:?})",
+                    );
+                    match &asked {
+                        Ok(took) => {
+                            if took.displaces.is_some() {
+                                displacing += 1;
+                            }
+                        }
+                        Err(_) => refusals += 1,
+                    }
+                    agreed += 1;
+                }
+            }
+        }
+    }
+
+    // The pair rule's own taxonomy: one socket type, so nothing here can be
+    // refused for a crossing and every refusal is `Incompatible`.
+    let mut peers: Document<Peer> = Document::new("root");
+    let near = peers.add_node(ROOT, NodeBody::Kind(Peer(4)), 0, 0).unwrap();
+    let mut incompatible = 0_u32;
+    for candidate in [Peer(3), Peer(4), Peer(5), Peer(40)] {
+        let body = NodeBody::Kind(candidate);
+        for leaving in Side::ALL {
+            let dangling = Socket::new(near, 0);
+            let (copied, trial) = by_copying(&peers, ROOT, dangling, leaving, &body);
+            let asked = peers.may_autowire_prospect(ROOT, dangling, leaving, &body);
+            assert_eq!(asked, copied, "★ {candidate:?} (trial was {trial:?})");
+            if let Err(AutowireError::NoneTakes { declined }) = &asked {
+                assert!(
+                    declined
+                        .iter()
+                        .all(|one| matches!(one.why, ConnectError::Incompatible { .. })),
+                    "this taxonomy can only refuse on the pair rule: {declined:?}"
+                );
+                incompatible += 1;
+            }
+            agreed += 1;
+        }
+    }
+
+    assert!(
+        agreed > 0 && refusals > 0 && displacing > 0 && incompatible > 0,
+        "★ the sweep must reach every outcome it is holding the two answers to: \
+         {agreed} compared, {refusals} refused, {displacing} displacing, \
+         {incompatible} refused by the pair rule"
+    );
+}
+
+/// ★★★★★ R2133 — **the two rules a prospective pair cannot break**, asserted
+/// rather than argued.
+///
+/// [`Document::vet`] applies four rules; the prospective planner applies two of
+/// them and skips a self link and a cycle. That is a claim about the graph — an
+/// arriving card is not the card the wire is leaving, and a card with no links
+/// is on no path — and if it is wrong then the prospective answer is a *weaker*
+/// rule wearing the same name, which is the one outcome this round must not
+/// have.
+///
+/// So it is checked from the other side: over the sweep above's population, the
+/// copy-and-add path, which DOES apply all four, never once answers either of
+/// them. The population deliberately includes a wire dragged off a node whose
+/// own kind would happily take it back.
+#[test]
+fn r2133_the_two_rules_a_prospective_pair_cannot_break() {
+    let mut document: Document<LOp> = Document::new("root");
+    let level = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Level(4)), 0, 0)
+        .unwrap();
+    let cross = document
+        .add_node(ROOT, NodeBody::Kind(LOp::Cross), 200, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(level, 0), Socket::new(cross, 0))
+        .expect("a scalar reaches Cross's scalar pin");
+
+    let mut seen = 0_u32;
+    for node in [level, cross] {
+        for leaving in Side::ALL {
+            let signature = document.signature(ROOT, node).expect("a signature");
+            let arity = match leaving {
+                Side::Input => signature.inputs.len(),
+                Side::Output => signature.outputs.len(),
+            };
+            for port in 0..u32::try_from(arity).unwrap() {
+                for kind in [LOp::Cross, LOp::Sum, LOp::Level(1), LOp::Meter] {
+                    let body = NodeBody::Kind(kind);
+                    let (copied, _) =
+                        by_copying(&document, ROOT, Socket::new(node, port), leaving, &body);
+                    if let Err(AutowireError::NoneTakes { declined }) = &copied {
+                        for one in declined {
+                            assert!(
+                                !matches!(
+                                    one.why,
+                                    ConnectError::SelfLink(_) | ConnectError::WouldCycle { .. }
+                                ),
+                                "★ a card that does not exist yet was refused by a \
+                                 rule about where it sits: {:?}",
+                                one.why
+                            );
+                        }
+                    }
+                    seen += 1;
+                }
+            }
+        }
+    }
+    assert!(seen > 0, "the population is not empty");
+}
+
+/// ★★★★★ R2133 — **the refusal a client receives names no node the document
+/// does not have.**
+///
+/// The defect that made this round's second half worth doing, held as a
+/// property. Measured on the analyzer lab before the repair, the reason
+/// published on the wire read *node 2.0 may not reach node 10.0* while the
+/// document had nodes 0 through 9: `10` was the trial copy's `next_node`, and
+/// it is exactly the id the next card created will be handed — so a reader who
+/// resolved it later would be shown an unrelated card.
+///
+/// Both halves are asserted, because the second is what gives the first a way
+/// to fail: the copy's answer DOES name it, and the prospective one does not.
+#[test]
+fn r2133_a_prospective_refusal_names_no_node_the_document_does_not_have() {
+    let mut document: Document<Peer> = Document::new("root");
+    let near = document
+        .add_node(ROOT, NodeBody::Kind(Peer(4)), 0, 0)
+        .unwrap();
+    let held: Vec<NodeId> = document
+        .tree(ROOT)
+        .expect("a tree")
+        .nodes()
+        .map(|n| n.id)
+        .collect();
+    let body = NodeBody::Kind(Peer(40));
+    let dangling = Socket::new(near, 0);
+
+    let (copied, trial) = by_copying(&document, ROOT, dangling, Side::Output, &body);
+    assert!(
+        !held.contains(&trial),
+        "★ the trial card's id is not one the document has: {trial:?} of {held:?}"
+    );
+    let AutowireError::NoneTakes { declined } = copied.expect_err("peer40 is too far from peer4")
+    else {
+        panic!("the pair rule refuses every pin");
+    };
+    assert!(
+        declined.iter().any(|one| matches!(
+            one.why,
+            ConnectError::Incompatible {
+                to: Prospect::Arriving(_),
+                ..
+            }
+        )),
+        "★ the copy's refusal names the trial card, which is what had to be \
+         flattened into a string before it could be published: {declined:?}"
+    );
+
+    let asked = document
+        .may_autowire_prospect(ROOT, dangling, Side::Output, &body)
+        .expect_err("the same refusal");
+    let sentence = asked.to_string();
+    for node in document.tree(ROOT).expect("a tree").nodes() {
+        let _ = node;
+    }
+    let AutowireError::NoneTakes { declined } = &asked else {
+        panic!("the same arm");
+    };
+    for one in declined {
+        for end in ends_of(&one.why) {
+            match end {
+                // A placed end must be a node the document actually has.
+                Prospect::Placed(socket) => assert!(
+                    held.contains(&socket.node),
+                    "★ {socket} is not in the document: {held:?}"
+                ),
+                // And the arriving end names no node at all, which is the
+                // point: there is nothing for a reader to resolve wrongly.
+                Prospect::Arriving(_) => {}
+            }
+        }
+    }
+    assert!(
+        sentence.contains("the arriving card"),
+        "★ and a person reads *the arriving card*, not a number: {sentence}"
+    );
+}
+
+/// Every end one refusal names (R2133).
+fn ends_of<T: Clone>(why: &ConnectError<T, Prospect>) -> Vec<Prospect> {
+    match why {
+        ConnectError::NoSuchNode(end) | ConnectError::NoSuchPort { socket: end, .. } => vec![*end],
+        ConnectError::TypeMismatch { from, to, .. }
+        | ConnectError::FlowMismatch { from, to, .. }
+        | ConnectError::Incompatible { from, to, .. } => vec![*from, *to],
+        ConnectError::SelfLink(_) | ConnectError::WouldCycle { .. } => Vec::new(),
+    }
+}
+
+/// ★★★★★ R2133 — **the two signature derivations partition the bodies.**
+///
+/// [`Document::prospective_signature`] answers for the bodies whose ports are a
+/// function of the body, and `declared_signature` falls through to its four
+/// remaining arms for the ones derived from where the node lands. If the two
+/// halves ever overlap, one body's ports get derived twice and the copies are
+/// free to drift; if they ever leave a gap, `declared_signature` reaches an arm
+/// that answers `None` and a placed node loses its ports.
+///
+/// So the partition is asserted over every body, against the predicate a caller
+/// reads — [`NodeBody::ports_are_derived_from_where_it_lands`] — and every body
+/// is then placed and asked, which is what closes the gap half.
+#[test]
+fn r2133_the_two_signature_derivations_partition_the_bodies() {
+    let mut document: Document<LOp> = Document::new("root");
+    let inner = document.add_definition("inner");
+    let beacon = document
+        .add_node(ROOT, NodeBody::Beacon, 0, 400)
+        .expect("a beacon");
+
+    let bodies: Vec<NodeBody<LOp>> = vec![
+        NodeBody::Kind(LOp::Sum),
+        NodeBody::Group(inner),
+        NodeBody::Frame,
+        NodeBody::Delay(LTy::Scalar),
+        NodeBody::Reroute,
+        NodeBody::Beacon,
+        NodeBody::Echo(beacon),
+    ];
+    let mut derived = 0_u32;
+    let mut known = 0_u32;
+    for body in bodies {
+        let ahead = document.prospective_signature(ROOT, &body);
+        assert_eq!(
+            ahead.is_none(),
+            body.ports_are_derived_from_where_it_lands(),
+            "★ the predicate and the answer must be the same partition: {body:?}"
+        );
+        if ahead.is_none() {
+            derived += 1;
+        } else {
+            known += 1;
+        }
+        // And whichever half it is in, a PLACED node of that body still has a
+        // signature — the half a partition with a gap in it would break.
+        let placed = document
+            .add_node(ROOT, body.clone(), 0, 0)
+            .expect("every body here is admitted");
+        assert!(
+            document.signature(ROOT, placed).is_some(),
+            "★ a placed {body:?} has no signature at all"
+        );
+    }
+    assert!(
+        derived > 0 && known > 0,
+        "both halves of the partition are populated: {derived} derived, {known} known"
+    );
 }
 
 /// A graph with a **sibling**: `one -> both`, `other -> both`, `both -> end`.

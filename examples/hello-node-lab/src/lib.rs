@@ -159,12 +159,13 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Act, AdvancedView, Alone, Arrival, Camera, ClassSource, Classify, Crossings, Definitions,
-    Document, Drawn, EditPath, Extent, Faces, Fault, Fit, Focus, Focused, Found, Fragment, InZone,
-    Instance, Item, Judged, LandError, Landfall, LinkId, LinkLayer, Margin, NameSource, Node,
-    NodeAddress, NodeBody, NodeId, NodeKind, Objection, ParentError, PortPath, PortRef, PortSite,
-    ROOT, Relinked, Room, RoomError, Sharing, Side, Socket, Tint, TreeId, Violation, WatchError,
-    Watches, Weight, Widening, ZoomRange, palette_of, type_palette,
+    Act, AdvancedView, Alone, Arrival, AutowireError, Camera, ClassSource, Classify, ConnectError,
+    Crossings, Definitions, Document, Drawn, EditPath, Extent, Faces, Fault, Fit, Focus, Focused,
+    Found, Fragment, InZone, Instance, Item, Judged, LandError, Landfall, LinkId, LinkLayer,
+    Margin, NameSource, Node, NodeAddress, NodeBody, NodeId, NodeKind, Objection, ParentError,
+    PortPath, PortRef, PortSite, Prospect, ROOT, Relinked, Room, RoomError, Sharing, Side, Socket,
+    Tint, TreeId, Violation, WatchError, Watches, Weight, Widening, ZoomRange, palette_of,
+    type_palette,
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -27831,20 +27832,41 @@ fn focus_wire(state: &Rc<LabState>) -> serde_json::Value {
 /// ★★★★★ R1987 — **the wire waiting for a card, and what each role would do
 /// with it.**
 ///
-/// # Why the roles are answered by TRYING, and why that is not a shortcut
+/// # Why the roles are answered by asking, and what that used to cost
 ///
 /// [`Document::may_autowire`] is asked of a node that exists, and a palette
 /// row's card does not exist yet. Rather than inventing a second, weaker rule
 /// for the hypothetical case — which is the drift this tree refuses everywhere
-/// else — the question is asked **on a copy of the document with the card
-/// actually in it**. That is §2 #3, this project's `dry_run` primitive, used
-/// for what it is for: a scenario explored on a document nobody is looking at,
-/// thrown away, and the real one untouched.
+/// else — R1987 asked the question **on a copy of the document with the card
+/// actually in it**: §2 #3's `dry_run`, used for exactly what it is for.
 ///
-/// So the answer is exact rather than approximate: it is the same call the
-/// press will make, on the same graph, with the same card. The reference cannot
-/// ask this at all — its hook is a `void` on a node that has already been
-/// created inside a modal menu, so a person there finds out by choosing.
+/// ★★★★★ R2133 — **the crate answers it directly now**
+/// ([`Document::may_autowire_prospect`]), and the copy is gone. Two things
+/// were wrong with it, and both were measured before anything was built:
+///
+/// * **it cost the whole document, once per role.** Release build, this
+///   screen's 21 roles: **98.7 µs** per read of this register at 10 cards,
+///   **228 µs** at 100, **704 µs** at 590, **2.10 ms** at 1,580 — linear in the
+///   card count at about 1.27 µs per card per role-sweep. R1987 wrote *harmless*
+///   here and gave its reason as *eight roles*; R2078 made it 21 and nobody
+///   re-read the sentence. Measured again through this call, same machine and
+///   same build: **21.2 µs at 100 cards, 21.1 at 590, 21.4 at 1,580** — the
+///   slope is gone, because the answer now costs one candidate's pins and not
+///   one copy of the graph. At 1,580 cards that is ~98x.
+/// * **the answer named a card that does not exist.** The copy's `add_node`
+///   mints a [`NodeId`], and it reached the wire: measured on the opening
+///   graph, every refusing row read *node 2.0 may not reach **node 10.0*** while
+///   the document has cards 0 through 9. `10` was the copy's `next_node` — the
+///   id the NEXT card created will get — so a reader resolving it later is shown
+///   an unrelated card. That is why the reason had to be flattened to a
+///   **string** to be published at all.
+///
+/// So the answer is still exact — `r2133_asking_before_the_card_exists_answers_
+/// what_asking_after_does` holds the crate's two answers to each other over a
+/// population — and the refusal now crosses the wire as the structured thing it
+/// is. The reference cannot ask this at all: its hook is a `void` on a node that
+/// has already been created inside a modal menu, so a person there finds out by
+/// choosing.
 ///
 /// `null` when nothing is waiting, which is a different statement from an empty
 /// roster.
@@ -27854,11 +27876,11 @@ fn waiting_wire(state: &Rc<LabState>) -> serde_json::Value {
     };
     let here = state.here();
     let leaving = Socket::new(waiting.from, waiting.port);
+    let doc = state.doc.borrow();
     let rows: Vec<serde_json::Value> = Role::ALL
         .iter()
         .map(|role| {
-            // A copy, so the graph a person is looking at is not touched by the
-            // question. The card is added the way `add_node` adds one, because
+            // The card is described the way `add_node` would build it, because
             // an answer about a differently-built card is an answer about
             // something else.
             //
@@ -27869,25 +27891,14 @@ fn waiting_wire(state: &Rc<LabState>) -> serde_json::Value {
             // then made every role answer *no pin takes the wire*, on a screen
             // where two of them would have taken it. Measured on the assembled
             // shell: twenty-one refusals, all of them wrong.
-            let mut trial = state.doc.borrow().clone();
-            let built = trial.add_node(
-                here,
-                NodeBody::Kind(LabNode {
-                    role: *role,
-                    listens_over: None,
-                    dials_over: None,
-                    listening: opens_listening(*role),
-                    implementation: Implementation::default(),
-                }),
-                waiting.at.0,
-                waiting.at.1,
-            );
-            let asked = built.map_err(|why| why.to_string()).and_then(|card| {
-                trial
-                    .may_autowire(here, leaving, Side::Output, card)
-                    .map_err(|why| why.to_string())
+            let body = NodeBody::Kind(LabNode {
+                role: *role,
+                listens_over: None,
+                dials_over: None,
+                listening: opens_listening(*role),
+                implementation: Implementation::default(),
             });
-            match asked {
+            match doc.may_autowire_prospect(here, leaving, Side::Output, &body) {
                 Ok(took) => serde_json::json!({
                     "role": role.name(),
                     "takes": true,
@@ -27906,17 +27917,66 @@ fn waiting_wire(state: &Rc<LabState>) -> serde_json::Value {
                 Err(why) => serde_json::json!({
                     "role": role.name(),
                     "takes": false,
-                    "because": why,
+                    // ★★★★★ R2133 — the arm, so a client can BRANCH, where this
+                    // was `why.to_string()` and a client could only show it.
+                    "refusal": refusal_reason(&why),
+                    // The sentence stays beside it, because the two have
+                    // different readers: an agent takes the arm, a person in a
+                    // toast takes this.
+                    "because": why.to_string(),
                 }),
             }
         })
         .collect();
+    drop(doc);
     serde_json::json!({
         "from": state.name_of(waiting.from),
         "pin": waiting.port,
         "at": [waiting.at.0, waiting.at.1],
         "roles": rows,
     })
+}
+
+/// ★★★★★ R2133 — **which refusal it was**, as a token a client can branch on.
+///
+/// Until this round a refused palette row carried only the sentence, because
+/// the answer came off a throwaway copy of the document and every arm of it
+/// named a [`NodeId`] the copy had just minted — meaningless outside the copy,
+/// and worse, equal to the id the *next* real card will be given. Flattening it
+/// was the only safe thing to do with it.
+///
+/// [`Document::may_autowire_prospect`] names the arriving end
+/// [`Prospect::Arriving`] instead, which names no node at all, so the arm is
+/// publishable. The tokens are the vocabulary and not the sentences: a person
+/// reads `because`, an agent reads this, and the two are allowed to be worded
+/// differently because they are read differently.
+///
+/// The three `ConnectError` arms below are the only ones a card that does not
+/// exist yet can reach — a self link and a cycle are facts about where a node
+/// sits, and this one does not sit anywhere — which is asserted on the crate
+/// side by `r2133_the_two_rules_a_prospective_pair_cannot_break`. The catch-all
+/// is therefore a token rather than an omission: a refusal this screen has no
+/// word for must still say that it happened.
+fn refusal_reason(why: &AutowireError<Endpoint, Prospect>) -> &'static str {
+    match why {
+        AutowireError::NoSuchTree(_) | AutowireError::NoSuchNode(_) => "gone",
+        AutowireError::NoSuchPort { .. } => "no-such-pin",
+        AutowireError::NotAdmitted(_) => "not-admitted",
+        AutowireError::PortsNotYetDerivable => "pins-not-known-yet",
+        AutowireError::NoPorts { .. } => "no-accept-pin",
+        AutowireError::NoneTakes { declined } => {
+            declined.first().map_or("refused", |one| match one.why {
+                ConnectError::TypeMismatch { .. } => "type-mismatch",
+                ConnectError::FlowMismatch { .. } => "flow-mismatch",
+                ConnectError::Incompatible { .. } => "pair-refused",
+                _ => "refused",
+            })
+        }
+        // The vocabulary is `#[non_exhaustive]`, so a refusal added upstream
+        // reaches here before this screen has a word for it. It says so rather
+        // than being reported as one of the words above.
+        _ => "refused",
+    }
 }
 
 /// ★★★★★ R1921 — `#rrggbb`, or the word for having no colour at all.
