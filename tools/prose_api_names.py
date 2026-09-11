@@ -103,6 +103,85 @@ FIELD = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?([a-z_][a-z_0-9]*)\s*:\s*[^=:]
 # exactly where rustdoc cannot help — see the module header.
 COMMENT = re.compile(r"//")
 
+# ★★★★★ R2146.2 — a function a MACRO declares is not in the source text at all.
+#
+# [`DEFINED`] reads `fn name` off the page, so a crate that declares its
+# functions through a `macro_rules!` has none of them in this gate's population
+# — and the gate then refuses prose citing a method that really exists. Measured
+# the day `pinion-chart` moved its 59 address composers and 11 overlay members
+# into a declaration macro: `Overlay::ring` and `Overlay::spoke` were refused as
+# naming nothing, while rustdoc resolved the very same links one step earlier in
+# the same push.
+#
+# ⇒ this is the module header's own rule biting: an over-narrow population
+# refuses good prose, and a gate that cries wolf is one that gets switched off.
+#
+# ⚠ The macro is not assumed to be a declaring one — it is DERIVED. A
+# `macro_rules!` whose expansion contains `fn $x(` declares functions named by
+# the metavariable, and only then are its invocations harvested. A macro that
+# expands to something else contributes nothing.
+#
+# ⚠⚠ WHAT THIS REACHES, MEASURED RATHER THAN CLAIMED: 72 names, all from
+# `pinion-chart`'s `address.rs`, whose rules are written `name(args) = …;`.
+# `pinion-core` declares two macros of this kind too (`forward_guard`,
+# `provider_slot_tests`) and NONE of their names is harvested, because their
+# invocations pass the name as a bare argument rather than as a rule head —
+# reading that would mean parsing each macro's matcher. So the hole is narrower
+# than it was and is not closed; it fails in the direction this gate already
+# fails in, by refusing prose rather than admitting a bad citation.
+MACRO_DEF = re.compile(r"^macro_rules!\s+([a-z_][a-z_0-9]*)")
+MACRO_DECLARES_FN = re.compile(r"\bfn\s+\$[a-z_][a-z_0-9]*\s*\(")
+# One rule of an invocation: an identifier at the head of an indented line,
+# followed by the parameter list or the `=` of a value. Indented, so the
+# invocation's own opening line cannot be read as one of its rules.
+RULE_HEAD = re.compile(r"^\s+([a-z_][a-z_0-9]*)\s*[(=]")
+
+
+def declaring_macros(text: str) -> set[str]:
+    """The macros in `text` whose expansion declares a `fn`.
+
+    A block runs from a `macro_rules!` at column 0 to the next line that is a
+    lone `}` — which is how this tree's formatter writes one. A macro written
+    some other way is simply not found, and the cost of that is the cost this
+    gate already has: it refuses prose rather than admitting a bad citation.
+    """
+    found: set[str] = set()
+    name: str | None = None
+    body: list[str] = []
+    for line in text.splitlines():
+        opened = MACRO_DEF.match(line)
+        if opened:
+            name, body = opened.group(1), []
+            continue
+        if name is None:
+            continue
+        if line == "}":
+            if MACRO_DECLARES_FN.search("\n".join(body)):
+                found.add(name)
+            name = None
+            continue
+        body.append(line)
+    return found
+
+
+def macro_declared(text: str, macros: set[str]) -> set[str]:
+    """Every name declared by an invocation of one of `macros` in `text`."""
+    names: set[str] = set()
+    inside = False
+    for line in text.splitlines():
+        if not inside:
+            head = line.split("!", 1)[0] if "!" in line else ""
+            if head in macros and line.rstrip().endswith("{"):
+                inside = True
+            continue
+        if line == "}":
+            inside = False
+            continue
+        rule = RULE_HEAD.match(line)
+        if rule:
+            names.add(rule.group(1))
+    return names
+
 
 def crate_of(path: Path) -> str:
     """The crate a file belongs to: the directory under `crates/` or `examples/`."""
@@ -136,9 +215,16 @@ def survey() -> tuple[dict[str, set[str]], dict[str, set[str]], list[tuple[Path,
     declares: dict[str, set[str]] = defaultdict(set)  # type name -> crates
     defines: dict[str, set[str]] = defaultdict(set)  # crate -> fn names
     citations: list[tuple[Path, int, str, str]] = []
-    for path in sources():
-        crate = crate_of(path)
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    # ★ R2146.2 — read once, then two passes: a macro can be invoked from a
+    # file other than the one defining it, so the declaring macros of a whole
+    # CRATE have to be known before any of its invocations are read.
+    corpus = [(path, crate_of(path), path.read_text(encoding="utf-8")) for path in sources()]
+    declarers: dict[str, set[str]] = defaultdict(set)  # crate -> macro names
+    for _path, crate, text in corpus:
+        declarers[crate] |= declaring_macros(text)
+    for path, crate, text in corpus:
+        defines[crate] |= macro_declared(text, declarers[crate])
+        for number, line in enumerate(text.splitlines(), 1):
             found = DECLARED.match(line)
             if found:
                 declares[found.group(1)].add(crate)
@@ -200,6 +286,32 @@ def selftest() -> int:
         if verb not in known:
             failures.append(f"selftest: `Document::{verb}` is in the tree but the survey missed it")
 
+    # ★★★★★ R2146.2 — a function a MACRO declares is in the population too.
+    #
+    # `pinion_chart::address` declares 59 composers and 11 overlay members
+    # through `composers!` / `overlay_members!`, so NONE of them is in the
+    # source text as `fn name`. Before this, the prose citing `Overlay::ring`
+    # and `Overlay::spoke` was refused while rustdoc resolved the same links.
+    # Asserted by name rather than by count, because what must hold is that a
+    # macro-declared name RESOLVES, not how many there are.
+    if "Overlay" not in declares:
+        failures.append("selftest: the survey found no `Overlay` type")
+    overlay = set().union(*(defines[owner] for owner in declares.get("Overlay", {""})))
+    for member in ("ring", "spoke", "value_at"):
+        if member not in overlay:
+            failures.append(
+                f"selftest: `Overlay::{member}` is declared by a macro and the "
+                "survey cannot see it — the population misses every "
+                "macro-declared function"
+            )
+    # ★ And the harvest is DERIVED from the macro rather than assumed: a macro
+    # whose expansion declares no `fn` contributes nothing, so a rule head is
+    # not a name on its own.
+    if declaring_macros("macro_rules! not_a_declarer {\n    () => { 1 };\n}\n"):
+        failures.append("selftest: a macro that declares no `fn` was read as one")
+    if not declaring_macros("macro_rules! declarer {\n    pub fn $name() {}\n}\n"):
+        failures.append("selftest: a macro whose expansion declares a `fn` was missed")
+
     # The denominator. Measured at R2000: 3,000+ citations, 1,900+ in scope.
     # A floor rather than the number, because the number moves every round —
     # what must not move is that there IS one.
@@ -222,6 +334,16 @@ def selftest() -> int:
     for line in failures:
         print(line, file=sys.stderr)
     if failures:
+        # ★★★★★ R2146.2 — SAY `FAIL`, in the word the tree's drivers read.
+        # Without this line the failures above are sentences no harness
+        # recognises, so `tools/counterfactual.py` classified two real catches
+        # as UNREADABLE — a red verdict nobody can act on, which R1939 made its
+        # own outcome precisely so it would not be counted as a catch.
+        # ⚠ The summary CARRIES the first sentence, because a driver quotes the
+        # lines its markers match and a bare count would tell a reader only
+        # that something broke.
+        first = failures[0].removeprefix("selftest: ")
+        print(f"selftest: FAIL ({len(failures)} failure(s)) — {first}", file=sys.stderr)
         return 1
     print(
         f"prose api names: selftest ok — {seen} citation(s), {in_scope} in scope, "
