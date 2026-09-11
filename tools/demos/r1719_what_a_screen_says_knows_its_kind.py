@@ -75,6 +75,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from read_path_shapes import read_core_source, schema_type_tokens  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
@@ -88,6 +89,28 @@ from rpc_verify import (  # noqa: E402
 )
 
 EXT = "/external"
+
+#: The schema vocabulary, READ OFF THE FRAMEWORK rather than spelled here.
+#:
+#: ★★★★★ R2137 — this walk used to assert the literal `"object"`. R2131 closed
+#: the schema type vocabulary as `pinion_core::external::SchemaType` and
+#: canonicalised five synonyms, `object` among them, so the wire began
+#: publishing `json` and this assertion started failing two rounds later — in
+#: CI, because the full sweep is the only thing that runs it.
+#:
+#: ⇒ the defect was not the stale word. It was that a walk SPELLS a token the
+#: framework owns, which is this tree's standing address-campaign defect in a
+#: second vocabulary. `schema_type_tokens` already reads `SchemaType::as_str`
+#: for `read_path_shapes`'s own gate, so the derivation is REUSED rather than
+#: written a second time, and a future rename reaches this walk by itself.
+_SCHEMA_TOKENS = schema_type_tokens(read_core_source())
+
+#: What a structured value is called on the wire — `SchemaType::Json`.
+STRUCTURED = _SCHEMA_TOKENS["Json"]
+
+#: What a flat string is called — `SchemaType::Text`, the wrong answer this
+#: section exists to refuse. Named so the assertion states BOTH sides.
+FLAT = _SCHEMA_TOKENS["Text"]
 VIEWPORT = (1440, 900)
 
 #: The three screens and the tag their live region carries. The value is read
@@ -469,9 +492,11 @@ def g_the_value_survives_the_wire(tf) -> None:
     schema = {f["path"]: f.get("type") for f in declared if isinstance(f, dict)}
     assert_eq(
         schema.get("said"),
-        "object",
-        "G: ★★ the schema declares it an object — it was `string` on all three "
-        "screens, which is why nothing downstream could ask the kind",
+        STRUCTURED,
+        f"G: ★★ the schema declares it structured ({STRUCTURED!r}) — it was "
+        f"{FLAT!r} on all three screens, which is why nothing downstream could "
+        f"ask the kind. Both words are read off `SchemaType::as_str`, so a "
+        f"round that renames one reaches this assertion by itself",
     )
 
 

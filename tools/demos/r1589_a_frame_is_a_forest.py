@@ -181,8 +181,29 @@ def body() -> None:
             "to it with the ordinary arity refusal rather than an arm someone "
             "had to remember",
         )
+        # ★ R2137 — the ARITY is derived from the signature this section just
+        # read, not spelled. The old assertion hardcoded `"port 0 of 0"`; R2133
+        # generalised `ConnectError`'s slot and reworded the refusal, and this
+        # walk went red two rounds later — in CI, because the full sweep is the
+        # only thing that runs it.
+        #
+        # ⚠ WHAT IS STILL PROSE, stated rather than hidden: `port(s)` is the
+        # framework's wording and this compares against it. That cannot be
+        # fixed from here — `ConnectError` publishes only a `Display` sentence,
+        # so every reader RE-DERIVES the arm by reading English. R2133 wrote
+        # that classification by hand inside `hello-node-lab::refusal_reason`
+        # and said the token had no consumer yet; the declaring site it needs
+        # is on the error type ⇒ registered as
+        # `debt-a-refusal-is-a-sentence-so-every-reader-parses-english`.
+        arity = sum(
+            len([p for p in side.split(":", 1)[1].split(",") if p])
+            for side in inv(tf, "node_ports", str(frame)).split("|")
+        )
+        assert arity == 0, f"C: a frame's signature is empty, got {arity} port(s)"
         reason = refused(tf, "connect", f"{BASE}.0>{frame}.0")
-        assert "port 0 of 0" in reason, f"C: {reason!r} names the arity"
+        assert f"{arity} port(s)" in reason, (
+            f"C: {reason!r} names the arity ({arity})"
+        )
 
         # ── (D) nesting: a frame made inside a frame stays inside it ────────
         inv(tf, "select", f"{BASE},{BLEND}")
