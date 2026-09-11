@@ -420,18 +420,6 @@
       ]
     },
     {
-      "name": "debt-a-sub-pixel-face-is-drawn-but-never-looked-at",
-      "substituted": false,
-      "blocked_by": "unmeasured",
-      "blocked_because": "",
-      "closed_by": "",
-      "closed_because": "",
-      "rank": "ordinary",
-      "why": [
-        "links analyzer-behaviour-canon-is-the-standalone-prototype"
-      ]
-    },
-    {
       "name": "debt-a-three-dimensional-surface-waits-on-phase-c",
       "substituted": false,
       "blocked_by": "phase-c",

@@ -4234,6 +4234,74 @@ mod footprint {
             );
         }
 
+        /// ★★★★★ R2150 — **what this engine puts on a page at the smallest
+        /// face the product ships.**
+        ///
+        /// `hello-node-lab` draws its digest rows at `FONT_TINY_PX = 9`, scaled
+        /// by the canvas zoom, and its minimum zoom is 25% — so the face is
+        /// **2px**. R1834 removed the level-of-detail that used to hide those
+        /// rows below 67%, because the behaviour reference has no such
+        /// conditional; what it left open, and registered, is that **nobody had
+        /// measured what a 2px face renders as**. The reference is a browser
+        /// CSS transform and sub-pixel rasterisation is the browser's problem;
+        /// this is our own engine, and the question "a blurred stroke, an empty
+        /// box, or nothing at all" had no answer.
+        ///
+        /// This is the answer, as data: the shaped ink extent at every face from
+        /// the product's floor up to the size that face is authored at. What it
+        /// asserts is the property the open question needed — **the engine
+        /// keeps producing ink all the way down, and the ink keeps shrinking**
+        /// — so a face that silently stopped shaping, or that floored itself
+        /// somewhere above 1, would fail here rather than be discovered by
+        /// somebody looking at a screen.
+        ///
+        /// ⚠ It does NOT claim legibility. No engine makes a 2px face readable,
+        /// and this tree's paint gates ask containment, overlap and reach —
+        /// never how something looks. Saying which of those two claims is being
+        /// made is the point: the debt this closes was opened because the
+        /// distinction had not been drawn.
+        #[test]
+        fn r2150_the_smallest_face_the_product_ships_still_shapes_ink() {
+            let mut cache = crate::test_font::own_font_cache();
+            let mut measured: Vec<(u32, (u32, u32))> = Vec::new();
+            for size in 1..=9u32 {
+                let mut style = TextStyle::new();
+                style.font_size_px = size;
+                measured.push((size, cache.ink_size("42 ms", &style, &[], None)));
+            }
+            // ★ Printed as well as asserted: the NUMBERS are what this test is
+            // for, and a reader asking "what does 2px look like here" wants
+            // them rather than a green tick. `cargo test -p pinion-text --lib
+            // r2150 -- --nocapture`.
+            println!("[r2150] face px -> shaped ink (w, h): {measured:?}");
+            for (size, (w, h)) in &measured {
+                assert!(
+                    *w > 0 && *h > 0,
+                    "★ at a {size}px face the engine shapes an EMPTY box \
+                     ({w}x{h}) — a row drawn at this size is not a small label, \
+                     it is an absent one, and the screen that draws it has no \
+                     way to know. Measured: {measured:?}"
+                );
+            }
+            // ★★ And the extent tracks the face at EVERY step, not just end to
+            // end. A floor inside the engine — the shape R1834 removed from the
+            // screen — would collapse a run of consecutive faces onto one
+            // extent while the first and last still differed, so an end-to-end
+            // comparison would pass on the floored build. Consecutive strict
+            // growth is what a floor cannot satisfy.
+            for pair in measured.windows(2) {
+                let (small, (sw, sh)) = pair[0];
+                let (big, (bw, bh)) = pair[1];
+                assert!(
+                    sw < bw && sh < bh,
+                    "★ a {small}px face shapes {sw}x{sh} and a {big}px face \
+                     {bw}x{bh} — the extent stopped tracking the face between \
+                     them, which is a floor one layer below the screen that \
+                     removed its own. Measured: {measured:?}"
+                );
+            }
+        }
+
         /// One opaque `Layout` per cached entry — the count that makes the
         /// `partial` basis an attributable limit rather than a disclaimer.
         #[test]
