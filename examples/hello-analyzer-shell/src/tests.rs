@@ -10432,3 +10432,105 @@ fn r2124_every_mounted_guest_is_asked_about() {
         );
     }
 }
+
+/// The screens that do not yet carry an address pin.
+///
+/// ★★★★★ R2140 — a ROSTER THAT CAN ONLY SHRINK, and the gate below asserts
+/// EQUALITY with it rather than containment. A row left here after its screen
+/// is pinned claims a debt that is gone, and this tree has paid for a hand-kept
+/// remainder list that rotted in exactly that direction (R1833: the first act
+/// of writing one down as data removed a stale item citing a debt closed seven
+/// rounds before the audit that listed it).
+///
+/// ⚠ These are NOT all the same kind of work, and saying so here is what stops
+/// the next round picking the harder one by accident:
+///
+/// * `hello-key-patterns` and `hello-node-lab` carry a `Painted` with a
+///   `reachable` set, so their gate is the four lines `hello-log-view` has.
+/// * `hello-sessions-view` and `hello-topology-view` have NO `Painted` at all —
+///   their sweep hands out a bare `Scene`. A tag collection has to be written
+///   first, and *does a mark a scroll would reveal count as painted here* has
+///   to be ANSWERED for those screens rather than inherited.
+/// * this host paints its own chrome and mounts the rest, so its pin covers the
+///   host's marks and not its guests'.
+const PIN_OWED: &[&str] = &[
+    "hello-analyzer-shell",
+    "hello-key-patterns",
+    "hello-node-lab",
+    "hello-sessions-view",
+    "hello-topology-view",
+];
+
+/// ★★★★★ R2140 — **every screen this binary assembles pins its published
+/// addresses, and the population is DERIVED.**
+///
+/// # What this exists to catch
+///
+/// R2138 built a value pin inside one screen and R2139 made it a seam, so
+/// adding the rest is mechanical. What is NOT mechanical is that nothing
+/// required a screen to have one: a screen added tomorrow would carry no pin,
+/// its published addresses could be renamed silently, and every gate would stay
+/// green. A list of screens-with-pins has the same hole — it is the
+/// hand-written population whose failure mode [`r2124_every_mounted_guest_is_asked_about`]
+/// measured one level down, where a roster reported zero about the guest it had
+/// forgotten.
+///
+/// ⇒ the population is this host plus every guest it MOUNTS, and [`MOUNTED`] is
+/// already held to this crate's own manifest by that gate. This one inherits
+/// that derivation rather than writing a second, so a screen that becomes
+/// mounted becomes owed in the same commit.
+///
+/// ★ The host names ITSELF from `CARGO_PKG_NAME` rather than as a literal, so a
+/// renamed package cannot leave this gate asking about a crate that is gone.
+///
+/// ⚠ This gate is RED-BY-DESIGN while the campaign runs: it states the
+/// remaining work as a roster rather than as prose in a carry, and each screen
+/// that gains a pin removes its row.
+#[test]
+fn r2140_every_assembled_screen_pins_its_published_addresses() {
+    use std::path::Path;
+
+    let mut population: Vec<&str> = vec![env!("CARGO_PKG_NAME")];
+    population.extend(MOUNTED.iter().map(|(guest, _)| *guest));
+    population.sort_unstable();
+    population.dedup();
+    // ★ Non-vacuity: a truncated population would make the comparison below
+    // pass by asking about almost nothing, which is the shape this tree refuses
+    // everywhere else it derives a population.
+    assert!(
+        population.len() >= 7,
+        "★ the assembled population is {population:?}, which is not what this \
+         binary mounts — the derivation is wrong and the comparison below means \
+         nothing"
+    );
+
+    // `CARGO_MANIFEST_DIR` is this crate's directory, so its parent holds every
+    // example crate.
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("an example crate has a parent directory");
+    let mut owed: Vec<&str> = population
+        .iter()
+        .copied()
+        .filter(|screen| {
+            !examples
+                .join(screen)
+                .join("src")
+                .join("painted_addresses.pin")
+                .is_file()
+        })
+        .collect();
+    owed.sort_unstable();
+    let mut declared: Vec<&str> = PIN_OWED.to_vec();
+    declared.sort_unstable();
+    assert_eq!(
+        owed, declared,
+        "★★★★★ the screens without an address pin are {owed:?} and this file \
+         declares {declared:?}.\n  \
+         A screen that gained a pin must lose its row here in the SAME commit — \
+         a row left behind claims a debt that is gone.\n  \
+         A screen mounted without one is the defect itself: its published \
+         addresses can be renamed and nothing refuses (R2137.3 measured a \
+         consistent rename passing 790 tests and four censuses)."
+    );
+}
