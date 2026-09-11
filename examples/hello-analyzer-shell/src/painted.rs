@@ -42,6 +42,7 @@ use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
 use pinion_core::style::Color;
+use pinion_core::test_fixtures::address_pin;
 use pinion_core::widgets::destination::Required;
 use pinion_core::{Frame, Scene};
 use pinion_screen::ScreenState;
@@ -18040,4 +18041,76 @@ fn r2124_every_mark_the_mounted_log_section_paints_has_a_declared_reader() {
             lv::NAMESPACE
         );
     });
+}
+
+/// Where this host's pinned address set lives, for the regeneration path.
+const PIN_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/painted_addresses.pin");
+
+/// ★★★★★ R2142 — **what this HOST publishes is pinned by its value, and this
+/// sweep is the host ALONE.**
+///
+/// The fourth consumer of `address_pin`.
+///
+/// # 🟥 What the first draft got wrong, and what caught it
+///
+/// This host mounts six guests, so the draft assumed its sweep painted their
+/// marks and filtered them out by namespace — derived from
+/// [`crate::tests::MOUNTED`] rather than hand-written, on the reasoning that a
+/// pin holding guest addresses would duplicate each guest's own and COUPLE
+/// them, so a rename inside a guest would fail two pins.
+///
+/// That reasoning is sound and the premise was false. The draft asserted the
+/// filter had actually removed something — a floor `address_pin::check` cannot
+/// provide, since it sees only what survived — and **that assertion failed on
+/// its first run**: the exclusion removed nothing at all.
+///
+/// [`painted_at`] builds `super::view(ScreenState::default(), ..)`, which is
+/// this host's own chrome and its dashboard. The tests that assert on a
+/// mounted guest's marks drive a different harness. So no filter is needed,
+/// and the premise came from reading test NAMES rather than the sweep.
+///
+/// # ★★ So the check is inverted rather than deleted
+///
+/// What was going to guard a filter now states the fact the filter's absence
+/// rests on: **this sweep paints nothing under a mounted guest's namespace.**
+/// It is true today, it records why there is no filter, and it fails loudly if
+/// the harness ever starts mounting — which is exactly when someone has to
+/// decide whether this pin should hold those addresses or exclude them.
+///
+/// ⇒ an assertion written to guard a design, and kept to record the
+/// measurement that replaced it.
+#[test]
+fn r2142_every_published_address_is_pinned_by_value() {
+    let mut mine: Vec<String> = Vec::new();
+    let mut guests: Vec<String> = Vec::new();
+    sweep(|_, shot, _, _| {
+        for tag in shot.tags.keys() {
+            if crate::tests::MOUNTED
+                .iter()
+                .any(|(_, namespace)| tag.starts_with(namespace))
+            {
+                guests.push(tag.clone());
+            } else {
+                mine.push(tag.clone());
+            }
+        }
+    });
+    assert!(
+        guests.is_empty(),
+        "★★ this sweep painted {} mark(s) belonging to a mounted guest \
+         ({:?}...) — it did not when this pin was written, and the pin below \
+         is the HOST's alone. Decide whether they belong here before \
+         regenerating.",
+        guests.len(),
+        &guests[..guests.len().min(4)]
+    );
+    let seen = address_pin::fold(mine.iter().map(String::as_str));
+    address_pin::check(
+        &seen,
+        include_str!("painted_addresses.pin"),
+        PIN_PATH,
+        // Near this floor means the sweep stopped reaching the host rather
+        // than that the host shrank.
+        30,
+    );
 }

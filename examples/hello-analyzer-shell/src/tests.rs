@@ -10360,7 +10360,7 @@ fn r2115_this_host_spells_no_mounted_screens_painted_address() {
 /// from the GUEST (so a rename moves the gate with it) and the package name has
 /// to be comparable with `Cargo.toml` (so the roster cannot go short). Held
 /// against the manifest by [`r2124_every_mounted_guest_is_asked_about`].
-const MOUNTED: &[(&str, &str)] = &[
+pub(crate) const MOUNTED: &[(&str, &str)] = &[
     ("hello-node-lab", hello_node_lab::address::NAMESPACE),
     ("hello-packet-view", hello_packet_view::address::NAMESPACE),
     ("hello-key-patterns", hello_key_patterns::address::NAMESPACE),
@@ -10453,9 +10453,16 @@ fn r2124_every_mounted_guest_is_asked_about() {
 ///   `reachable`, genuinely the four lines `hello-log-view` has. **Pinned at
 ///   R2141**, and its row left this roster in the same commit, which is the
 ///   rule this gate exists to enforce.
-/// * this host — `Painted` + `sweep`, but NO `reachable` field and a different
-///   sweep signature. Four lines with `tags` alone. It paints its own chrome
-///   and mounts the rest, so its pin covers the host's marks, not its guests'.
+/// * ~~this host~~ — `Painted` + `sweep`, NO `reachable`, a different sweep
+///   signature. **Pinned at R2142 (206 addresses).** ⚠ And the round's first
+///   draft filtered out the guests' namespaces, on the belief that a host
+///   sweep paints what it mounts. Its own "the filter removed something"
+///   assertion **failed on first run**: `painted_at` builds this host's own
+///   chrome and dashboard, and the tests that assert on a mounted guest's
+///   marks drive a different harness. The check was INVERTED rather than
+///   deleted — it now holds that this sweep paints nothing under a guest
+///   namespace, so the absence of a filter is a recorded fact instead of an
+///   assumption.
 /// * `hello-node-lab` — has `Painted` but **no `sweep` at all**: its tests
 ///   iterate `STATES`/`SIZES` inline at four separate sites, and its
 ///   `reachable` is a `BTreeMap<String, Vec<Move>>` rather than a set. Needs
@@ -10476,7 +10483,6 @@ fn r2124_every_mounted_guest_is_asked_about() {
 /// `pinion_core::test_fixtures::address_pin` takes the screen's own TAG
 /// ITERATOR rather than a `Scene` or a `Painted`.
 const PIN_OWED: &[&str] = &[
-    "hello-analyzer-shell",
     "hello-node-lab",
     "hello-sessions-view",
     "hello-topology-view",
