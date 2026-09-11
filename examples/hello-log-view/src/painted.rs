@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
+use pinion_core::test_fixtures::address_pin;
 use pinion_core::test_fixtures::screen_ink::{
     assert_boxes_hold_their_text, assert_contained_ink, stand_in_ink,
 };
@@ -585,4 +586,37 @@ fn r1731_the_regions_that_hold_the_surfaces_are_painted() {
             "{case}: the receiver a press resolves to is not in the scene",
         );
     });
+}
+
+/// Where this screen's pinned address set lives, for the regeneration path.
+const PIN_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/painted_addresses.pin");
+
+/// ★★★★★ R2139 — **what this screen publishes is pinned by its VALUE.**
+///
+/// The second consumer of `address_pin`, which is what makes that module a lift
+/// rather than a relocation. The rule, the fold, the message and the
+/// regeneration all live in the framework; this screen supplies only its own
+/// tag set — including `reachable`, the marks a scroll would bring into view,
+/// which a helper re-deriving from the scene would miss.
+///
+/// See `pinion_core::test_fixtures::address_pin` for the measurement this
+/// exists against: a consistent rename of one family passed 790 tests and four
+/// censuses because paint, specification, wire, walks and tests all derive from
+/// one constant and therefore all move together.
+#[test]
+fn r2139_every_published_address_is_pinned_by_value() {
+    let mut tags: Vec<String> = Vec::new();
+    sweep(|_, shot, _, _, _| {
+        tags.extend(shot.tags.keys().cloned());
+        tags.extend(shot.reachable.iter().cloned());
+    });
+    let seen = address_pin::fold(tags.iter().map(String::as_str));
+    address_pin::check(
+        &seen,
+        include_str!("painted_addresses.pin"),
+        PIN_PATH,
+        // Near this floor means the sweep stopped reaching the screen rather
+        // than that the screen shrank.
+        10,
+    );
 }

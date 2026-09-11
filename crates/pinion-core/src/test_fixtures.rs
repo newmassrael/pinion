@@ -21,6 +21,15 @@
 //! the framework owns one place to evolve the assertion's error
 //! message / hook list as the AT bounds attach contract grows.
 
+// R2139 §5.2 §5.11 — holding a screen's published addresses to their VALUES.
+// Its own module for the reason the ones below have one: the rule is the
+// framework's and the observables are the screen's. R2138 built this gate
+// inside one screen; the seam is here because a second copy of it would be
+// this campaign's own defect a level up — one rule, hand-maintained per screen,
+// free to drift. What a screen supplies is its own tag set, because only the
+// screen knows whether a mark a scroll would reveal counts as painted.
+pub mod address_pin;
+
 // R1672 §5.32 §5.45 — the ink gate three screens run. Its own module because
 // it is a HARNESS vocabulary rather than a widget stand-in: the check is
 // `containment::escapes` and what a screen has to supply is the metric.

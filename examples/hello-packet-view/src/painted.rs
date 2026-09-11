@@ -2972,6 +2972,8 @@ fn cell_text_style(scene: &Scene, tag: &str) -> Option<pinion_core::style::TextS
 
 // ── 8. The published addresses, pinned BY VALUE ─────────────────────────────
 
+use pinion_core::test_fixtures::address_pin;
+
 /// Where this screen's pinned address set lives, for the regeneration path.
 const PIN_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/painted_addresses.pin");
 
@@ -3027,58 +3029,22 @@ const PIN_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/painted_address
 /// half is what makes it visible to a reader of the commit.
 #[test]
 fn r2138_every_published_address_is_pinned_by_value() {
-    use pinion_core::containment::repeating_site;
-
-    let mut seen: BTreeSet<String> = BTreeSet::new();
+    // ★ R2139 — the RULE is the framework's and only the collection is this
+    // screen's. `reachable` is exactly why: a mark a scroll would reveal counts
+    // as painted here, and a helper that re-derived tags from the scene would
+    // miss it. Both halves are handed over, folded by the shared vocabulary.
+    let mut tags: Vec<String> = Vec::new();
     sweep(|_, shot, _, _, _| {
-        for tag in shot.tags.keys().chain(shot.reachable.iter()) {
-            seen.insert(repeating_site(tag));
-        }
+        tags.extend(shot.tags.keys().cloned());
+        tags.extend(shot.reachable.iter().cloned());
     });
-    // ★ Non-vacuity: a sweep that painted nothing would make the comparison
-    // below pass against an empty pin, which is the shape this tree has paid
-    // for before — a gate that is green for having asked about nothing.
-    assert!(
-        seen.len() > 50,
-        "the sweep collected only {} address(es); the pin below would be \
-         asserting almost nothing",
-        seen.len()
-    );
-
-    if std::env::var_os("PINION_REGEN_ADDRESS_PIN").is_some() {
-        let mut out = String::from(
-            "# R2138 — every address this screen paints, folded by \
-             `repeating_site`.\n\
-             # Rewritten by `PINION_REGEN_ADDRESS_PIN=1 cargo test -p \
-             hello-packet-view\n\
-             # r2138_every_published_address_is_pinned_by_value`; do not \
-             hand-edit.\n",
-        );
-        for site in &seen {
-            out.push_str(site);
-            out.push('\n');
-        }
-        std::fs::write(PIN_PATH, out).expect("the pin is writable");
-        return;
-    }
-
-    let pinned: BTreeSet<String> = include_str!("painted_addresses.pin")
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(str::to_owned)
-        .collect();
-    let added: Vec<&String> = seen.difference(&pinned).collect();
-    let gone: Vec<&String> = pinned.difference(&seen).collect();
-    assert!(
-        added.is_empty() && gone.is_empty(),
-        "★★★★★ this screen's published addresses changed. A reader outside \
-         this repository addresses marks by these strings, so a change is a \
-         published change and has to be deliberate.\n  \
-         no longer painted: {gone:?}\n  \
-         newly painted:     {added:?}\n  \
-         If the change is intended, regenerate: \
-         PINION_REGEN_ADDRESS_PIN=1 cargo test -p hello-packet-view \
-         r2138_every_published_address_is_pinned_by_value"
+    let seen = address_pin::fold(tags.iter().map(String::as_str));
+    address_pin::check(
+        &seen,
+        include_str!("painted_addresses.pin"),
+        PIN_PATH,
+        // This screen paints seven families; anything near this floor means the
+        // sweep stopped reaching the screen rather than that the screen shrank.
+        50,
     );
 }

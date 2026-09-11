@@ -1,6 +1,6 @@
-# R2138 — every address this screen paints, folded by `repeating_site`.
-# Rewritten by `PINION_REGEN_ADDRESS_PIN=1 cargo test -p hello-packet-view
-# r2138_every_published_address_is_pinned_by_value`; do not hand-edit.
+# Every address this screen paints, folded by `repeating_site`.
+# Rewritten by setting PINION_REGEN_ADDRESS_PIN and running this
+# screen's address-pin test; do not hand-edit.
 packet_view
 pv.appbar
 pv.appbar.interface

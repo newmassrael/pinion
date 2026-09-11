@@ -1,0 +1,39 @@
+# Every address this screen paints, folded by `repeating_site`.
+# Rewritten by setting PINION_REGEN_ADDRESS_PIN and running this
+# screen's address-pin test; do not hand-edit.
+log_view
+lv.column.message
+lv.column.severity
+lv.column.source
+lv.column.time
+lv.column.type
+lv.detail
+lv.detail.bytes
+lv.detail.kind
+lv.detail.kind.pill
+lv.detail.layers
+lv.detail.message
+lv.detail.meta
+lv.detail.subject
+lv.filter.query
+lv.filter.query-text
+lv.header
+lv.header.filter
+lv.header.live
+lv.header.severity
+lv.header.title
+lv.list
+lv.list.body
+lv.list.cell.*_message
+lv.list.cell.*_severity
+lv.list.cell.*_source
+lv.list.cell.*_time
+lv.list.cell.*_type
+lv.list.dot.*
+lv.list.header
+lv.list.open
+lv.list.row.*
+lv.root
+lv.severity.all
+lv.severity.error
+lv.severity.warn
