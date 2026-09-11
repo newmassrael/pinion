@@ -1361,7 +1361,7 @@ impl ScreenRoster {
     ///
     /// The analysis tool mounts **six** screens and declares both parts to all
     /// six. **One** asks. The census that had been prescribed for this — *does
-    /// every arm of [`Part`](pinion_core::chrome::Part) have a consumer* — is
+    /// every arm of [`Part`] have a consumer* — is
     /// green on that tree, because the one guest that asks consumes both arms.
     /// **The arm is not the unit; the (screen, arm) pair is**, and that is the
     /// unit this answers in.
