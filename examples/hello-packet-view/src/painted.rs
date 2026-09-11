@@ -2969,3 +2969,116 @@ fn cell_text_style(scene: &Scene, tag: &str) -> Option<pinion_core::style::TextS
     });
     found
 }
+
+// ── 8. The published addresses, pinned BY VALUE ─────────────────────────────
+
+/// Where this screen's pinned address set lives, for the regeneration path.
+const PIN_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/painted_addresses.pin");
+
+/// ★★★★★ R2138 — **what this screen publishes is pinned by its VALUE, and a
+/// rename has to say so.**
+///
+/// # What this exists to catch, measured rather than argued
+///
+/// The address campaign gave every family a declaring site, so paint,
+/// `spec.rs`, the wire, the walks and this crate's own tests all DERIVE one
+/// address from one constant. That is the repair — and it means those five move
+/// together when the constant moves. R2137.3 injected exactly that: all 14
+/// literals of this screen's message-grid family renamed consistently by one
+/// letter, in one file, with nothing stale left — the campaign had already made
+/// that possible. It passed `painted_addresses`, `read_path_shapes`,
+/// `canon_surface_census` and `analyzer_census`; it passed this crate's 103
+/// tests; it passed `hello-analyzer-shell` + `pinion-screen` + `pinion-a11y`
+/// (687); and it passed the `r1747` walk, which reads the address off the wire.
+///
+/// **790 tests and four censuses moved with the rename and nothing refused.**
+///
+/// ⚠ The distinction that counterfactual sharpened, and it is the reason this
+/// gate is not redundant with the ones above: renaming ONE constant DOES fail
+/// (`r1663` and `r2111` catch it), because the declaration then contradicts
+/// itself. What had no check is the VALUE. Those are two different claims, and
+/// a weakly-injected counterfactual only reaches the first — which is how the
+/// first attempt at this measurement nearly concluded a pin already existed.
+///
+/// # ★ Why the population is the PAINT and not the source
+///
+/// A source scan for `pub const NAME: &str = "..."` under-counts silently: it
+/// reads 331 of this tree's declarations and misses 16 that are `char`,
+/// `&[&str]` or a roster shape it was not taught, and nothing says a word. For
+/// a value pin an under-count is the dangerous direction — a constant the
+/// scanner cannot see is a constant nobody pins. This walks what the screen
+/// ACTUALLY PAINTS, so it cannot miss an address by failing to recognise its
+/// declaration. `grep is not a census` (R2129), one level up.
+///
+/// # ★ Why the set is FOLDED
+///
+/// [`repeating_site`](pinion_core::containment::repeating_site) turns a grid
+/// cell's row-and-column address into one starred site, so the pin is stable
+/// against fixture data while a RENAME still moves it. Without the fold this
+/// file would
+/// be a transcript of the sample capture and would churn on every data change,
+/// which is how a pin stops being read.
+///
+/// # Regenerating
+///
+/// `PINION_REGEN_ADDRESS_PIN=1 cargo test -p hello-packet-view
+/// r2138_every_published_address_is_pinned_by_value` rewrites the file. A
+/// rename is therefore a two-line diff — the constant and the pin — and the pin
+/// half is what makes it visible to a reader of the commit.
+#[test]
+fn r2138_every_published_address_is_pinned_by_value() {
+    use pinion_core::containment::repeating_site;
+
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    sweep(|_, shot, _, _, _| {
+        for tag in shot.tags.keys().chain(shot.reachable.iter()) {
+            seen.insert(repeating_site(tag));
+        }
+    });
+    // ★ Non-vacuity: a sweep that painted nothing would make the comparison
+    // below pass against an empty pin, which is the shape this tree has paid
+    // for before — a gate that is green for having asked about nothing.
+    assert!(
+        seen.len() > 50,
+        "the sweep collected only {} address(es); the pin below would be \
+         asserting almost nothing",
+        seen.len()
+    );
+
+    if std::env::var_os("PINION_REGEN_ADDRESS_PIN").is_some() {
+        let mut out = String::from(
+            "# R2138 — every address this screen paints, folded by \
+             `repeating_site`.\n\
+             # Rewritten by `PINION_REGEN_ADDRESS_PIN=1 cargo test -p \
+             hello-packet-view\n\
+             # r2138_every_published_address_is_pinned_by_value`; do not \
+             hand-edit.\n",
+        );
+        for site in &seen {
+            out.push_str(site);
+            out.push('\n');
+        }
+        std::fs::write(PIN_PATH, out).expect("the pin is writable");
+        return;
+    }
+
+    let pinned: BTreeSet<String> = include_str!("painted_addresses.pin")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_owned)
+        .collect();
+    let added: Vec<&String> = seen.difference(&pinned).collect();
+    let gone: Vec<&String> = pinned.difference(&seen).collect();
+    assert!(
+        added.is_empty() && gone.is_empty(),
+        "★★★★★ this screen's published addresses changed. A reader outside \
+         this repository addresses marks by these strings, so a change is a \
+         published change and has to be deliberate.\n  \
+         no longer painted: {gone:?}\n  \
+         newly painted:     {added:?}\n  \
+         If the change is intended, regenerate: \
+         PINION_REGEN_ADDRESS_PIN=1 cargo test -p hello-packet-view \
+         r2138_every_published_address_is_pinned_by_value"
+    );
+}
