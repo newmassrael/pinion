@@ -1410,8 +1410,11 @@ pub fn link_of(tag: &str) -> Option<LinkId> {
 // asked with `--nocapture`, answers `13 owed {lab.canvas: 1, lab.crumb: 3,
 // lab.gate: 6, lab.hint: 2, lab.observed: 1}` — five stems. The other four in
 // `UNADDRESSED_FAMILIES` (the application bar, the rail, the toast and the
-// fault panel) are painted by the STANDALONE binary only, because the shell
-// draws its own bar and its own rail.
+// fault panel) were absent from that map — and R2125 gave one reason for all
+// four. 🟥 R2127 measured it: the reason holds for TWO. The bar and the rail
+// are chrome the host provides, so mounted they are not built at all; the toast
+// and the fault panel have no chrome condition anywhere near them and are
+// simply not on the frame that gate paints. See [`Unpainted`].
 //
 // ⇒ closing exactly these five empties the assembled ratchet's owed map, which
 // is an assertion that can be written and held (`r2125_the_mounted_lab_owes_
@@ -1721,23 +1724,98 @@ pub fn reader_of(tag: &str) -> Option<&'static str> {
 /// day this slice is empty, the gate that reads it becomes
 /// `r2115_no_module_but_the_declaration_spells_this_screens_namespace` — the
 /// same assertion screen B already carries — and this const goes with it.
-/// ⚠⚠ THE POPULATION IS THE SCREEN'S OWN SWEEP, not the assembly's. Four of
-/// these — the application bar, the rail, the toast and the fault panel — are
-/// painted by the STANDALONE binary and not by the screen mounted as a page,
-/// because the shell draws its own bar and its own rail. So a reader who
-/// measured this list against the shell would find four names owning nothing
-/// and conclude the list had rotted. That is why exactness is asserted by
-/// `r2116_every_family_this_screen_paints_is_declared_or_owed` in this crate,
-/// over `STATES`, and the assembled gate next door only refuses a family that
-/// is in neither place.
-/// ★★★★★ R2125 — **nine became four, and the four that are left are the ones
-/// the ASSEMBLED page does not paint.** The five struck out here — the canvas,
+/// ⚠⚠ THE POPULATION IS THE SCREEN'S OWN SWEEP, not the assembly's, and each
+/// entry says WHY the page the shell opens does not paint it — see
+/// [`Unpainted`], which is where R2125's single sentence for four names was
+/// found to be true of two.
+/// ★★★★★ R2125 — **nine became four.** The five struck out here — the canvas,
 /// the breadcrumb, the check panel, the hint and the reported links — are
 /// exactly the stems R2116's assembled ratchet reported as owed, so striking
-/// them empties that map and lets the shell assert it. What remains (the
-/// application bar, the rail, the toast, the fault panel) belongs to the
-/// STANDALONE binary, because the shell draws its own bar and its own rail.
-pub const UNADDRESSED_FAMILIES: &[&str] = &["lab.appbar", "lab.faults", "lab.rail", "lab.toast"];
+/// them empties that map and lets the shell assert it.
+pub const UNADDRESSED_FAMILIES: &[(&str, Unpainted)] = &[
+    (APPBAR, Unpainted::HostDraws),
+    (FAULTS, Unpainted::StateReveals),
+    (RAIL, Unpainted::HostDraws),
+    (TOAST, Unpainted::StateReveals),
+];
+
+// ★★★★★ R2127 — the four stems, NAMED. They are still unaddressed: what this
+// campaign means by declared is that every MEMBER address is composed here, and
+// none of these four is. A stem const is what a reader outside this crate needs
+// to ask a family-wide question without spelling the family — the host's gate
+// below does exactly that — and it is where the conversion of each of these
+// will begin. Nothing is struck off `UNADDRESSED_FAMILIES` for having one.
+
+/// The application bar this screen paints when no host provides one.
+pub const APPBAR: &str = "lab.appbar";
+
+/// The fault-injection panel in the inspector body.
+pub const FAULTS: &str = "lab.faults";
+
+/// The navigation rail this screen paints when no host provides one.
+pub const RAIL: &str = "lab.rail";
+
+/// The transient message this screen shows over the canvas.
+pub const TOAST: &str = "lab.toast";
+
+/// Why the page the shell opens paints nothing under a family this screen still
+/// owes an address.
+///
+/// ★★★★★ R2127 — **the reason is data, per family, because R2125 wrote ONE
+/// reason over FOUR names and it is true of TWO.**
+///
+/// That round's sentence — *painted by the STANDALONE binary only, because the
+/// shell draws its own bar and its own rail* — is written three times in this
+/// tree, and it explains the application bar and the rail exactly. It explains
+/// neither the toast nor the fault panel: those have no chrome condition
+/// anywhere near them. The toast is drawn on the canvas, which the shell paints
+/// like any other part of this screen, and the fault panel is in the inspector
+/// body. What keeps them out of the assembled ratchet is that gate's
+/// POPULATION — one frame, the screen as it opens — and not this screen.
+///
+/// ⇒ two facts wearing one sentence, which is why a reader could not tell them
+/// apart and why nobody looked for the second one for two rounds. Stated as an
+/// enum, each half is a claim a gate can hold, and the halves are held by
+/// different gates because they are refuted by different things.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unpainted {
+    /// The HOST draws this part, so mounted this screen paints no mark of the
+    /// family at all — the node is not built, which is what makes "the page
+    /// contributes no second bar" a property rather than a rule (R1725).
+    ///
+    /// Decided in one place, [`crate::draws_own_app_bar`] /
+    /// [`crate::draws_own_rail`], and published so a host-side gate reads that
+    /// decision rather than re-deriving it.
+    HostDraws,
+    /// A STATE reveals it. Mounted, this screen paints the family exactly as it
+    /// does standalone once the state is reached; a gate that paints one frame
+    /// cannot see it, and that is a fact about the gate.
+    StateReveals,
+}
+
+/// Why the assembly does not paint `stem`, or `None` when this screen does not
+/// owe that family an address.
+///
+/// ★ The membership test every reader used to write as
+/// `UNADDRESSED_FAMILIES.contains(&stem)`. It answers the reason as well as the
+/// membership because R2127's whole finding is that callers were entitled to
+/// the reason and had nowhere to get it.
+#[must_use]
+pub fn unaddressed(stem: &str) -> Option<Unpainted> {
+    UNADDRESSED_FAMILIES
+        .iter()
+        .find(|(name, _)| *name == stem)
+        .map(|(_, why)| *why)
+}
+
+/// The stems of [`UNADDRESSED_FAMILIES`], for a reader that wants the names
+/// only.
+///
+/// ⚠ Derived rather than declared beside the table: a second list is the defect
+/// this whole campaign is about, one level up.
+pub fn unaddressed_stems() -> impl Iterator<Item = &'static str> {
+    UNADDRESSED_FAMILIES.iter().map(|(name, _)| *name)
+}
 
 /// ★★★★★ R2116 — the namespace every address of this screen begins with, and
 /// the needle a gate over the whole screen uses.

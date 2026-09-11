@@ -542,6 +542,18 @@
       ]
     },
     {
+      "name": "debt-the-assembled-tool-shows-no-card-settings-at-the-size-it-opens",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links screen-a-vs-canon-operation-census"
+      ]
+    },
+    {
       "name": "debt-the-canon-census-counts-markup-and-not-pixels",
       "substituted": false,
       "blocked_by": "campaign",

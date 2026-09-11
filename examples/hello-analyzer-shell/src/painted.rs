@@ -16167,7 +16167,7 @@ fn r2116_every_mark_the_mounted_lab_paints_is_declared_or_owed() {
                 continue;
             }
             let stem: String = tag.split('.').take(2).collect::<Vec<_>>().join(".");
-            if lab::UNADDRESSED_FAMILIES.contains(&stem.as_str()) {
+            if lab::unaddressed(&stem).is_some() {
                 *owed.entry(stem).or_default() += 1;
             } else {
                 orphans.push(tag);
@@ -16240,11 +16240,19 @@ fn r2116_every_mark_the_mounted_lab_paints_is_declared_or_owed() {
         // R2116 wrote this gate with a declared remainder because the screen was
         // four times the size of its siblings and could not reach zero. That
         // remainder was NINE families. Asking this gate with `--nocapture` said
-        // which of the nine THIS ASSEMBLY paints — five — and the other four are
-        // the standalone binary's, because the shell draws its own application
-        // bar and its own rail. So the reachable end state was never "lab is
-        // converted"; it was "the page a person opens owes nothing", and that is
-        // an assertion, where "some of lab is converted" is not.
+        // which of the nine THIS ASSEMBLY paints — five — so the reachable end
+        // state was never "lab is converted"; it was "the page a person opens
+        // owes nothing", and that is an assertion, where "some of lab is
+        // converted" is not.
+        //
+        // 🟥 ★★★★★ R2127 — **the sentence that used to stand here said the
+        // other four are the standalone binary's *because the shell draws its
+        // own application bar and its own rail*, and that is true of TWO of
+        // them.** What this gate measured is that its own population — one
+        // frame — does not have them; the reason was supplied afterwards and
+        // fitted the first two names on the list. The toast and the fault panel
+        // are painted by the mounted page like anything else once a gesture
+        // reaches them, which the gate below drives and asserts.
         //
         // ⚠ This is deliberately NOT the exactness assertion the crate gate
         // makes. That one sweeps every state and refuses a remainder entry that
@@ -16267,6 +16275,439 @@ fn r2116_every_mark_the_mounted_lab_paints_is_declared_or_owed() {
             lab::NAMESPACE
         );
     });
+}
+
+/// ★★★★★ R2127 — **the four families the gate above cannot see, asked about by
+/// their own reasons.**
+///
+/// # What this exists for
+///
+/// R2125 emptied the assembled ratchet's owed map by declaring the five
+/// families the page a person opens paints, and left four. It gave one reason
+/// for those four — *the shell draws its own bar and its own rail, so the
+/// standalone binary paints them and a mounted page never does* — and that
+/// sentence went into three files.
+///
+/// 🟥🟥🟥 It is true of two of them. Measured here rather than read: the
+/// application bar and the rail are gated on
+/// [`draws_own_app_bar`](hello_node_lab::draws_own_app_bar) /
+/// [`draws_own_rail`](hello_node_lab::draws_own_rail), which ask whether the
+/// host provides that chrome; the toast and the fault panel are gated on
+/// nothing of the kind. The toast is drawn on the canvas and the fault panel in
+/// the inspector body, both of which this assembly paints — they are simply not
+/// on the ONE FRAME `r2116_every_mark_the_mounted_lab_paints_is_declared_or_
+/// owed` looks at, which is a fact about that gate's population.
+///
+/// ⇒ *the assembled gate cannot see them* was inherited as *the screen does not
+/// paint them*, and a round that folded the four on that basis would have
+/// written an assertion that is green because nothing asks.
+///
+/// # Why the two halves are asserted differently
+///
+/// A `HostDraws` family is checked as an ABSENCE, and an absence is worthless on
+/// its own: *no mark under `lab.rail`* passes just as well on a screen that
+/// stopped painting a rail at all, or one this test failed to reach. So the
+/// absence is asserted beside the screen's own published decision — the guest
+/// says it is not drawing its own chrome here — and beside a family the same
+/// frame DOES paint, so a frame with nothing on it cannot read as success.
+///
+/// A `StateReveals` family is checked as a PRESENCE, which needs no such
+/// scaffolding: the state is driven through the same gestures a person makes,
+/// and the mark either arrives or it does not.
+#[test]
+fn r2127_the_mounted_lab_is_asked_about_the_families_one_frame_cannot_show() {
+    use hello_node_lab::address::{self as lab, Unpainted};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        state
+            .go("lab")
+            .unwrap_or_else(|why| panic!("the node lab section is open and refused: {why:?}"));
+
+        // ── the two the host draws ───────────────────────────────────────────
+        //
+        // ⚠ THE PAINT COMES FIRST, and that is R1825's arrangement rather than
+        // an ordering preference: `host_chrome_for` answers from the enclosing
+        // scope while the host is building the guest's scene, and afterwards
+        // from what that host last RECORDED. Asked before this application has
+        // placed the surface even once there is neither — and `NONE` is not
+        // "no answer", it is *you are standalone*.
+        let (shot, _) = painted_at((WIN_W, WIN_H));
+
+        // The guest's own decision: this is what makes the absence below mean
+        // "the host provides it" rather than "nothing was painted".
+        assert!(
+            !hello_node_lab::draws_own_app_bar(),
+            "★★★★★ mounted here, the node lab says it draws its OWN application \
+             bar. Either this host stopped declaring that it provides one, or \
+             this gate is asking outside the record the host keeps — and either \
+             way the absence asserted below would pass for the wrong reason \
+             (R1825's defect, from the other side)."
+        );
+        assert!(
+            !hello_node_lab::draws_own_rail(),
+            "★★★★★ mounted here, the node lab says it draws its OWN rail, so \
+             this assembly has two navigations or this gate is asking outside \
+             the host's record"
+        );
+
+        // ⚠ The floor that keeps the absences honest: this frame paints
+        // SOMETHING of the guest's. Without it, a frame that failed to reach
+        // the section at all satisfies every `is_empty()` below.
+        let painted_here = shot.family(lab::NAMESPACE).len();
+        assert!(
+            painted_here > 0,
+            "★★ the mounted lab paints nothing at all in this frame, so every \
+             absence below is about a screen that is not there"
+        );
+        // ── every state this gate can reach, driven WHATEVER the table says ──
+        //
+        // 🟥🟥🟥 ★★★★★ THE ROSTER IS INDEPENDENT OF THE DECLARATION, and that is
+        // the whole discrimination. A first draft of this gate drove a family's
+        // gesture only when the family was declared `StateReveals`, and that
+        // draft is green on the exact error it exists to catch: declare the
+        // toast `HostDraws` and its gesture stops running, the opening frame has
+        // no toast on it, and the absence passes. Which is R2125's mistake
+        // reproduced BY THE GATE WRITTEN TO CATCH IT.
+        //
+        // So every state below is reached on every run, the marks are unioned,
+        // and the table is read off that union. A family labelled either way
+        // round then fails: the host's, if the union has it; a state's, if the
+        // union has not.
+        let (seen, by_state) = drive_every_state(&shot);
+
+        let mut host_drawn = 0usize;
+        let mut revealed: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
+        for (stem, why) in lab::UNADDRESSED_FAMILIES {
+            let found = seen.get(stem).copied().unwrap_or_default();
+            match why {
+                Unpainted::HostDraws => {
+                    host_drawn += 1;
+                    assert_eq!(
+                        found, 0,
+                        "★★★★★ `{stem}` is declared as chrome the HOST draws, \
+                         and the mounted page paints {found} mark(s) under it \
+                         across the states this gate reaches. Either the guest \
+                         is contributing a second bar or rail to this tree — \
+                         the thing `Part::ApplicationBar` and `Part::Navigation` \
+                         exist to stop — or the family is one a STATE reveals \
+                         and the declaration says the wrong thing about it."
+                    );
+                }
+                Unpainted::StateReveals => {
+                    assert!(
+                        found > 0,
+                        "★★★★★ `{stem}` is declared as a family a STATE reveals, \
+                         and none of the states this gate drives painted \
+                         anything under it. Either this application cannot \
+                         reach a part of the screen it mounts, the family \
+                         belongs with the chrome the host draws, or the state \
+                         that reveals it is missing from `REACHED` — and the \
+                         third is the one to check first, because a gate that \
+                         cannot reach a state reports exactly what a screen \
+                         that does not paint one does."
+                    );
+                    revealed.insert(stem, found);
+                }
+            }
+        }
+
+        // ⚠⚠ Both arms have to be exercised, for the reason the crate's own
+        // table gate asserts it there: a split nothing takes is a split that
+        // cannot be wrong.
+        assert!(
+            host_drawn > 0 && !revealed.is_empty(),
+            "★★ {host_drawn} family/ies were asked about as the host's and \
+             {} as a state's — with one side empty, this gate is testing one \
+             arm of a two-armed claim",
+            revealed.len()
+        );
+        println!(
+            "[r2127] each state painted its own family {by_state:?}; the mounted \
+             lab paints {painted_here} mark(s) under `{}` on the opening frame; \
+             over that frame and {} driven state(s), {host_drawn} family/ies \
+             the host draws painted 0 and {} a state reveals painted \
+             {revealed:?}",
+            lab::NAMESPACE,
+            REACHED.len(),
+            revealed.len(),
+        );
+    });
+}
+
+/// The states [`r2127_the_mounted_lab_is_asked_about_the_families_one_frame_cannot_show`]
+/// drives the assembly through, beyond the frame it opens with.
+///
+/// ★★★★★ R2127 — the population difference the assembled ratchet's own comment
+/// records, written down as a thing a round can ADD TO rather than as a
+/// limitation.
+///
+/// ⚠ NOT a second copy of [`STATES`], and the distinction was measured rather
+/// than assumed: that roster sweeps THIS shell's own dashboard, by writing into
+/// `ShellState` — a card selected, layout-edit mode, the preset menu — and none
+/// of its seven entries navigates to a mounted section at all. So the states a
+/// GUEST is in have never had a roster here, which is why every gate about a
+/// mounted screen paints the frame the shell opens with and stops.
+///
+/// ⚠ Each state is reached through the pointer this host routes, never by
+/// writing into the guest's signals. A state a test invents can be one the
+/// assembled application cannot reach, and every claim made off this roster is
+/// about what a PERSON using the assembled tool gets to.
+/// 🟥🟥🟥 ★★★★★ R2127 — **each state NAMES the family it exists to reveal, and
+/// that third field is a repair a counterfactual demanded.**
+///
+/// The first draft asserted a `StateReveals` family against the UNION of every
+/// state, and a battery found what that costs: aiming the overflow press at the
+/// toolbar instead of at its control — so that state reaches nothing — was NOT
+/// caught, because the other state's card selection also makes this screen say
+/// something and the union still had a toast in it. A union answers *some state
+/// painted it*, which is not what the roster claims.
+///
+/// So the family is asserted against ITS OWN state's frame. The union is still
+/// what the `HostDraws` half is checked against, because there the claim really
+/// is *none of these states, at all*.
+/// Drive every entry of [`REACHED`] and answer two different things: the UNION
+/// of what the opening frame and all of them paint under each declared family,
+/// and what each state painted of the family IT NAMES.
+///
+/// ★★★★★ R2127 — two answers rather than one, because the table's two halves
+/// are refuted by different evidence. *This family is nowhere* is a claim about
+/// the union; *this family is here* is a claim about one state's own frame, and
+/// a battery proved the difference: asserting the second against the union let
+/// a gesture aimed beside its control pass, because ANOTHER state happened to
+/// paint the same family.
+///
+/// ⚠ Split out of the gate for clippy's line budget, which is the reason R2122
+/// records for doing it with structure rather than an `allow` — and the battery
+/// was re-run afterwards, because a gate changed after verification is not
+/// verified.
+fn drive_every_state(
+    opening: &Painted,
+) -> (
+    std::collections::BTreeMap<&'static str, usize>,
+    std::collections::BTreeMap<&'static str, usize>,
+) {
+    use hello_node_lab::address::{self as lab, Unpainted};
+    let mut seen: std::collections::BTreeMap<&str, usize> = lab::unaddressed_stems()
+        .map(|stem| (stem, opening.family(stem).len()))
+        .collect();
+    let mut by_state: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for (what, reach, reveals) in REACHED {
+        let after = reach();
+        let grew = after.family(lab::NAMESPACE).len();
+        assert!(
+            grew > 0,
+            "★★ after {what} the mounted lab paints nothing at all, so this \
+             state contributes no evidence either way"
+        );
+        let mine = after.family(reveals).len();
+        assert!(
+            mine > 0,
+            "★★★★★ the state reached by {what} exists to reveal `{reveals}` and \
+             painted nothing under it. A union over every state would pass here \
+             whenever ANOTHER state happens to paint the same family — \
+             measured: this screen says something when a card is selected too, \
+             so aiming this gesture beside its control left the union with a \
+             toast in it and nothing objected."
+        );
+        by_state.insert(what, mine);
+        for (stem, count) in &mut seen {
+            *count += after.family(stem).len();
+        }
+    }
+    // ⚠ And the mapping is TOTAL: a family declared `StateReveals` with no state
+    // naming it would otherwise be carried by another state's frame.
+    for (stem, why) in lab::UNADDRESSED_FAMILIES {
+        if *why != Unpainted::StateReveals {
+            continue;
+        }
+        assert!(
+            REACHED.iter().any(|(_, _, reveals)| reveals == stem),
+            "★★★★★ `{stem}` is declared as revealed by a state and no entry of \
+             `REACHED` names it, so nothing drives the assembly there. Add the \
+             state rather than leaning on another one's frame."
+        );
+    }
+    (seen, by_state)
+}
+
+/// One state of a MOUNTED guest: what to call it, the gestures that reach it,
+/// and the family it exists to reveal.
+///
+/// ★ Named for [`SweptState`]'s reason — a tuple this shape is a type, and the
+/// three positions mean three different things.
+type GuestState = (&'static str, fn() -> Painted, &'static str);
+
+const REACHED: &[GuestState] = &[
+    (
+        "the toolbar overflow opened",
+        the_toolbar_overflow_is_opened,
+        hello_node_lab::address::TOAST,
+    ),
+    (
+        "a card selected with the inspector showing",
+        a_card_is_selected_with_the_inspector_open,
+        hello_node_lab::address::FAULTS,
+    ),
+];
+
+/// Press the mounted lab's overflow control.
+///
+/// ★ This screen SAYS what it just did, and this is the shortest such act the
+/// assembly can reach: the control is on the toolbar row at every size, and
+/// pressing it announces which groups it opened. What the announcement paints
+/// is the toast.
+fn the_toolbar_overflow_is_opened() -> Painted {
+    use hello_node_lab::address as lab;
+    let (shot, scene) = painted_at((WIN_W, WIN_H));
+    let mut hand = hand_on(scene);
+    hand.cursor(aim(&shot, lab::TOOLBAR_MORE));
+    hand.press();
+    hand.release();
+    painted_at((WIN_W, WIN_H)).0
+}
+
+/// Bring the inspector back if it is folded, then select a card.
+///
+/// ★★ TWO gestures and not one, measured rather than assumed: the fault panel
+/// is derived from the selected card's own form and drawn in the inspector
+/// BODY, and this application opens with that panel folded to its strip. A
+/// first draft selected a card and asserted the panel — it painted nothing, and
+/// read as *the assembly cannot reach the fault panel* when what it could not
+/// reach was the pane holding it.
+///
+/// ⚠ The unfold is conditional on the BODY being absent rather than on a flag:
+/// a press anywhere on a folded panel brings it back, so pressing
+/// unconditionally would fold it again on a run where it opened unfolded.
+fn a_card_is_selected_with_the_inspector_open() -> Painted {
+    a_card_is_selected_with_the_inspector_open_at(SIZES)
+}
+
+/// The state above, tried at each of `sizes` in turn.
+///
+/// ★★★★★ R2127 — the SIZE is part of this state and was not part of the first
+/// draft, which tried the opening size alone and reported *no card puts a form
+/// in the mounted inspector* about all eight of them.
+///
+/// ⚠ *The assembly cannot reach the fault panel* and *the assembly cannot reach
+/// it AT THIS SIZE* are different claims, and only the second is true.
+/// Sweeping the sizes this application already declares is what separates them
+/// — and asserting the state at the first size that yields it, rather than at a
+/// size written down here, is what stops this becoming a number that rots when
+/// the layout moves.
+///
+/// ⚠⚠ WHY the opening size shows none is NOT diagnosed here, and a plausible
+/// reason is deliberately not written down: two of them (the form block is not
+/// built at all, or it is built and out of view) produce this exact symptom,
+/// and a comment naming one would read as settled. Registered instead as
+/// `debt-the-assembled-tool-shows-no-card-settings-at-the-size-it-opens`, whose
+/// first question is whether the NODE IS IN THE SCENE rather than whether it is
+/// visible.
+fn a_card_is_selected_with_the_inspector_open_at(sizes: &[(&str, (u32, u32))]) -> Painted {
+    use hello_node_lab::address as lab;
+    let mut tried: Vec<(&str, String)> = Vec::new();
+    for (what, size) in sizes {
+        if let Some(found) = a_card_whose_settings_the_inspector_shows(*size, &mut tried) {
+            // ★★★★★ WHICH SIZE IS THE FINDING, so it is printed every run
+            // rather than written into a comment that stops being true. This
+            // state is not reachable at every size this application declares,
+            // and a reader who sees only the green would take it for one that
+            // is.
+            println!(
+                "[r2127] the mounted inspector shows a card's settings {what}; \
+                 sizes that showed none first: {tried:?}"
+            );
+            return found;
+        }
+    }
+    panic!(
+        "★★★★★ no card of this graph put a form in the mounted inspector at any \
+         size this application declares, as (size, card): {tried:?}. Either \
+         this application cannot select a card whose settings the inspector \
+         shows, or the note moved and this roster is looking for the wrong \
+         mark. Painted under the inspector after the last press: {:?}",
+        painted_at((WIN_W, WIN_H)).0.family(lab::INSPECTOR_SEAT)
+    )
+}
+
+/// Press each card at `size` until one shows a form.
+///
+/// 🟥 ★★★★★ R2127 — **there is no unfold gesture here, and its absence is a
+/// measurement.** A draft opened with *if the inspector body is not showing,
+/// press its strip to bring it back*, on the assumption that this application
+/// opens the mounted lab with that pane folded the way the guest's own sweep
+/// does. A counterfactual inverting that condition was NOT caught, which said
+/// the branch does nothing: this assembly opens with the inspector SHOWING at
+/// every size it declares, so the branch never ran, and pressing the panel when
+/// it is already open does not fold it either.
+///
+/// ⇒ a dead branch with a gesture in it is worse than no branch — it reads as a
+/// step this state depends on. What the state actually depends on is the fact
+/// below, so the fact is asserted and the gesture is gone.
+fn a_card_whose_settings_the_inspector_shows(
+    size: (u32, u32),
+    tried: &mut Vec<(&'static str, String)>,
+) -> Option<Painted> {
+    use hello_node_lab::address as lab;
+    let (shot, _) = painted_at(size);
+    // ⚠⚠ A STATE THIS GATE FAILED TO REACH REPORTS EXACTLY WHAT A SCREEN THAT
+    // DOES NOT PAINT ONE DOES. Without this the run says *the assembly paints
+    // no fault panel* when what happened is that the pane holding it is not
+    // showing, and the two readings are the same sentence.
+    assert!(
+        shot.rect(lab::INSPECTOR_BODY).is_some(),
+        "★★★★★ the mounted lab's inspector is not showing its body at this \
+         size, so no state below is the one this roster claims to reach — and \
+         this application opens it showing, so something moved. Painted under \
+         the inspector: {:?}",
+        shot.family(lab::INSPECTOR_SEAT)
+    );
+    // ★★★★★ A CARD WHOSE SETTINGS THE INSPECTOR SHOWS, and which that is comes
+    // from PRESSING rather than from a table. The fault panel is derived from
+    // the selected card's own form, and the first draft of this took the first
+    // card the canvas paints: it selected `P-01`, the inspector filled in with
+    // that card's identity, role, degree and pins — and no note and no panel,
+    // because that card dials nothing. *A card is selected* and *a form is
+    // shown* are two facts, and only the second is this state.
+    let mut cards: Vec<String> = shot
+        .tags
+        .keys()
+        .filter_map(|tag| lab::card_of(tag))
+        .map(str::to_owned)
+        .collect();
+    cards.sort_unstable();
+    cards.dedup();
+    assert!(
+        !cards.is_empty(),
+        "★★ the graph this assembly opens on paints no cards, so no selection \
+         is possible and this state is not reachable for a reason that has \
+         nothing to do with the inspector"
+    );
+    for card in &cards {
+        let (shot, scene) = painted_at(size);
+        let mut hand = hand_on(scene);
+        hand.cursor(aim(&shot, &lab::card(card)));
+        hand.press();
+        hand.release();
+        let after = painted_at(size).0;
+        if after.rect(lab::INSPECTOR_NOTE).is_some() {
+            return Some(after);
+        }
+        tried.push((size_word(size), card.clone()));
+    }
+    None
+}
+
+/// A size, as a word, for a refusal that has to name which one it tried.
+fn size_word(size: (u32, u32)) -> &'static str {
+    SIZES
+        .iter()
+        .find(|(_, declared)| *declared == size)
+        .map_or("a size this application does not declare", |(what, _)| {
+            *what
+        })
 }
 
 /// The mounted lab's wire-family marks in one shot, split by which head each

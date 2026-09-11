@@ -2622,7 +2622,7 @@ fn r2116_every_family_this_screen_paints_is_declared_or_owed() {
                     continue;
                 }
                 let stem: String = tag.split('.').take(2).collect::<Vec<_>>().join(".");
-                if super::address::UNADDRESSED_FAMILIES.contains(&stem.as_str()) {
+                if super::address::unaddressed(&stem).is_some() {
                     *owed.entry(stem).or_default() += 1;
                 } else {
                     orphans.push(format!("{when}: {tag}"));
@@ -2646,9 +2646,8 @@ fn r2116_every_family_this_screen_paints_is_declared_or_owed() {
              declaration drifted from what the painter composes.",
             orphans.len()
         );
-        let claiming_nothing: Vec<&&str> = super::address::UNADDRESSED_FAMILIES
-            .iter()
-            .filter(|stem| !owed.contains_key(**stem))
+        let claiming_nothing: Vec<&str> = super::address::unaddressed_stems()
+            .filter(|stem| !owed.contains_key(*stem))
             .collect();
         assert!(
             claiming_nothing.is_empty(),
@@ -2841,43 +2840,88 @@ fn r2125_the_wire_hands_over_the_addresses_the_walks_used_to_spell() {
 ///
 /// The list was NINE families and is now FOUR. The five that left are exactly
 /// the ones the ASSEMBLED page paints, which is why the shell can now assert its
-/// owed map is empty; the four that stay are the application bar, the rail, the
-/// toast and the fault panel, which the shell draws itself so a mounted page
-/// never paints them.
+/// owed map is empty.
 ///
 /// ⚠ This is a claim about WHICH four, not about how many. A count would pass
 /// with the wrong four in it, and the two gates that read this list — the sweep
 /// in this crate and the assembly's next door — would then disagree about a
 /// family without either being able to say so.
+///
+/// 🟥🟥🟥 ★★★★★ R2127 — **and it is a claim about WHY, which is where R2125 was
+/// wrong about half its own list.** That round wrote *the shell draws itself so
+/// a mounted page never paints them* over all four names. Measured: the
+/// application bar and the rail are chrome the host declares it provides, so
+/// mounted this screen does not build them; the toast and the fault panel have
+/// no chrome condition anywhere near them, and what keeps them out of the
+/// assembled ratchet is that gate painting ONE frame. Two facts under one
+/// sentence — the class this project has now paid for three rounds running —
+/// so the reason is [`crate::address::Unpainted`] and this test holds it.
 #[test]
 fn r2125_the_declared_remainder_is_what_the_shell_does_not_mount() {
     use super::address as lab;
+    use super::address::Unpainted;
     assert_eq!(
         lab::UNADDRESSED_FAMILIES,
-        &["lab.appbar", "lab.faults", "lab.rail", "lab.toast"],
-        "★★★★★ the remainder is the four families the STANDALONE binary paints \
-         and a mounted page does not. A name added here is a family that stopped \
-         being declared; a name removed is one whose reader arrived — and either \
-         way the assembly's gate and this crate's sweep have to move together."
+        &[
+            ("lab.appbar", Unpainted::HostDraws),
+            ("lab.faults", Unpainted::StateReveals),
+            ("lab.rail", Unpainted::HostDraws),
+            ("lab.toast", Unpainted::StateReveals),
+        ],
+        "★★★★★ the remainder is four families and TWO reasons. A name added here \
+         is a family that stopped being declared; a name removed is one whose \
+         reader arrived; a reason changed is a claim about what the ASSEMBLY \
+         can see — and all three have to move the assembly's gate and this \
+         crate's sweep together."
     );
     // ★ None of the four is recovered by a reader — which is what makes them a
     // remainder rather than a stale list. The other direction (that each still
     // owns a painted mark) is `r2116_every_family_this_screen_paints_is_
     // declared_or_owed`'s, over the whole state sweep.
-    for stem in lab::UNADDRESSED_FAMILIES {
+    for stem in lab::unaddressed_stems() {
         assert_eq!(
             lab::reader_of(stem),
             None,
             "`{stem}` has a declared reader now and is still listed as owed"
         );
     }
-    // ★★ And the five this round declared are NOT in it, named rather than
-    // counted: a round that declared a family and forgot to strike it out would
-    // leave the remainder claiming work that is done.
+    // ★★ And the five R2125 declared are NOT in it, named rather than counted:
+    // a round that declared a family and forgot to strike it out would leave
+    // the remainder claiming work that is done.
     for done in [lab::CANVAS, lab::CRUMB, lab::GATE, lab::HINT, lab::OBSERVED] {
-        assert!(
-            !lab::UNADDRESSED_FAMILIES.contains(&done),
+        assert_eq!(
+            lab::unaddressed(done),
+            None,
             "`{done}` is declared and still listed as owed"
+        );
+    }
+    // ★★★★★ R2127 — **this crate's sweep is the STANDALONE population, and that
+    // is what lets it see all four.**
+    //
+    // The two `HostDraws` families exist in the paint only while this screen
+    // draws its own chrome, so a sweep that ran host-wrapped would find them
+    // owning nothing and `claiming_nothing` above would fire — correctly, and
+    // for a reason nobody would guess from the message. Asserting the
+    // population here says which build this crate's gates describe, so the
+    // split with the assembly's gate is a statement rather than an accident of
+    // where the test happens to run.
+    assert!(
+        super::draws_own_app_bar() && super::draws_own_rail(),
+        "★★★★★ this crate's own gates run with NO host chrome — that is what \
+         makes their population the standalone screen. Wrapped in a host they \
+         would describe the mounted page instead, and the remainder above would \
+         read as rotted."
+    );
+    // ⚠ Both reasons must be exercised. A table with one reason in it is a
+    // list with a decoration, and the gate next door that splits on the reason
+    // would then be testing one arm.
+    for why in [Unpainted::HostDraws, Unpainted::StateReveals] {
+        assert!(
+            lab::UNADDRESSED_FAMILIES
+                .iter()
+                .any(|(_, kind)| *kind == why),
+            "★★ no family is declared {why:?}, so the split this table exists \
+             for describes nothing and the host gate's matching arm is untested"
         );
     }
 }

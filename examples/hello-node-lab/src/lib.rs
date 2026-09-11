@@ -270,7 +270,14 @@ fn rail_w() -> u32 {
 /// pixels and resolves a press first**; the bar's twin had no such cover and
 /// put 41 regions out of step. A defect that is invisible because something
 /// else happens to be in the way is still the defect.
-fn draws_own_rail() -> bool {
+/// ★★★★★ R2127 — **published**, because a host-side gate has to read this
+/// decision rather than re-derive it. `address::Unpainted::HostDraws` is a
+/// claim about what this screen does NOT paint mounted, and an absence is only
+/// checkable beside the reason for it: without this the shell's gate would
+/// assert *the rail family is empty* and pass just as happily on a screen that
+/// had stopped painting a rail anywhere.
+#[must_use]
+pub fn draws_own_rail() -> bool {
     !pinion_core::chrome::host_chrome_for(VIEW_TAG).provides(pinion_core::chrome::Part::Navigation)
 }
 
@@ -309,7 +316,11 @@ fn draws_own_rail() -> bool {
 /// DIFFERENT region at their own centre when mounted, and **0** did standalone
 /// at the same size. (No denominator — see `pinion_core::chrome`'s header for
 /// why one would be a fact about the frame rather than about the defect.)
-fn draws_own_app_bar() -> bool {
+/// ★★★★★ R2127 — **published**, for the reason given on [`draws_own_rail`]:
+/// the host's gate reads this screen's own decision instead of writing a second
+/// one.
+#[must_use]
+pub fn draws_own_app_bar() -> bool {
     !pinion_core::chrome::host_chrome_for(VIEW_TAG)
         .provides(pinion_core::chrome::Part::ApplicationBar)
 }
