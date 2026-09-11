@@ -2113,9 +2113,17 @@ impl FaultPanelSpec {
     /// a literal spelled again at the painter, so renaming one in
     /// [`Self::row_parts`] moves the paint with it instead of leaving the
     /// declaration and the screen to drift.
+    ///
+    /// ⚠ R2128 — reads `self.row_parts[0]`, NOT `address::FAULTS_WHAT`, and the
+    /// difference is this method's whole contract. `FAULTS_WHAT` names the word
+    /// for a reader that holds no spec — `painted_faults` classifying a tag off
+    /// the paint. This method answers *the part at my declared position 0*, so
+    /// taking the word from anywhere but `self` would make it lie about the
+    /// instance it was called on. A first draft did exactly that and clippy's
+    /// `unused_self` said so at the push gate.
     #[must_use]
     pub fn what(&self, n: usize) -> String {
-        crate::address::faults_row_part(n, crate::address::FAULTS_WHAT)
+        crate::address::faults_row_part(n, self.row_parts[0])
     }
 
     /// The run carrying the applies-scope badge the field declares.

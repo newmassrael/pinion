@@ -3082,9 +3082,18 @@ fn the_fault_panels_four_heads_derive() {
     assert_eq!(spec::FAULT_PANEL.row_stem, lab::FAULTS_ROW_SEAT);
     assert_eq!(spec::FAULT_PANEL.scope_stem, lab::FAULTS_SCOPE_SEAT);
     assert_eq!(spec::FAULT_PANEL.row_parts, lab::FAULTS_ROW_PARTS);
+    // ★★★★★ R2128 — `FAULTS_WHAT` and the positional declaration are PINNED to
+    // each other. The const exists for a reader that holds no spec (the paint
+    // classifier); the method answers from `self.row_parts`. They are two doors
+    // onto one fact, so if they ever disagree the paint and the reader disagree
+    // — which is this campaign's defect wearing a different hat.
+    assert_eq!(lab::FAULTS_WHAT, lab::FAULTS_ROW_PARTS[0]);
     // ★ The three methods that remain are the ones that READ this declaration —
     // a part by declared position — and they are held against the composer.
-    assert_eq!(spec::FAULT_PANEL.what(2), lab::faults_row_part(2, "what"));
+    assert_eq!(
+        spec::FAULT_PANEL.what(2),
+        lab::faults_row_part(2, lab::FAULTS_WHAT)
+    );
     assert_eq!(spec::FAULT_PANEL.badge(2), lab::faults_row_part(2, "badge"));
     assert_eq!(spec::FAULT_PANEL.why(2), lab::faults_row_part(2, "why"));
 }
