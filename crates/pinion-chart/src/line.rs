@@ -756,7 +756,7 @@ impl LineChart {
 
         let mut children: Vec<Scene> = Vec::new();
         if let Some(bg) = style.background {
-            children.push(box_node(rect, bg, format!("{}.bg", self.tag_prefix)));
+            children.push(box_node(rect, bg, crate::address::bg(&self.tag_prefix)));
         }
         children.extend(self.gridlines(&plot, &x_ticks, &y_ticks, style));
         if let Some(crosshair) = crosshair {
@@ -947,7 +947,7 @@ impl LineChart {
         } else {
             style.area_alpha
         };
-        let tag = format!("{}.area.{i}", self.tag_prefix);
+        let tag = crate::address::area(&self.tag_prefix, i);
         if encoded.iter().any(Option::is_some) {
             // The area spans a range of x, so its measure is encoded
             // CONTINUOUSLY: a gradient whose stops sit at the samples' own x
@@ -1088,7 +1088,7 @@ impl LineChart {
                     &pts,
                     self.interpolation,
                     Stroke::new(line_color, width).with_cap(StrokeCap::Round),
-                    format!("{}.series.{i}", self.tag_prefix),
+                    crate::address::series(&self.tag_prefix, i),
                 ));
             }
             // The focus overdraw: the in-window sub-polyline at full colour.
@@ -1152,7 +1152,7 @@ impl LineChart {
             out.push(stroke_path(
                 pair,
                 Stroke::new(color, width).with_cap(StrokeCap::Round),
-                format!("{}.series.{i}.seg.{k}", self.tag_prefix),
+                format!("{}.seg.{k}", crate::address::series(&self.tag_prefix, i)),
             ));
         }
         out
@@ -1271,7 +1271,7 @@ impl LineChart {
         let crosshair = stroke_path(
             &[(focus_pixel, plot.top), (focus_pixel, plot.bottom)],
             Stroke::new(style.crosshair, 1),
-            format!("{}.inspect.crosshair", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).crosshair(),
         );
 
         let radius = style.marker_radius.max(1);
@@ -1287,7 +1287,7 @@ impl LineChart {
                     py,
                     radius,
                     color,
-                    format!("{}.inspect.marker.{i}", self.tag_prefix),
+                    crate::address::inspect(&self.tag_prefix).marker(*i),
                 ))
             })
             .collect();
@@ -1322,7 +1322,7 @@ impl LineChart {
                 color: self.series[*i]
                     .color
                     .unwrap_or_else(|| self.palette.color(*i)),
-                tag: format!("{}.inspect.value.{i}", self.tag_prefix),
+                tag: crate::address::inspect(&self.tag_prefix).value_at(*i),
             })
             .collect();
         callout(
@@ -1330,10 +1330,10 @@ impl LineChart {
             plot.right,
             plot.top,
             &header,
-            format!("{}.inspect.header", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).header(),
             &rows,
             style,
-            format!("{}.inspect.tooltip", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).tooltip(),
         )
     }
 }

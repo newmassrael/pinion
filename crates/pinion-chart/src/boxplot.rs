@@ -677,7 +677,7 @@ impl BoxPlotChart {
 
         let mut children: Vec<Scene> = Vec::new();
         if let Some(bg) = style.background {
-            children.push(box_node(rect, bg, format!("{}.bg", self.tag_prefix)));
+            children.push(box_node(rect, bg, crate::address::bg(&self.tag_prefix)));
         }
 
         let frame = (g.left, g.right, g.top, g.bottom);
@@ -827,7 +827,7 @@ impl BoxPlotChart {
             out.push(stroke_path(
                 &[(bx.cap_left, y), (bx.cap_right, y)],
                 stroke,
-                format!("{}.cap.{i}.{tag}", self.tag_prefix),
+                crate::address::cap(&self.tag_prefix, i, tag),
             ));
         }
 
@@ -1028,7 +1028,7 @@ impl BoxPlotChart {
                     to_u32(b.bottom - b.top).max(1),
                 ),
                 style.crosshair,
-                format!("{}.inspect.highlight", self.tag_prefix),
+                crate::address::inspect(&self.tag_prefix).highlight(),
             )
         });
         // Every number in the tooltip goes through the AXIS's own readout
@@ -1077,10 +1077,10 @@ impl BoxPlotChart {
             g.right,
             g.top,
             d.label(),
-            format!("{}.inspect.header", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).header(),
             &rows,
             style,
-            format!("{}.inspect.tooltip", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).tooltip(),
         );
         Some(BoxInspect { highlight, tooltip })
     }
@@ -1090,7 +1090,7 @@ impl BoxPlotChart {
         CalloutRow {
             text: format!("{name} {value}"),
             color,
-            tag: format!("{}.inspect.{tag}", self.tag_prefix),
+            tag: crate::address::inspect(&self.tag_prefix).member(tag),
         }
     }
 

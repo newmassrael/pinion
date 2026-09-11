@@ -395,7 +395,7 @@ impl PolarChart {
 
         let mut children: Vec<Scene> = Vec::new();
         if let Some(bg) = style.background {
-            children.push(box_node(rect, bg, format!("{}.bg", self.tag_prefix)));
+            children.push(box_node(rect, bg, crate::address::bg(&self.tag_prefix)));
         }
         children.extend(self.grid(&plot, radial_ticks.ticks(), &angular_ticks, style));
         children.extend(self.marks(&plot, style));
@@ -509,14 +509,14 @@ impl PolarChart {
                     out.push(polygon_node(
                         &pixels,
                         PathStyle::filled(color.with_alpha(style.area_alpha)),
-                        format!("{}.area.{i}", self.tag_prefix),
+                        crate::address::area(&self.tag_prefix, i),
                     ));
                 }
                 out.push(series_path(
                     &pixels,
                     closed,
                     Stroke::new(color, style.series_width.max(1)),
-                    format!("{}.series.{i}", self.tag_prefix),
+                    crate::address::series(&self.tag_prefix, i),
                 ));
             }
             if self.markers {
@@ -531,7 +531,7 @@ impl PolarChart {
                         // R1824 — a point mark is ONE sample, so it carries
                         // its own verdict rather than the run's.
                         self.mute.shade(self.sample_index(i, j), base),
-                        format!("{}.point.{i}.{j}", self.tag_prefix),
+                        crate::address::point(&self.tag_prefix, i, j),
                     ));
                 }
             }
@@ -617,7 +617,7 @@ impl PolarChart {
         let mut out = vec![stroke_path(
             &[(plot.cx, plot.cy), plot.at(angle, plot.radius)],
             Stroke::new(style.crosshair, 1),
-            format!("{}.inspect.spoke", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).spoke(),
         )];
         let mut rows = Vec::new();
         let radial_format = axis_format(&plot.radial, radial_ticks);
@@ -635,13 +635,13 @@ impl PolarChart {
                     y,
                     to_f32(style.marker_radius) + 2.0,
                     Stroke::new(color, 2),
-                    format!("{}.inspect.ring.{i}", self.tag_prefix),
+                    crate::address::inspect(&self.tag_prefix).ring(i),
                 ));
             }
             rows.push(CalloutRow {
                 text: format!("{}  {}", s.name, radial_format.readout(p.y)),
                 color,
-                tag: format!("{}.inspect.value.{i}", self.tag_prefix),
+                tag: crate::address::inspect(&self.tag_prefix).value_at(i),
             });
         }
         let header = self.angular_format(&self.angular_ticks(style)).readout(
@@ -653,10 +653,10 @@ impl PolarChart {
             plot.cx + plot.radius,
             plot.cy - plot.radius,
             &header,
-            format!("{}.inspect.header", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).header(),
             &rows,
             style,
-            format!("{}.inspect.tooltip", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).tooltip(),
         ));
         out
     }

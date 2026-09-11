@@ -506,7 +506,7 @@ impl BarChart {
 
         let mut children: Vec<Scene> = Vec::new();
         if let Some(bg) = style.background {
-            children.push(box_node(rect, bg, format!("{}.bg", self.tag_prefix)));
+            children.push(box_node(rect, bg, crate::address::bg(&self.tag_prefix)));
         }
         // Horizontal gridlines (one per y-tick) + the L-frame axes — the shared
         // cartesian furniture (R1377). A bar chart's x-axis is CATEGORICAL, so
@@ -771,23 +771,23 @@ impl BarChart {
             outline_box(
                 r,
                 style.crosshair,
-                format!("{}.inspect.highlight", self.tag_prefix),
+                crate::address::inspect(&self.tag_prefix).highlight(),
             )
         });
         let rows = vec![CalloutRow {
             text: value_text(bar, g.y_step),
             color: style.tooltip_fg,
-            tag: format!("{}.inspect.value", self.tag_prefix),
+            tag: crate::address::inspect(&self.tag_prefix).value(),
         }];
         let tooltip = callout(
             center_x,
             g.right,
             g.top,
             &bar.label,
-            format!("{}.inspect.header", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).header(),
             &rows,
             style,
-            format!("{}.inspect.tooltip", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).tooltip(),
         );
         Some(BarInspect { highlight, tooltip })
     }

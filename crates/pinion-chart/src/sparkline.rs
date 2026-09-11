@@ -204,7 +204,7 @@ impl Sparkline {
     fn build_body(&self, rect: Rect, style: &ChartStyle) -> ContainerNode {
         let mut children: Vec<Scene> = Vec::new();
         if let Some(bg) = style.background {
-            children.push(box_node(rect, bg, format!("{}.bg", self.tag_prefix)));
+            children.push(box_node(rect, bg, crate::address::bg(&self.tag_prefix)));
         }
 
         if let Some(g) = self.geom(rect, style) {

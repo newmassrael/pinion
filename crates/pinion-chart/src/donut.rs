@@ -245,7 +245,7 @@ impl DonutChart {
 
         let mut children: Vec<Scene> = Vec::new();
         if let Some(bg) = style.background {
-            children.push(box_node(rect, bg, format!("{}.bg", self.tag_prefix)));
+            children.push(box_node(rect, bg, crate::address::bg(&self.tag_prefix)));
         }
 
         // One filled sector per drawn slice, in sweep order, tagged by the
@@ -401,7 +401,7 @@ impl DonutChart {
             seg.a0,
             seg.a1,
             PathStyle::stroked(Stroke::new(style.crosshair, 2)),
-            format!("{}.inspect.highlight", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).highlight(),
         );
         // The tooltip is anchored at the slice's mid-angle point on the outer
         // radius (in the sector rect's frame -> window via the bbox origin).
@@ -410,17 +410,17 @@ impl DonutChart {
         let rows = vec![CalloutRow {
             text: percent_text(slice.value, geom.total),
             color: style.tooltip_fg,
-            tag: format!("{}.inspect.value", self.tag_prefix),
+            tag: crate::address::inspect(&self.tag_prefix).value(),
         }];
         let tooltip = callout(
             anchor_x,
             to_f32(geom.bbox.x + geom.bbox.w),
             to_f32(geom.bbox.y),
             &slice.label,
-            format!("{}.inspect.header", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).header(),
             &rows,
             style,
-            format!("{}.inspect.tooltip", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).tooltip(),
         );
         Some(DonutInspect { highlight, tooltip })
     }

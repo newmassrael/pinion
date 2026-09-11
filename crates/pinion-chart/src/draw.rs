@@ -810,12 +810,12 @@ pub(crate) fn axes(frame: PlotFrame, style: &ChartStyle, prefix: &str) -> Vec<Sc
         stroke_path(
             &[(left, top), (left, bottom)],
             stroke,
-            format!("{prefix}.axis.y"),
+            crate::address::axis_y(prefix),
         ),
         stroke_path(
             &[(left, bottom), (right, bottom)],
             stroke,
-            format!("{prefix}.axis.x"),
+            crate::address::axis_x(prefix),
         ),
     ]
 }

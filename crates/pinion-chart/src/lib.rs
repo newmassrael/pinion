@@ -308,6 +308,7 @@
 //!   (structured scene) and §2 #7 (scene-as-data); it does **not** satisfy
 //!   §2 #6 today, and that gap is stated here rather than left silent.
 
+pub mod address;
 mod bar;
 mod boxplot;
 mod brush;

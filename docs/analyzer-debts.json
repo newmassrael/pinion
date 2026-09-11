@@ -554,6 +554,18 @@
       ]
     },
     {
+      "name": "debt-the-address-census-cannot-see-the-crates-that-paint",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links debt-the-canon-is-one-app-and-we-are-many-binaries"
+      ]
+    },
+    {
       "name": "debt-the-address-ratchet-cannot-charge-a-two-segment-mark",
       "substituted": false,
       "blocked_by": "buildable",

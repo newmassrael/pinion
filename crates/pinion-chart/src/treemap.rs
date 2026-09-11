@@ -391,7 +391,7 @@ impl Treemap {
 
         let mut children: Vec<Scene> = Vec::new();
         if let Some(bg) = style.background {
-            children.push(box_node(rect, bg, format!("{}.bg", self.tag_prefix)));
+            children.push(box_node(rect, bg, crate::address::bg(&self.tag_prefix)));
         }
 
         let size = style.label_size_px.max(1);
@@ -645,23 +645,23 @@ impl Treemap {
         let highlight = Some(outline_box(
             p.rect,
             style.crosshair,
-            format!("{}.inspect.highlight", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).highlight(),
         ));
         let anchor_x = to_f32(p.rect.x) + to_f32(p.rect.w) / 2.0;
         let rows = vec![CalloutRow {
             text: percent_text(tile.value, geom.total),
             color: style.tooltip_fg,
-            tag: format!("{}.inspect.value", self.tag_prefix),
+            tag: crate::address::inspect(&self.tag_prefix).value(),
         }];
         let tooltip = callout(
             anchor_x,
             to_f32(geom.frame.x + geom.frame.w),
             to_f32(geom.frame.y),
             &tile.label,
-            format!("{}.inspect.header", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).header(),
             &rows,
             style,
-            format!("{}.inspect.tooltip", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).tooltip(),
         );
         Some(TreemapInspect { highlight, tooltip })
     }

@@ -315,7 +315,7 @@ impl Timeline {
 
         let mut children: Vec<Scene> = Vec::new();
         if let Some(bg) = style.background {
-            children.push(box_node(rect, bg, format!("{}.bg", self.tag_prefix)));
+            children.push(box_node(rect, bg, crate::address::bg(&self.tag_prefix)));
         }
 
         // Vertical time gridlines (one per ruler tick) — the shared cartesian
@@ -337,12 +337,12 @@ impl Timeline {
         children.push(stroke_path(
             &[(g.left, g.top), (g.right, g.top)],
             axis_stroke,
-            format!("{}.axis.x", self.tag_prefix),
+            crate::address::axis_x(&self.tag_prefix),
         ));
         children.push(stroke_path(
             &[(g.left, g.top), (g.left, g.bottom)],
             axis_stroke,
-            format!("{}.axis.y", self.tag_prefix),
+            crate::address::axis_y(&self.tag_prefix),
         ));
 
         // Ruler time labels, centred over each tick in the top margin.
@@ -410,7 +410,7 @@ impl Timeline {
             children.push(stroke_path(
                 &[(px, g.top), (px, g.bottom)],
                 Stroke::new(style.crosshair, 2),
-                format!("{}.playhead", self.tag_prefix),
+                crate::address::playhead(&self.tag_prefix).root(),
             ));
             children.extend(self.playhead_callout(&g, px, style));
         }
@@ -483,7 +483,7 @@ impl Timeline {
             .map(|(i, j)| CalloutRow {
                 text: format!("{}  {}", self.lanes[i].name, self.lanes[i].spans[j].label),
                 color: style.tooltip_fg,
-                tag: format!("{}.playhead.value.{i}", self.tag_prefix),
+                tag: crate::address::playhead(&self.tag_prefix).value_at(i),
             })
             .collect();
         callout(
@@ -491,10 +491,10 @@ impl Timeline {
             g.right,
             g.top,
             &g.x_format.readout(time),
-            format!("{}.playhead.header", self.tag_prefix),
+            crate::address::playhead(&self.tag_prefix).header(),
             &rows,
             style,
-            format!("{}.playhead.tooltip", self.tag_prefix),
+            crate::address::playhead(&self.tag_prefix).tooltip(),
         )
     }
 

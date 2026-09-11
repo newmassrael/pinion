@@ -204,7 +204,7 @@ impl ScatterChart {
                             .iter()
                             .position(|p| (p.x - x).abs() < f64::EPSILON);
                         ChartCell {
-                            tag: at.map(|j| format!("{}.point.{index}.{j}", self.tag_prefix)),
+                            tag: at.map(|j| crate::address::point(&self.tag_prefix, *index, j)),
                             value: at.map_or_else(String::new, |j| {
                                 format!("{y_name} {}", format_si(series.points[j].y))
                             }),
@@ -462,7 +462,7 @@ impl ScatterChart {
 
         let mut children: Vec<Scene> = Vec::new();
         if let Some(bg) = style.background {
-            children.push(box_node(rect, bg, format!("{}.bg", self.tag_prefix)));
+            children.push(box_node(rect, bg, crate::address::bg(&self.tag_prefix)));
         }
         // Gridlines (both axes numeric) + crosshair behind the points.
         // A log axis's fainter per-decade subdivisions paint below the
@@ -604,7 +604,7 @@ impl ScatterChart {
                     py,
                     radius,
                     mark_color,
-                    format!("{}.point.{i}.{j}", self.tag_prefix),
+                    crate::address::point(&self.tag_prefix, i, j),
                 ));
             }
         }
@@ -716,7 +716,7 @@ impl ScatterChart {
         let crosshair = stroke_path(
             &[(focus_pixel, plot.top), (focus_pixel, plot.bottom)],
             Stroke::new(style.crosshair, 1),
-            format!("{}.inspect.crosshair", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).crosshair(),
         );
 
         // A ring one gap wider than the point marks, so it frames the focused
@@ -732,7 +732,7 @@ impl ScatterChart {
                     py,
                     point_r + 3,
                     ring_stroke,
-                    format!("{}.inspect.ring.{i}", self.tag_prefix),
+                    crate::address::inspect(&self.tag_prefix).ring(*i),
                 ))
             })
             .collect();
@@ -772,7 +772,7 @@ impl ScatterChart {
                 color: self.series[*i]
                     .color
                     .unwrap_or_else(|| self.palette.color(*i)),
-                tag: format!("{}.inspect.value.{i}", self.tag_prefix),
+                tag: crate::address::inspect(&self.tag_prefix).value_at(*i),
             })
             .collect();
         callout(
@@ -780,10 +780,10 @@ impl ScatterChart {
             plot.right,
             plot.top,
             &header,
-            format!("{}.inspect.header", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).header(),
             &rows,
             style,
-            format!("{}.inspect.tooltip", self.tag_prefix),
+            crate::address::inspect(&self.tag_prefix).tooltip(),
         )
     }
 }
