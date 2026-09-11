@@ -6201,6 +6201,46 @@ def appbar_tag(tf, word: str, *, ext: str = "/external") -> str:
     return appbar_seats(screen_spec(tf, ext))[word]
 
 
+def lab_address(tf, family: str, part: str | None = None, *, ext: str = "/external"):
+    """An address the node lab publishes for a reader that cannot call its
+    declaration.
+
+    ★★★★★ R2128 — the door for the four families that screen folded this round:
+    the application bar, the rail's pane, the toast, and (through
+    [`lab_fault_panel`]) the fault panel. Eleven walk sites across seven walks
+    spelled one of these, and a walk is Python — no compiler and no Rust gate
+    can see the copy drift, so a wrong letter reads as *the screen did not paint
+    it*.
+
+    `family` is a key of the screen's `declared_addresses` row. Pass `part` when
+    the family is a group of named marks (`appbar`, `toast`, `crumb`, `gate`,
+    `hint`) and leave it off for a lone one (`canvas`, `rail_pane`,
+    `observed_seat`). A family or part the screen does not publish is a
+    `KeyError` naming it — which is the point: a walk asking for something the
+    declaration does not hold should stop, not look for a mark that is not
+    there.
+
+    ⚠ Deliberately NOT a door onto the whole spec. The rail's SEATS are not
+    here: each rides on the rail row beside the destination it belongs to, which
+    is where a walk already is when it wants one (`seat["tag"]`).
+    """
+    row = screen_spec(tf, ext)["declared_addresses"][family]
+    return row if part is None else row[part]
+
+
+def lab_fault_panel(tf, *, ext: str = "/external") -> dict:
+    """The node lab's fault panel as it publishes itself — its own box, its
+    heading, the seat a row is addressed under, the parts a row paints, and the
+    seat an out-of-reach scope is named under.
+
+    ★ Its own row rather than a member of `declared_addresses`, because it
+    carries the panel's SHAPE as well as its prefixes; a walk that wants the
+    third row's badge composes it from `row_stem` and `row_parts` here rather
+    than spelling either.
+    """
+    return screen_spec(tf, ext)["faults_panel"]
+
+
 def pin_prefix(tf, *, ext: str = "/external") -> str:
     """The prefix every pin of every card on the node graph is painted under.
 

@@ -49,13 +49,20 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    lab_address,
     run_demo,
+    screen_spec,
     toolbar_tag,
 )
 
 SHELL = "hello-analyzer-shell"
 LAB = "hello-node-lab"
 EXT = "/external"
+#: The MOUNTED node lab's own wire surface, which lives under its destination
+#: (R1989). R2104 reached for it inline; R2128 names it, because this walk now
+#: asks the guest three things and a path spelled three times is the shape this
+#: whole campaign is about.
+GUEST = "/node_lab/external"
 CHECKS: list[str] = []
 
 
@@ -91,7 +98,14 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # the application publishes rather than spelled here.
         published = app.query(f"{EXT}/spec")["rail"]
         seat_tag = published[0]["tag"][: -len(published[0]["key"])]
-        rails = sorted(t for t in rects if t in ("shell.rail", "lab.rail"))
+        # ★★★★★ R2128 — the GUEST's addresses, asked of the guest. This walk is
+        # the one that decided a mounted screen draws neither bar nor rail, and
+        # it spelled both of those families nine times — an absence is the one
+        # claim a wrong letter passes silently, because a mark that is not there
+        # and a mark nobody looked for read the same.
+        guest_rail = lab_address(app, "rail_pane", ext=GUEST)
+        guest_bar = lab_address(app, "appbar", "bar", ext=GUEST)
+        rails = sorted(t for t in rects if t in ("shell.rail", guest_rail))
         assert_eq(
             rails,
             ["shell.rail"],
@@ -116,7 +130,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             ok(f"A: the host's {seat} seat is painted", f"{seat_tag}{seat}" in rects)
         ok(
             "A: none of the guest's rail seats is painted",
-            not [t for t in rects if t.startswith("lab.rail.")],
+            not [t for t in rects if t.startswith(f"{guest_rail}.")],
         )
         # ★ R1725 answered only the NAVIGATION question and asserted the guest
         # kept its own bar, "so a later round cannot quietly fold them together
@@ -141,7 +155,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             "A: ★★★★★ and the guest draws NO bar of its own -- one application, "
             "one bar, which is what the behaviour canon has on all three of its "
             "screens",
-            "lab.appbar" not in rects,
+            guest_bar not in rects,
         )
         # ★★★★★ And the graph's name is still SAID. Dropping the strip is only
         # half the move: the toolbar's copy of the name deferred to the bar with
@@ -159,11 +173,9 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             # external lives under its destination (R1989). Spelled here until
             # this round, and a wrong letter would have made this assertion read
             # "the name is announced by nobody" when it is.
-            "lab.appbar" not in tree
+            guest_bar not in tree
             and bool(
-                tree.get(toolbar_tag(app, "title", ext="/node_lab/external"), {}).get(
-                    "name"
-                )
+                tree.get(toolbar_tag(app, "title", ext=GUEST), {}).get("name")
             ),
         )
 
@@ -231,7 +243,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # has one X" had written the claim twice. The room the strip took is
         # what the assertion is really about, so it now checks that instead of
         # checking the strip is there.
-        ok("A: the guest draws no bar of its own", "lab.appbar" not in rects)
+        ok("A: the guest draws no bar of its own", guest_bar not in rects)
         ok(
             "A: and its content starts at the page's own top edge, in the room "
             "the strip used to take",
@@ -258,7 +270,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         ok("C: returning brings the guest back", "lab.canvas" in back)
         ok(
             "C: and it still has no rail of its own",
-            "lab.rail" not in back,
+            guest_rail not in back,
         )
         assert_eq(
             navigations(app),
@@ -272,39 +284,45 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
     banner("B — the SAME screen standalone: its rail is back")
     with RpcSubprocess(LAB, boot_grace=1.5) as lab:
         rects = abs_rects_of(lab.snapshot(source="paint"))
-        ok("B: standalone, the screen draws its own rail", "lab.rail" in rects)
-        seats = sorted(t for t in rects if t.startswith("lab.rail."))
+        # ★★★★★ R2128 — asked of the STANDALONE process, which is a different
+        # surface from the mounted one above and gives the same answer. That is
+        # the claim section B exists to make, so taking both from the same
+        # spelled literal would have been assuming it.
+        rail = lab_address(lab, "rail_pane", ext=EXT)
+        bar = lab_address(lab, "appbar", "bar", ext=EXT)
+        ok("B: standalone, the screen draws its own rail", rail in rects)
+        seats = sorted(t for t in rects if t.startswith(f"{rail}."))
         ok(f"B: with all {len(seats)} of its seats", len(seats) >= 7)
         assert_eq(
-            rects["lab.rail"][0],
+            rects[rail][0],
             0,
             "B: at the window's own left edge",
         )
         assert_eq(
             rects["lab.palette"][0],
-            rects["lab.rail"][0] + rects["lab.rail"][2],
+            rects[rail][0] + rects[rail][2],
             "B: with the palette beside it, exactly where it always was -- the "
             "standalone layout is unchanged, which is what makes this a "
             "statement about the PLACE rather than an edit to the screen",
         )
         assert_eq(
             navigations(lab),
-            ["lab.rail"],
+            [rail],
             "B: and standalone it is the one navigation there is",
         )
         tree = nodes_by_tag(lab)
         ok(
             "B: its seats are in the tree too",
-            len([t for t in tree if t.startswith("lab.rail.")]) >= 7,
+            len([t for t in tree if t.startswith(f"{rail}.")]) >= 7,
         )
         # ★ And the rest of the screen is the same screen in both places, which
         # is what makes this a statement about the PLACE rather than an edit:
         # every pane it paints hosted, it paints standalone.
-        for pane in ("lab.palette", "lab.canvas", "lab.inspector", "lab.appbar"):
+        for pane in ("lab.palette", "lab.canvas", "lab.inspector", bar):
             ok(f"B: standalone it still paints {pane}", pane in rects)
         assert_eq(
             navigations(lab),
-            ["lab.rail"],
+            [rail],
             "B: and one navigation is one navigation here too -- the repair is "
             "not 'the guest never has a rail', it is 'the guest has one where "
             "nothing else does'",
@@ -316,9 +334,23 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # capability. That is a claim about behaviour, so it is pressed: every
         # seat answers with a refusal naming itself, and the screen it is on
         # does not change.
+        # ⚠ RAW, and deliberately: this is the opaque snapshot the assertion at
+        # the end of the section compares against, so it must be whatever the
+        # wire answered rather than anything parsed out of it.
         before = lab.query(f"{EXT}/spec")
+        # ★ R2128 — the seat's address rides on the rail row beside the
+        # destination it belongs to, so a walk that has the roster has the
+        # addresses and composes nothing.
+        #
+        # 🟥 THROUGH `screen_spec`, NOT through `before`. This screen publishes
+        # `spec` as a STRING HOLDING JSON while its sibling publishes JSON, and
+        # `screen_spec` is the harness door that exists for exactly that split.
+        # The first draft indexed `before` directly and died
+        # `TypeError: string indices must be integers` — the door was already
+        # there and going around it is what broke.
+        seat_of = {row["name"]: row["tag"] for row in screen_spec(lab, EXT)["rail"]}
         for seat in ("packets", "keys", "logs"):
-            rect = rects[f"lab.rail.{seat}"]
+            rect = rects[seat_of[seat]]
             lab.request(
                 "scene/click",
                 {

@@ -9012,7 +9012,7 @@ fn r2102_an_edit_under_a_live_focus_says_what_it_left_in_the_assembled_tool() {
         );
 
         let (shot, _) = painted_at((WIN_W, WIN_H));
-        let words = run_words(&shot, "lab.toast").join(" ");
+        let words = run_words(&shot, hello_node_lab::address::TOAST).join(" ");
         assert!(
             words.contains("deleted Q-01"),
             "the assembled tool draws the edit's own sentence: {words:?}"
@@ -16159,16 +16159,10 @@ fn r2116_every_mark_the_mounted_lab_paints_is_declared_or_owed() {
 
         let mut by_reader: std::collections::BTreeMap<&str, usize> =
             std::collections::BTreeMap::new();
-        let mut owed: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
         let mut orphans: Vec<&str> = Vec::new();
         for tag in shot.family(lab::NAMESPACE) {
             if let Some(reader) = reader_of(tag) {
                 *by_reader.entry(reader).or_default() += 1;
-                continue;
-            }
-            let stem: String = tag.split('.').take(2).collect::<Vec<_>>().join(".");
-            if lab::unaddressed(&stem).is_some() {
-                *owed.entry(stem).or_default() += 1;
             } else {
                 orphans.push(tag);
             }
@@ -16177,11 +16171,11 @@ fn r2116_every_mark_the_mounted_lab_paints_is_declared_or_owed() {
         assert!(
             orphans.is_empty(),
             "★★★★★ {} mark(s) the mounted lab paints in its own namespace are at \
-             addresses no declared reader recovers AND no declared remainder \
-             owns: {orphans:?}. Either the screen grew a region nothing \
-             declares — which is the hole every per-family gate in this campaign \
-             was blind to — or a declaration drifted from what the painter \
-             composes.",
+             addresses no declared reader recovers: {orphans:?}. Since R2128 \
+             that guest has no declared remainder to fall back on, so this is \
+             either a region that grew with nothing declaring it — the hole \
+             every per-family gate in this campaign was blind to — or a \
+             declaration that drifted from what the painter composes.",
             orphans.len()
         );
         let claimed: usize = by_reader.values().sum();
@@ -16224,54 +16218,26 @@ fn r2116_every_mark_the_mounted_lab_paints_is_declared_or_owed() {
                  orphans above mean less than it reads. Counted: {by_reader:?}"
             );
         }
-        // ⚠⚠ THE OTHER DIRECTION — that no name in the remainder owns nothing —
-        // is NOT asserted here, and the reason is measured rather than assumed.
-        // This gate sees ONE state: the screen the shell opens with. A family
-        // the screen paints only after a gesture is absent from this snapshot
-        // legitimately, so "this assembly does not paint it" cannot distinguish
-        // a struck-out entry from a family that simply has not been revealed.
-        // Exactness is the CRATE gate's, over the whole state sweep
-        // (`r2116_every_family_this_screen_paints_is_declared_or_owed`), and
-        // that split is what stops this gate from either passing vacuously or
-        // demanding a mark that correct behaviour does not produce.
-        // ★★★★★ R2125 — AND THE OWED MAP IS EMPTY, which is the whole reason
-        // this round cut where it did.
+        // ⚠⚠ WHICH FAMILIES THIS FRAME SHOWS is NOT asserted here, and the
+        // reason is measured rather than assumed. This gate sees ONE state: the
+        // screen the shell opens with. A family the screen paints only after a
+        // gesture is absent from this snapshot legitimately, so "this assembly
+        // does not paint it" cannot distinguish a region that went away from one
+        // that has not been revealed. Exactness is the CRATE gate's, over the
+        // whole state sweep — and the gate below drives the gestures that reach
+        // what this frame cannot.
         //
-        // R2116 wrote this gate with a declared remainder because the screen was
-        // four times the size of its siblings and could not reach zero. That
-        // remainder was NINE families. Asking this gate with `--nocapture` said
-        // which of the nine THIS ASSEMBLY paints — five — so the reachable end
-        // state was never "lab is converted"; it was "the page a person opens
-        // owes nothing", and that is an assertion, where "some of lab is
-        // converted" is not.
-        //
-        // 🟥 ★★★★★ R2127 — **the sentence that used to stand here said the
-        // other four are the standalone binary's *because the shell draws its
-        // own application bar and its own rail*, and that is true of TWO of
-        // them.** What this gate measured is that its own population — one
-        // frame — does not have them; the reason was supplied afterwards and
-        // fitted the first two names on the list. The toast and the fault panel
-        // are painted by the mounted page like anything else once a gesture
-        // reaches them, which the gate below drives and asserts.
-        //
-        // ⚠ This is deliberately NOT the exactness assertion the crate gate
-        // makes. That one sweeps every state and refuses a remainder entry that
-        // owns nothing; this one sees one frame and refuses a mark that nothing
-        // recovers. Two questions, and the comment above says why they cannot be
-        // merged.
-        assert!(
-            owed.is_empty(),
-            "★★★★★ the mounted lab paints {} mark(s) under a family nothing \
-             declares: {owed:?}. Since R2125 this page owes NOTHING — every \
-             family the assembly paints has a declared reader — so this is a \
-             family that came back rather than one that was never done.",
-            owed.values().sum::<usize>()
-        );
-        let owed_total: usize = owed.values().sum();
+        // ★★★★★ R2128 — **THE OWED BUCKET IS GONE, and its absence is the
+        // round.** R2116 wrote this gate with an escape hatch: a mark whose
+        // family the guest had declared as still-owed was counted rather than
+        // reported. R2125 emptied that bucket for this assembly's opening frame
+        // and asserted `owed.is_empty()`; this round declared the last four
+        // families, so there is no bucket left to be empty. A mark is now
+        // recovered or it is an orphan, which is strictly the assertion R2125
+        // was reaching for — with no second list that could quietly grow back.
         println!(
-            "[r2116] {} mark(s) under `{}`: {claimed} recovered {by_reader:?}, \
-             {owed_total} owed {owed:?}",
-            claimed + owed_total,
+            "[r2116] {claimed} mark(s) under `{}` recovered {by_reader:?}, 0 \
+             orphans and no remainder to fall back on",
             lab::NAMESPACE
         );
     });
@@ -16279,6 +16245,26 @@ fn r2116_every_mark_the_mounted_lab_paints_is_declared_or_owed() {
 
 /// ★★★★★ R2127 — **the four families the gate above cannot see, asked about by
 /// their own reasons.**
+///
+/// 🟥🟥🟥 ★★★★★ **R2128 KEPT THIS GATE AND ITS ROSTER, DELIBERATELY, and the
+/// reason is that folding the four changed nothing this gate asks.** That round
+/// declared every member address of all four and struck the address half of the
+/// guest's remainder out, which retired the bucket the ratchet above used to
+/// have. The temptation at that point is to let this go with it: the families
+/// are declared, the ratchet is at zero, the list this reads is called something
+/// else now.
+///
+/// It would have deleted the only thing in this tree that drives a MOUNTED
+/// guest past its opening frame. [`REACHED`] is what makes the two
+/// `StateReveals` families visible at all — measured, `{lab.faults: 32,
+/// lab.toast: 6}` — and *this assembly can reach the fault panel* is a claim
+/// about the ASSEMBLED TOOL that no declaration can make and no crate-level
+/// sweep can check. A gate whose subject went away is deleted; this one's
+/// subject is the assembly, and the assembly did not change.
+///
+/// ⇒ the roster stays, and the day a third family joins
+/// [`ABSENT_WHEN_MOUNTED`] as a `StateReveals` this gate refuses until a state
+/// is added for it.
 ///
 /// # What this exists for
 ///
@@ -16380,7 +16366,7 @@ fn r2127_the_mounted_lab_is_asked_about_the_families_one_frame_cannot_show() {
         let mut host_drawn = 0usize;
         let mut revealed: std::collections::BTreeMap<&str, usize> =
             std::collections::BTreeMap::new();
-        for (stem, why) in lab::UNADDRESSED_FAMILIES {
+        for (stem, why) in lab::ABSENT_WHEN_MOUNTED {
             let found = seen.get(stem).copied().unwrap_or_default();
             match why {
                 Unpainted::HostDraws => {
@@ -16490,7 +16476,7 @@ fn drive_every_state(
     std::collections::BTreeMap<&'static str, usize>,
 ) {
     use hello_node_lab::address::{self as lab, Unpainted};
-    let mut seen: std::collections::BTreeMap<&str, usize> = lab::unaddressed_stems()
+    let mut seen: std::collections::BTreeMap<&str, usize> = lab::absent_when_mounted_stems()
         .map(|stem| (stem, opening.family(stem).len()))
         .collect();
     let mut by_state: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
@@ -16519,7 +16505,7 @@ fn drive_every_state(
     }
     // ⚠ And the mapping is TOTAL: a family declared `StateReveals` with no state
     // naming it would otherwise be carried by another state's frame.
-    for (stem, why) in lab::UNADDRESSED_FAMILIES {
+    for (stem, why) in lab::ABSENT_WHEN_MOUNTED {
         if *why != Unpainted::StateReveals {
             continue;
         }

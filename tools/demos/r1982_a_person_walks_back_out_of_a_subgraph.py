@@ -102,7 +102,7 @@ def crumb_addresses(app: RpcSubprocess, surface: str) -> dict:
     guest through the guest's own path, which is the same fact the host's chrome
     is read by and not a second copy of it.
     """
-    return js(app.query(f"{surface}/spec"))["owed_addresses"]["crumb"]
+    return js(app.query(f"{surface}/spec"))["declared_addresses"]["crumb"]
 
 
 def standing(app: RpcSubprocess, surface: str) -> dict:

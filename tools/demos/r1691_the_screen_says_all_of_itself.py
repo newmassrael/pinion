@@ -239,8 +239,8 @@ def body() -> None:
         body_row = rows[palette_seats(spec)["body"]]
         assert_eq(body_row["reason"], "layout")
         assert_eq(body_row["relay"], "children")
-        # ★ R2125 — received from the screen's own `owed_addresses`.
-        caption = rows[spec["owed_addresses"]["hint"]["text"]]
+        # ★ R2125 — received from the screen's own `declared_addresses`.
+        caption = rows[spec["declared_addresses"]["hint"]["text"]]
         assert_eq(caption["reason"], "name_of")
         assert_eq(caption["relay"], "peer")
         assert_eq(
@@ -420,15 +420,20 @@ def body() -> None:
         tf.invoke(f"{EXT}/export", "")
         after = tf.voice()
         rows_after = voice_rows(after)
-        assert "lab.toast" in rows_after, "the act put a message on screen"
+        # ★★★★★ R2128 — RECEIVED, not spelled. The toast was one of the four
+        # families the screen still owed a declaration; it has one now and
+        # publishes it, so a wrong letter here can no longer look for a mark
+        # that is not there and read as the screen saying nothing.
+        toast_tag = spec["declared_addresses"]["toast"]["message"]
+        assert toast_tag in rows_after, "the act put a message on screen"
         assert_eq(
-            rows_after["lab.toast"]["voice"],
+            rows_after[toast_tag]["voice"],
             "announced",
             "★★★★★ ...and a reader is told about it. Several operations report "
             "ONLY here, so a silent toast is an operation a reader cannot "
             "confirm happened",
         )
-        toast = access_node_by_tag(tf.request("scene/access").result, "lab.toast")
+        toast = access_node_by_tag(tf.request("scene/access").result, toast_tag)
         # ★★★★★ R1719 — this line used to demand `assertive` for EVERYTHING the
         # screen says, on the argument written beside it: "a reply to something
         # the person just did". That argument is right about the half of what
@@ -456,7 +461,10 @@ def body() -> None:
         locked = [seat for seat in spec["rail"] if seat["locked"]]
         assert len(locked) >= 2, f"the reference locks seats on this rail: {locked}"
         for seat in locked:
-            node = access_node_by_tag(tf.request("scene/access").result, f"lab.rail.{seat['name']}")
+            # ★★★★★ R2128 — the seat's address rides on the rail row now, beside
+            # the destination it belongs to. This walk composed it from a prefix
+            # it spelled, which is the copy no compiler here can see.
+            node = access_node_by_tag(tf.request("scene/access").result, seat["tag"])
             assert node is not None, f"the {seat['name']} seat announces"
             assert_eq(node["role"], "link")
             assert_eq(
@@ -469,7 +477,7 @@ def body() -> None:
             assert_eq((node.get("unavailable") or {}).get("kind"), "reserved")
         live = [seat for seat in spec["rail"] if not seat["locked"]]
         for seat in live:
-            node = access_node_by_tag(tf.request("scene/access").result, f"lab.rail.{seat['name']}")
+            node = access_node_by_tag(tf.request("scene/access").result, seat["tag"])
             assert node is not None and not node.get("unavailable"), (
                 f"the {seat['name']} seat is open and announces a reason to wait"
             )

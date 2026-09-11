@@ -493,6 +493,18 @@
       ]
     },
     {
+      "name": "debt-one-read-path-answers-two-shapes-across-six-screens",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-tool-capability-spec"
+      ]
+    },
+    {
       "name": "debt-seven-capabilities-were-excluded-by-an-unratified-boundary",
       "substituted": false,
       "blocked_by": "buildable",
@@ -539,6 +551,18 @@
       "rank": "ordinary",
       "why": [
         "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
+      "name": "debt-the-address-ratchet-cannot-see-a-respelled-vocabulary-word",
+      "substituted": false,
+      "blocked_by": "unmeasured",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-tool-capability-spec"
       ]
     },
     {

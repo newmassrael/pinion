@@ -112,7 +112,7 @@ pub struct PaneSpec {
 /// The four panes, left to right.
 pub const PANES: &[PaneSpec] = &[
     PaneSpec {
-        tag: "lab.rail",
+        tag: crate::address::RAIL,
         title: "",
         width: 54,
         // Fixed seats, one per destination: the rail's content is the
@@ -127,7 +127,7 @@ pub const PANES: &[PaneSpec] = &[
         // — which is what makes the gate below non-vacuous for it too.
         opens: EdgePlacement::open(ChromeEdge::Left, 54),
         // Its seats are named under its own tag, and it does not fold.
-        holds: &["lab.rail"],
+        holds: &[crate::address::RAIL],
     },
     PaneSpec {
         tag: crate::address::PALETTE,
@@ -238,7 +238,7 @@ pub const PANES: &[PaneSpec] = &[
         // from a prefix match on `tag`.
         holds: &[
             crate::address::INSPECTOR,
-            "lab.faults",
+            crate::address::FAULTS,
             crate::address::FORM_STEM,
         ],
     },
@@ -1483,17 +1483,17 @@ pub enum Population {
 pub const VOICES: &[VoiceSpec] = &[
     // The shell.
     VoiceSpec {
-        tag: "lab.appbar",
+        tag: crate::address::APPBAR,
         role: "group",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.appbar.state",
+        tag: crate::address::APPBAR_STATE,
         role: "status",
         population: Population::One,
     },
     VoiceSpec {
-        tag: "lab.rail",
+        tag: crate::address::RAIL,
         role: "navigation",
         population: Population::One,
     },
@@ -1501,7 +1501,7 @@ pub const VOICES: &[VoiceSpec] = &[
     // exposes later scope rather than hiding it, and a destination a reader
     // cannot hear about is hidden however visible it is.
     VoiceSpec {
-        tag: "lab.rail.{}",
+        tag: crate::address::RAIL_SEAT_TEMPLATE,
         role: "link",
         population: Population::Rail,
     },
@@ -1774,7 +1774,7 @@ pub const VOICES: &[VoiceSpec] = &[
 /// spellings, so what this table says is what `scene/voice` publishes.
 pub const SILENCES: &[(&str, Population, &str)] = &[
     // The graph's name, painted three times and announced once.
-    ("lab.appbar.graph", Population::One, "name_of"),
+    (crate::address::APPBAR_GRAPH, Population::One, "name_of"),
     (crate::address::TOOLBAR_TITLE, Population::One, "name_of"),
     // Colour keys. A reader who never sees the colours loses the membership of
     // the transport set, which the palette announces as its value — so the
@@ -2079,27 +2079,34 @@ pub struct FaultPanelSpec {
 }
 
 /// The panel, as this screen paints it.
+///
+/// ★★★★★ R2128 — every string here comes from [`crate::address`], which is
+/// where this screen's addresses are declared. Before that round they were
+/// literals, and this table WAS the declaration for a family the address module
+/// did not hold — which is how the fault panel came to be one of the four
+/// `reader_of` could not recover. The shape is still this table's; the
+/// addresses are not.
 pub const FAULT_PANEL: FaultPanelSpec = FaultPanelSpec {
-    tag: "lab.faults",
-    head: "lab.faults.head",
-    row_stem: "lab.faults.row.",
-    row_parts: &["what", "badge", "why"],
-    scope_stem: "lab.faults.scope.",
+    tag: crate::address::FAULTS,
+    head: crate::address::FAULTS_HEAD,
+    row_stem: crate::address::FAULTS_ROW_SEAT,
+    row_parts: crate::address::FAULTS_ROW_PARTS,
+    scope_stem: crate::address::FAULTS_SCOPE_SEAT,
 };
 
+// ★★★★★ R2128 — **`row`, `part` and `scope` are GONE from this impl, and the
+// compiler is what said so.** They composed an address from this struct's own
+// prefixes; once those prefixes came from [`crate::address`] the composition
+// belonged there too, and the three methods became wrappers that read nothing of
+// the instance. Clippy's `unused_self` reported exactly that, which is the lint
+// telling the truth: a method that does not depend on its receiver is a name
+// that lies about where its answer comes from. Callers ask
+// `address::faults_row` / `faults_row_part` / `faults_scope` directly now.
+//
+// ⚠ What STAYED is what genuinely reads this declaration: the three below are
+// about `row_parts` — a part BY DECLARED POSITION — and [`Self::roster`] is
+// about the whole shape.
 impl FaultPanelSpec {
-    /// The box for the `n`th offer.
-    #[must_use]
-    pub fn row(&self, n: usize) -> String {
-        format!("{}{n}", self.row_stem)
-    }
-
-    /// One part of the `n`th offer's row.
-    #[must_use]
-    pub fn part(&self, n: usize, part: &str) -> String {
-        format!("{}{n}.{part}", self.row_stem)
-    }
-
     /// The run naming the offer's key and arm.
     ///
     /// The three parts are addressed by their DECLARED POSITION rather than by
@@ -2108,25 +2115,19 @@ impl FaultPanelSpec {
     /// declaration and the screen to drift.
     #[must_use]
     pub fn what(&self, n: usize) -> String {
-        self.part(n, self.row_parts[0])
+        crate::address::faults_row_part(n, crate::address::FAULTS_WHAT)
     }
 
     /// The run carrying the applies-scope badge the field declares.
     #[must_use]
     pub fn badge(&self, n: usize) -> String {
-        self.part(n, self.row_parts[1])
+        crate::address::faults_row_part(n, self.row_parts[1])
     }
 
     /// The run carrying the clause that admits the offer.
     #[must_use]
     pub fn why(&self, n: usize) -> String {
-        self.part(n, self.row_parts[2])
-    }
-
-    /// The run that says why `wire`'s faults are out of reach.
-    #[must_use]
-    pub fn scope(&self, wire: &str) -> String {
-        format!("{}{wire}", self.scope_stem)
+        crate::address::faults_row_part(n, self.row_parts[2])
     }
 
     /// **Every element the panel paints**, given how many offers the
@@ -2142,13 +2143,13 @@ impl FaultPanelSpec {
     pub fn roster(&self, offers: usize, out_of_reach: &[&str]) -> Vec<String> {
         let mut out = vec![self.tag.to_owned(), self.head.to_owned()];
         for n in 0..offers {
-            out.push(self.row(n));
+            out.push(crate::address::faults_row(n));
             for part in self.row_parts {
-                out.push(self.part(n, part));
+                out.push(crate::address::faults_row_part(n, part));
             }
         }
         for wire in out_of_reach {
-            out.push(self.scope(wire));
+            out.push(crate::address::faults_scope(wire));
         }
         out
     }

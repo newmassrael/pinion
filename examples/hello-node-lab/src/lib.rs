@@ -6316,7 +6316,7 @@ impl Hit {
         if let Some(seat) = toolbar_seats(state).into_iter().find(|s| s.tag == tag) {
             return seat.hit;
         }
-        if let Some(name) = tag.strip_prefix("lab.rail.")
+        if let Some(name) = address::rail_destination(tag)
             && let Some((name, _)) = spec::RAIL.iter().find(|(n, _)| *n == name)
         {
             return Self::Rail(name);
@@ -10245,7 +10245,7 @@ fn dashed_wire(
 fn app_bar(state: &LabState, ink: Ink) -> Scene {
     let running = state.running.get();
     panel(
-        "lab.appbar",
+        address::APPBAR,
         Rect::new(0, 0, window_size().0, APP_BAR_H),
         ink.surface,
         Some(ink.outline),
@@ -10253,7 +10253,7 @@ fn app_bar(state: &LabState, ink: Ink) -> Scene {
             label("node lab", Rect::new(16, 19, 90, 16), FONT_TITLE, ink.text),
             quiet(
                 tagged_label(
-                    "lab.appbar.graph",
+                    address::APPBAR_GRAPH,
                     // ⚠ R1981 — the breadcrumb is NOT here, and that was this
                     // round's first draft. Mounted in the shell this whole app
                     // bar is not painted at all — the shell draws its own
@@ -10267,10 +10267,10 @@ fn app_bar(state: &LabState, ink: Ink) -> Scene {
                     FONT_SMALL,
                     ink.text_2,
                 ),
-                Silence::name_of("lab.appbar"),
+                Silence::name_of(address::APPBAR),
             ),
             tagged_label(
-                "lab.appbar.state",
+                address::APPBAR_STATE,
                 if running { "running" } else { "stopped" },
                 Rect::new(window_size().0 - 120, 20, 100, 14),
                 FONT_SMALL,
@@ -10293,7 +10293,7 @@ fn rail(ink: Ink) -> Scene {
         let seat = local(rail_seat(n));
         let active = *name == spec::RAIL_ACTIVE;
         let mut box_node = box_at(
-            &format!("lab.rail.{name}"),
+            &address::rail(name),
             seat,
             if active { ink.accent_soft } else { ink.surface },
             Some(if active { ink.accent_line } else { ink.surface }),
@@ -10322,7 +10322,13 @@ fn rail(ink: Ink) -> Scene {
             },
         ));
     }
-    panel("lab.rail", rect, ink.surface, Some(ink.outline), children)
+    panel(
+        address::RAIL,
+        rect,
+        ink.surface,
+        Some(ink.outline),
+        children,
+    )
 }
 
 /// A rail seat's icon, drawn as marks rather than written as a character.
@@ -11335,7 +11341,7 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
             // ⇒ the same predicate the paint and the layout read. A screen that
             // decided this separately would be the two-readers defect R1821
             // measured, in the one layer where nobody looks at the pixels.
-            Silence::name_of("lab.appbar"),
+            Silence::name_of(address::APPBAR),
         ),
         tagged_label(
             address::TOOLBAR_META,
@@ -13707,18 +13713,24 @@ fn canvas_toast(state: &LabState, ink: Ink) -> Option<Scene> {
     let said = state.toast.showing()?;
     let dot = Rect::new(inner.x + TOAST_PAD, inner.y + TOAST_PAD + 3, 7, 7);
     Some(panel(
-        "lab.toast",
+        address::TOAST,
         seat,
         ink.raised,
         Some(ink.outline_2),
         vec![
             quiet(
-                box_at("lab.toast.dot", dot, toast_ink(said.tone(), ink), None, 4),
+                box_at(
+                    address::TOAST_BULLET,
+                    dot,
+                    toast_ink(said.tone(), ink),
+                    None,
+                    4,
+                ),
                 Silence::decorative("the bullet before the message"),
             ),
             quiet(
                 tagged_label(
-                    "lab.toast.text",
+                    address::TOAST_TEXT,
                     said.sentence(),
                     Rect::new(
                         dot.x + TOAST_DOT,
@@ -13729,7 +13741,7 @@ fn canvas_toast(state: &LabState, ink: Ink) -> Option<Scene> {
                     FONT_SMALL,
                     ink.text,
                 ),
-                Silence::name_of("lab.toast"),
+                Silence::name_of(address::TOAST),
             ),
         ],
     ))
@@ -14209,7 +14221,11 @@ fn fault_panel(state: &LabState, top: u32, ink: Ink) -> Vec<Scene> {
     // and nowhere else, so the specification did not know the panel existed and
     // the backward gate reported twenty-eight invented elements the first time
     // anything asked about the whole screen.
+    // ★★★★★ R2128 — and the parametric halves come from `address`, which is
+    // where every address of this screen is composed. `FAULT_PANEL` is the
+    // panel's SHAPE; the row and scope composers left it when its prefixes did.
     let panel = &spec::FAULT_PANEL;
+    let row_tag = address::faults_row;
     let mut out = vec![
         box_at(
             panel.tag,
@@ -14236,7 +14252,7 @@ fn fault_panel(state: &LabState, top: u32, ink: Ink) -> Vec<Scene> {
         // that only warns cannot be painted as one that stops a launch.
         let ink_for = if row.blocks() { ink.err } else { ink.warn };
         out.push(box_at(
-            &panel.row(n),
+            &row_tag(n),
             Rect::new(PAD + 8, y, width - 16, FAULT_LINE_H - 4),
             ink.surface,
             Some(ink_for),
@@ -14250,7 +14266,7 @@ fn fault_panel(state: &LabState, top: u32, ink: Ink) -> Vec<Scene> {
                 FAULT_PX,
                 ink_for,
             ),
-            Silence::name_of(panel.row(n)),
+            Silence::name_of(row_tag(n)),
         ));
         out.push(quiet(
             tagged_label(
@@ -14265,7 +14281,7 @@ fn fault_panel(state: &LabState, top: u32, ink: Ink) -> Vec<Scene> {
                 FAULT_PX,
                 ink.text_3,
             ),
-            Silence::part_of(panel.row(n)),
+            Silence::part_of(row_tag(n)),
         ));
         out.push(quiet(
             tagged_label(
@@ -14275,7 +14291,7 @@ fn fault_panel(state: &LabState, top: u32, ink: Ink) -> Vec<Scene> {
                 FAULT_PX,
                 ink.text_3,
             ),
-            Silence::part_of(panel.row(n)),
+            Silence::part_of(row_tag(n)),
         ));
     }
     // ★★★★★ One run per scope the panel does NOT offer, derived from
@@ -14286,7 +14302,7 @@ fn fault_panel(state: &LabState, top: u32, ink: Ink) -> Vec<Scene> {
     for (n, (wire, sentence)) in notes.iter().enumerate() {
         out.push(quiet(
             tagged_label(
-                &panel.scope(wire),
+                &address::faults_scope(wire),
                 sentence.clone(),
                 Rect::new(
                     PAD + 10,
@@ -17040,7 +17056,7 @@ impl ExternalIntrospect for LabOracle {
             return Announced::nowhere("the lab holds no document yet, so it has no toast");
         };
         state.say(refused.clone());
-        Announced::at("lab.toast")
+        Announced::at(address::TOAST)
     }
 
     #[allow(clippy::too_many_lines, reason = "one arm per published action")]
@@ -18499,20 +18515,36 @@ fn link_addresses_wire() -> serde_json::Value {
     })
 }
 
-/// ★★★★★ R2125 — **the five families the assembled page owed, for the walks.**
+/// ★★★★★ R2125, completed and RENAMED R2128 — **the families with no other row
+/// on this surface, handed to the walks.**
 ///
 /// A walk is Python: it cannot name a Rust const, so the only way it stops
-/// spelling an address is if the screen HANDS it one. Three walks spelled these
-/// twelve times, and what made them spellable rather than derivable is that
-/// nothing published them — the same finding R2116 recorded for the reset seats
-/// and R2124 for a sibling screen, here for the last five families of this one.
+/// spelling an address is if the screen HANDS it one. What made these spellable
+/// rather than derivable is that nothing published them — the same finding
+/// R2116 recorded for the reset seats and R2124 for a sibling screen.
+///
+/// 🟥🟥🟥 **The key was `owed_addresses` and the name stopped being true.** It
+/// grouped the families R2116 had declared as still owing a declaration —
+/// deliberately one key rather than a word per family, so a reader could see it
+/// was a LIST WITH AN END — and R2128 declared the last of them. A key named for
+/// a condition that no longer holds is the class this project keeps paying for,
+/// so the name says what the row IS: the addresses this screen publishes for a
+/// reader that cannot call the declaration.
+///
+/// ⚠ The fault panel is NOT here and that is the row's rule, not an omission: it
+/// has its own published row (`faults_panel`), which carries its shape as well
+/// as its prefixes. This key is for the families that have nowhere else.
+///
+/// ⚠⚠ The rail is not here either — a seat's address rides on the rail row
+/// itself, beside the destination it belongs to, which is where a walk already
+/// is when it wants one.
 ///
 /// ⚠ Seats where the family is indexed and whole addresses where it is not, so a
 /// walk composes only what genuinely varies: a breadcrumb step's depth and a
 /// check-panel line's ordinal are the walk's own numbers, while the canvas, the
 /// standing step, the trail and the hint's sentence are single marks with
 /// nothing to vary.
-fn owed_addresses_wire() -> serde_json::Value {
+fn declared_addresses_wire() -> serde_json::Value {
     serde_json::json!({
         "canvas": address::CANVAS,
         "crumb": {
@@ -18530,6 +18562,22 @@ fn owed_addresses_wire() -> serde_json::Value {
         },
         "hint": { "band": address::HINT, "text": address::HINT_TEXT },
         "observed_seat": address::OBSERVED_SEAT,
+        // ★★★★★ R2128 — the two the standalone binary draws and the one it
+        // floats over the canvas. The bar and the rail are chrome a HOST may
+        // provide, so a walk driving the standalone screen is the only reader
+        // that finds them — which is exactly why they went eighteen instalments
+        // unconverted, and no reason at all to leave them unpublished.
+        "appbar": {
+            "bar": address::APPBAR,
+            "graph": address::APPBAR_GRAPH,
+            "state": address::APPBAR_STATE,
+        },
+        "rail_pane": address::RAIL,
+        "toast": {
+            "message": address::TOAST,
+            "dot": address::TOAST_BULLET,
+            "text": address::TOAST_TEXT,
+        },
     })
 }
 
@@ -18684,8 +18732,15 @@ fn spec_json() -> serde_json::Value {
         "observed": spec::OBSERVED.iter().map(|(from, to)| serde_json::json!({
             "from": from, "to": to,
         })).collect::<Vec<_>>(),
+        // ★★★★★ R2128 — and WHERE each seat is painted. Until this round a walk
+        // that wanted a seat's rectangle had the destination's name and nothing
+        // else, so four walks composed the address from a prefix they spelled —
+        // R2116's finding about the reset seats, one family over, and the same
+        // repair: the row carries the address the paint used, so the two cannot
+        // be two spellings.
         "rail": spec::RAIL.iter().map(|(name, reserved_for)| serde_json::json!({
             "name": name,
+            "tag": address::rail(name),
             "locked": reserved_for.is_some(),
             "reserved_for": reserved_for,
             "active": *name == spec::RAIL_ACTIVE,
@@ -18938,15 +18993,15 @@ fn spec_json() -> serde_json::Value {
         // executed rather than repeated — and R2106's, which is that the check
         // has to be made in every namespace and not only in this table's keys.
         "link_addresses": link_addresses_wire(),
-        // ★★★★★ R2125 — the five families this screen owed until this round.
+        // ★★★★★ R2125, renamed R2128 — the families with no other row on this
+        // surface.
         //
-        // ⚠ Under `owed_addresses` rather than a word per family, because that
-        // is what these five have in common and nothing else does: they are the
-        // remainder R2116 declared, and the day the standalone four join them
-        // this key is what the last instalment empties. A key per family would
-        // publish the grouping as five unrelated facts and lose the one thing a
-        // reader needs — that this is a LIST WITH AN END.
-        "owed_addresses": owed_addresses_wire(),
+        // ⚠ ONE key rather than a word per family, because that is what these
+        // have in common and nothing else does: a reader needs to see that this
+        // is a LIST WITH AN END. It was `owed_addresses` while R2116's declared
+        // remainder was what made the list, and the name went false the round
+        // that remainder emptied — see `declared_addresses_wire`.
+        "declared_addresses": declared_addresses_wire(),
         "addable": spec::ADDABLE,
         "gestures": spec::GESTURES.iter().map(|(g, w)| serde_json::json!([g, w])).collect::<Vec<_>>(),
         // ★ R1678 — the reset affordances, and which of them are CONDITIONAL.
@@ -25375,7 +25430,7 @@ fn appbar_access(state: &LabState) -> Vec<AccessNode> {
     //
     // 🟥🟥🟥 ★★★★★ R1825 — **and empty is not enough.** The graph's name is
     // painted at the toolbar's title, which defers to this bar with a
-    // `Silence::name_of("lab.appbar")`. R1822 dropped that deferral where the
+    // `Silence::name_of(address::APPBAR)`. R1822 dropped that deferral where the
     // bar is absent and stopped there, which moves the node from *wrongly
     // quiet* to **undecided** — a different fault, not a repair. Measured on
     // the running application: that title, `voice: "unvoiced"`, the
@@ -25396,9 +25451,9 @@ fn appbar_access(state: &LabState) -> Vec<AccessNode> {
     }
     let running = state.running.get();
     vec![
-        AccessNode::new("lab.appbar", AriaRole::Group)
+        AccessNode::new(address::APPBAR, AriaRole::Group)
             .with_name(format!("node lab: {}", spec::GRAPH_NAME)),
-        AccessNode::new("lab.appbar.state", AriaRole::Status)
+        AccessNode::new(address::APPBAR_STATE, AriaRole::Status)
             .with_name(if running { "running" } else { "stopped" })
             .with_live(AccessLive::Polite),
     ]
@@ -25419,7 +25474,7 @@ fn rail_access() -> Vec<AccessNode> {
         .collect();
     let tags: Vec<String> = spec::RAIL
         .iter()
-        .map(|(name, _)| format!("lab.rail.{name}"))
+        .map(|(name, _)| address::rail(name))
         .collect();
     let links: Vec<NavLink<'_>> = spec::RAIL
         .iter()
@@ -25437,7 +25492,7 @@ fn rail_access() -> Vec<AccessNode> {
             unavailable: reasons[i].as_ref(),
         })
         .collect();
-    navigation_link_nodes("lab.rail", "sections", &links)
+    navigation_link_nodes(address::RAIL, "sections", &links)
 }
 
 /// The palette: the pane, a button per role, the pin legend, and the
@@ -29167,12 +29222,12 @@ fn fault_access(state: &LabState) -> Vec<AccessNode> {
         ))
         .with_value(AccessValue::Text(fault_scope_note()));
     for n in 0..rows.len() {
-        panel = panel.with_child(names.row(n));
+        panel = panel.with_child(address::faults_row(n));
     }
     let mut nodes = vec![panel];
     for (n, row) in rows.iter().enumerate() {
         nodes.push(
-            AccessNode::new(names.row(n), AriaRole::ListItem)
+            AccessNode::new(address::faults_row(n), AriaRole::ListItem)
                 .with_name(format!(
                     "{} {}: {} - {}, admitted by {}",
                     row.key,
@@ -29306,7 +29361,7 @@ fn gate_access(state: &LabState) -> Vec<AccessNode> {
     // constant anybody can get half right.
     if let Some(said) = state.toast.showing() {
         nodes.push(
-            AccessNode::new("lab.toast", AriaRole::Status)
+            AccessNode::new(address::TOAST, AriaRole::Status)
                 .with_name(said.sentence())
                 .with_live(AccessLive::for_urgency(said.urgency())),
         );

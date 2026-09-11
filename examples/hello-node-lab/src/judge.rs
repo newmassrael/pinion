@@ -505,8 +505,11 @@ mod tests {
     /// A surface with nothing on it but the extent the host granted, which is
     /// all the away condition reads.
     fn given(width: u32) -> PaintedRegions {
-        PaintedRegions::from_marks(vec![("lab.appbar".to_owned(), Rect::new(0, 0, width, 54))])
-            .with_extent(Extent::new(width, 900))
+        PaintedRegions::from_marks(vec![(
+            crate::address::APPBAR.to_owned(),
+            Rect::new(0, 0, width, 54),
+        )])
+        .with_extent(Extent::new(width, 900))
     }
 
     /// ★★★★★ R1791 — the away condition's SHAPE, tested where it can still be

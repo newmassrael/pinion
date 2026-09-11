@@ -992,7 +992,7 @@ fn folded_pane(state: &LabState, pane: &spec::PaneSpec) -> bool {
 fn declared_tags(state: &LabState) -> Vec<String> {
     let mut want: Vec<String> = vec![
         super::VIEW_TAG.to_owned(),
-        "lab.appbar".into(),
+        super::address::APPBAR.into(),
         super::address::TOOLBAR.into(),
         super::address::TOOLBAR_TITLE.into(),
         super::address::TOOLBAR_META.into(),
@@ -1058,7 +1058,7 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         }
     }
     for (seat, _) in spec::RAIL {
-        want.push(format!("lab.rail.{seat}"));
+        want.push(super::address::rail(seat));
     }
     // ★ R1887.1 — what the palette's BODY holds, demanded only while there is a
     // body. Same rule as the panes above, one level in: a folded panel's
@@ -1121,9 +1121,12 @@ fn declared_tags(state: &LabState) -> Vec<String> {
     // message region that was always there would be an empty box on the canvas,
     // and the reference paints its own only while there is something in it.
     if state.toast.showing().is_some() {
-        want.push("lab.toast".to_owned());
-        want.push("lab.toast.dot".to_owned());
-        want.push("lab.toast.text".to_owned());
+        want.push(super::address::TOAST.to_owned());
+        want.extend(
+            super::address::TOAST_PARTS
+                .iter()
+                .map(|(_, tag)| (*tag).to_owned()),
+        );
     }
     want.extend(declared_fault_panel(state));
     // The cards are the ones the model holds, not the ones the specification
@@ -1257,7 +1260,7 @@ fn must_answer(tag: &str) -> Option<String> {
     let author = super::address::form_part_prefix("author");
     let disown = super::address::form_part_prefix("disown");
     for (prefix, verb) in [
-        ("lab.rail.", "rail"),
+        (super::address::RAIL_SEAT, "rail"),
         (super::address::ROLE_ROW, "role"),
         (add.as_str(), "add"),
         (control.as_str(), "field"),
@@ -1434,7 +1437,7 @@ fn same_row(want: &str, got: &str) -> bool {
 
 /// The pane a tag's mark has to be painted inside.
 fn owning_pane(tag: &str) -> Option<Rect> {
-    if tag.starts_with("lab.rail") {
+    if tag == super::address::RAIL || super::address::rail_destination(tag).is_some() {
         return Some(rail_rect());
     }
     if tag.starts_with(super::address::PALETTE) {
@@ -2574,8 +2577,8 @@ use pinion_core::test_fixtures::screen_ink::{
 /// eight runs left the screen (R1952), and four came into the sweep (R2074).
 const SHORT_BOX_BUDGET: usize = 71;
 
-/// ★★★★★ R2116 — **every family this screen paints, in every state it is swept
-/// through, is either recovered by a declared reader or named as still owed.**
+/// ★★★★★ R2116, at zero since R2128 — **every family this screen paints, in
+/// every state it is swept through, is recovered by a declared reader.**
 ///
 /// The gate the seventeen instalments of this campaign could not be. Each of
 /// them asked *does any module re-spell a family the declaration HOLDS*, and
@@ -2584,14 +2587,27 @@ const SHORT_BOX_BUDGET: usize = 71;
 /// it in five modules, and nothing would say a word — which is exactly what
 /// happened seventeen times over, one family at a time.
 ///
-/// `hello-packet-view` closed that floor at R2115 by reaching zero and
-/// asserting it. This screen is four times the size and its remainder is
-/// FAMILIES rather than sites, so the remainder is declared
-/// ([`crate::address::UNADDRESSED_FAMILIES`]) and this gate holds it in both
-/// directions: a family that is neither recovered nor owed fails, and a name in
-/// the remainder that nothing owes fails too. The second half is what keeps the
-/// list from becoming the hand-written thing it is standing in for — a family
-/// declared next round and not struck out here is a failure, not a stale line.
+/// `hello-packet-view` closed that floor at R2115 by reaching zero. This screen
+/// was four times the size, so R2116 wrote the same gate with a DECLARED
+/// remainder instead and held it in both directions. R2125 emptied five of the
+/// nine and R2128 the last four, so the remainder is gone and what is left is
+/// the assertion with no escape hatch: a mark is recovered or it is an orphan.
+///
+/// 🟥🟥🟥 ★★★★★ **The emptiness guard that remainder carried is RESTATED rather
+/// than deleted, and that is this round's one structural risk.** The old guard
+/// was `owed_total > 0` — *the remainder is not describing nothing* — and it
+/// would have gone silently green forever the moment the list emptied, since a
+/// removed assertion leaves no trace. Two statements replace it:
+///
+/// * `claimed > 0` plus the per-reader floors, which is what makes
+///   `orphans.is_empty()` a claim about a screen that is actually there;
+/// * every entry of [`crate::address::ABSENT_WHEN_MOUNTED`] is a family THIS
+///   sweep paints. That table is the half of the old remainder that survived
+///   (it says what a mounted page's opening frame does not show, not what is
+///   undeclared), and the assertion is the old `claiming_nothing` check with
+///   its meaning corrected: an entry that names a region this screen no longer
+///   paints is a stale line, and a stale line there is what would let the
+///   shell's `r2127_*` pass by asking about nothing.
 ///
 /// ⚠⚠ THE STATE AXIS IS WHY THIS LIVES HERE AND NOT ONLY IN THE SHELL. The
 /// assembled gate next door sees the screen the shell OPENS with, and this
@@ -2607,7 +2623,11 @@ fn r2116_every_family_this_screen_paints_is_declared_or_owed() {
         super::reset_lab_state();
         let state = use_lab_state();
         let mut by_reader: BTreeMap<&str, usize> = BTreeMap::new();
-        let mut owed: BTreeMap<String, usize> = BTreeMap::new();
+        // ★★★★★ R2128 — the families the ASSEMBLY's opening frame does not
+        // show, counted HERE, where every one of them is painted. This is the
+        // half of R2116's remainder that outlived the campaign, and counting it
+        // is what the old `claiming_nothing` check becomes.
+        let mut absent_mounted: BTreeMap<&str, usize> = BTreeMap::new();
         let mut orphans: Vec<String> = Vec::new();
         let mut states = 0usize;
         for (when, mutate) in STATES {
@@ -2617,15 +2637,16 @@ fn r2116_every_family_this_screen_paints_is_declared_or_owed() {
                 if !tag.starts_with(super::address::NAMESPACE) {
                     continue;
                 }
-                if let Some(reader) = declared_reader_of(tag) {
-                    *by_reader.entry(reader).or_default() += 1;
-                    continue;
-                }
-                let stem: String = tag.split('.').take(2).collect::<Vec<_>>().join(".");
-                if super::address::unaddressed(&stem).is_some() {
-                    *owed.entry(stem).or_default() += 1;
-                } else {
+                let Some(reader) = declared_reader_of(tag) else {
                     orphans.push(format!("{when}: {tag}"));
+                    continue;
+                };
+                *by_reader.entry(reader).or_default() += 1;
+                let stem: String = tag.split('.').take(2).collect::<Vec<_>>().join(".");
+                if let Some(known) =
+                    super::address::absent_when_mounted_stems().find(|declared| *declared == stem)
+                {
+                    *absent_mounted.entry(known).or_default() += 1;
                 }
             }
         }
@@ -2640,34 +2661,41 @@ fn r2116_every_family_this_screen_paints_is_declared_or_owed() {
         assert!(
             orphans.is_empty(),
             "★★★★★ this screen paints {} mark(s) in its own namespace that no \
-             declared reader recovers and no declared remainder owns: \
-             {orphans:#?}. Either a region grew with nothing declaring it — the \
-             hole every per-family gate in this campaign was blind to — or a \
-             declaration drifted from what the painter composes.",
+             declared reader recovers: {orphans:#?}. Since R2128 there is no \
+             declared remainder to fall back on, so this is either a region \
+             that grew with nothing declaring it — the hole every per-family \
+             gate in this campaign was blind to — or a declaration that drifted \
+             from what the painter composes.",
             orphans.len()
         );
-        let claiming_nothing: Vec<&str> = super::address::unaddressed_stems()
-            .filter(|stem| !owed.contains_key(*stem))
+        // ★★★★★ R2128 — the RESTATEMENT of `owed_total > 0`. The old guard said
+        // *the declared remainder is not describing nothing*; the remainder is
+        // empty now, so the same job is done by the table that replaced it. An
+        // entry naming a family this sweep does not paint is a stale line, and a
+        // stale line there makes the shell's `r2127_*` ask about nothing.
+        let claiming_nothing: Vec<&str> = super::address::absent_when_mounted_stems()
+            .filter(|stem| !absent_mounted.contains_key(*stem))
             .collect();
         assert!(
             claiming_nothing.is_empty(),
-            "★★★★★ `address::UNADDRESSED_FAMILIES` names {claiming_nothing:?}, which this \
-             screen paints under no unaddressed name in any swept state. Either \
-             the family was declared and the entry was not struck out, or the \
-             screen stopped painting it — both leave the remainder claiming work \
-             that is not there, and a remainder that cannot shrink is prose."
+            "★★★★★ `address::ABSENT_WHEN_MOUNTED` names {claiming_nothing:?}, \
+             which this screen paints in no swept state. That table says a \
+             MOUNTED page's opening frame does not show these — a claim the \
+             shell's `r2127_*` holds — and an entry naming a region this screen \
+             stopped painting leaves that gate asserting an absence about \
+             nothing."
         );
         let claimed: usize = by_reader.values().sum();
-        let owed_total: usize = owed.values().sum();
         assert!(
-            claimed > 0 && owed_total > 0,
-            "★ {claimed} recovered and {owed_total} owed — with both sides \
-             ORed, an empty population makes the two assertions above describe \
-             nothing"
+            claimed > 0 && !absent_mounted.is_empty(),
+            "★ {claimed} mark(s) recovered and {} of the mounted-absent \
+             families painted — with nothing on the screen, the assertions \
+             above describe nothing",
+            absent_mounted.len()
         );
         println!(
             "[r2116] over {states} state(s): {claimed} mark(s) recovered \
-             {by_reader:?}, {owed_total} owed {owed:?}"
+             {by_reader:?}, 0 owed; absent when mounted {absent_mounted:?}"
         );
     });
 }
@@ -2781,19 +2809,18 @@ fn r2125_every_owed_lab_address_is_derived() {
     }
 }
 
-/// ★★★★★ R2125 — **the screen HANDS the walks every address they used to
-/// spell.**
+/// ★★★★★ R2125, extended R2128 — **the screen HANDS the walks every address
+/// they used to spell.**
 ///
-/// Three walks spelled these twelve times, and a walk is Python: no Rust gate
-/// reads it, so the walk half cannot be asserted from here. What CAN be asserted
-/// is the thing the walks depend on — that the wire carries each of these
-/// addresses, so a walk never has to compose one. If this regressed the walks
-/// would go back to spelling and nothing would say so.
+/// A walk is Python: no Rust gate reads it, so the walk half cannot be asserted
+/// from here. What CAN be asserted is the thing the walks depend on — that the
+/// wire carries each of these addresses, so a walk never has to compose one. If
+/// this regressed the walks would go back to spelling and nothing would say so.
 #[test]
 fn r2125_the_wire_hands_over_the_addresses_the_walks_used_to_spell() {
     use super::address as lab;
     let published = super::spec_json();
-    let owed = &published["owed_addresses"];
+    let owed = &published["declared_addresses"];
     assert_eq!(owed["canvas"], lab::CANVAS);
     assert_eq!(owed["crumb"]["here"], lab::CRUMB);
     assert_eq!(owed["crumb"]["trail"], lab::CRUMB_TRAIL);
@@ -2807,6 +2834,44 @@ fn r2125_the_wire_hands_over_the_addresses_the_walks_used_to_spell() {
     assert_eq!(owed["hint"]["band"], lab::HINT);
     assert_eq!(owed["hint"]["text"], lab::HINT_TEXT);
     assert_eq!(owed["observed_seat"], lab::OBSERVED_SEAT);
+    // ★★★★★ R2128 — the three this round added. The bar and the toast have no
+    // other row; the rail's stem is here and each SEAT's address rides on the
+    // rail row beside the destination it belongs to, which is where a walk
+    // already is when it wants one.
+    assert_eq!(owed["appbar"]["bar"], lab::APPBAR);
+    assert_eq!(owed["appbar"]["graph"], lab::APPBAR_GRAPH);
+    assert_eq!(owed["appbar"]["state"], lab::APPBAR_STATE);
+    assert_eq!(owed["rail_pane"], lab::RAIL);
+    assert_eq!(owed["toast"]["message"], lab::TOAST);
+    assert_eq!(owed["toast"]["dot"], lab::TOAST_BULLET);
+    assert_eq!(owed["toast"]["text"], lab::TOAST_TEXT);
+    let seats = published["rail"]
+        .as_array()
+        .expect("the rail publishes its destinations");
+    assert_eq!(
+        seats.len(),
+        spec::RAIL.len(),
+        "★ the rail row is the specification's own roster"
+    );
+    for seat in seats {
+        let name = seat["name"].as_str().expect("a destination has a name");
+        assert_eq!(
+            seat["tag"],
+            lab::rail(name),
+            "★★ `{name}` publishes an address the paint does not compose — a \
+             walk reading this row would look for a mark that is not there and \
+             report it as the screen failing to paint a seat"
+        );
+    }
+    // ★★★★★ And the fault panel is handed over on its OWN row, which is why it
+    // is not in the key above: that row carries the panel's SHAPE as well as its
+    // prefixes, and a second copy here would be the defect this campaign is
+    // about one level up.
+    let panel = &published["faults_panel"];
+    assert_eq!(panel["tag"], lab::FAULTS);
+    assert_eq!(panel["head"], lab::FAULTS_HEAD);
+    assert_eq!(panel["row_stem"], lab::FAULTS_ROW_SEAT);
+    assert_eq!(panel["scope_stem"], lab::FAULTS_SCOPE_SEAT);
     // ★ And every one of them is a mark of this screen — a key that published
     // the empty string would satisfy every equality above.
     let mut published_marks = 0;
@@ -2824,6 +2889,17 @@ fn r2125_the_wire_hands_over_the_addresses_the_walks_used_to_spell() {
         &owed["hint"]["band"],
         &owed["hint"]["text"],
         &owed["observed_seat"],
+        &owed["appbar"]["bar"],
+        &owed["appbar"]["graph"],
+        &owed["appbar"]["state"],
+        &owed["rail_pane"],
+        &owed["toast"]["message"],
+        &owed["toast"]["dot"],
+        &owed["toast"]["text"],
+        &panel["tag"],
+        &panel["head"],
+        &panel["row_stem"],
+        &panel["scope_stem"],
     ] {
         let tag = value.as_str().expect("every address publishes as a string");
         assert!(
@@ -2832,15 +2908,189 @@ fn r2125_the_wire_hands_over_the_addresses_the_walks_used_to_spell() {
         );
         published_marks += 1;
     }
-    assert_eq!(published_marks, 13);
+    assert_eq!(published_marks, 24);
 }
 
-/// ★★★★★ R2125 — **the declared remainder is the standalone screen's, and it
-/// says so.**
+/// ★★★★★ R2128 — **the four families this round folded agree with themselves,
+/// and their inverses are disjoint.**
 ///
-/// The list was NINE families and is now FOUR. The five that left are exactly
-/// the ones the ASSEMBLED page paints, which is why the shell can now assert its
-/// owed map is empty.
+/// *Nobody re-spells the address* and *the composition is right* are two claims,
+/// and the first is satisfied by a declaration that composes nonsense. The
+/// sweep says every painted mark is recovered; this says the thing that recovers
+/// it is not lying.
+///
+/// ⚠ `spec::FAULT_PANEL` is driven here rather than trusted. It is the panel's
+/// published SHAPE and its prefixes now come from the declaration — but a
+/// future editor putting a literal back into that table would break nothing the
+/// compiler can see, and every walk reading the panel's row would then be
+/// handed an address the paint does not compose.
+///
+/// ⚠⚠ Split into three, one per SHAPE, which is R2122's rule for the hundred-line
+/// bound: pay it with structure rather than an `allow`. The shapes are the three
+/// this round's declaration comment names, so the split is the subject's and not
+/// the budget's.
+///
+/// 🟥 **And the vacuity guards the first draft wrote are NOT here, because
+/// clippy refused one of them as an expression that always evaluates to false.**
+/// `!FAULTS_ROW_PARTS.is_empty()` is a claim about a `const`, so there is no run
+/// in which it fails — the project's own rule is that an assertion with no
+/// failing path is deleted rather than kept for comfort. What actually catches
+/// an emptied roster is `r2116_*`: a part the declaration stopped holding stops
+/// being recovered, and its marks arrive there as orphans.
+#[test]
+fn r2128_every_standalone_lab_address_is_derived() {
+    the_closed_word_rosters_derive();
+    the_rail_seat_derives();
+    the_fault_panels_four_heads_derive();
+}
+
+/// The application bar and the toast: two closed rosters of fixed words.
+fn the_closed_word_rosters_derive() {
+    use super::address as lab;
+    assert_eq!(lab::APPBAR_SEAT, format!("{}.", lab::APPBAR));
+    assert_eq!(lab::TOAST_SEAT, format!("{}.", lab::TOAST));
+    for (word, tag) in lab::APPBAR_PARTS {
+        assert_eq!(
+            &lab::appbar(word),
+            tag,
+            "★ the declared address for the bar's `{word}` is not what \
+             `appbar()` derives"
+        );
+        assert_eq!(lab::reader_of(tag), Some("appbar"));
+    }
+    for (word, tag) in lab::TOAST_PARTS {
+        assert_eq!(
+            &lab::toast(word),
+            tag,
+            "★ the declared address for the toast's `{word}` is not what \
+             `toast()` derives"
+        );
+        assert_eq!(lab::reader_of(tag), Some("toast"));
+    }
+    assert_eq!(lab::appbar_part(lab::APPBAR_GRAPH), Some("graph"));
+    assert_eq!(lab::toast_part(lab::TOAST_TEXT), Some("text"));
+    // ★★ The stem is the family's own tag, not a member of it: a prefix that
+    // swallowed the separator would resolve a reader asking about the BAR to
+    // whichever part sorted first.
+    assert_eq!(lab::appbar_part(lab::APPBAR), None);
+    assert_eq!(lab::appbar_part(lab::APPBAR_SEAT), None);
+    assert_eq!(lab::toast_part(lab::TOAST), None);
+    assert_eq!(lab::toast_part(lab::TOAST_SEAT), None);
+    assert_eq!(lab::reader_of(lab::APPBAR), Some("appbar"));
+    assert_eq!(lab::reader_of(lab::TOAST), Some("toast"));
+    // ★★★ A word the roster does not hold is refused rather than recovered —
+    // the direction that answers nothing instead of naming a wrong mark.
+    assert_eq!(lab::appbar_part(&lab::appbar("invented")), None);
+    assert_eq!(lab::toast_part(&lab::toast("invented")), None);
+    // ⚠ And a deeper seat is not a part: `bare` refuses anything still holding a
+    // separator, which is what stops a future `lab.toast.text.caption` being
+    // read as the part `text`.
+    assert_eq!(
+        lab::toast_part(&format!("{}text.deeper", lab::TOAST_SEAT)),
+        None
+    );
+}
+
+/// The rail: one open key per destination, the key being the destination's own
+/// name.
+fn the_rail_seat_derives() {
+    use super::address as lab;
+    assert_eq!(lab::RAIL_SEAT, format!("{}.", lab::RAIL));
+    assert_eq!(lab::RAIL_SEAT_TEMPLATE, format!("{}{{}}", lab::RAIL_SEAT));
+    for (name, _) in spec::RAIL {
+        let tag = lab::rail(name);
+        assert_eq!(
+            lab::rail_destination(&tag),
+            Some(*name),
+            "★ `{tag}` did not round-trip back to its destination"
+        );
+        assert_eq!(lab::reader_of(&tag), Some("rail"));
+    }
+    assert_eq!(
+        lab::rail_destination(lab::RAIL),
+        None,
+        "★★ the pane's own tag is not one of its seats — the two are container \
+         and content"
+    );
+    assert_eq!(lab::rail_destination(lab::RAIL_SEAT), None);
+    assert_eq!(lab::reader_of(lab::RAIL), Some("rail"));
+    assert_eq!(lab::reader_of(&lab::rail(spec::RAIL_ACTIVE)), Some("rail"));
+}
+
+/// The fault panel: four heads over one stem, and the published shape that
+/// takes its prefixes from them.
+fn the_fault_panels_four_heads_derive() {
+    use super::address as lab;
+    assert_eq!(lab::FAULTS_SEAT, format!("{}.", lab::FAULTS));
+    assert_eq!(lab::FAULTS_HEAD, format!("{}head", lab::FAULTS_SEAT));
+    assert_eq!(lab::FAULTS_ROW_SEAT, format!("{}row.", lab::FAULTS_SEAT));
+    assert_eq!(
+        lab::FAULTS_SCOPE_SEAT,
+        format!("{}scope.", lab::FAULTS_SEAT)
+    );
+    assert_eq!(
+        lab::fault_mark_of(lab::FAULTS_HEAD),
+        Some(lab::FaultMark::Head)
+    );
+    for n in 0..3 {
+        assert_eq!(
+            lab::fault_mark_of(&lab::faults_row(n)),
+            Some(lab::FaultMark::Row(n)),
+            "★ a row does not round-trip at {n}"
+        );
+        for part in lab::FAULTS_ROW_PARTS {
+            let tag = lab::faults_row_part(n, part);
+            assert_eq!(
+                lab::fault_mark_of(&tag),
+                Some(lab::FaultMark::RowPart(n, part)),
+                "★ `{tag}` did not round-trip"
+            );
+            assert_eq!(lab::reader_of(&tag), Some("faults"));
+        }
+    }
+    for scope in ["world", "link"] {
+        assert_eq!(
+            lab::fault_mark_of(&lab::faults_scope(scope)),
+            Some(lab::FaultMark::Scope(scope))
+        );
+    }
+    // ★★★★★ The four heads are DISJOINT, which a prefix test could not say: a
+    // row index never parses as `head`, a scope word never as a number, and a
+    // part word outside the roster is refused rather than taken for a key.
+    assert_eq!(lab::fault_mark_of(lab::FAULTS), None);
+    assert_eq!(lab::fault_mark_of(lab::FAULTS_SEAT), None);
+    assert_eq!(lab::fault_mark_of(lab::FAULTS_ROW_SEAT), None);
+    assert_eq!(
+        lab::fault_mark_of(&lab::faults_row_part(0, "invented")),
+        None
+    );
+    assert_eq!(
+        lab::fault_mark_of(&format!("{}not-a-number", lab::FAULTS_ROW_SEAT)),
+        None
+    );
+    assert_eq!(
+        lab::fault_mark_of(&format!("{}a.b", lab::FAULTS_SCOPE_SEAT)),
+        None
+    );
+    assert_eq!(lab::reader_of(lab::FAULTS), Some("faults"));
+    // ★★★★★ The published SHAPE takes its prefixes from the declaration. This
+    // table is the fault panel's wire row and was the family's declaration until
+    // this round; the equalities are what stop a literal coming back to it where
+    // the compiler cannot see the difference.
+    assert_eq!(spec::FAULT_PANEL.tag, lab::FAULTS);
+    assert_eq!(spec::FAULT_PANEL.head, lab::FAULTS_HEAD);
+    assert_eq!(spec::FAULT_PANEL.row_stem, lab::FAULTS_ROW_SEAT);
+    assert_eq!(spec::FAULT_PANEL.scope_stem, lab::FAULTS_SCOPE_SEAT);
+    assert_eq!(spec::FAULT_PANEL.row_parts, lab::FAULTS_ROW_PARTS);
+    // ★ The three methods that remain are the ones that READ this declaration —
+    // a part by declared position — and they are held against the composer.
+    assert_eq!(spec::FAULT_PANEL.what(2), lab::faults_row_part(2, "what"));
+    assert_eq!(spec::FAULT_PANEL.badge(2), lab::faults_row_part(2, "badge"));
+    assert_eq!(spec::FAULT_PANEL.why(2), lab::faults_row_part(2, "why"));
+}
+
+/// ★★★★★ R2125, re-aimed R2128 — **the mounted-absent table is the standalone
+/// screen's, and it says so.**
 ///
 /// ⚠ This is a claim about WHICH four, not about how many. A count would pass
 /// with the wrong four in it, and the two gates that read this list — the sweep
@@ -2856,43 +3106,56 @@ fn r2125_the_wire_hands_over_the_addresses_the_walks_used_to_spell() {
 /// assembled ratchet is that gate painting ONE frame. Two facts under one
 /// sentence — the class this project has now paid for three rounds running —
 /// so the reason is [`crate::address::Unpainted`] and this test holds it.
+///
+/// 🟥🟥🟥 ★★★★★ R2128 — **and the ONE thing this gate no longer asserts is the
+/// point of the round.** It used to check that none of the four had a declared
+/// reader, which was what made them a *remainder*. All four have one now, and
+/// the check is INVERTED rather than dropped: every name in the table must be a
+/// family this module addresses. An entry that nothing recovers would be a
+/// family this screen paints with no declaration — which is what
+/// `r2116_*`'s orphan list would report, from the other end.
 #[test]
 fn r2125_the_declared_remainder_is_what_the_shell_does_not_mount() {
     use super::address as lab;
     use super::address::Unpainted;
     assert_eq!(
-        lab::UNADDRESSED_FAMILIES,
+        lab::ABSENT_WHEN_MOUNTED,
         &[
-            ("lab.appbar", Unpainted::HostDraws),
-            ("lab.faults", Unpainted::StateReveals),
-            ("lab.rail", Unpainted::HostDraws),
-            ("lab.toast", Unpainted::StateReveals),
+            (lab::APPBAR, Unpainted::HostDraws),
+            (lab::FAULTS, Unpainted::StateReveals),
+            (lab::RAIL, Unpainted::HostDraws),
+            (lab::TOAST, Unpainted::StateReveals),
         ],
-        "★★★★★ the remainder is four families and TWO reasons. A name added here \
-         is a family that stopped being declared; a name removed is one whose \
-         reader arrived; a reason changed is a claim about what the ASSEMBLY \
-         can see — and all three have to move the assembly's gate and this \
+        "★★★★★ the table is four families and TWO reasons. A name added here is \
+         a region a mounted page stopped showing; a name removed is one it \
+         started showing; a reason changed is a claim about WHY the assembly \
+         cannot see it — and all three have to move the assembly's gate and this \
          crate's sweep together."
     );
-    // ★ None of the four is recovered by a reader — which is what makes them a
-    // remainder rather than a stale list. The other direction (that each still
-    // owns a painted mark) is `r2116_every_family_this_screen_paints_is_
-    // declared_or_owed`'s, over the whole state sweep.
-    for stem in lab::unaddressed_stems() {
-        assert_eq!(
-            lab::reader_of(stem),
-            None,
-            "`{stem}` has a declared reader now and is still listed as owed"
+    // ★★★★★ R2128 — the INVERSE of what stood here until this round. Every one
+    // of the four is recovered by a declared reader now, which is what folding
+    // them meant; the table is about the ASSEMBLY's opening frame and says
+    // nothing about whether this module addresses the family. The other
+    // direction (that each still owns a painted mark in some state) is
+    // `r2116_every_family_this_screen_paints_is_declared_or_owed`'s.
+    for stem in lab::absent_when_mounted_stems() {
+        assert!(
+            lab::reader_of(stem).is_some(),
+            "`{stem}` is named as absent when mounted and nothing in `address` \
+             recovers it — the table is about a MOUNTED page's opening frame, \
+             not about an undeclared family, and the two were separated at \
+             R2128 precisely because one list could not answer both"
         );
     }
     // ★★ And the five R2125 declared are NOT in it, named rather than counted:
-    // a round that declared a family and forgot to strike it out would leave
-    // the remainder claiming work that is done.
+    // they are painted by the assembly's opening frame, which is what that
+    // round's cut was chosen for.
     for done in [lab::CANVAS, lab::CRUMB, lab::GATE, lab::HINT, lab::OBSERVED] {
         assert_eq!(
-            lab::unaddressed(done),
+            lab::absent_when_mounted(done),
             None,
-            "`{done}` is declared and still listed as owed"
+            "`{done}` is painted by the assembly's opening frame and is listed \
+             as absent there"
         );
     }
     // ★★★★★ R2127 — **this crate's sweep is the STANDALONE population, and that
@@ -2909,7 +3172,7 @@ fn r2125_the_declared_remainder_is_what_the_shell_does_not_mount() {
         super::draws_own_app_bar() && super::draws_own_rail(),
         "★★★★★ this crate's own gates run with NO host chrome — that is what \
          makes their population the standalone screen. Wrapped in a host they \
-         would describe the mounted page instead, and the remainder above would \
+         would describe the mounted page instead, and the table above would \
          read as rotted."
     );
     // ⚠ Both reasons must be exercised. A table with one reason in it is a
@@ -2917,7 +3180,7 @@ fn r2125_the_declared_remainder_is_what_the_shell_does_not_mount() {
     // would then be testing one arm.
     for why in [Unpainted::HostDraws, Unpainted::StateReveals] {
         assert!(
-            lab::UNADDRESSED_FAMILIES
+            lab::ABSENT_WHEN_MOUNTED
                 .iter()
                 .any(|(_, kind)| *kind == why),
             "★★ no family is declared {why:?}, so the split this table exists \
@@ -3310,7 +3573,7 @@ fn r1653_the_painted_screen_invented_nothing() {
         // `None` where the count is a function of the live model rather than of
         // the specification.
         let families: &[(&str, Option<usize>)] = &[
-            ("lab.rail.", Some(spec::RAIL.len())),
+            (super::address::RAIL_SEAT, Some(spec::RAIL.len())),
             (super::address::ROLE_ROW, Some(spec::ROLES.len())),
             (super::address::ROLE_SWATCH, Some(spec::ROLES.len())),
             // ★ R1968 — a group heading per RUN of the roster, so a palette
@@ -3358,7 +3621,7 @@ fn r1653_the_painted_screen_invented_nothing() {
             (form_stem.as_str(), None),
             (super::address::INSPECTOR_SEAT, None),
             (super::address::TOOLBAR_SEAT, None),
-            ("lab.appbar.", None),
+            (super::address::APPBAR_SEAT, None),
             (super::address::HINT_SEAT, None),
             (super::address::CRUMB, None),
             (super::address::PALETTE_DISCOVERY, None),
@@ -3997,11 +4260,11 @@ fn r1654_the_screen_fills_whatever_window_it_is_given() {
         // window it got and would fail for a reason that is not a defect.
         for size in [(WIN_W, WIN_H), (1920, 1200), (super::MIN_W, super::MIN_H)] {
             let shot = painted_at(&state, size).0;
-            let rail = shot.tags["lab.rail"];
+            let rail = shot.tags[super::address::RAIL];
             let palette = shot.tags[crate::address::PALETTE];
             let canvas = shot.tags[super::address::CANVAS];
             let inspector = shot.tags[crate::address::INSPECTOR];
-            let appbar = shot.tags["lab.appbar"];
+            let appbar = shot.tags[super::address::APPBAR];
 
             assert_eq!(appbar.w, size.0, "{size:?}: the bar spans the window");
             assert_eq!(rail.x, 0, "{size:?}");
@@ -4736,7 +4999,7 @@ fn r1669_every_reserved_rail_seat_is_declared_with_its_booking() {
 
         let mut reserved = 0;
         for (name, booking) in spec::RAIL {
-            let tag = format!("lab.rail.{name}");
+            let tag = super::address::rail(name);
             match booking {
                 Some(why) => {
                     reserved += 1;
@@ -4770,7 +5033,10 @@ fn r1669_every_reserved_rail_seat_is_declared_with_its_booking() {
         // the second site to its own.
         let unexpected: Vec<&String> = census
             .keys()
-            .filter(|t| !t.starts_with("lab.rail.") && !t.starts_with(super::address::PALETTE_VERB))
+            .filter(|t| {
+                super::address::rail_destination(t).is_none()
+                    && !t.starts_with(super::address::PALETTE_VERB)
+            })
             .collect();
         assert!(
             unexpected.is_empty(),
@@ -8924,13 +9190,16 @@ fn r1778_what_this_screen_says_leaves_the_frame_it_was_on() {
 fn painted_faults(shot: &Painted) -> Vec<(String, String)> {
     let mut out: Vec<(usize, String, String)> = Vec::new();
     for (tag, text) in &shot.said {
-        let Some(rest) = tag.strip_prefix("lab.faults.row.") else {
+        // ★ R2128 — the part word comes from the DECLARATION. This matched the
+        // literal `"what"`, which is a word `address` owns and no gate here can
+        // see re-spelled: the ratchet's needle is address-shaped.
+        let Some(super::address::FaultMark::RowPart(n, word)) = super::address::fault_mark_of(tag)
+        else {
             continue;
         };
-        let Some(n) = rest.strip_suffix(".what") else {
+        if word != super::address::FAULTS_WHAT {
             continue;
-        };
-        let n: usize = n.parse().expect("a row index");
+        }
         let (key, arm) = text
             .split_once(" · ")
             .unwrap_or_else(|| panic!("a fault run reads <key> · <arm>: {text:?}"));
@@ -8981,7 +9250,7 @@ fn r1853_the_panel_offers_exactly_the_faults_the_declaration_admits() {
         // counts the rows.
         let head = shot
             .said
-            .get("lab.faults.head")
+            .get(super::address::FAULTS_HEAD)
             .expect("the panel is headed");
         let counted: usize = head
             .split_whitespace()
@@ -9177,7 +9446,10 @@ fn r1853_the_panel_names_the_faults_it_cannot_offer() {
         let named: BTreeSet<String> = shot
             .said
             .keys()
-            .filter_map(|tag| tag.strip_prefix("lab.faults.scope."))
+            .filter_map(|tag| match super::address::fault_mark_of(tag) {
+                Some(super::address::FaultMark::Scope(wire)) => Some(wire),
+                _ => None,
+            })
             .map(str::to_owned)
             .collect();
         let owed: BTreeSet<String> = Scope::ALL
@@ -9201,7 +9473,7 @@ fn r1853_the_panel_names_the_faults_it_cannot_offer() {
         for scope in Scope::ALL.into_iter().filter(|s| !s.injectable()) {
             let said = shot
                 .said
-                .get(&format!("lab.faults.scope.{}", scope.wire()))
+                .get(&super::address::faults_scope(scope.wire()))
                 .unwrap_or_else(|| panic!("{} is named", scope.wire()));
             assert!(
                 said.contains(scope.because()),
@@ -9252,7 +9524,7 @@ fn r1853_no_fault_run_sits_in_a_box_too_short_for_its_own_face() {
         let mut clipped: Vec<(String, u32, u32)> = Vec::new();
         let mut looked = 0usize;
         for (tag, text) in &shot.said {
-            if !tag.starts_with("lab.faults.") || text.is_empty() {
+            if super::address::fault_mark_of(tag).is_none() || text.is_empty() {
                 continue;
             }
             let rect = shot
@@ -9260,7 +9532,7 @@ fn r1853_no_fault_run_sits_in_a_box_too_short_for_its_own_face() {
                 .get(tag)
                 .unwrap_or_else(|| panic!("{tag} said {text:?}, so the layout pass gave it a box"));
             looked += 1;
-            let needs = pinion_core::containment::line_box(if tag == "lab.faults.head" {
+            let needs = pinion_core::containment::line_box(if tag == super::address::FAULTS_HEAD {
                 super::FONT_SMALL
             } else {
                 super::FAULT_PX

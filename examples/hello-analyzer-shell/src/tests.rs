@@ -3542,13 +3542,15 @@ fn r1725_one_application_has_one_navigation() {
             "the host's own rail is still painted"
         );
         assert!(
-            !tags.iter().any(|t| t == "lab.rail"),
+            !tags.iter().any(|t| t == hello_node_lab::address::RAIL),
             "and the guest's is not built AT ALL -- not painted-and-hidden and \
              not zero-width, because a hidden node is still a node in the tree \
              and a zero-width one is still a node a census counts"
         );
         assert!(
-            !tags.iter().any(|t| t.starts_with("lab.rail.")),
+            !tags
+                .iter()
+                .any(|t| hello_node_lab::address::rail_destination(t).is_some()),
             "nor any of its seats"
         );
 
@@ -6543,7 +6545,7 @@ fn r1857_the_walk_reaches_a_fault_panel_whose_every_row_is_whole() {
     use pinion_core::widgets::fault_injection::Scope;
     use std::collections::{BTreeMap, BTreeSet};
 
-    const STEM: &str = "lab.faults";
+    const STEM: &str = hello_node_lab::address::FAULTS;
 
     let owner = Owner::new();
     owner.run(|| {
@@ -10163,12 +10165,19 @@ fn r2051_a_rail_seat_address_is_typed_in_one_place() {
 /// slipping past unasked, which is the same trick `every_module_is_read` plays
 /// one level down.
 ///
-/// ⚠ **One guest is exempt and says so**: the node lab is mid-campaign and
-/// still spells its own family here (R2116's ratchet and its
-/// `UNADDRESSED_FAMILIES` are what hold it). A gate that is red on the day it is
-/// written is a gate somebody turns off, so the exemption is declared rather
+/// ⚠ **One guest is exempt and says so**: the node lab is mid-campaign and this
+/// host still spells some of its addresses (`r2116_*` over that guest's own
+/// state sweep is what holds the guest side). A gate that is red on the day it
+/// is written is a gate somebody turns off, so the exemption is declared rather
 /// than the gate weakened — and it is asserted to be still EARNED, so the round
 /// that finishes that campaign is told to delete it.
+///
+/// ⚠⚠ R2128 folded that guest's last four FAMILIES and this exemption did NOT
+/// become deletable, which is worth writing down rather than discovering: what
+/// it covers is a different population — the addresses this HOST spells, which
+/// still include a family of the guest neither round touched. *The guest owes
+/// no family a declaration* and *this host spells none of the guest's
+/// addresses* are two finish lines.
 #[test]
 fn r2115_this_host_spells_no_mounted_screens_painted_address() {
     let sources = shell_sources();
@@ -10269,9 +10278,10 @@ const MOUNTED: &[(&str, &str)] = &[
 /// yet held to zero for them.
 ///
 /// ⚠ Exactly one, and it is a DECLARED remainder rather than a silent gap: the
-/// node lab's families are ratcheted by `r2116_*` and by that screen's
-/// `UNADDRESSED_FAMILIES`. The gate above asserts this exemption is still
-/// earned, so it cannot quietly outlive the campaign it exists for.
+/// node lab's families are ratcheted by `r2116_*` over that screen's own state
+/// sweep, and its spelled SITES by `tools/painted_addresses.py`. The gate above
+/// asserts this exemption is still earned, so it cannot quietly outlive the
+/// campaign it exists for.
 const MID_CAMPAIGN: &[&str] = &["hello-node-lab"];
 
 /// ★★★★★ R2124 — **every screen this binary MOUNTS is one the host address

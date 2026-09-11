@@ -93,6 +93,7 @@ from rpc_verify import (  # noqa: E402
     appbar_tag,
     assert_eq,
     assert_every_refusal_is_heard,
+    lab_address,
     run_demo,
 )
 
@@ -102,15 +103,30 @@ EXT = "/external"
 #: the live region each puts speech in, a WRITE it refuses, and an ACTION whose
 #: refusal the surface itself authors. The last is needed because the two kinds
 #: of refusal are held to opposite rules — see `b_the_two_kinds_of_refusal`.
-#: ★★★★★ R2115 — the capture viewer's tag is `None` ON PURPOSE: its address is
-#: ASKED of the running screen (`appbar_tag`) in the loop below, because this
-#: table is module-level and cannot query anything. `lab.toast` is screen A's
-#: debt and is left where it is.
+#: ★★★★★ R2115 — the capture viewer's live region is ASKED of the running
+#: screen, because this table is module-level and cannot query anything.
+#: ★★★★★ R2128 — and so is the node lab's, which is what that round's fold made
+#: possible: the toast was one of the four families that screen had no
+#: declaration for, so this table held the only copy of its address. The comment
+#: here used to say so and leave it — "screen A's debt and left where it is" —
+#: which is a debt nobody could query.
+#:
+#: ⚠ A CALLABLE rather than the `None`-means-ask arrangement R2115 left. With
+#: one screen asking, `None` could mean one source; with two it would have to
+#: mean two different ones, and the branch that chose between them would be a
+#: third place the screen's identity is written down. Each row now says where
+#: its own address comes from, and the shell's is still a literal because that
+#: screen is the HOST here rather than a guest this walk drives.
 SCREENS = [
-    ("hello-node-lab", "lab.toast", "zoom", ("select", absent_id("card"))),
+    (
+        "hello-node-lab",
+        lambda tf: lab_address(tf, "toast", "message", ext=EXT),
+        "zoom",
+        ("select", absent_id("card")),
+    ),
     (
         "hello-packet-view",
-        None,
+        lambda tf: appbar_tag(tf, "said", ext=EXT),
         "row_count",
         ("select_message", absent_id("row")),
     ),
@@ -329,6 +345,9 @@ def f_a_refused_read_is_not_announced(tf, example: str) -> None:
 
 def g_the_person_can_see_it(tf) -> None:
     banner("G — the node lab: the agent's refusal, painted")
+    # ★★★★★ R2128 — the toast's three addresses, RECEIVED. This check spelled
+    # all three, which is a second copy of a composition the screen performs.
+    toast = lab_address(tf, "toast", ext=EXT)
     # ★★★★★ R1737.1 — the selection has to MOVE for the screen to say anything.
     # R1736 made "an act that changed nothing says nothing" a property of the
     # one place a selection changes, and `R-01` is the card this screen OPENS
@@ -343,14 +362,14 @@ def g_the_person_can_see_it(tf) -> None:
     rects = abs_rects_of(tf.snapshot(source="paint", viewport=(1600, 900)))
     ok(
         "G: a confirmation is on the toast to begin with",
-        "lab.toast.text" in rects or "lab.toast" in rects,
+        toast["text"] in rects or toast["message"] in rects,
     )
     refuse(tf, "rename", "R-01,P-01")
     after = abs_rects_of(tf.snapshot(source="paint", viewport=(1600, 900)))
     ok(
         "G: ★★★★ the refusal an AGENT caused is drawn on the canvas the person "
         "is looking at, not only returned down the socket",
-        "lab.toast.dot" in after,
+        toast["dot"] in after,
     )
     value = said(tf)
     ok(
@@ -362,8 +381,9 @@ def g_the_person_can_see_it(tf) -> None:
 def main() -> int:
     for example, declared, slot, surface in SCREENS:
         with RpcSubprocess(example) as tf:
-            # ★ R2115 — a screen that DECLARES its bar hands the address over.
-            tag = declared if declared is not None else appbar_tag(tf, "said", ext=EXT)
+            # ★ R2115 — a screen that DECLARES its live region hands the address
+            # over, and R2128 made that two screens out of three.
+            tag = declared(tf) if callable(declared) else declared
             a_every_published_action_is_heard(tf, example)
             b_the_two_kinds_of_refusal(tf, example, tag, surface)
             d_the_agent_learns_whether_the_person_heard(tf, example, tag)

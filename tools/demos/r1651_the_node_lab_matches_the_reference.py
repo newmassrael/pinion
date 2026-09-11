@@ -241,10 +241,13 @@ def body() -> None:
         # they hang and `pin_address` composes. Hoisted here beside its
         # neighbours because the blocks below compose one per card.
         pins = spec["pin_addresses"]["prefix"]
-        # ★★★★★ R2125 — the five families this screen owed until that round. The
-        # walk is HANDED them; before R2125 it spelled four itself, in a language
-        # where no compiler and no Rust gate could see the copy drift.
-        owed = spec["owed_addresses"]
+        # ★★★★★ R2125, renamed R2128 — the families with no other row on this
+        # surface. The walk is HANDED them; before R2125 it spelled four itself,
+        # in a language where no compiler and no Rust gate could see the copy
+        # drift. The key was `owed_addresses` while R2116's declared remainder
+        # was what made the list; R2128 declared the last of it, so the name says
+        # what the row IS rather than what it was for.
+        addresses = spec["declared_addresses"]
         # ★★★★★ R2118 — and the WIRE family, which is the first here whose stem
         # carries TWO vocabularies: a mark under it is either a wire the document
         # holds, keyed by that wire's own id, or one of a closed roster of words.
@@ -354,10 +357,11 @@ def body() -> None:
         for pane in spec["panes"]:
             if pane["tag"] not in painted:
                 missing.append(pane["tag"])
+        # ★ R2128 — a seat's address rides on its own row now, so this composes
+        # nothing.
         for seat in spec["rail"]:
-            tag = f"lab.rail.{seat['name']}"
-            if tag not in painted:
-                missing.append(tag)
+            if seat["tag"] not in painted:
+                missing.append(seat["tag"])
         # ★★★★★ R1968 — the palette's group headings, read off the wire's own
         # `role_groups` rather than named here. The screen derives the partition
         # from the roster now (one heading per run of roles sharing a group), so
@@ -467,12 +471,12 @@ def body() -> None:
             seat_tag["run"],
             # ★★★★★ R2125 — RECEIVED, not composed. These four were the last of
             # this walk's spelled addresses; the screen publishes them under
-            # `owed_addresses`, which is the remainder R2116 declared and the
-            # key a later instalment empties.
-            owed["gate"]["panel"],
-            owed["gate"]["verdict"],
-            owed["hint"]["band"],
-            owed["hint"]["text"],
+            # `declared_addresses`, beside every other family with no row of its
+            # own on this surface.
+            addresses["gate"]["panel"],
+            addresses["gate"]["verdict"],
+            addresses["hint"]["band"],
+            addresses["hint"]["text"],
             link_seat["label"],
             ins_tag["id"],
             ins_tag["degree"],
@@ -544,7 +548,7 @@ def body() -> None:
             declared.update(f"{pane['tag']}.{part}" for part in chrome)
             chrome_of[pane["tag"]] = len(chrome)
         for seat in spec["rail"]:
-            declared.add(f"lab.rail.{seat['name']}")
+            declared.add(seat["tag"])
         for run in spec["role_groups"]:
             declared.add(run["tag"])
             # ★ R2085 — and its colour chip, from the same row. Seven marks
@@ -695,7 +699,11 @@ def body() -> None:
         registered = q(tf, "definitions")["definitions"]
         FAMILIES = {
             "node_lab": 1,
-            "lab.appbar": 3,
+            # ★★★★★ R2128 — RECEIVED. The bar and the toast were two of the four
+            # families this screen had no declaration for; they have one now and
+            # publish it under `declared_addresses`, so a family key here is the
+            # stem the paint used rather than a second spelling of it.
+            addresses["appbar"]["bar"]: 3,
             # ★★ R1687 — 11, not 10: the toolbar gained the second of the two
             # seats the reference puts side by side, `lab.toolbar.script`. Its
             # sibling `lab.toolbar.config` was already here, answering the
@@ -935,7 +943,7 @@ def body() -> None:
             #
             # Three, and each is a mark: the box, the tone-coloured bullet
             # (R1719) and the run of text.
-            "lab.toast": 3,
+            addresses["toast"]["message"]: 3,
             # ★★★★★ R2047 — the definitions register, in three families rather
             # than one prefix. One prefix would sweep the heading in with the
             # rows and hide a heading that stopped being painted, which is the
@@ -1238,8 +1246,11 @@ def body() -> None:
             # followed by its name, so taking the name off the end recovers the
             # prefix the paint actually used.
             role_prefix = spec["roles"][0]["tag"][: -len(spec["roles"][0]["name"])]
+            # ★ R2128 — and the rail's, recovered the same way from a seat's own
+            # published address.
+            rail_prefix = spec["rail"][0]["tag"][: -len(spec["rail"][0]["name"])]
             for prefix, verb in (
-                ("lab.rail.", "rail"),
+                (rail_prefix, "rail"),
                 (role_prefix, "role"),
                 (parts["add"], "add"),
             ):

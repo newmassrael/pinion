@@ -83,6 +83,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    lab_address,
     run_demo,
     toolbar_root,
 )
@@ -314,9 +315,10 @@ def section_d(app: RpcSubprocess, surface: str, declared: dict) -> None:
     )
 
     # The rail declares no resize at all: a different refusal, named.
+    # ★ R2128 — and WHICH pane the rail is, received rather than spelled.
     ok(
         "D: the rail declares no resize, so it is not a pane this verb sizes",
-        declared["lab.rail"].get("resize") is None,
+        declared[lab_address(app, "rail_pane", ext=surface)].get("resize") is None,
     )
 
 

@@ -238,20 +238,22 @@ fn r1822_the_app_bars_pane_is_absent_from_the_scene_the_host_draws_one_in() {
     owner.run(|| {
         let standalone = tags();
         assert!(
-            standalone.iter().any(|t| t == "lab.appbar"),
+            standalone.iter().any(|t| t == super::address::APPBAR),
             "★ the screen that owns its window still paints its own bar"
         );
 
         with_host_chrome(HostChrome::NONE.with(Part::ApplicationBar), || {
             let mounted = tags();
             assert!(
-                !mounted.iter().any(|t| t.starts_with("lab.appbar")),
+                !mounted
+                    .iter()
+                    .any(|t| super::address::reader_of(t) == Some("appbar")),
                 "★★★★★ and where the host draws one, NO node of it is in the \
                  scene -- not the bar, not the graph label inside it, not the \
                  run-state label. Absent, not hidden and not zero-height: {:?}",
                 mounted
                     .iter()
-                    .filter(|t| t.starts_with("lab.appbar"))
+                    .filter(|t| super::address::reader_of(t) == Some("appbar"))
                     .collect::<Vec<_>>()
             );
             assert!(
@@ -408,7 +410,7 @@ fn r1822_the_graphs_name_is_announced_by_one_stop_in_both_configurations() {
             .map(|n| n.tag)
             .collect();
         assert!(
-            landmarks.iter().any(|t| t == "lab.appbar"),
+            landmarks.iter().any(|t| t == super::address::APPBAR),
             "★ the bar it draws is a landmark a reader can reach"
         );
         assert_eq!(
@@ -423,7 +425,7 @@ fn r1822_the_graphs_name_is_announced_by_one_stop_in_both_configurations() {
                 .map(|n| n.tag)
                 .collect();
             assert!(
-                !landmarks.iter().any(|t| t == "lab.appbar"),
+                !landmarks.iter().any(|t| t == super::address::APPBAR),
                 "★★★★★ where it draws no bar it offers no landmark for one -- \
                  not an empty group, not a zero-height strip: absent, which is \
                  the only form of that claim a reader cannot trip over"
@@ -1113,7 +1115,7 @@ fn r2049_a_role_address_is_typed_in_one_place() {
         );
     }
     assert_eq!(
-        super::address::role_of_row("lab.rail.packets"),
+        super::address::role_of_row(&super::address::rail("packets")),
         None,
         "★ a tag of another family is not a role"
     );
@@ -2361,7 +2363,7 @@ fn r2053_every_form_part_address_is_derived() {
         "★★ and the address round-trips through its own inverse"
     );
     assert_eq!(
-        super::address::form_control_key("lab.rail.packets"),
+        super::address::form_control_key(&super::address::rail("packets")),
         None,
         "★ a tag of another family is not a form row"
     );

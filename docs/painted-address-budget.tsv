@@ -75,9 +75,9 @@ kp.filter	0	0
 kp.header	0	0
 kp.list	0	0
 lab.advanced	0	9
-lab.appbar	0	6
+lab.appbar	0	0
 lab.crumb	0	0
-lab.faults	4	9
+lab.faults	0	0
 lab.form	0	0
 lab.frame	0	15
 lab.gate	0	0
@@ -88,10 +88,10 @@ lab.node	0	0
 lab.observed	0	0
 lab.palette	0	0
 lab.pin	0	0
-lab.rail	9	12
+lab.rail	0	0
 lab.reset	0	0
 lab.scenario	0	11
-lab.toast	4	4
+lab.toast	0	0
 lab.toolbar	0	0
 lab.wire	0	1
 line.area	1	0

@@ -57,6 +57,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     card_prefix,
+    lab_address,
     run_demo,
 )
 
@@ -187,7 +188,15 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             "A: the same cards are on the canvas after the drop -- raising is a "
             "permutation, not an edit",
         )
-        for pane in ("lab.palette", "lab.canvas", "lab.inspector", "lab.appbar"):
+        # ★ R2128 — the bar is RECEIVED. The other three are families this walk
+        # still spells; the bar was one of the four the screen had no
+        # declaration for at all, which is what this round changed.
+        for pane in (
+            "lab.palette",
+            "lab.canvas",
+            "lab.inspector",
+            lab_address(app, "appbar", "bar"),
+        ):
             ok(f"A: the screen still paints {pane}", pane in after)
         # Picking a SECOND card up puts that one in front and leaves the first
         # ahead of everything it was already ahead of: the order is a history.

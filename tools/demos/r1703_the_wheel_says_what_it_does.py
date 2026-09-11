@@ -64,6 +64,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     card_tag,
+    lab_address,
     pin_tag,
     run_demo,
 )
@@ -673,7 +674,11 @@ def body() -> None:
             "lab.canvas",  # the canvas itself: declared
             "lab.palette",  # a scrolling pane: NOT declared, falls through
             "lab.inspector",  # the other scrolling pane: NOT declared
-            "lab.rail",  # the destination rail: NOT declared
+            # ★ R2128 — the rail is RECEIVED now. It is still a pane this
+            # screen declares no wheel answer for, which is what this row
+            # asserts; what changed is that the walk no longer spells where it
+            # is painted.
+            lab_address(tf, "rail_pane"),
         ],
     )
     checks += a_forms_answer_survives_a_scroll()

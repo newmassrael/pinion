@@ -108,6 +108,7 @@ from rpc_verify import (  # noqa: E402
     assert_action_refused,
     assert_eq,
     card_tag,
+    lab_fault_panel,
     resize_and_settle,
     run_demo,
 )
@@ -262,12 +263,17 @@ def section_a(app: RpcSubprocess) -> None:
     assert_eq(app.query(f"{EXT}/nav"), SEAT, "the lab section opens")
 
     select_card(app, ext=lab_ext(app))
+    # ★★★★★ R2128 — the panel's own row hands over its box and the seat a row is
+    # addressed under. This walk spelled both, six times between its two
+    # sections, and a wrong letter in either reads as *the assembled tool paints
+    # no fault panel* — which is what this section is for.
+    panel = lab_fault_panel(app, ext=lab_ext(app))
     tags = set(walk_tags(app.snapshot(source="paint")))
-    ok("its inspector paints the fault panel", "lab.faults" in tags)
+    ok("its inspector paints the fault panel", panel["tag"] in tags)
     rows = sorted(
         t
         for t in tags
-        if t.startswith("lab.faults.row.") and "." not in t[len("lab.faults.row.") :]
+        if t.startswith(panel["row_stem"]) and "." not in t[len(panel["row_stem"]) :]
     )
     print(f"    {len(rows)} fault row(s) painted inside the assembled tool")
     ok("with rows in it", len(rows) >= 4)
@@ -300,9 +306,12 @@ def section_a(app: RpcSubprocess) -> None:
 def section_b(app: RpcSubprocess) -> None:
     banner("B — a reader walks the offers one at a time, with a position and a count")
     select_card(app)
-    panel = announced(app, "lab.faults", leaves=False)
-    ok("the panel itself is announced", "lab.faults" in panel)
-    node = panel["lab.faults"]
+    # ★★★★★ R2128 — RECEIVED. This is the standalone process, so the panel's row
+    # is on its own surface rather than under a section root.
+    declared = lab_fault_panel(app)
+    panel = announced(app, declared["tag"], leaves=False)
+    ok("the panel itself is announced", declared["tag"] in panel)
+    node = panel[declared["tag"]]
     print(f"    role {node.get('role')!r}, name {node.get('name')!r}")
     ok(
         "★ as a LIST, which is what a reader navigates offers as -- folding them "
@@ -315,8 +324,10 @@ def section_b(app: RpcSubprocess) -> None:
         "not offered" in reading(node),
     )
 
-    rows = announced(app, "lab.faults.row.")
-    rows = {t: n for t, n in rows.items() if "." not in t[len("lab.faults.row.") :]}
+    rows = announced(app, declared["row_stem"])
+    rows = {
+        t: n for t, n in rows.items() if "." not in t[len(declared["row_stem"]) :]
+    }
     print(f"    {len(rows)} row(s) announced")
     assert_eq(
         sorted(node.get("children") or []),

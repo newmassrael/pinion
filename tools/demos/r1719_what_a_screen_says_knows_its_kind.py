@@ -82,6 +82,7 @@ from rpc_verify import (  # noqa: E402
     appbar_tag,
     assert_eq,
     filter_tag,
+    lab_address,
     run_demo,
     shell_palette_entry,
 )
@@ -92,15 +93,21 @@ VIEWPORT = (1440, 900)
 #: The three screens and the tag their live region carries. The value is read
 #: at `said` on all three — R1719 made that uniform; before it one screen
 #: called the string `toast` and another called it `said`.
-#: ★★★★★ R2115 — the capture viewer's row is `None` ON PURPOSE: its address is
-#: ASKED of the running screen (`appbar_tag`) in the loop below, because this
-#: table is module-level and cannot query anything. That is R2109's `filter_bar`
-#: finding, and this is the last of this screen's addresses any walk spelled.
-#: The other two screens have not been through the address campaign yet and
-#: still say their own — `lab.toast` is screen A's debt, not this one's.
-SCREENS: list[tuple[str, str | None]] = [
-    ("hello-node-lab", "lab.toast"),
-    ("hello-packet-view", None),
+#: ★★★★★ R2115 — the capture viewer's address is ASKED of the running screen,
+#: because this table is module-level and cannot query anything. That is R2109's
+#: `filter_bar` finding.
+#: ★★★★★ R2128 — and the node lab's is asked now too: the toast was one of the
+#: four families that screen had no declaration for, so this table held the only
+#: copy of its address and said so ("screen A's debt, not this one's") without
+#: anything being able to act on the sentence.
+#:
+#: ⚠ A CALLABLE rather than R2115's `None`-means-ask: with two screens asking,
+#: `None` would have to mean two different sources, and the branch choosing
+#: between them is a third place a screen's identity gets written down. The
+#: shell's stays a literal — it is the HOST here, not a guest this walk drives.
+SCREENS: list[tuple[str, object]] = [
+    ("hello-node-lab", lambda tf: lab_address(tf, "toast", "message", ext=EXT)),
+    ("hello-packet-view", lambda tf: appbar_tag(tf, "said", ext=EXT)),
     ("hello-analyzer-shell", "shell.toast"),
 ]
 
@@ -341,7 +348,7 @@ def d_an_act_that_changed_nothing_says_so(tf) -> None:
         "existing for, rather than folding it into the refusal",
     )
     assert_eq(
-        live_of(tf, "lab.toast"),
+        live_of(tf, lab_address(tf, "toast", "message", ext=EXT)),
         "polite",
         "D: and the live region agrees, because it reads the same tone",
     )
@@ -352,12 +359,14 @@ def d_an_act_that_changed_nothing_says_so(tf) -> None:
 
 def e_the_bullet_changes_colour(tf) -> None:
     banner("E — the node lab: the toast's bullet, measured off the paint")
+    # ★★★★★ R2128 — RECEIVED. The bullet's address was spelled twice here.
+    dot = lab_address(tf, "toast", "dot", ext=EXT)
 
     def bullet() -> tuple:
         scene = tf.snapshot(source="paint", viewport=(1600, 900))
         found = fills_by_tag(scene)
-        assert "lab.toast.dot" in found, "the toast's bullet is painted"
-        return found["lab.toast.dot"]
+        assert dot in found, "the toast's bullet is painted"
+        return found[dot]
 
     select_afresh(tf, "R-01")
     confirmed = bullet()
@@ -469,9 +478,9 @@ def g_the_value_survives_the_wire(tf) -> None:
 def main() -> int:
     for example, declared in SCREENS:
         with RpcSubprocess(example) as tf:
-            # ★ R2115 — a screen that DECLARES its bar hands the address over;
-            # the two that do not still say their own, above.
-            tag = declared if declared is not None else appbar_tag(tf, "said", ext=EXT)
+            # ★ R2115 — a screen that DECLARES its live region hands the address
+            # over, and R2128 made that two screens out of three.
+            tag = declared(tf) if callable(declared) else declared
             a_the_wire_publishes_the_value(tf, example)
             agent_words = b_the_urgency_comes_off_the_tone(tf, example, tag)
             c_the_frame_is_not_in_the_clause(tf, example, agent_words)

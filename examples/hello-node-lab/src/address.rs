@@ -1408,13 +1408,14 @@ pub fn link_of(tag: &str) -> Option<LinkId> {
 // before this one said so. What made a subset choosable was measuring which
 // families the ASSEMBLY paints rather than which are biggest: R2116's ratchet,
 // asked with `--nocapture`, answers `13 owed {lab.canvas: 1, lab.crumb: 3,
-// lab.gate: 6, lab.hint: 2, lab.observed: 1}` — five stems. The other four in
-// `UNADDRESSED_FAMILIES` (the application bar, the rail, the toast and the
-// fault panel) were absent from that map — and R2125 gave one reason for all
-// four. 🟥 R2127 measured it: the reason holds for TWO. The bar and the rail
-// are chrome the host provides, so mounted they are not built at all; the toast
-// and the fault panel have no chrome condition anywhere near them and are
-// simply not on the frame that gate paints. See [`Unpainted`].
+// lab.gate: 6, lab.hint: 2, lab.observed: 1}` — five stems. The other four (the
+// application bar, the rail, the toast and the fault panel) were absent from
+// that map — and R2125 gave one reason for all four. 🟥 R2127 measured it: the
+// reason holds for TWO. The bar and the rail are chrome the host provides, so
+// mounted they are not built at all; the toast and the fault panel have no
+// chrome condition anywhere near them and are simply not on the frame that gate
+// paints. See [`Unpainted`] — and [`ABSENT_WHEN_MOUNTED`], which is what that
+// remainder became at R2128 once all four were declared.
 //
 // ⇒ closing exactly these five empties the assembled ratchet's owed map, which
 // is an assertion that can be written and held (`r2125_the_mounted_lab_owes_
@@ -1691,75 +1692,314 @@ pub fn reader_of(tag: &str) -> Option<&'static str> {
     if observed_of(tag).is_some() {
         return Some("observed");
     }
+    // ★★★★★ R2128 — the four the assembly's opening frame cannot show. They
+    // are recovered here like any other family: whether the MOUNTED page paints
+    // one is [`ABSENT_WHEN_MOUNTED`]'s question and has nothing to do with
+    // whether this module addresses it. Conflating the two is what R2125 did.
+    if tag == APPBAR || appbar_part(tag).is_some() {
+        return Some("appbar");
+    }
+    if tag == RAIL || rail_destination(tag).is_some() {
+        return Some("rail");
+    }
+    if tag == TOAST || toast_part(tag).is_some() {
+        return Some("toast");
+    }
+    if tag == FAULTS || fault_mark_of(tag).is_some() {
+        return Some("faults");
+    }
     None
 }
 
-// ─── what this module does NOT declare yet ──────────────────────────────────
+// ─── which families the ASSEMBLY's opening frame does not show ──────────────
 
-/// ★★★★★ R2116 — **the families this screen paints that nothing here
-/// addresses**, named so that a gate can tell them from a family nobody thought
-/// of.
+/// ★★★★★ R2128 — **the families a MOUNTED page's opening frame does not paint,
+/// and why.**
 ///
-/// Every address gate this campaign has written asks *does any reader re-spell
-/// a family the declaration HOLDS*, and that question has a floor built into it:
-/// a family the declaration does not hold is invisible to it. Seventeen
-/// instalments each closed one family and left that floor exactly where it was,
-/// so this screen could grow an eighteenth region tomorrow, spell it in five
-/// modules, and nothing would say a word.
+/// # What this used to be, and why the rename IS the finding
 ///
-/// `hello-packet-view` closed that floor by reaching zero and asserting it
-/// (R2115). This screen cannot: it is four times the size and the remainder is
-/// families, not sites. So the remainder is DECLARED instead — and the gate
-/// that reads it asserts it in **both** directions:
+/// R2116 wrote this table as `UNADDRESSED_FAMILIES`: the families this screen
+/// paints that nothing in this module addressed. R2125 gave the remaining
+/// entries a reason as prose, R2127 found the prose true of half of them and
+/// made the reason data — and this round declared all four, which empties the
+/// thing the old name says.
 ///
-/// * every family the assembled screen paints is either recovered by a reader
-///   above or named here — so a NEW undeclared family fails on the day it is
-///   painted, which is what the seventeen instalments could not do;
-/// * every name here is still unaddressed — so a round that declares one and
-///   forgets to strike it out fails too, which is what stops this list becoming
-///   the hand-written thing it is standing in for.
+/// 🟥🟥🟥 **The list does not go with that name, because the two were never one
+/// fact.** *Nothing composes this address in one place* is a property of this
+/// module and is now false of all four. *The page a person opens does not paint
+/// this family* is a property of the ASSEMBLY's opening frame and is still true
+/// of all four — the bar and the rail because the host draws them, the toast and
+/// the fault panel because a gesture has not happened yet. A table serving two
+/// questions answers the wrong one the moment they part company, which is what
+/// R2125's single sentence did one level down.
 ///
-/// ⚠ These are STEMS, two segments, not addresses. Nothing composes onto them
-/// and no reader takes them apart; they exist to be counted and struck out. The
-/// day this slice is empty, the gate that reads it becomes
-/// `r2115_no_module_but_the_declaration_spells_this_screens_namespace` — the
-/// same assertion screen B already carries — and this const goes with it.
-/// ⚠⚠ THE POPULATION IS THE SCREEN'S OWN SWEEP, not the assembly's, and each
-/// entry says WHY the page the shell opens does not paint it — see
-/// [`Unpainted`], which is where R2125's single sentence for four names was
-/// found to be true of two.
-/// ★★★★★ R2125 — **nine became four.** The five struck out here — the canvas,
-/// the breadcrumb, the check panel, the hint and the reported links — are
-/// exactly the stems R2116's assembled ratchet reported as owed, so striking
-/// them empties that map and lets the shell assert it.
-pub const UNADDRESSED_FAMILIES: &[(&str, Unpainted)] = &[
+/// ⇒ the address half is retired — every member of these four is composed above
+/// and `r2128_every_standalone_lab_address_is_derived` holds it — and the
+/// assembly half keeps the table, under the name of the question it answers.
+///
+/// # ⚠ THE POPULATION IS THE ASSEMBLY'S, and the two gates that read it differ
+///
+/// This screen's OWN sweep paints every one of these, which
+/// `r2116_every_family_this_screen_paints_is_declared_or_owed` asserts — that is
+/// what stops an entry outliving the region it names, and it is the restatement
+/// of the emptiness guard that table used to carry. The shell's
+/// `r2127_the_mounted_lab_is_asked_about_the_families_one_frame_cannot_show`
+/// asks the other half: the `HostDraws` two must paint NOTHING there, and the
+/// `StateReveals` two must paint something once a gesture reaches them.
+///
+/// ⚠⚠ An entry is not a hole and is not an exemption from an address gate. The
+/// day this screen stops drawing its own chrome, or the day the shell's opening
+/// frame shows a toast, the entry is struck out and both gates say so.
+pub const ABSENT_WHEN_MOUNTED: &[(&str, Unpainted)] = &[
     (APPBAR, Unpainted::HostDraws),
     (FAULTS, Unpainted::StateReveals),
     (RAIL, Unpainted::HostDraws),
     (TOAST, Unpainted::StateReveals),
 ];
 
-// ★★★★★ R2127 — the four stems, NAMED. They are still unaddressed: what this
-// campaign means by declared is that every MEMBER address is composed here, and
-// none of these four is. A stem const is what a reader outside this crate needs
-// to ask a family-wide question without spelling the family — the host's gate
-// below does exactly that — and it is where the conversion of each of these
-// will begin. Nothing is struck off `UNADDRESSED_FAMILIES` for having one.
+// ─── R2128: the four the ASSEMBLY's opening frame cannot show ────────────────
+//
+// ★★★★★ THE FOLD, AND WHAT IT DOES *NOT* CHANGE. R2127 named these four stems
+// and left every member address spelled at its readers, because R2125 had given
+// one reason for all four and that reason was true of two. Measuring it is what
+// made this round writable: the four are two kinds, the kinds are stated as
+// [`Unpainted`], and NEITHER kind is a reason to leave an address undeclared.
+// *The assembly does not paint it on its opening frame* is a fact about that
+// gate's population; *nothing composes it in one place* is a fact about this
+// module. They were one list and are now two things (see
+// [`ABSENT_WHEN_MOUNTED`], which keeps the first and drops the second).
+//
+// ⚠ THE SHAPE QUESTION, ASKED FIRST (R2123's rule, its fourth use). The four
+// are not one shape:
+//
+// * `lab.appbar.` and `lab.toast.` are CLOSED WORD ROSTERS of two — every
+//   member is a fixed word, so each is declared whole beside its word and the
+//   inverse is a lookup, the arrangement `lab.hint` has.
+// * `lab.rail.` is a SINGLE OPEN KEY: one seat per destination, the key being
+//   the destination's own name, so it is composed and the inverse is the shared
+//   [`bare`] rule.
+// * `lab.faults.` has FOUR HEADS over one stem — a heading word, an indexed
+//   row, a part inside an indexed row, and a scope keyed by a wire word — so it
+//   takes [`LinkMark`]'s shape rather than a prefix test, for [`LinkMark`]'s
+//   reason: *what is left after the prefix* is not a key until something has
+//   said which head it belongs to.
 
 /// The application bar this screen paints when no host provides one.
 pub const APPBAR: &str = "lab.appbar";
 
-/// The fault-injection panel in the inspector body.
-pub const FAULTS: &str = "lab.faults";
+/// [`APPBAR`] with the separator its parts hang off.
+pub const APPBAR_SEAT: &str = "lab.appbar.";
+
+/// The run naming the graph being edited.
+///
+/// ⚠ Announced nowhere: it is the graph's name painted a third time, and the
+/// specification silences it under the bar's own voice. The address is still
+/// declared, because the silence table names it and a silence pointing at a
+/// mark nothing paints is the same defect from the other side.
+pub const APPBAR_GRAPH: &str = "lab.appbar.graph";
+
+/// The run saying whether the graph is running.
+pub const APPBAR_STATE: &str = "lab.appbar.state";
+
+/// Every part of the application bar this screen addresses, beside its address.
+///
+/// ★ A closed roster of words rather than a composer over an open key: these
+/// two are all there are, and a family of two invites a second speller exactly
+/// the way [`HINT_TEXT`]'s family of one did.
+pub const APPBAR_PARTS: &[(&str, &str)] = &[("graph", APPBAR_GRAPH), ("state", APPBAR_STATE)];
+
+/// The address of the application bar's `part`.
+///
+/// `part` is one of [`APPBAR_PARTS`]; a word that is not composes an address
+/// nothing paints — a lookup answering nothing rather than a wrong mark, which
+/// is the safe direction ([`card_part`]'s).
+#[must_use]
+pub fn appbar(part: &str) -> String {
+    format!("{APPBAR_SEAT}{part}")
+}
+
+/// The part an application-bar address names, or `None` when it is not one.
+#[must_use]
+pub fn appbar_part(tag: &str) -> Option<&'static str> {
+    let word = bare(tag.strip_prefix(APPBAR_SEAT)?)?;
+    APPBAR_PARTS
+        .iter()
+        .find(|(part, _)| *part == word)
+        .map(|(part, _)| *part)
+}
 
 /// The navigation rail this screen paints when no host provides one.
 pub const RAIL: &str = "lab.rail";
 
+/// [`RAIL`] with the separator its seats hang off.
+pub const RAIL_SEAT: &str = "lab.rail.";
+
+/// A rail seat's address with the population's placeholder, for a specification
+/// row that must be `&'static str`.
+///
+/// Held against [`rail`] by the gate, the arrangement [`ROLE_ROW_TEMPLATE`] has
+/// and for its reason: a derivation cannot make a `&'static str`, so the
+/// template is a declaration — but it is a declaration in ONE file, driven
+/// against what the painter composes.
+pub const RAIL_SEAT_TEMPLATE: &str = "lab.rail.{}";
+
+/// The address of the rail seat for `destination`.
+///
+/// ★ The key is the destination's own name, which is the roster's
+/// ([`crate::spec::RAIL`]) and not a word closed here — so this is composed
+/// where [`appbar`] is looked up.
+#[must_use]
+pub fn rail(destination: &str) -> String {
+    format!("{RAIL_SEAT}{destination}")
+}
+
+/// The destination a rail seat's address names, or `None` when the tag is not
+/// one.
+#[must_use]
+pub fn rail_destination(tag: &str) -> Option<&str> {
+    bare(tag.strip_prefix(RAIL_SEAT)?)
+}
+
 /// The transient message this screen shows over the canvas.
 pub const TOAST: &str = "lab.toast";
 
-/// Why the page the shell opens paints nothing under a family this screen still
-/// owes an address.
+/// [`TOAST`] with the separator its parts hang off.
+pub const TOAST_SEAT: &str = "lab.toast.";
+
+/// The bullet before the message, whose ink says what KIND of thing was said.
+pub const TOAST_BULLET: &str = "lab.toast.dot";
+
+/// The sentence the screen last said.
+pub const TOAST_TEXT: &str = "lab.toast.text";
+
+/// Every part of the toast this screen addresses, beside its address.
+pub const TOAST_PARTS: &[(&str, &str)] = &[("dot", TOAST_BULLET), ("text", TOAST_TEXT)];
+
+/// The address of the toast's `part`.
+///
+/// See [`appbar`] for what a word outside [`TOAST_PARTS`] composes.
+#[must_use]
+pub fn toast(part: &str) -> String {
+    format!("{TOAST_SEAT}{part}")
+}
+
+/// The part a toast address names, or `None` when it is not one.
+#[must_use]
+pub fn toast_part(tag: &str) -> Option<&'static str> {
+    let word = bare(tag.strip_prefix(TOAST_SEAT)?)?;
+    TOAST_PARTS
+        .iter()
+        .find(|(part, _)| *part == word)
+        .map(|(part, _)| *part)
+}
+
+/// The fault-injection panel in the inspector body.
+pub const FAULTS: &str = "lab.faults";
+
+/// [`FAULTS`] with the separator its parts hang off.
+pub const FAULTS_SEAT: &str = "lab.faults.";
+
+/// The panel's heading, which states how many offers the derivation produced.
+pub const FAULTS_HEAD: &str = "lab.faults.head";
+
+/// Where one offer's row is addressed, by its painted position.
+pub const FAULTS_ROW_SEAT: &str = "lab.faults.row.";
+
+/// Where one scope the panel cannot reach is addressed, by that scope's wire
+/// word.
+pub const FAULTS_SCOPE_SEAT: &str = "lab.faults.scope.";
+
+/// The parts every offer's row paints, in the order the row lays them out.
+///
+/// ★ POSITIONAL, and [`crate::spec::FaultPanelSpec`] reads them by position
+/// rather than by a literal spelled again at the painter — so renaming one here
+/// moves the paint with it instead of leaving the declaration and the screen to
+/// drift.
+pub const FAULTS_ROW_PARTS: &[&str] = &["what", "badge", "why"];
+
+/// The part whose run carries the offer's key and its arm.
+///
+/// ★★★★★ R2128 — **a word this module OWNS, named once.** `painted_faults` read
+/// the panel back off the paint by pattern-matching the literal `"what"`, and
+/// `spec::FaultPanelSpec::what` composes it from `row_parts[0]` — so *which part
+/// is the key-and-arm run* was stated in two places, one of them a bare string
+/// in another module.
+///
+/// 🟥 **No gate saw it, and that is the finding rather than the fix.**
+/// `tools/painted_addresses.py` counts literals shaped like an ADDRESS; `"what"`
+/// is not one, so `--list lab.faults` answers `0 site(s)` and the budget pins
+/// this family at `0 0` while a declared word is retyped at a reader. The
+/// ratchet's needle can never be widened to see this — it is not an address ⇒
+/// [[debt-the-address-ratchet-cannot-see-a-respelled-vocabulary-word]], which
+/// also records that the population across the other rosters is UNCOUNTED.
+pub const FAULTS_WHAT: &str = FAULTS_ROW_PARTS[0];
+
+/// The address of the `n`th offer's row.
+#[must_use]
+pub fn faults_row(n: usize) -> String {
+    format!("{FAULTS_ROW_SEAT}{n}")
+}
+
+/// The address of one `part` of the `n`th offer's row.
+#[must_use]
+pub fn faults_row_part(n: usize, part: &str) -> String {
+    format!("{FAULTS_ROW_SEAT}{n}.{part}")
+}
+
+/// The address of the run naming a scope the panel cannot offer.
+///
+/// `wire` is the scope's own wire spelling, so a caller holding the enum arm
+/// hands over `scope.wire()` and never a word of its own.
+#[must_use]
+pub fn faults_scope(wire: &str) -> String {
+    format!("{FAULTS_SCOPE_SEAT}{wire}")
+}
+
+/// What a tag of the fault panel names, or `None` when it is not one of them.
+///
+/// ★★★★★ [`LinkMark`]'s shape, for [`link_mark_of`]'s reason: four heads share
+/// [`FAULTS_SEAT`], so *what is left after the prefix* is not a key until
+/// something has said which head it belongs to. Three separate inverses over one
+/// stem would each answer about their own head and none could say a tag belongs
+/// to another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FaultMark<'a> {
+    /// The panel's heading.
+    Head,
+    /// One offer's row, by painted position.
+    Row(usize),
+    /// One part inside an offer's row — a word of [`FAULTS_ROW_PARTS`].
+    RowPart(usize, &'static str),
+    /// A scope the panel cannot offer, by its wire word.
+    Scope(&'a str),
+}
+
+/// What `tag` names inside the fault panel, or `None`.
+#[must_use]
+pub fn fault_mark_of(tag: &str) -> Option<FaultMark<'_>> {
+    let tail = tag.strip_prefix(FAULTS_SEAT)?;
+    if let Some(rest) = tail.strip_prefix("row.") {
+        let (digits, part) = match rest.split_once('.') {
+            Some((digits, word)) => (
+                digits,
+                Some(*FAULTS_ROW_PARTS.iter().find(|known| **known == word)?),
+            ),
+            None => (rest, None),
+        };
+        let n = digits.parse::<usize>().ok()?;
+        return Some(match part {
+            Some(word) => FaultMark::RowPart(n, word),
+            None => FaultMark::Row(n),
+        });
+    }
+    if let Some(rest) = tail.strip_prefix("scope.") {
+        return bare(rest).map(FaultMark::Scope);
+    }
+    (tail == "head").then_some(FaultMark::Head)
+}
+
+/// Why the page the shell opens paints nothing under a family this screen
+/// declares.
 ///
 /// ★★★★★ R2127 — **the reason is data, per family, because R2125 wrote ONE
 /// reason over FOUR names and it is true of TWO.**
@@ -1793,28 +2033,28 @@ pub enum Unpainted {
     StateReveals,
 }
 
-/// Why the assembly does not paint `stem`, or `None` when this screen does not
-/// owe that family an address.
+/// Why the assembly's opening frame does not paint `stem`, or `None` when it
+/// does.
 ///
 /// ★ The membership test every reader used to write as
 /// `UNADDRESSED_FAMILIES.contains(&stem)`. It answers the reason as well as the
 /// membership because R2127's whole finding is that callers were entitled to
 /// the reason and had nowhere to get it.
 #[must_use]
-pub fn unaddressed(stem: &str) -> Option<Unpainted> {
-    UNADDRESSED_FAMILIES
+pub fn absent_when_mounted(stem: &str) -> Option<Unpainted> {
+    ABSENT_WHEN_MOUNTED
         .iter()
         .find(|(name, _)| *name == stem)
         .map(|(_, why)| *why)
 }
 
-/// The stems of [`UNADDRESSED_FAMILIES`], for a reader that wants the names
+/// The stems of [`ABSENT_WHEN_MOUNTED`], for a reader that wants the names
 /// only.
 ///
 /// ⚠ Derived rather than declared beside the table: a second list is the defect
 /// this whole campaign is about, one level up.
-pub fn unaddressed_stems() -> impl Iterator<Item = &'static str> {
-    UNADDRESSED_FAMILIES.iter().map(|(name, _)| *name)
+pub fn absent_when_mounted_stems() -> impl Iterator<Item = &'static str> {
+    ABSENT_WHEN_MOUNTED.iter().map(|(name, _)| *name)
 }
 
 /// ★★★★★ R2116 — the namespace every address of this screen begins with, and
