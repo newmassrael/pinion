@@ -735,6 +735,72 @@ def rust_census(
     return {stem: len(found) for stem, found in index.items()}
 
 
+@functools.lru_cache(maxsize=1)
+def rust_reader_scan() -> dict[str, tuple[tuple[str, int], ...]]:
+    """Every Rust READER site, indexed by family stem.
+
+    ★★★★★ R2175 — **the census had a queue and no way to ask which family a
+    piece of it was in.** The reducible queue — the number this debt's closing
+    criterion reads — is *walk sites plus Rust READERS*, and it was computed as
+    a grand total by [`rust_role_totals`] while every per-family question went
+    to [`rust_scan`], which counts assertions and declarations too. Two
+    populations, and no derivation joining them.
+
+    What that cost, measured at R2175: [`blocked_families`] said its subject was
+    "every family that HAS READERS and no pin", filtered on *has any site*, and
+    reported *all* its sites. **19 of the 23 sites it called BLOCKED were
+    declarations** — lines already in the one home this campaign exists to give
+    them — and five of its nine families had no reducible site at all. The gate
+    beside it could not catch that, because it re-spelled the rule with the same
+    wrong population.
+
+    ⚠ This is R2164's finding again (*39 of 79 BLOCKED sites were not blocked at
+    all*), with a different cause. Two rounds of the same sentence is what says
+    the repair belongs at the derivation rather than at the cause.
+    """
+    index: dict[str, list[tuple[str, int]]] = {}
+    for path in rust_sources():
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        name = str(path.relative_to(ROOT))
+        for line, stem, role in rust_site_roles(path, body):
+            if role == "reader":
+                index.setdefault(stem, []).append((name, line))
+    return {stem: tuple(found) for stem, found in index.items()}
+
+
+def reducible_sites(
+    index: dict[str, list[tuple[str, int]]] | None = None,
+) -> dict[str, tuple[int, int]]:
+    """`family -> (walk sites, Rust reader sites)` — **the queue, per family**.
+
+    ★★★★★ R2175 — the ONE derivation of *what is left to convert*, so that the
+    total this gate prints and the per-family questions asked beside it cannot
+    be about different things. Everything that says "queue", "blocked" or
+    "reducible" reads this; nothing re-derives it.
+
+    ⚠ A walk site is always a reader — a walk cannot declare a Rust const and
+    has no test span — which is why the walk column needs no role filter. That
+    is a fact about the population, not an assumption: [`sources`] is
+    `tools/demos/` plus the harness.
+
+    ⚠⚠ Families with only assertions or only declarations are ABSENT, and that
+    is the point. They are not work; charging them as work is what this
+    replaced. What they may still be is UNPINNED — a different question, asked
+    by [`unpinned_families`].
+    """
+    index = scan() if index is None else index
+    readers = rust_reader_scan()
+    out: dict[str, tuple[int, int]] = {}
+    for stem in set(index) | set(readers):
+        pair = (len(index.get(stem, ())), len(readers.get(stem, ())))
+        if pair != (0, 0):
+            out[stem] = pair
+    return out
+
+
 class Pinned(NamedTuple):
     """A family's two budgeted numbers.
 
@@ -906,10 +972,18 @@ def check() -> int:
     # judged by has a FLOOR it must not cross, and a floor nobody states is a
     # target nobody can reach.
     reader, assertion, declaration = rust_role_totals()
+    # ★★★★★ R2175 — the queue is summed from `reducible_sites`, the per-family
+    # derivation everything else about the queue reads, rather than from the
+    # grand total beside it. The two must agree, and `--selftest` compares them:
+    # before this round the total and the per-family questions came from two
+    # walks over the corpus that nothing joined, which is how `blocked_families`
+    # could report a number that was not part of the queue it qualified.
+    left = reducible_sites(index)
+    queue = sum(sum(pair) for pair in left.values())
     print(
         f"painted-addresses: of the rust half, {reader} reader(s), "
         f"{assertion} assertion(s) and {declaration} declaration(s) — the "
-        f"reducible queue is {walk_total + reader} (walks are all readers), and "
+        f"reducible queue is {queue} (walks are all readers), and "
         f"the census cannot legitimately fall below {assertion + declaration}"
     )
     # ★★★★★ R2147 — and WHETHER EACH FAMILY'S VALUE IS HELD AT ALL, which
@@ -937,17 +1011,22 @@ def check() -> int:
     # conversion at all until something does. Derived from the declarations;
     # see [`site_vocabulary`]. Printed every run, because a queue that cannot
     # say what kind of work it holds is how three rounds picked by eye.
+    #
+    # ★★★★★ R2175 — over the QUEUE, which is what the paragraph above says it
+    # qualifies. The rust column counted every site until this round, so a line
+    # whose own sentence is *the queue is a work order* answered about 365 sites
+    # when the queue held 25 — and its `unknown` figure, the one a round picks
+    # by, was 67 where the truth is what the reducible half spells.
     kinds = ("paint", "path", "both", "unknown")
     walk_kinds = dict.fromkeys(kinds, 0)
     rust_kinds = dict.fromkeys(kinds, 0)
-    for stem, count in now.items():
-        walk_kinds[site_vocabulary(stem)] += count
-    for stem, count in rust_now.items():
-        rust_kinds[site_vocabulary(stem)] += count
+    for stem, (walk_n, rust_n) in left.items():
+        walk_kinds[site_vocabulary(stem)] += walk_n
+        rust_kinds[site_vocabulary(stem)] += rust_n
     print(
-        "painted-addresses: by vocabulary — walk "
+        "painted-addresses: by vocabulary, over the QUEUE — walk "
         + " / ".join(f"{walk_kinds[k]} {k}" for k in kinds)
-        + "; rust "
+        + "; rust readers "
         + " / ".join(str(rust_kinds[k]) for k in kinds)
         + " (an UNDECLARED name is not a conversion until something declares "
         "it; BOTH is a name two vocabularies claim, which is a finding)"
@@ -1013,12 +1092,32 @@ def check() -> int:
     # beside the queue it qualifies, because a remainder and the part of it
     # nobody may touch are two different facts and the first alone reads as a
     # plan. See `blocked_families` for why this is not subtracted.
-    blocked = blocked_families(index, rust_index)
+    #
+    # ★★★★★ R2175 — and it is drawn from `reducible_sites` now, the SAME
+    # derivation the queue total above is printed from, so "of those site(s)"
+    # is true of the sentence rather than merely plausible in it. It said 23
+    # until this round and the answer was 4.
+    blocked = blocked_families(index)
     blocked_sites = sum(walk + rust for _stem, walk, rust in blocked)
     print(
         f"painted-addresses: {blocked_sites} of those site(s) are BLOCKED, in "
         f"{len(blocked)} family/ies nothing pins — `--owed` names them, and a "
         "conversion that emptied one would be refused as a deleted check"
+    )
+    # ★★★★★ R2175 — and the WIDER question the line above used to answer by
+    # accident: a family whose value nothing holds at all, reducible or not. A
+    # declaration nobody compares with the paint is exactly as renameable as a
+    # reader nobody compares with the paint; what differs is the remedy, which
+    # is why these are two lines and not one number. Reported, never subtracted.
+    unpinned = unpinned_families(index, rust_index)
+    unpinned_sites = sum(walk + rust for _stem, walk, rust in unpinned)
+    print(
+        f"painted-addresses: separately, {unpinned_sites} site(s) in "
+        f"{len(unpinned)} family/ies have their value held by NOTHING — "
+        f"{unpinned_sites - blocked_sites} of them are assertions or "
+        "declarations, which are not work here but are renameable with nothing "
+        "refusing (see `debt-a-published-address-can-be-renamed-and-nothing-"
+        "refuses`)"
     )
     joined = sorted(set(gone_checks) - read_unpinned())
     if joined:
@@ -1043,6 +1142,29 @@ def check() -> int:
     return 0
 
 
+def pin_word(source: str | None, has_work: bool) -> str:
+    """The work order's `pin` column for one family — PURE, so it is testable.
+
+    ★★★★★ R2175 — `BLOCKED` is this file's word for *work no round may finish*,
+    and the work order was printing it for every family nothing pins. Nine rows
+    said BLOCKED under a summary line that said four: one word carrying two
+    facts inside one table, which is this project's most-repeated defect and
+    reads as *the campaign is more stuck than it is*.
+
+    A family nothing pins and nothing owes is `unpinned` — its value is held by
+    nothing, which is a real finding and a different one, counted by
+    [`unpinned_families`] and owned by
+    `debt-a-published-address-can-be-renamed-and-nothing-refuses`.
+
+    ⚠ Its own function rather than three lines in the loop, for R1884's reason:
+    a rule and the thing that runs it are two gates, and the one that gets
+    tested is the pure one.
+    """
+    if source:
+        return source
+    return "BLOCKED" if has_work else "unpinned"
+
+
 def owed() -> int:
     """The work order: the families with the most sites left to convert.
 
@@ -1051,17 +1173,35 @@ def owed() -> int:
     opened by reconciling that number with a hand count of the Rust side that
     the tool could not produce. A work order that names a third of the work is
     not a work order.
+
+    ★★★★★ R2175 — **and the sort was on the wrong population.** "Left to
+    convert" is walk sites plus Rust READERS; the `rust` column is every site,
+    so families of pure assertions and pure declarations were ranked as work and
+    ranked ABOVE families that had some. Measured at R2175: **52 of the 92
+    families here have nothing left to convert**, and the old sort put
+    `value.elem` (22 sites, 0 work) at rank THREE and `shell.carry` (9 sites, 0
+    work) at rank TEN. The second is the sharper one — R2171 *repaid*
+    `shell.carry`, and the work order went on listing it as the tenth-biggest
+    job. The `rdr` column is what a round picks by; `rust` stays because it is
+    what the ratchet pins and what the floor is computed from.
     """
     index, rust_index = scan(), rust_scan()
+    left = reducible_sites(index)
     stems = sorted(
         set(index) | set(rust_index),
-        key=lambda s: (-(len(index.get(s, [])) + len(rust_index.get(s, []))), s),
+        key=lambda s: (
+            -sum(left.get(s, (0, 0))),
+            -(len(index.get(s, [])) + len(rust_index.get(s, []))),
+            s,
+        ),
     )
     if not stems:
         print("painted-addresses: nothing spelled anywhere")
         return 0
     pins = pin_sources(stems)
-    print(f"{'walk':>6}  {'rust':>6}  {'files':>5}  {'pin':<9}  family")
+    print(
+        f"{'walk':>6}  {'rust':>6}  {'rdr':>5}  {'files':>5}  {'pin':<9}  family"
+    )
     for stem in stems:
         walk, rust = index.get(stem, []), rust_index.get(stem, [])
         files = len({path for path, _ in walk} | {path for path, _ in rust})
@@ -1070,21 +1210,34 @@ def owed() -> int:
         # speller leaves its address compared with nothing, which `--check`
         # refuses as a deleted check. A round picking the top row of this table
         # used to get no warning at all.
-        held = pins.get(stem) or "BLOCKED"
-        print(f"{len(walk):>6}  {len(rust):>6}  {files:>5}  {held:<9}  {stem}")
+        readers = left.get(stem, (0, 0))[1]
+        held = pin_word(pins.get(stem), bool(walk) or bool(readers))
+        print(
+            f"{len(walk):>6}  {len(rust):>6}  {readers:>5}  {files:>5}  "
+            f"{held:<9}  {stem}"
+        )
     walk_total = sum(len(f) for f in index.values())
     rust_total = sum(len(f) for f in rust_index.values())
+    left_total = sum(sum(pair) for pair in left.values())
     print(
-        f"{walk_total:>6}  {rust_total:>6}         total across "
-        f"{len(stems)} family/ies"
+        f"{walk_total:>6}  {rust_total:>6}  {left_total - walk_total:>5}"
+        f"         total across {len(stems)} family/ies; {left_total} left to "
+        "convert"
     )
-    blocked = blocked_families(index, rust_index)
+    blocked = blocked_families(index)
     sites = sum(walk + rust for _stem, walk, rust in blocked)
     print(
         f"painted-addresses: {len(blocked)} of those family/ies are BLOCKED — "
         f"{sites} site(s) whose value nothing holds, so converting one deletes "
         "a check rather than repaying a debt. Pin them first, or decide they "
         "are not work."
+    )
+    unpinned = unpinned_families(index, rust_index)
+    print(
+        f"painted-addresses: a further {len(unpinned) - len(blocked)} family/ies "
+        "read `unpinned` — nothing holds their value either, and they have "
+        "nothing left to convert, so a rename there is unchecked but it is not "
+        "this debt's work"
     )
     return 0
 
@@ -1093,7 +1246,22 @@ def blocked_families(
     index: dict[str, list[tuple[str, int]]] | None = None,
     rust_index: dict[str, list[tuple[str, int]]] | None = None,
 ) -> list[tuple[str, int, int]]:
-    """`(family, walk, rust)` for every family that HAS readers and NO pin.
+    """`(family, walk, rust readers)` for every family that HAS READERS and NO
+    pin — the part of the **reducible queue** no round may finish.
+
+    ★★★★★ R2175 — **this said READERS and filtered on SITES**, and the two
+    stopped agreeing the moment a screen put its addresses in a `const` array.
+    Measured at R2175: of the 23 sites this reported as BLOCKED, **19 were
+    declarations** and five of the nine families had no reducible site at all —
+    `hello_modal_refocus.hover` (6), `hello_modal_handoff.hover` (5),
+    `hello_window_refocus.hover` (2), `the_tide.vn` (2) and `lab.wire` (1) are
+    each a single declaring site per address, which is the state this campaign
+    exists to reach. The real figure is **4 sites in 4 families**, so the number
+    beside the queue overstated the blocked work by 5.75x.
+    ⇒ it reads [`reducible_sites`] now, which is the same derivation the queue
+    total is printed from. The wider question — *whose value does nothing hold,
+    reducible or not* — is [`unpinned_families`], because it is a different
+    question and deserves to be asked rather than folded in.
 
     ★★★★★ R2160 — **the queue was two populations reported as one.** The
     campaign's closing criterion is *reducible = 0*, and [`check`] prints that
@@ -1116,6 +1284,38 @@ def blocked_families(
     part that is hard would be the census measuring the campaign's comfort
     rather than its remainder — R2155's finding, which this is the second
     instance of.
+    """
+    left = reducible_sites(index)
+    pins = pin_sources(sorted(left))
+    return [
+        (stem, walk, rust) for stem, (walk, rust) in sorted(left.items())
+        if not pins[stem]
+    ]
+
+
+def unpinned_families(
+    index: dict[str, list[tuple[str, int]]] | None = None,
+    rust_index: dict[str, list[tuple[str, int]]] | None = None,
+) -> list[tuple[str, int, int]]:
+    """`(family, walk, rust sites)` for every family with ANY site and NO pin.
+
+    ★★★★★ R2175 — the question [`blocked_families`] used to answer by accident,
+    given its own name. *Is this family's value held by anything?* is asked of
+    every site, because a declaration nobody compares with the paint is exactly
+    as renameable as a reader nobody compares with the paint — R2137.3 measured
+    that a consistent rename passes 790 tests. What differs is the REMEDY: a
+    reader is converted, a declaration is pinned. One word could not carry both.
+
+    ⚠ Reported, never subtracted — R2160's rule, which the round that narrowed
+    `blocked_families` is the likeliest to break. The narrower number is the
+    honest one for *what is left to convert*; this is the honest one for *what a
+    rename would go unnoticed in*, and dropping it to make the first look better
+    would be the census measuring comfort.
+
+    ⚠⚠ The repair for the declaration-only half is not this debt's. It is
+    `debt-a-published-address-can-be-renamed-and-nothing-refuses`, and this line
+    is where that debt's population can be counted from the address census
+    rather than by hand.
     """
     index = scan() if index is None else index
     rust_index = rust_scan() if rust_index is None else rust_index
@@ -2647,12 +2847,22 @@ def selftest() -> int:
             break
     # ⚠ The other arm, over the whole population rather than the answer: every
     # family with readers and no pin must BE in the list.
-    walk_now, rust_now = census(), rust_census()
-    every = sorted(set(walk_now) | set(rust_now))
+    #
+    # 🟥🟥🟥 ★★★★★ R2175 — **this arm RE-SPELLED the rule, with the same wrong
+    # population as the code, so it could not fail.** It said "every family with
+    # readers" and then computed that from `census()` / `rust_census()`, which
+    # count assertions and declarations too — the identical mistake the function
+    # it was guarding had made. Two checks, one wrong population: this project's
+    # own standing lesson (*a gate must not re-spell the rule; it must compare
+    # against the DERIVATION's output*), reproduced inside the gate written to
+    # enforce it. It now asks `reducible_sites` — the one derivation — so the
+    # gate and the code cannot be wrong in the same direction without the
+    # arithmetic arm below noticing.
+    left_now = reducible_sites()
     should = {
         stem
-        for stem, source in pin_sources(every).items()
-        if not source and (walk_now.get(stem, 0) or rust_now.get(stem, 0))
+        for stem, source in pin_sources(sorted(left_now)).items()
+        if not source
     }
     missed = sorted(should - {stem for stem, _w, _r in blocked})
     if missed:
@@ -2660,6 +2870,71 @@ def selftest() -> int:
         print(
             f"FAIL: {missed} have readers and no pin and are not reported "
             "BLOCKED — a round would pick them as ordinary work",
+            file=sys.stderr,
+        )
+    # ★★★★★ R2175 — and the ARITHMETIC arm, which is what makes the two above
+    # more than a restatement: the per-family derivation must sum to the same
+    # queue the grand-total role tally gives. One population, one answer — the
+    # form this file already uses for the census/role tally, applied to the pair
+    # that actually diverged.
+    reader_total = rust_role_totals()[0]
+    walk_total_now = sum(census().values())
+    if sum(sum(pair) for pair in left_now.values()) != walk_total_now + reader_total:
+        failed += 1
+        print(
+            f"FAIL: reducible_sites sums to "
+            f"{sum(sum(pair) for pair in left_now.values())} and the role tally "
+            f"says the queue is {walk_total_now + reader_total} — one "
+            "population, two answers",
+            file=sys.stderr,
+        )
+    # ★ And BLOCKED must be a SUBSET of the queue, which is the property whose
+    # absence let 19 declarations be reported as work no round may finish.
+    #
+    # ⚠ Stated rather than hidden: this arm and the one after it share a
+    # derivation with what they check, so today they cannot fail — see
+    # `debt-a-check-whose-two-sides-share-one-derivation`. They are kept because
+    # the failure they pin is a RE-IMPLEMENTATION (`blocked_families` reading
+    # `rust_scan` again, which is exactly what R2175 repaired), and against that
+    # change they do fire. The arm above is the one that compares two
+    # independent walks over the corpus, and it is the load-bearing one.
+    outside = sorted(
+        stem for stem, _w, _r in blocked if stem not in left_now
+    )
+    if outside:
+        failed += 1
+        print(
+            f"FAIL: {outside} are reported BLOCKED and are not in the reducible "
+            "queue at all — BLOCKED qualifies the queue, so it cannot name "
+            "something outside it",
+            file=sys.stderr,
+        )
+    # ★★★★★ R2175 — the work order's `pin` word, as a PURE rule with fixtures.
+    # The discriminating pair is the last two: no pin and work is BLOCKED, no
+    # pin and no work is not.
+    word_cases = [
+        ("a pinned family answers with its source", ("artifact", True), "artifact"),
+        ("and does so whether or not it owes", ("assertion", False), "assertion"),
+        ("★ nothing pinning it AND work left is BLOCKED", (None, True), "BLOCKED"),
+        ("★★ nothing pinning it and NO work left is not", (None, False), "unpinned"),
+    ]
+    for label, (source, has_work), want in word_cases:
+        got = pin_word(source, has_work)
+        if got != want:
+            failed += 1
+            print(
+                f"FAIL: {label}: pin_word({source!r}, {has_work!r}) -> {got!r}, "
+                f"wanted {want!r}",
+                file=sys.stderr,
+            )
+    # ★ The wider question keeps its own name and must stay WIDER — if these two
+    # ever answer the same set, one of them has stopped asking its question.
+    wider = {stem for stem, _w, _r in unpinned_families()}
+    if not {stem for stem, _w, _r in blocked} <= wider:
+        failed += 1
+        print(
+            "FAIL: a BLOCKED family is not reported as unpinned — the narrow "
+            "question must be a subset of the wide one",
             file=sys.stderr,
         )
 
@@ -2960,6 +3235,7 @@ def selftest() -> int:
             schema_cases,
             vocab_cases,
             declaring_cases,
+            word_cases,
         )
     ) + (
         5  # R2147/R2166: four classifier words and the artifact corpus floor
@@ -2968,6 +3244,7 @@ def selftest() -> int:
         + 1  # R2170: the census total and the role tally are one population
         + 3  # R2168: the retyped/single split's three derived checks
         + 4  # R2164: the role rule's four derived cross-checks
+        + 3  # R2175: the queue's arithmetic arm and BLOCKED's two subset arms
         + 10  # the ad-hoc assertions above, pre-existing and left alone
     )
     print(f"painted_addresses selftest: {total - failed} of {total} cases OK")
