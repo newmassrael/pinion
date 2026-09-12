@@ -29,6 +29,7 @@ from __future__ import annotations
 import collections
 import json
 import queue
+import re
 import shutil
 import signal
 import socket
@@ -7532,6 +7533,104 @@ def screen_spec(app: "RpcSubprocess", external: str = "/external") -> Any:
             "`python3 tools/read_path_shapes.py` for which screen regressed."
         )
     return spec
+
+
+def external_schema(app: "RpcSubprocess", external: str = "/external") -> list[dict]:
+    """★★★★★ R2166 — every INTROSPECTION PATH this External declares, as data.
+
+    The address campaign is about marks a screen PAINTS. Measured at R2166,
+    a large part of what the census still counted is not that at all: a walk
+    writing `gq(tf, "value.elem.1")` or `q(tf, "item.dark.checked")` is
+    spelling a **query path**, the §7 `$schema` vocabulary — a third language
+    beside the paint address and R2155's configuration key, counted as the
+    first because `ADDRESS`'s needle cannot tell three dotted words apart.
+
+    ⚠ The defect is the same one, not a different one. The screen ALREADY
+    declares these — `SchemaField::parametric("value.<index>", "json", …)`,
+    1,161 distinct paths across this tree — and publishes them here. What was
+    missing is a READER, so every walk re-typed the declaration. That is this
+    debt's sentence with one noun changed.
+
+    Rows carry `path` (`"value.<index>"`, `"any_modified"`), `type`, and for a
+    parametric one `args` and `arg_form`. Raises on an empty answer for
+    [`published_tags`]' reason: a walk that silently got nothing would spell
+    everything and pass.
+    """
+    schema = app.query(f"{external}/$schema")
+    assert isinstance(schema, list) and schema, (
+        f"{external}/$schema answered {schema!r}. A screen that declares no "
+        "introspection path is one a walk can only spell at, which is the "
+        "defect this reader exists to remove."
+    )
+    return schema
+
+
+#: How a declared path marks the place an argument goes: `value.<index>`.
+_SCHEMA_ARG = re.compile(r"<([A-Za-z_][A-Za-z0-9_]*)>")
+
+
+@dataclass(frozen=True)
+class ExternalPaths:
+    """One External's declared paths, ready to compose — [`external_paths`].
+
+    Shaped like `ChartAddresses` (R2165) rather than as a function taking the
+    app, so the schema is read ONCE per walk. A walk that re-read it per site
+    would put a round trip behind every address and make its own trace a record
+    of how often it asked rather than what it asked for.
+    """
+
+    external: str
+    declared: dict[str, str]
+
+    def at(self, name: str, **args: Any) -> str:
+        """One introspection path, composed from what the screen DECLARES.
+
+            paths.at("value", index="elem.1")   -> "value.elem.1"
+            paths.at("modified", addr="elem.2") -> "modified.elem.2"
+            paths.at("any_modified")            -> "any_modified"
+
+        `name` is the declared path with its arguments removed — `value` for
+        `value.<index>` — because that is the part a walk means, and the only
+        part that stays put when an argument is renamed.
+
+        ⚠⚠ Both directions are refused, as [`_chart_format`] refuses them and
+        for the same reason. A path the screen does not declare, or an argument
+        it does not take, composes a plausible string that names nothing; the
+        screen answers that with an error a walk reads as *the screen does not
+        have this*, which is this campaign's failure mode one language further
+        out.
+        """
+        if name not in self.declared:
+            raise AssertionError(
+                f"{self.external} declares no path called {name!r}. It declares "
+                f"{sorted(self.declared)}. A walk cannot name a Rust item, so a "
+                "path it is not handed is one it would have to spell."
+            )
+        template = self.declared[name]
+        wanted = set(_SCHEMA_ARG.findall(template))
+        given = set(args)
+        if wanted != given:
+            raise AssertionError(
+                f"{self.external} declares {template!r}: it takes {sorted(wanted)} "
+                f"and was given {sorted(given)}. A path composed past this would "
+                "name nothing, and the walk would read that as the screen not "
+                "having it."
+            )
+        out = template
+        for arg, value in args.items():
+            out = out.replace(f"<{arg}>", str(value))
+        return out
+
+
+def external_paths(app: "RpcSubprocess", external: str = "/external") -> ExternalPaths:
+    """Read one External's declared path vocabulary, once, ready to compose."""
+    declared: dict[str, str] = {}
+    for row in external_schema(app, external):
+        path = row.get("path")
+        if isinstance(path, str):
+            declared[_SCHEMA_ARG.sub("", path).rstrip(".")] = path
+    assert declared, f"{external}/$schema carried no `path` row this reader could use"
+    return ExternalPaths(external=external, declared=declared)
 
 
 def declared_panes(app: "RpcSubprocess", external: str = "/external") -> list[dict]:

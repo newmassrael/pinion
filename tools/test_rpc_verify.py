@@ -679,6 +679,53 @@ def test_chart_addresses_binds_the_two_coordinates_together() -> None:
         check(False, f"ChartAddresses: a None part must refuse -> {composed}")
 
 
+def test_external_paths_compose_the_declared_introspection_vocabulary() -> None:
+    """★★★★★ R2166 — the THIRD address vocabulary, which had no reader.
+
+    `value.elem.1` is not a painted address: it is the §7 `$schema` path this
+    External declares as `value.<index>`, the vocabulary the router makes a
+    precondition of dispatch (`InterveneError::UnknownPath` is literally "path
+    is not declared in the schema"). The screen published it and every walk
+    re-typed it.
+
+    ⚠ The declared ARGUMENT NAME is load-bearing and this round proved it the
+    hard way: the first conversion wrote `expanded(id=…)` where the screen
+    declares `expanded.<branch_id>`, and the refusal below is what caught it
+    before a path naming nothing reached the screen.
+    """
+    paths = rpc_verify.ExternalPaths(
+        external="/grid/external",
+        declared={
+            "value": "value.<index>",
+            "modified": "modified.<addr>",
+            "expanded": "expanded.<branch_id>",
+            "any_modified": "any_modified",
+        },
+    )
+    check(paths.at("value", index="elem.1") == "value.elem.1",
+          "ExternalPaths: an argument standing for a whole sub-address")
+    check(paths.at("modified", addr="elem.2") == "modified.elem.2",
+          "ExternalPaths: a second declared argument name")
+    check(paths.at("value", index=4) == "value.4",
+          "ExternalPaths: a scalar index through the same declaration")
+    check(paths.at("any_modified") == "any_modified",
+          "ExternalPaths: a path that takes no argument at all")
+
+    refusals = [
+        ("a path the screen does not declare", lambda: paths.at("nope", index=1)),
+        ("the WRONG argument name", lambda: paths.at("expanded", id="struct.Position")),
+        ("an argument the path does not take", lambda: paths.at("any_modified", index=1)),
+        ("an argument the path takes and did not get", lambda: paths.at("value")),
+    ]
+    for label, call in refusals:
+        try:
+            composed = call()
+        except AssertionError:
+            check(True, f"ExternalPaths: {label} is refused")
+        else:
+            check(False, f"ExternalPaths: {label} must be refused -> {composed}")
+
+
 def test_request_matches_its_own_id() -> None:
     tf = wired()
     deliver(tf, {"jsonrpc": "2.0", "id": 999, "result": "somebody else's"})

@@ -735,14 +735,16 @@ def check() -> int:
     # this line nothing counted them.
     pins = pin_sources(families)
     by_artifact = sum(1 for source in pins.values() if source == "artifact")
+    by_schema = sum(1 for source in pins.values() if source == "schema")
     by_assertion = sum(1 for source in pins.values() if source == "assertion")
     gone_checks = deleted_checks(now, rust_now, families)
     print(
         f"painted-addresses: {by_artifact} family/ies pinned by an artifact, "
+        f"{by_schema} by a declared introspection path, "
         f"{by_assertion} by an assertion, "
-        f"{len(families) - by_artifact - by_assertion} by NOTHING — of those, "
-        f"{len(gone_checks)} are already converted, which is a check deleted "
-        f"rather than a debt repaid"
+        f"{len(families) - by_artifact - by_schema - by_assertion} by NOTHING "
+        f"— of those, {len(gone_checks)} are already converted, which is a "
+        f"check deleted rather than a debt repaid"
     )
     # ★★★★★ R2156 — the SECOND vocabulary, whose walk half had no gate at all.
     # Printed every run, zero or not: the number whose absence let this go
@@ -1143,6 +1145,71 @@ def grammar_prefixes() -> tuple[str, ...]:
     return tuple(sorted(found))
 
 
+#: How a screen DECLARES an introspection path — the third address vocabulary.
+#:
+#: ★★★★★ R2166 — measured: a large part of what this census still counted is
+#: not a painted address at all. `gq(tf, "value.elem.1")` and
+#: `q(tf, "item.dark.checked")` are §7 `$schema` PATHS, the vocabulary R1637-
+#: R1642 made a precondition of dispatch (`InterveneError::UnknownPath` is
+#: literally "path is not declared in the schema"). [`ADDRESS`]'s needle cannot
+#: tell three dotted words apart, so they were counted as paint — the same
+#: shape R2155 found for configuration keys, one vocabulary further out.
+#:
+#: The repair is R2155's: not to drop them, but to recognise the place they are
+#: DECLARED, so converting one is a repayment rather than a deleted check.
+SCHEMA_DECLARATION = re.compile(r'SchemaField::(?:new|parametric|action)\(\s*"([^"]+)"')
+
+
+@functools.lru_cache(maxsize=1)
+def schema_heads() -> frozenset[str]:
+    """The fixed head of every PARAMETRIC declared introspection path.
+
+    `expanded.<branch_id>` contributes `expanded`; `any_modified` contributes
+    NOTHING, because a path with no argument is one whole path rather than a
+    family, and folding it in would claim a family from a declaration that
+    names a single slot.
+
+    ⚠⚠ The parametric restriction is what keeps this SAFE, and it was measured
+    rather than assumed. A bare head match over ALL declarations would claim
+    `line.series` — a painted chart family — from a declaration that has never
+    heard of it, and calling a family pinned when it is not loses a check
+    silently ([`covers`]). Restricted to parametric heads, the claim is 14
+    families, every one of them a path vocabulary the walks read by `query` or
+    `intervene`, and not one of them painted.
+    """
+    heads: set[str] = set()
+    for root in RUST_ROOTS:
+        for path in sorted((ROOT / root).rglob("*.rs")):
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if "SchemaField::" not in text:
+                continue
+            for declared in SCHEMA_DECLARATION.findall(text):
+                segments = declared.split(".")
+                fixed: list[str] = []
+                for segment in segments:
+                    if segment.startswith("<"):
+                        break
+                    fixed.append(segment)
+                if fixed and len(fixed) < len(segments):
+                    heads.add(fixed[0])
+    return frozenset(heads)
+
+
+def schema_pins(stem: str) -> bool:
+    """Whether a screen's DECLARED introspection paths hold `stem`'s family.
+
+    This is a value pin in the same sense the emitted grammar is: the
+    declaration is what the walk now composes from, and it is checked — the
+    router refuses a path the schema does not declare, so a declaration and the
+    behaviour it describes cannot drift apart silently.
+    """
+    head, _, rest = stem.partition(".")
+    return bool(rest) and head in schema_heads()
+
+
 def grammar_pins(stem: str) -> bool:
     """Whether a committed grammar artifact holds `stem`'s family.
 
@@ -1216,6 +1283,11 @@ def pin_sources(families: Iterable[str]) -> dict[str, str]:
     for stem in families:
         if any(covers(address, stem) for address in addresses) or grammar_pins(stem):
             out[stem] = "artifact"
+        elif schema_pins(stem):
+            # R2166 — the THIRD vocabulary's pin. Named apart from `artifact`
+            # because it is a different claim: a declared path is held by the
+            # router refusing an undeclared one, not by a byte comparison.
+            out[stem] = "schema"
         elif asserted.get(stem):
             out[stem] = "assertion"
         else:
@@ -1738,8 +1810,43 @@ def selftest() -> int:
     # ★ And the classifier is not a constant. A `pin_sources` that answered one
     # word for everything would make the gate below either always green or
     # always red, and both read as working.
+    # ★★★★★ R2166 — the THIRD vocabulary's pin, and above all the half that
+    # says NO. A declared path's head is an ordinary word — `value`, `name`,
+    # `expanded`, `item` — so the restriction to PARAMETRIC declarations is
+    # what keeps this from claiming a painted family. Measured: without it,
+    # `line.series` (a chart family under the `line` prefix) is claimed by a
+    # declaration that has never heard of it.
+    schema_cases: list[tuple[str, str, bool]] = [
+        ("a parametric declaration pins its family", "value.elem", True),
+        ("★ the same, under another screen's word", "expanded.struct", True),
+        ("★ and one whose argument is not the family's second segment", "item.dark", True),
+        (
+            "★★ a PAINTED family whose first word a declaration happens to\n"
+            "       share is NOT claimed — the direction that loses a check",
+            "line.series",
+            False,
+        ),
+        ("a word no schema declares at all", "chart.candle", False),
+        ("a bare stem with no second segment", "value", False),
+    ]
+    for label, stem, want in schema_cases:
+        if schema_pins(stem) is not want:
+            failed += 1
+            print(
+                f"FAIL: {label}: schema_pins({stem!r}) -> {schema_pins(stem)}, "
+                f"wanted {want}",
+                file=sys.stderr,
+            )
+    if not schema_heads():
+        failed += 1
+        print(
+            "FAIL: no parametric schema declaration was read — every case above "
+            "is vacuous",
+            file=sys.stderr,
+        )
+
     live_pins = pin_sources(set(read_budget()) | set(census()))
-    for source in ("artifact", "assertion", ""):
+    for source in ("artifact", "schema", "assertion", ""):
         if not any(value == source for value in live_pins.values()):
             failed += 1
             print(
@@ -2295,9 +2402,18 @@ def selftest() -> int:
     # and they are NAMED rather than folded into one number nobody can read.
     total = sum(
         len(case_list)
-        for case_list in (cases, needle_cases, rust_cases, role_cases, covers_cases, grammar_cases)
+        for case_list in (
+            cases,
+            needle_cases,
+            rust_cases,
+            role_cases,
+            covers_cases,
+            grammar_cases,
+            schema_cases,
+        )
     ) + (
-        4  # R2147: three classifier words and the artifact corpus floor
+        5  # R2147/R2166: four classifier words and the artifact corpus floor
+        + 1  # R2166: the parametric-declaration corpus floor
         + 4  # R2164: the role rule's four derived cross-checks
         + 10  # the ad-hoc assertions above, pre-existing and left alone
     )

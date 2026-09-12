@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -69,6 +70,12 @@ def painted(tf, tag: str) -> bool:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        # ★★★★★ R2166 — the introspection PATH vocabulary, asked for rather
+        # than spelled. `value.elem.1` is not a painted address at all: it is
+        # the §7 `$schema` path this External declares as `value.<index>`, and
+        # every walk here had been re-typing that declaration.
+        gp = external_paths(tf, f"/{GRID}/external")
+
         # ── (A) boot — the array branch + 3 element leaves ──────────
         assert_eq(tq(tf, "row_count"), 28, "6 cats + 2 structs + 1 array + 19 leaves, all expanded")
         assert_eq(gq(tf, "elem_count"), 3, "the array sub-model boots with 3 elements")
@@ -84,25 +91,31 @@ def body() -> None:
         assert painted(tf, f"{GRID}#rmelem0"), "an element's remove button is painted"
 
         # ── (B) an element reads / writes via the unified value wire ─
-        assert_eq(gq(tf, "value.elem.1"), 0.5, "element 1 reads its sub-model value")
-        assert_eq(gq(tf, "name.elem.1"), "Spawn Weights [1]", "the qualified element name")
-        assert_eq(gq(tf, "kind.elem.1"), "float", "the homogeneous element kind")
-        tf.intervene(f"/{GRID}/external/value.elem.1", 2.5)
-        assert_eq(gq(tf, "value.elem.1"), 2.5, "intervene writes the element value")
+        assert_eq(gq(tf, gp.at("value", index="elem.1")), 0.5, "element 1 reads its sub-model value")
+        assert_eq(
+            gq(tf, gp.at("name", index="elem.1")),
+            "Spawn Weights [1]",
+            "the qualified element name",
+        )
+        assert_eq(
+            gq(tf, gp.at("kind", index="elem.1")), "float", "the homogeneous element kind"
+        )
+        tf.intervene(f"/{GRID}/external/{gp.at('value', index='elem.1')}", 2.5)
+        assert_eq(gq(tf, gp.at("value", index="elem.1")), 2.5, "intervene writes the element value")
 
         # The Gameplay/array branch sits at the bottom of the tall 28-row grid
         # (which does not scroll), so collapse the categories above it to lift
         # the array's "+"/"-" buttons into the window for the pixel-click steps
         # below. (RPC / scene-as-data reads above work regardless of position.)
         for cat in ("cat.Identity", "cat.Appearance", "cat.Physics", "cat.Stats", "cat.Transform"):
-            tf.intervene(f"/{GRID}/external/expanded.{cat}", False)
+            tf.intervene(f"/{GRID}/external/{gp.at('expanded', branch_id=cat)}", False)
         wait_until(lambda: painted(tf, f"{GRID}#elem.0"), timeout=4.0, interval=0.03,
                    desc="the array elements are visible after collapsing the categories above")
 
         # ── (C) add an element (RPC, then a click on "+") ───────────
         assert_eq(tf.invoke(f"/{GRID}/external/add_elem", None), 3, "add_elem returns the new index")
         assert_eq(gq(tf, "elem_count"), 4, "the list grew to 4")
-        assert_eq(gq(tf, "value.elem.3"), 0.0, "a new element seeds 0.0")
+        assert_eq(gq(tf, gp.at("value", index="elem.3")), 0.0, "a new element seeds 0.0")
         wait_until(lambda: painted(tf, f"{GRID}#elem.3"), timeout=4.0, interval=0.03,
                    desc="the new element row paints")
         # The "+" button click is the GUI twin of the RPC.
@@ -114,7 +127,7 @@ def body() -> None:
         # Elements: [1.0, 2.5, 0.25, 0.0, 0.0]. Remove index 0 -> 2.5 shifts to 0.
         assert_eq(tf.invoke(f"/{GRID}/external/remove_elem", 0), True, "remove_elem reports it existed")
         assert_eq(gq(tf, "elem_count"), 4, "the list shrank to 4")
-        assert_eq(gq(tf, "value.elem.0"), 2.5, "later elements shift down on remove (array semantics)")
+        assert_eq(gq(tf, gp.at("value", index="elem.0")), 2.5, "later elements shift down on remove (array semantics)")
         assert_eq(tf.invoke(f"/{GRID}/external/remove_elem", 9), False, "an out-of-range remove is a no-op")
         # The "-" button on element 0 removes it.
         tf.click(path=f"{GRID}#rmelem0")
@@ -123,9 +136,11 @@ def body() -> None:
 
         # ── (E) move_elem reorders the sub-model ────────────────────
         # Elements now: [0.25, 0.0, 0.0]. Move 0 -> 2 -> [0.0, 0.0, 0.25].
-        assert_eq(gq(tf, "value.elem.0"), 0.25, "before reorder: element 0")
+        assert_eq(gq(tf, gp.at("value", index="elem.0")), 0.25, "before reorder: element 0")
         assert_eq(tf.invoke(f"/{GRID}/external/move_elem", "0,2"), True, "move_elem reports it moved")
-        assert_eq(gq(tf, "value.elem.2"), 0.25, "the element moved to the end")
+        assert_eq(
+            gq(tf, gp.at("value", index="elem.2")), 0.25, "the element moved to the end"
+        )
         assert_eq(tf.invoke(f"/{GRID}/external/move_elem", "1,1"), False, "from == to is a no-op")
 
         # ── (F) begin-edit reports the node id; remove cancels it ────

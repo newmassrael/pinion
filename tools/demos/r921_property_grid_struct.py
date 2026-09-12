@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -76,6 +77,11 @@ def painted(tf, tag: str) -> bool:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        # ★★★★★ R2166 — the declared introspection PATHS, asked for. These are
+        # the §7 `$schema` vocabulary (`struct_modified.<id>`, `expanded.<branch_id>`)
+        # rather than painted addresses, and the walk had been spelling them.
+        gp = external_paths(tf, f"/{GRID}/external")
+
         # ── (A) boot — the tree structure ───────────────────────────
         assert_eq(tq(tf, "row_count"), 28, "6 categories + 2 structs + 1 array + 19 leaves, all expanded")
         assert_eq(tq(tf, "id_at.0"), IDENTITY, "the first row is the Identity category")
@@ -90,50 +96,50 @@ def body() -> None:
         assert_eq(tq(tf, "id_at.16"), "6", "the struct's first field is Position X (value 6)")
         assert_eq(tq(tf, "level_at.16"), 3, "a struct field is aria-level 3 (category > struct > field)")
         assert_eq(tq(tf, "expanded_at.16"), None, "a leaf has no aria-expanded")
-        summary = gq(tf, "struct_summary.struct.Position")
+        summary = gq(tf, gp.at("struct_summary", struct_id="struct.Position"))
         assert summary.startswith("(") and summary.endswith(")") and "12.5" in summary, \
             f"the struct summary is a tuple of its field values, got {summary!r}"
-        assert_eq(gq(tf, "struct_modified.struct.Position"), False, "boot: the struct is clean")
+        assert_eq(gq(tf, gp.at("struct_modified", struct_id="struct.Position")), False, "boot: the struct is clean")
         assert painted(tf, f"{GRID}#{POS}"), "the Position struct header is painted"
         assert painted(tf, f"{GRID}#{POS_X}"), "the Position X field row is painted when expanded"
 
         # ── (C) edit a field -> the struct reads modified + paints its arrow ─
         tf.intervene(f"/{GRID}/external/value.{POS_X}", 99.0)
         assert_eq(gq(tf, f"value.{POS_X}"), 99.0, "the field edit applied")
-        assert_eq(gq(tf, "struct_modified.struct.Position"), True, "a modified field makes the struct modified")
-        assert_eq(gq(tf, "struct_modified.struct.Scale"), False, "the untouched Scale struct stays clean")
+        assert_eq(gq(tf, gp.at("struct_modified", struct_id="struct.Position")), True, "a modified field makes the struct modified")
+        assert_eq(gq(tf, gp.at("struct_modified", struct_id="struct.Scale")), False, "the untouched Scale struct stays clean")
         wait_until(lambda: painted(tf, f"{GRID}#reset{POS}"), timeout=4.0, interval=0.03,
                    desc="the modified struct paints its reset arrow")
 
         # ── (D) reset_struct restores every field (the shared funnel) ─
         assert_eq(tf.invoke(f"/{GRID}/external/reset_struct", POS), 1, "reset_struct reports the field count reset")
         assert_eq(gq(tf, f"value.{POS_X}"), 12.5, "Position X restored to its default")
-        assert_eq(gq(tf, "struct_modified.struct.Position"), False, "the struct reads clean after reset_struct")
+        assert_eq(gq(tf, gp.at("struct_modified", struct_id="struct.Position")), False, "the struct reads clean after reset_struct")
         wait_until(lambda: not painted(tf, f"{GRID}#reset{POS}"), timeout=4.0, interval=0.03,
                    desc="the struct reset arrow disappears once default")
 
         # ── (E) collapse the struct (RPC + a click) hides its fields ─
-        assert_eq(gq(tf, "expanded.struct.Position"), True, "the struct boots expanded")
+        assert_eq(gq(tf, gp.at("expanded", branch_id="struct.Position")), True, "the struct boots expanded")
         assert_eq(tf.invoke(f"/{GRID}/external/toggle_branch", POS), False, "toggle_branch collapses it")
-        assert_eq(gq(tf, "expanded.struct.Position"), False, "the struct is now collapsed")
+        assert_eq(gq(tf, gp.at("expanded", branch_id="struct.Position")), False, "the struct is now collapsed")
         assert_eq(tq(tf, "row_count"), 25, "collapsing Position hides its 3 fields (28 - 3)")
         wait_until(lambda: not painted(tf, f"{GRID}#{POS_X}"), timeout=4.0, interval=0.03,
                    desc="the Position X field is hidden when its struct collapses")
         assert painted(tf, f"{GRID}#{POS}"), "the struct header stays painted when collapsed"
         # A click on the struct header re-expands it (the disclosure affordance).
         tf.click(path=f"{GRID}#{POS}")
-        wait_until(lambda: gq(tf, "expanded.struct.Position") is True, timeout=4.0, interval=0.03,
+        wait_until(lambda: gq(tf, gp.at("expanded", branch_id="struct.Position")) is True, timeout=4.0, interval=0.03,
                    desc="clicking the struct header re-expands it")
         wait_until(lambda: painted(tf, f"{GRID}#{POS_X}"), timeout=4.0, interval=0.03,
                    desc="the field reappears after the click expand")
 
         # ── (F) collapse a category hides its leaves ────────────────
-        tf.intervene(f"/{GRID}/external/expanded.{IDENTITY}", False)
+        tf.intervene(f"/{GRID}/external/{gp.at('expanded', branch_id=IDENTITY)}", False)
         assert_eq(gq(tf, f"expanded.{IDENTITY}"), False, "intervene collapsed the Identity category")
         assert_eq(tq(tf, "row_count"), 25, "collapsing Identity hides its 3 leaves (28 - 3)")
         wait_until(lambda: not painted(tf, f"{GRID}#0"), timeout=4.0, interval=0.03,
                    desc="the Name leaf is hidden when Identity collapses")
-        tf.intervene(f"/{GRID}/external/expanded.{IDENTITY}", True)
+        tf.intervene(f"/{GRID}/external/{gp.at('expanded', branch_id=IDENTITY)}", True)
         assert_eq(tq(tf, "row_count"), 28, "re-expanding restores the full tree")
 
         # ── (G) the cursor is an id-keyed read/write (a pure move) ───

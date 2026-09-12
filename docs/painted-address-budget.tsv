@@ -54,7 +54,7 @@ dev.cell	1	2
 discovery.multicast	1	0
 echo.demo	0	4
 expanded.cat	0	2
-expanded.struct	3	0
+expanded.struct	0	0
 feed.head	0	3
 feed.row	0	3
 hello_modal_handoff.hover	0	5
@@ -68,7 +68,7 @@ item.bake	1	1
 item.dark	2	2
 item.ship	1	1
 item.toggle_window	2	2
-kind.elem	1	1
+kind.elem	0	1
 kp.column	0	0
 kp.detail	0	0
 kp.filter	0	0
@@ -105,8 +105,8 @@ lv.header	0	0
 lv.list	0	0
 lv.severity	0	0
 match.spark	0	2
-modified.elem	7	6
-name.elem	1	1
+modified.elem	0	6
+name.elem	0	1
 no.such	0	0
 nodegroups.frame	3	0
 nodegroups.node	6	0
@@ -142,8 +142,8 @@ shell.status	1	4
 shell.subbar	0	0
 shell.toast	0	3
 sizes.legend	0	1
-struct_modified.struct	4	3
-struct_summary.struct	1	1
+struct_modified.struct	0	3
+struct_summary.struct	0	1
 sv.chip	0	0
 sv.detail	0	0
 sv.list	0	0
@@ -174,6 +174,6 @@ tv.link	0	0
 tv.node	0	0
 tv.tip	0	0
 tv.toggle	0	0
-value.elem	10	22
+value.elem	0	22
 vn.sprite	2	0
 zoom.block	1	3
