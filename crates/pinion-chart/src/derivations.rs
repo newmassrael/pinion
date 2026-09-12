@@ -97,9 +97,10 @@ pub(crate) mod name {
     ///
     /// It is [`Chosen`](pinion_core::derivation::DerivationKind::Chosen)
     /// because that is exactly what it is — a setting the caller picked, whose
-    /// value is a stable name, which is the case [`chosen_name`] was written
-    /// for. It is published by every chart kind because it is stated in
-    /// [`chart_root`], the one constructor all of them route through.
+    /// value is a stable name, which is the case [`chosen_name`](super::chosen_name)
+    /// was written for. It is published by every chart kind because it is
+    /// stated in [`chart_root`](super::chart_root), the one constructor all of
+    /// them route through.
     pub const TAG_PREFIX: &str = "tag_prefix";
 }
 
