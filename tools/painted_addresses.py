@@ -2148,15 +2148,97 @@ def template_family(literal: str) -> str | None:
     return f"{segments[0]}.{family}"
 
 
+#: A literal carrying a NUMERIC id where a family segment goes — `value.3`,
+#: `node.0.x` — which neither [`ADDRESS`] (a word there) nor
+#: [`template_family`] (a placeholder there) anchors.
+_NUMERIC_ID = re.compile(r"^[a-z][a-z0-9_]*\.\d+(?:\.[A-Za-z0-9_#.{}:-]+)?$")
+
+#: How a declared path marks where an argument goes: `value.<index>`.
+_DECLARED_ARG = re.compile(r"<[A-Za-z_][A-Za-z0-9_]*>")
+
+
+@functools.lru_cache(maxsize=1)
+def declared_path_templates() -> tuple[tuple[str, str], ...]:
+    """`(declared path, template)` for every PARAMETRIC path this tree declares —
+    `("node.<id>.op", "node.{}.op")` — read with [`SCHEMA_DECLARATION`].
+
+    Over the wide Rust corpus, as [`schema_heads`] reads it: a screen's
+    declaration is where the vocabulary lives, whichever crate holds it.
+    """
+    found: set[str] = set()
+    for root in RUST_ROOTS:
+        for path in sorted((ROOT / root).rglob("*.rs")):
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if "SchemaField::" not in text:
+                continue
+            found.update(
+                declared
+                for declared in SCHEMA_DECLARATION.findall(text)
+                if _DECLARED_ARG.search(declared)
+            )
+    return tuple(sorted((d, _DECLARED_ARG.sub("{}", d)) for d in found))
+
+
+def declared_path_family(
+    literal: str, templates: Iterable[tuple[str, str]] | None = None
+) -> str | None:
+    """The family of a NUMERIC-id literal that composes exactly one declared
+    path's family — `node.0.x` is `node.{}` — or `None`.
+
+    ★★★★★ R2187 — the census read the §7 path vocabulary (R2166) through the
+    paint address's grammar, and that grammar cannot see a path whose argument
+    is written as a NUMBER: `ADDRESS` wants a word in the family segment,
+    [`template_family`] wants a placeholder there, and most of these paths are
+    two segments long, which that grammar calls a prefix. Measured: **760 walk
+    and 545 Rust literals** charged nowhere — `value.3`, `node.0.x`,
+    `name.11`, `selected.15` — so R2173's "the path vocabulary's walk half is 0"
+    was true only of what the needle could see.
+
+    ⚠ SHAPE cannot separate `value.3` from a dictionary key or a word that
+    happens to be dotted. The DECLARATIONS can: a literal is a path spelling
+    exactly when it composes a declared parametric template, the test R2181
+    built for pins ([`template_denotes`]) asked of `SchemaField` declarations.
+    Measured before building: of the 760 walk literals, **728 compose a
+    declared path and 32 compose none**; of the 545 Rust, 523 compose one and
+    every one is an assertion.
+
+    The family is the path's HEAD as a template family (`value.{}`), the key
+    [`template_family`] gives the same vocabulary when it is written with a
+    placeholder, so `f"node.{i}.op"` and `"node.0.op"` are one row.
+
+    ⚠ One head, and not by luck: a declared path begins with a WORD, and
+    [`template_denotes`] matches that word against the literal's own first
+    segment — so every template a literal composes shares the literal's head.
+    The first draft refused "several heads", a branch that could not run; it is
+    gone rather than kept as a check with no failing path.
+
+    `templates` is handed in by a fixture; the tree's are
+    [`declared_path_templates`].
+    """
+    if " " in literal or "/" in literal or not _NUMERIC_ID.match(literal):
+        return None
+    pool = declared_path_templates() if templates is None else templates
+    if any(template_denotes(template, literal) for _declared, template in pool):
+        return f"{literal.split('.')[0]}.{{}}"
+    return None
+
+
 def family_of(literal: str) -> str | None:
     """The family `literal` is charged to: a concrete stem [`ADDRESS`] anchors,
-    a [`template_family`], or `None`.
+    a [`template_family`], a [`declared_path_family`], or `None`.
 
     ★★★★★ R2184 — the ONE place a literal becomes a family. Every needle reads
     it, so a concrete stem and a template stem cannot be derived by two rules.
+    ★★★★★ R2187 — and a numeric-id path the screens DECLARE, read last because
+    it is the only rule that asks the tree rather than the text.
     """
     hit = ADDRESS.match(literal)
-    return hit.group(1) if hit else template_family(literal)
+    if hit:
+        return hit.group(1)
+    return template_family(literal) or declared_path_family(literal)
 
 
 def unanchored_shape(literal: str) -> bool:
@@ -3431,6 +3513,42 @@ def selftest() -> int:
             failed += 1
             print(
                 f"FAIL: {label}: family_of({literal!r}) -> {got!r}, wanted {want!r}",
+                file=sys.stderr,
+            )
+    # ★★★★★ R2187 — a numeric-id path is charged by the DECLARATIONS it
+    # composes, handed in here so no case depends on today's tree.
+    declared = (
+        ("value.<index>", "value.{}"),
+        ("node.<id>.op", "node.{}.op"),
+        ("node.<id>.resolved_input.<port>", "node.{}.resolved_input.{}"),
+    )
+    declared_cases: list[tuple[str, str, str | None]] = [
+        ("a two-segment path with a numeric argument", "value.3", "value.{}"),
+        ("a numeric id with a field after it", "node.0.op", "node.{}"),
+        ("★ an argument mid-path and one at the end",
+         "node.2.resolved_input.1", "node.{}"),
+        ("★★ a numeric id with a RUNTIME argument later in the path — the dry "
+         "run counted these and the first implementation did not",
+         "node.2.resolved_input.{}", "node.{}"),
+        ("★★ but a runtime placeholder where the declaration has a WORD composes "
+         "nothing: a placeholder in the literal is text to the matcher",
+         "node.0.{}", None),
+        ("★★ a field the screen does not declare composes nothing",
+         "node.0.bogus", None),
+        ("★★ a head nothing declares composes nothing — the shape is not enough",
+         "elem.0", None),
+        ("a version string is not the shape", "1.2.3", None),
+        ("a word in the family segment is ADDRESS's question, not this one",
+         "value.elem.1", None),
+        ("a sentence is not the shape", "value 3", None),
+    ]
+    for label, literal, want in declared_cases:
+        got = declared_path_family(literal, declared)
+        if got != want:
+            failed += 1
+            print(
+                f"FAIL: {label}: declared_path_family({literal!r}) -> {got!r}, "
+                f"wanted {want!r}",
                 file=sys.stderr,
             )
     template_stem_cases: list[tuple[str, object, object]] = [
