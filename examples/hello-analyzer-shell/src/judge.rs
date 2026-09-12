@@ -80,7 +80,10 @@ use crate::{VIEW_TAG, spec};
 /// the sub bar" — the question this file asks — was unaskable through it.
 const LAYOUT_BAR: &str = crate::address::SUBBAR;
 /// Where a placed card is addressed.
-const BOARD: &str = "card.";
+///
+/// ★ R2185 — the declaration's, for [`LAYOUT_BAR`]'s reason: this was the
+/// card family's prefix declared a second time.
+const BOARD: &str = crate::address::CARD;
 
 /// What answers for the dashboard, which is a page this shell paints itself.
 pub struct BoardJudge;

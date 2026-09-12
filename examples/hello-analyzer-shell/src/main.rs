@@ -797,10 +797,10 @@ fn tabs() -> Vec<&'static str> {
     spec::VIEW_TABS.iter().map(|tab| tab.title).collect()
 }
 
-/// A card's id is `<kind>#<n>` — the kind so the definition is recoverable
-/// without a side table, the ordinal so a kind can be placed more than once.
+/// A card's id is `<kind>#<n>` — read back through the declaration that
+/// composes it ([`address::card_kind`], R2185).
 fn kind_of(id: &str) -> &str {
-    id.split_once('#').map_or(id, |(kind, _)| kind)
+    address::card_kind(id)
 }
 
 fn def_for_card(id: &str) -> Option<&'static spec::WidgetSpec> {
@@ -3928,7 +3928,7 @@ impl Hit {
         // same action a press on it does — which is what the round-trip gate next
         // door requires of every member of every composite.
         if let Some(n) = tag
-            .strip_prefix(&format!("card.{FILTER_CARD}.chip."))
+            .strip_prefix(&address::card_chip_prefix(FILTER_CARD))
             .and_then(|n| n.parse::<usize>().ok())
             && n < spec::FILTER_CHIPS.len()
         {
@@ -4332,20 +4332,22 @@ fn hit_word(hit: &Hit) -> String {
         }),
         Hit::Theme(n) => address::settings_theme(*n),
         Hit::Palette(kind) => address::palette_entry(kind),
-        Hit::Grip(id) => format!("card.{id}.grip"),
-        Hit::Affordance(id, affordance) => format!("card.{id}.{}", affordance.wire()),
-        Hit::Stepper(id, verb) => format!("card.{id}.{verb}"),
-        Hit::Remedy(id) => format!("card.{id}.remedy"),
+        Hit::Grip(id) => address::card_grip(id),
+        Hit::Affordance(id, affordance) => address::card_affordance(id, *affordance),
+        Hit::Stepper(id, verb) => address::card_stepper(id, verb),
+        Hit::Remedy(id) => address::card_remedy(id),
         Hit::PaletteFold => address::PALETTE_HEAD_FOLD.to_owned(),
         Hit::PaletteStrip => address::PALETTE_STRIP.to_owned(),
         // ★ R1900 — the tab names the OCCUPANT it selects, not the cell it is
         // drawn in. The cell's name is whichever occupant is in front, so a tag
         // built from it would change under a person's finger every time they
         // pressed a tab.
-        Hit::Tab(id) => format!("card.{id}.tab"),
-        Hit::FilterChip(id, n) => format!("card.{id}.chip.{n}"),
-        Hit::AlarmColumn(id, n) => format!("card.{id}.feed.head.col#{n}"),
-        Hit::Card(id) => format!("card.{id}"),
+        Hit::Tab(id) => address::card_tab(id),
+        Hit::FilterChip(id, n) => address::card_chip(id, *n),
+        Hit::AlarmColumn(id, n) => {
+            pinion_widget_paint::header_feed::column_tag(&address::alarm_feed(id), *n)
+        }
+        Hit::Card(id) => address::card(id),
         // ★ R1907 — the tag is the affordance's own wire word, so what a
         // pointer answers and what the paint tagged are one name.
         Hit::FloatHome(id) => format!("float.{id}.{}", DetachedAffordance::SendHome.wire()),
@@ -9277,7 +9279,7 @@ fn card_config_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
     }
     vec![Scene::Container(
         ContainerNode::new(children)
-            .with_tag(format!("card.{id}.config"))
+            .with_tag(address::card_config(id))
             .with_style(
                 BoxStyle::filled(palette.panel)
                     .with_corner_radius(11)
@@ -9891,7 +9893,7 @@ impl Valued {
     fn tag_prefix(&self) -> String {
         match self {
             Self::Preference(_) => address::SETTINGS.to_owned(),
-            Self::Card { card, .. } => format!("card.{card}.config"),
+            Self::Card { card, .. } => address::card_config(card),
         }
     }
 
@@ -10276,7 +10278,7 @@ fn header_scene(
     // card, which `label_of` owns.
     let addresses: Vec<String> = sharing
         .iter()
-        .map(|member| format!("card.{member}.tab"))
+        .map(|member| address::card_tab(member.as_str()))
         .collect();
     let words: Vec<String> = sharing
         .iter()
@@ -10291,7 +10293,7 @@ fn header_scene(
         })
         .collect();
     card_header::header_scene(
-        &format!("card.{id}"),
+        &address::card(id),
         rect,
         &card_header::HeaderSpec {
             tabs: &tabs,
@@ -10343,7 +10345,7 @@ fn body_scene(state: &ShellState, card: &Card, rect: Rect, palette: Palette) -> 
                     palette.muted
                 },
             )])
-            .with_tag(format!("card.{}.remedy", card.id().as_str()))
+            .with_tag(address::card_remedy(card.id().as_str()))
             .with_style(
                 BoxStyle::filled(if actionable {
                     palette.accent
@@ -11616,15 +11618,13 @@ fn filter_row_shown(state: &ShellState, id: &str, body: Rect) -> ChipGroup {
 /// geometry placed.
 fn filter_row_of(id: &str, chosen: Option<usize>, cursor: usize, shown: usize) -> ChipGroup {
     ChipGroup::new(
-        format!("card.{id}.chips"),
+        address::card_chips(id),
         "Saved filters",
         spec::FILTER_CHIPS
             .iter()
             .enumerate()
             .take(shown)
-            .map(|(n, (name, _))| {
-                Chip::new(format!("card.{id}.chip.{n}"), *name, chosen == Some(n))
-            })
+            .map(|(n, (name, _))| Chip::new(address::card_chip(id, n), *name, chosen == Some(n)))
             .collect(),
         spec::FILTER_ROW,
     )
@@ -11638,7 +11638,7 @@ const FILTER_CARD: &str = "filter#3";
 /// The tag that bar carries, derived from [`FILTER_CARD`] so the ring's entry and
 /// the widget's own tag are one string rather than two that agree today.
 fn filter_chips_tag() -> String {
-    format!("card.{FILTER_CARD}.chips")
+    address::card_chips(FILTER_CARD)
 }
 
 /// Where the filter card's chips land, and which of them the card is tall enough
@@ -12606,7 +12606,7 @@ fn edit_bar_scene(card_id: &str, bar: Rect, cell: (u32, u32), palette: Palette) 
                 FONT_SMALL,
                 palette.ink,
             )])
-            .with_tag(format!("card.{card_id}.{verb}"))
+            .with_tag(address::card_stepper(card_id, verb))
             .with_style(
                 BoxStyle::filled(palette.high)
                     .with_corner_radius(4)
@@ -12641,7 +12641,7 @@ fn edit_bar_scene(card_id: &str, bar: Rect, cell: (u32, u32), palette: Palette) 
     ));
     Scene::Container(
         ContainerNode::new(children)
-            .with_tag(format!("card.{card_id}.editbar"))
+            .with_tag(address::card_edit_bar(card_id))
             .with_style(BoxStyle::filled(palette.raised))
             .with_layout(absolute(bar)),
     )
@@ -12757,7 +12757,7 @@ fn card_scene(
     }
     Scene::Container(
         ContainerNode::new(children)
-            .with_tag(format!("card.{}", card.id().as_str()))
+            .with_tag(address::card(card.id().as_str()))
             .with_style(card_style(palette, selected, editing))
             .with_layout(absolute(rect)),
     )
@@ -14946,7 +14946,7 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
         // palette footprint has no card on the canvas to lift, and asking for
         // one by name would quietly raise nothing; the `match` is what says so.
         if drag.carried().is_placed() {
-            let held = [format!("card.{}", drag.carried().id())];
+            let held = [address::card(drag.carried().id().as_str())];
             pinion_core::held::raise_to_front(
                 &mut canvas_children,
                 &held,
@@ -15445,7 +15445,7 @@ fn page_descriptions(state: &ShellState, at: &str) -> pinion_core::describe::Des
                 let id = card.id();
                 let title = card.title();
                 described.describe(
-                    format!("card.{id}.grip"),
+                    address::card_grip(id.as_str()),
                     format!("Drag to move {title} to another place on the board"),
                 );
                 described.describe(
@@ -15667,7 +15667,7 @@ fn active_descendant(state: &Rc<ShellState>, stop: &str) -> Option<String> {
         // nobody.
         .or_else(|| {
             (stop == "shell.canvas")
-                .then(|| state.selected.get().map(|id| format!("card.{id}")))
+                .then(|| state.selected.get().map(|id| address::card(&id)))
                 .flatten()
         })
 }
@@ -15827,7 +15827,7 @@ fn board_nodes(state: &Rc<ShellState>) -> (String, Vec<String>, Vec<AccessNode>)
         {
             continue;
         }
-        children.push(format!("card.{}", card.id().as_str()));
+        children.push(address::card(card.id().as_str()));
         nodes.extend(card_nodes(state, card));
     }
     (value, children, nodes)
@@ -16029,7 +16029,7 @@ fn card_nodes(state: &Rc<ShellState>, card: &Card) -> Vec<AccessNode> {
     // there the offered set is what the tree states, as it did for every card
     // before this round.
     let header = card_header_layout(state, card);
-    let mut region = AccessNode::new(format!("card.{id}"), AriaRole::Group)
+    let mut region = AccessNode::new(address::card(id), AriaRole::Group)
         .with_name(card.title())
         .with_value(AccessValue::Text(announce))
         .with_state(AccessState::default());
@@ -16037,9 +16037,9 @@ fn card_nodes(state: &Rc<ShellState>, card: &Card) -> Vec<AccessNode> {
     // The grip gives way LAST rather than never (`HeaderLayout::grip`), so a
     // card dragged to nothing has none and a reader is not offered one.
     if header.as_ref().is_none_or(|h| h.grip().is_some()) {
-        region = region.with_child(format!("card.{id}.grip"));
+        region = region.with_child(address::card_grip(id));
         nodes.push(
-            AccessNode::new(format!("card.{id}.grip"), AriaRole::Button)
+            AccessNode::new(address::card_grip(id), AriaRole::Button)
                 .with_name(format!("Move {}", card.title())),
         );
     }
@@ -16053,7 +16053,7 @@ fn card_nodes(state: &Rc<ShellState>, card: &Card) -> Vec<AccessNode> {
     // is what changed.
     if let Some(tile) = state.board.get().tile(card.id()) {
         if tile.is_shared() && &tile.id == card.id() {
-            let list = format!("card.{id}.tabs");
+            let list = address::card_tabs(id);
             region = region.with_child(list.clone());
             let mut strip = AccessNode::new(list, AriaRole::TabList).with_name(format!(
                 "{} shares a place with {} other card(s)",
@@ -16061,7 +16061,7 @@ fn card_nodes(state: &Rc<ShellState>, card: &Card) -> Vec<AccessNode> {
                 tile.members().len() - 1
             ));
             for member in tile.members() {
-                let tag = format!("card.{member}.tab");
+                let tag = address::card_tab(member.as_str());
                 strip = strip.with_child(tag.clone());
                 nodes.push(
                     AccessNode::new(tag, AriaRole::Tab)
@@ -16102,7 +16102,7 @@ fn card_nodes(state: &Rc<ShellState>, card: &Card) -> Vec<AccessNode> {
     // ([[debt-a-card-announces-a-row-it-does-not-paint]]), and the cheapest way
     // not to join it is to ask the painter's own question.
     if card_config_panel(state).is_some_and(|(open, _, _)| open.id() == card.id()) {
-        let panel_tag = format!("card.{id}.config");
+        let panel_tag = address::card_config(id);
         region = region.with_child(panel_tag.clone());
         let mut group = AccessNode::new(&panel_tag, AriaRole::Group)
             .with_name(format!("{} settings", card.title()));
@@ -16194,29 +16194,33 @@ fn card_chrome_nodes(
 ) -> Vec<AccessNode> {
     let id = card.id().as_str();
     let offered = card.chrome().offered();
-    let surviving: Vec<&'static str> = match header {
+    // ★ R2185 — the surviving controls as AFFORDANCES rather than their wire
+    // words, so the address comes from the header crate's own composer and the
+    // name from an exhaustive match: a string match needed a catch-all, and a
+    // fifth affordance would have been named "Remove" without a word said.
+    let surviving: Vec<CardAffordance> = match header {
         Some(layout) => layout
             .slots()
             .iter()
-            .filter_map(|(n, _)| offered.get(*n).map(|a| a.wire()))
+            .filter_map(|(n, _)| offered.get(*n).copied())
             .collect(),
-        None => offered.iter().map(|a| a.wire()).collect(),
+        None => offered.clone(),
     };
     surviving
         .into_iter()
-        .map(|control| {
-            AccessNode::new(format!("card.{id}.{control}"), AriaRole::Button).with_name(
-                match control {
-                    "settings" => "Configure".to_owned(),
-                    "tear_off" => {
+        .map(|affordance| {
+            AccessNode::new(address::card_affordance(id, affordance), AriaRole::Button).with_name(
+                match affordance {
+                    CardAffordance::Settings => "Configure".to_owned(),
+                    CardAffordance::TearOff => {
                         if state.is_floating(id) {
                             "Redock".to_owned()
                         } else {
                             "Detach".to_owned()
                         }
                     }
-                    "maximize" => "Maximize".to_owned(),
-                    _ => format!("Remove {}", card.title()),
+                    CardAffordance::Maximize => "Maximize".to_owned(),
+                    CardAffordance::Close => format!("Remove {}", card.title()),
                 },
             )
         })

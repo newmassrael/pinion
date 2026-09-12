@@ -2926,7 +2926,7 @@ pub fn card_ids() -> Vec<String> {
     BOARD
         .iter()
         .enumerate()
-        .map(|(n, placed)| format!("{}#{n}", placed.kind))
+        .map(|(n, placed)| crate::address::card_id(placed.kind, n))
         .collect()
 }
 
@@ -3345,7 +3345,7 @@ pub fn card_of(kind: &str) -> Option<String> {
     BOARD
         .iter()
         .position(|placed| placed.kind == kind)
-        .map(|n| format!("{kind}#{n}"))
+        .map(|n| crate::address::card_id(kind, n))
 }
 
 /// `{health card}.stat.{n}.{part}` for every part of every tile the strip draws.

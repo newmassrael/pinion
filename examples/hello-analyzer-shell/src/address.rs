@@ -926,3 +926,125 @@ pub fn alarm_row(feed: &str, slot: usize) -> String {
 pub fn alarm_cell(feed: &str, slot: usize, column: usize) -> String {
     format!("{}.cell.{column}", alarm_row(feed, slot))
 }
+
+// --- the card -----------------------------------------------------------------
+//
+// ★★★★★ R2185 §5.2 — **a placed card's family: its prefix, its id, and the
+// chrome every card shares.**
+//
+// Measured at entry: the census charged the template family `card.{}` 57 Rust
+// readers and 20 walk sites (R2184), and grouping those readers by function
+// showed R2180's defect across the whole card rather than one feed. The chrome
+// was composed by the header painter and then again by the hit test
+// (`hit_word`), the accessibility tree (`card_nodes`, `card_chrome_nodes`) and
+// the page's descriptions; the card's prefix was declared a second time
+// (`judge.rs`'s `BOARD`); and the id grammar was composed by the specification
+// and parsed back by hand in `main.rs`.
+//
+// # Who owns what
+//
+// The grip and the four affordance controls are the CRATE's composition —
+// `card_header::{grip_tag, affordance_tag}` — and this module places them under
+// a card without restating them. The card's own address and id, the tab a
+// shared place draws for an occupant, the strip holding those tabs, the
+// configuration panel, the remedy, the edit bar and its steppers, and the filter
+// card's chips are painted by this screen, so they are declared here.
+//
+// ⚠ Not here yet, and said: the parts a card's BODY paints (`stat.{n}`, `bins`,
+// `tree.{n}`, `bytes.{n}`, a table's `grid` and `head`) — later instalments, a
+// body at a time — and `widen`, a remedy's wire word whose painter this round
+// did not measure.
+
+/// The prefix every placed card is addressed under.
+pub const CARD: &str = "card.";
+
+/// A placed card's id: its kind, then its place on the board — `alarms#6`.
+///
+/// The kind so the definition is recoverable without a side table; the ordinal
+/// so one kind can be placed more than once.
+#[must_use]
+pub fn card_id(kind: &str, ordinal: usize) -> String {
+    format!("{kind}#{ordinal}")
+}
+
+/// The kind a card id names — [`card_id`] read back.
+#[must_use]
+pub fn card_kind(id: &str) -> &str {
+    id.split_once('#').map_or(id, |(kind, _)| kind)
+}
+
+/// The card `id`, as painted.
+#[must_use]
+pub fn card(id: &str) -> String {
+    format!("{CARD}{id}")
+}
+
+/// The card's drag handle — the header crate's composition, under this card.
+#[must_use]
+pub fn card_grip(id: &str) -> String {
+    pinion_widget_paint::card_header::grip_tag(&card(id))
+}
+
+/// One of the card's affordance controls — the header crate's composition.
+#[must_use]
+pub fn card_affordance(id: &str, affordance: pinion_core::widgets::card::CardAffordance) -> String {
+    pinion_widget_paint::card_header::affordance_tag(&card(id), affordance)
+}
+
+/// The tab a shared place draws for the occupant `id`.
+///
+/// Named by the OCCUPANT rather than by the card in front, for the reason
+/// `card_header::HeaderTab::tag` gives.
+#[must_use]
+pub fn card_tab(id: &str) -> String {
+    format!("{}.tab", card(id))
+}
+
+/// The strip holding a shared place's tabs, on the card in front.
+#[must_use]
+pub fn card_tabs(id: &str) -> String {
+    format!("{}.tabs", card(id))
+}
+
+/// The card's own configuration panel.
+#[must_use]
+pub fn card_config(id: &str) -> String {
+    format!("{}.config", card(id))
+}
+
+/// The control a card offers for what its state lacks.
+#[must_use]
+pub fn card_remedy(id: &str) -> String {
+    format!("{}.remedy", card(id))
+}
+
+/// The bar a card in editing shows.
+#[must_use]
+pub fn card_edit_bar(id: &str) -> String {
+    format!("{}.editbar", card(id))
+}
+
+/// One stepper on that bar, by its verb.
+#[must_use]
+pub fn card_stepper(id: &str, verb: &str) -> String {
+    format!("{}.{verb}", card(id))
+}
+
+/// The prefix every chip of the card `id` carries — what a press is read back
+/// through.
+#[must_use]
+pub fn card_chip_prefix(id: &str) -> String {
+    format!("{}.chip.", card(id))
+}
+
+/// The card's chip `n`.
+#[must_use]
+pub fn card_chip(id: &str, n: usize) -> String {
+    format!("{}{n}", card_chip_prefix(id))
+}
+
+/// The bar the card's chips sit in — the group, not a chip.
+#[must_use]
+pub fn card_chips(id: &str) -> String {
+    format!("{}.chips", card(id))
+}

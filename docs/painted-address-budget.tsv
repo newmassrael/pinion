@@ -24,13 +24,13 @@ bars.bar	2	5
 bars.xlabel	2	0
 card.alarms	2	7
 card.decode	13	0
-card.filter	5	10
+card.filter	5	8
 card.health	0	1
 card.keymap	5	0
 card.latency	4	15
 card.packet	16	11
 card.throughput	0	2
-card.{}	20	98
+card.{}	20	76
 cell_at.{}	0	1
 chart.area	6	3
 chart.axis	2	3

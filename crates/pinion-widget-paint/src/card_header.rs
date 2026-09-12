@@ -604,6 +604,26 @@ pub fn grip_scene(tag: impl Into<String>, header: Rect, metrics: CardMetrics, in
     )
 }
 
+/// ★★★★★ R2185 — **the drag handle's address** under a header's tag prefix.
+///
+/// Published because the header is not the only thing that names it. A
+/// consumer's hit test, its accessibility tree and its descriptions all name
+/// the grip, and before this each wrote `{prefix}.grip` for itself: a copy of
+/// this crate's composition across its boundary, which has to agree with the
+/// paint to the letter or a reader is offered a handle nothing draws.
+#[must_use]
+pub fn grip_tag(tag_prefix: &str) -> String {
+    format!("{tag_prefix}.grip")
+}
+
+/// ★★★★★ R2185 — **an affordance control's address** under a header's tag
+/// prefix: the affordance's own wire word, which [`CardAffordance::from_wire`]
+/// round-trips. Published for [`grip_tag`]'s reason.
+#[must_use]
+pub fn affordance_tag(tag_prefix: &str, affordance: CardAffordance) -> String {
+    format!("{tag_prefix}.{}", affordance.wire())
+}
+
 /// **A card header, painted.**
 ///
 /// The scenes come back in paint order and every tagged one is addressed
@@ -626,7 +646,7 @@ pub fn header_scene(
 
     if let Some(grip) = laid.grip() {
         out.push(grip_scene(
-            format!("{tag_prefix}.grip"),
+            grip_tag(tag_prefix),
             header,
             metrics,
             spec.ink.muted,
@@ -678,7 +698,7 @@ pub fn header_scene(
                 Rect::new(0, 0, slot.w, slot.h),
                 spec.ink.muted,
             ))
-            .with_tag(format!("{tag_prefix}.{}", affordance.wire()))
+            .with_tag(affordance_tag(tag_prefix, affordance))
             .with_layout(absolute(slot)),
         ));
     }
@@ -1118,6 +1138,56 @@ mod tests {
     /// affordance's own wire word, that the grip is addressable, and that a
     /// narrowing removes controls from the scene rather than moving them
     /// somewhere a press cannot follow.
+    /// ★★★★★ R2185 — the chrome's addresses are composed HERE, and a consumer
+    /// that names them calls these instead of writing `{prefix}.grip`. The
+    /// values are pinned by literal, and what `header_scene` paints is held to
+    /// what the composers return, so neither can move without the other.
+    #[test]
+    fn r2185_a_header_part_is_composed_here_and_pinned_by_value() {
+        use pinion_core::widgets::card::CardAffordance;
+
+        assert_eq!(super::grip_tag("card.a"), "card.a.grip");
+        for (affordance, want) in [
+            (CardAffordance::Settings, "card.a.settings"),
+            (CardAffordance::TearOff, "card.a.tear_off"),
+            (CardAffordance::Maximize, "card.a.maximize"),
+            (CardAffordance::Close, "card.a.close"),
+        ] {
+            assert_eq!(super::affordance_tag("card.a", affordance), want);
+        }
+
+        let ink = HeaderInk {
+            title: Color::rgb(0xff, 0xff, 0xff),
+            muted: Color::rgb(0x88, 0x88, 0x88),
+            accent: Color::rgb(0x00, 0xc0, 0x80),
+            kind: Color::rgb(0xc0, 0x40, 0x40),
+        };
+        let spec = HeaderSpec {
+            tabs: &[],
+            fore: 0,
+            offered: &CardAffordance::ALL,
+            ready: true,
+            restore: false,
+            title: "ingest",
+            badge: "LIVE",
+            ink,
+        };
+        let tags = tags_of(&header_scene(
+            "card.a",
+            band(400),
+            &spec,
+            CardMetrics::default(),
+        ));
+        let mut composed = vec![super::grip_tag("card.a")];
+        composed.extend(CardAffordance::ALL.map(|a| super::affordance_tag("card.a", a)));
+        for want in &composed {
+            assert!(
+                tags.iter().any(|t| t == want),
+                "the composer says `{want}` and the header painted {tags:?}"
+            );
+        }
+    }
+
     #[test]
     fn r1817_a_whole_header_is_painted_through_the_public_api() {
         use pinion_core::widgets::card::CardAffordance::{Close, Maximize, Settings, TearOff};
