@@ -40,6 +40,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    chart_addresses,
     indexed_tags,
     run_demo,
     text_of_tag,
@@ -58,25 +59,25 @@ def centres(rects: dict, prefix: str) -> list[float]:
     return out
 
 
-def run(tf: RpcSubprocess) -> None:
+def run(tf: RpcSubprocess, c) -> None:
     snap = tf.snapshot(source="paint", viewport=WIN)
     rects = abs_rects_of(snap)
 
     # ── 1. the chart boots on candles ───────────────────────────────────
-    candles = indexed_tags(rects, "chart.candle.")
+    candles = indexed_tags(rects, c.under("candle"))
     assert_eq(len(candles), SESSIONS, "one candle body per session")
-    assert_eq(indexed_tags(rects, "chart.ohlc."), [], "and no bars yet")
-    candle_centres = centres(rects, "chart.candle.")
+    assert_eq(indexed_tags(rects, c.under("ohlc_part")), [], "and no bars yet")
+    candle_centres = centres(rects, c.under("candle"))
     print(f"[demo] candles: {candles}")
 
     # ── 2. the bars chip swaps the mark ─────────────────────────────────
     tf.click(path="bar")
     tf.tick(0.016)
     bars = abs_rects_of(tf.snapshot(source="paint", viewport=WIN))
-    assert_eq(indexed_tags(bars, "chart.candle."), [], "the candles are gone")
+    assert_eq(indexed_tags(bars, c.under("candle")), [], "the candles are gone")
     for i in range(SESSIONS):
         for part in ("range", "open", "close"):
-            tag = f"chart.ohlc.{i}.{part}"
+            tag = c.at("ohlc_part", index=i, part=part)
             assert tag in bars, f"{tag} is painted: {sorted(bars)[:12]}"
     print(f"[demo] bars painted for {SESSIONS} sessions, 3 nodes each")
 
@@ -85,7 +86,7 @@ def run(tf: RpcSubprocess) -> None:
     #      would look almost right.
     bar_centres = []
     for i in range(SESSIONS):
-        x, _y, w, _h = bars[f"chart.ohlc.{i}.range"]
+        x, _y, w, _h = bars[c.at("ohlc_range", index=i)]
         bar_centres.append(x + w / 2.0)
     for i, (a, b) in enumerate(zip(candle_centres, bar_centres)):
         assert abs(a - b) <= 1.0, f"session {i} moved: {a} vs {b}"
@@ -96,8 +97,8 @@ def run(tf: RpcSubprocess) -> None:
     #      inside it. A bar that drew only the body would pass check 2.
     taller = 0
     for i in range(SESSIONS):
-        _x, _y, _w, spine_h = bars[f"chart.ohlc.{i}.range"]
-        _x, _y, _w, body_h = rects[f"chart.candle.{i}"]
+        _x, _y, _w, spine_h = bars[c.at("ohlc_range", index=i)]
+        _x, _y, _w, body_h = rects[c.at("candle", index=i)]
         assert spine_h >= body_h, f"session {i}: spine {spine_h} < body {body_h}"
         if spine_h > body_h:
             taller += 1
@@ -110,8 +111,8 @@ def run(tf: RpcSubprocess) -> None:
     #      statement about the pen rather than about the mark.
     for i in range(SESSIONS):
         cx = bar_centres[i]
-        ox, _oy, ow, _oh = bars[f"chart.ohlc.{i}.open"]
-        clx, _cy, cw, _ch = bars[f"chart.ohlc.{i}.close"]
+        ox, _oy, ow, _oh = bars[c.at("ohlc_part", index=i, part="open")]
+        clx, _cy, cw, _ch = bars[c.at("ohlc_part", index=i, part="close")]
         assert ox + ow / 2.0 < cx, f"session {i}: the open tick is on the left"
         assert clx + cw / 2.0 > cx, f"session {i}: the close tick is on the right"
     print("[demo] open left, close right — the mark's own way of saying which")
@@ -122,8 +123,8 @@ def run(tf: RpcSubprocess) -> None:
     mono = abs_rects_of(tf.snapshot(source="paint", viewport=WIN))
     rising = falling = 0
     for i in range(SESSIONS):
-        _x, oy, _w, _h = mono[f"chart.ohlc.{i}.open"]
-        _x, cy, _w, _h = mono[f"chart.ohlc.{i}.close"]
+        _x, oy, _w, _h = mono[c.at("ohlc_part", index=i, part="open")]
+        _x, cy, _w, _h = mono[c.at("ohlc_part", index=i, part="close")]
         if cy < oy:
             rising += 1
         elif cy > oy:
@@ -144,10 +145,10 @@ def run(tf: RpcSubprocess) -> None:
     tf.click(path="bar")
     tf.tick(0.016)
     back = abs_rects_of(tf.snapshot(source="paint", viewport=WIN))
-    assert_eq(len(indexed_tags(back, "chart.candle.")), SESSIONS, "candles again")
-    assert_eq(indexed_tags(back, "chart.ohlc."), [], "and no bars")
+    assert_eq(len(indexed_tags(back, c.under("candle"))), SESSIONS, "candles again")
+    assert_eq(indexed_tags(back, c.under("ohlc_part")), [], "and no bars")
     for i in range(SESSIONS):
-        x, _y, w, _h = back[f"chart.candle.{i}"]
+        x, _y, w, _h = back[c.at("candle", index=i)]
         assert abs((x + w / 2.0) - candle_centres[i]) <= 1.0, f"session {i} is home"
 
     print("[demo] one datum, two marks")
@@ -157,7 +158,8 @@ def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         for _ in range(3):
             tf.tick(0.016)
-        run(tf)
+        # ★★★★★ R2165 — prefix, overlay part and the family prefixes, from the frame.
+        run(tf, chart_addresses(tf, viewport=WIN))
 
 
 if __name__ == "__main__":

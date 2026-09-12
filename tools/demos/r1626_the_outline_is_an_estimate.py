@@ -42,6 +42,7 @@ from rpc_verify import (  # noqa: E402
     access_node_by_tag,
     assert_eq,
     call,
+    chart_addresses,
     indexed_tags,
     run_demo,
 )
@@ -55,31 +56,31 @@ def centre_x(rect: tuple) -> float:
     return x + w / 2.0
 
 
-def run(tf: RpcSubprocess) -> None:
+def run(tf: RpcSubprocess, c) -> None:
     plain = abs_rects_of(tf.snapshot(source="paint", viewport=WIN))
 
     # ── 1. the chart boots as boxes ─────────────────────────────────────
-    boxes = indexed_tags(plain, "chart.box.")
+    boxes = indexed_tags(plain, c.under("box_at"))
     assert len(boxes) >= 3, f"a box per endpoint: {boxes}"
-    assert_eq(indexed_tags(plain, "chart.violin."), [], "and no violins yet")
+    assert_eq(indexed_tags(plain, c.under("violin")), [], "and no violins yet")
     print(f"[demo] boxes: {boxes}")
 
     # ── 2. the violin chip adds the estimate and KEEPS the box ──────────
     tf.click(path="violin")
     tf.tick(0.016)
     vio = abs_rects_of(tf.snapshot(source="paint", viewport=WIN))
-    assert_eq(indexed_tags(vio, "chart.violin."), boxes, "one violin per endpoint")
+    assert_eq(indexed_tags(vio, c.under("violin")), boxes, "one violin per endpoint")
     assert_eq(
-        indexed_tags(vio, "chart.box."),
+        indexed_tags(vio, c.under("box_at")),
         boxes,
         "the box stays inside it — the outline is an estimate, the box is data",
     )
     assert_eq(
-        indexed_tags(vio, "chart.median."),
+        indexed_tags(vio, c.under("median")),
         boxes,
         "and so does the median",
     )
-    print(f"[demo] violins: {indexed_tags(vio, 'chart.violin.')}")
+    print(f"[demo] violins: {indexed_tags(vio, c.under('violin'))}")
 
     # ── 3. the violin is a DIFFERENT shape, not a wider box ─────────────
     #      A density reaches past the quartiles, so the outline CONTAINS the
@@ -91,8 +92,8 @@ def run(tf: RpcSubprocess) -> None:
     #      once, which is what a mark that merely re-drew the box would fail.
     taller = 0
     for i in boxes:
-        _x, vy, vw, vh = vio[f"chart.violin.{i}"]
-        _x, by, bw, bh = vio[f"chart.box.{i}"]
+        _x, vy, vw, vh = vio[c.at("violin", index=i)]
+        _x, by, bw, bh = vio[c.at("box_at", index=i)]
         assert vy <= by, f"endpoint {i}: the estimate starts at or above the box"
         assert vy + vh >= by + bh, f"endpoint {i}: and ends at or below it"
         assert vw >= bw - 1, f"endpoint {i}: violin {vw} vs box {bw}"
@@ -105,7 +106,7 @@ def run(tf: RpcSubprocess) -> None:
 
     # ── 4. it is MIRRORED about the category centre ─────────────────────
     for i in boxes:
-        assert abs(centre_x(vio[f"chart.violin.{i}"]) - centre_x(vio[f"chart.box.{i}"])) <= 1.0, (
+        assert abs(centre_x(vio[c.at("violin", index=i)]) - centre_x(vio[c.at("box_at", index=i)])) <= 1.0, (
             f"endpoint {i}: the violin is centred on its category, so a "
             "one-sided density plot would fail here"
         )
@@ -113,7 +114,7 @@ def run(tf: RpcSubprocess) -> None:
 
     # ── 5. the mark does not move the categories ────────────────────────
     for i in boxes:
-        assert abs(centre_x(vio[f"chart.box.{i}"]) - centre_x(plain[f"chart.box.{i}"])) <= 1.0, (
+        assert abs(centre_x(vio[c.at("box_at", index=i)]) - centre_x(plain[c.at("box_at", index=i)])) <= 1.0, (
             f"endpoint {i} moved when the mark changed"
         )
     print("[demo] the categories did not move")
@@ -122,11 +123,11 @@ def run(tf: RpcSubprocess) -> None:
     tf.click(path="logscale")
     tf.tick(0.016)
     logged = abs_rects_of(tf.snapshot(source="paint", viewport=WIN))
-    assert len(indexed_tags(logged, "chart.violin.")) == len(boxes), (
+    assert len(indexed_tags(logged, c.under("violin"))) == len(boxes), (
         "a logarithmic value axis still draws violins"
     )
     for i in boxes:
-        _x, _y, _w, h = logged[f"chart.violin.{i}"]
+        _x, _y, _w, h = logged[c.at("violin", index=i)]
         assert h > 0, f"endpoint {i} has extent on a log axis"
     print("[demo] the log axis draws violins too")
 
@@ -144,8 +145,8 @@ def run(tf: RpcSubprocess) -> None:
     tf.click(path="violin")
     tf.tick(0.016)
     back = abs_rects_of(tf.snapshot(source="paint", viewport=WIN))
-    assert_eq(indexed_tags(back, "chart.violin."), [], "the estimate is gone")
-    assert_eq(indexed_tags(back, "chart.box."), boxes, "the boxes remain")
+    assert_eq(indexed_tags(back, c.under("violin")), [], "the estimate is gone")
+    assert_eq(indexed_tags(back, c.under("box_at")), boxes, "the boxes remain")
 
     print("[demo] the outline is an estimate; the box is the data")
 
@@ -154,7 +155,9 @@ def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         for _ in range(3):
             tf.tick(0.016)
-        run(tf)
+        # ★★★★★ R2165/R2166 — the chart's prefix, its overlay part and the
+        # family PREFIXES this walk classifies by, all asked of the frame.
+        run(tf, chart_addresses(tf, viewport=WIN))
 
 
 if __name__ == "__main__":

@@ -746,6 +746,42 @@ def check() -> int:
         f"— of those, {len(gone_checks)} are already converted, which is a "
         f"check deleted rather than a debt repaid"
     )
+    # ★★★★★ R2167 — WHICH VOCABULARY each remaining site is in. The queue is a
+    # work order, and until this line it said one number for three different
+    # jobs: a painted address a walk can ask the frame for, a `$schema` path it
+    # asks the screen for, and a name NOTHING declares — which is not a
+    # conversion at all until something does. Derived from the declarations;
+    # see [`site_vocabulary`]. Printed every run, because a queue that cannot
+    # say what kind of work it holds is how three rounds picked by eye.
+    kinds = ("paint", "path", "both", "unknown")
+    walk_kinds = dict.fromkeys(kinds, 0)
+    rust_kinds = dict.fromkeys(kinds, 0)
+    for stem, count in now.items():
+        walk_kinds[site_vocabulary(stem)] += count
+    for stem, count in rust_now.items():
+        rust_kinds[site_vocabulary(stem)] += count
+    print(
+        "painted-addresses: by vocabulary — walk "
+        + " / ".join(f"{walk_kinds[k]} {k}" for k in kinds)
+        + "; rust "
+        + " / ".join(str(rust_kinds[k]) for k in kinds)
+        + " (an UNDECLARED name is not a conversion until something declares "
+        "it; BOTH is a name two vocabularies claim, which is a finding)"
+    )
+    contested = sorted(
+        stem
+        for stem in set(now) | set(rust_now)
+        if site_vocabulary(stem) == "both"
+    )
+    if contested:
+        print(
+            f"painted-addresses: {len(contested)} name(s) claimed by both a "
+            f"paint declaration and a `$schema` one: {contested} — a path lives "
+            "under an External and a tag lives in the scene, so they do not "
+            "collide where they are USED; what cannot tell them apart is this "
+            "census reading source literals with no namespace around them"
+        )
+
     # ★★★★★ R2156 — the SECOND vocabulary, whose walk half had no gate at all.
     # Printed every run, zero or not: the number whose absence let this go
     # unseen is the one this line carries.
@@ -1208,6 +1244,54 @@ def schema_pins(stem: str) -> bool:
     """
     head, _, rest = stem.partition(".")
     return bool(rest) and head in schema_heads()
+
+
+def site_vocabulary(stem: str) -> str:
+    """Which of this tree's address vocabularies `stem` belongs to:
+    `"paint"`, `"path"`, `"both"`, or `"unknown"`.
+
+    ★★★★★ R2167 — the debt R2166 registered, paid. That round found that a
+    large part of what this census counted is not a painted address at all but
+    a §7 `$schema` query path, and it settled WHICH sites by READING them —
+    the method this campaign refuses everywhere else. This is the derivation,
+    and it asks the two DECLARATIONS rather than the readers:
+
+    * **paint** — a committed `.pin` artifact covers the family, or an emitted
+      grammar composes it (see [`grammar_pins`], anchored on both halves).
+    * **path** — a parametric `SchemaField::…` declares it (see
+      [`schema_pins`], restricted to parametric for the reason recorded there).
+    * **unknown** — neither, which is the honest third answer and not a guess.
+
+    ⚠ This is NOT [`pin_sources`] with different words. That answers *what
+    holds this family's value* and can say `assertion`; this answers *what kind
+    of name it is*, and an assertion holds a value without saying which
+    vocabulary it is in. Two questions that happen to share two authorities.
+
+    ⚠⚠ **`"both"` IS AN ANSWER AND NOT A TIE TO BREAK**, and the invariant that
+    says so caught one on its first run. `match.<i>` and `match.<row>` are
+    declared paths in `row_search` and `row_style`; `match.spark` is a mark
+    `hello-analyzer-shell` paints and pins. One word, two vocabularies — this
+    tree's recurring defect, found by a gate for once instead of by reading.
+
+    ⚠⚠⚠ And the collision is in THIS NEEDLE, not in the tree: a path lives
+    under an External and a tag lives in the scene, so the two never meet where
+    they are used. What cannot tell them apart is a census reading source
+    literals with no namespace around them. Preferring one here would hide
+    that, so the answer is `"both"` and the limit is stated: a tighter
+    derivation needs each SITE's namespace — the reader it is handed to — and
+    that is the next instalment, not a preference written here.
+    """
+    paints = grammar_pins(stem) or any(
+        covers(address, stem) for address in pin_artifact_addresses()
+    )
+    routes = schema_pins(stem)
+    if paints and routes:
+        return "both"
+    if paints:
+        return "paint"
+    if routes:
+        return "path"
+    return "unknown"
 
 
 def grammar_pins(stem: str) -> bool:
@@ -1845,6 +1929,42 @@ def selftest() -> int:
             file=sys.stderr,
         )
 
+    # ★★★★★ R2167 — the vocabulary derivation, and the invariant that keeps it
+    # from HIDING the ambiguity it would otherwise resolve by preference.
+    # `site_vocabulary` tests paint first, so a family both authorities claimed
+    # would read as paint and nobody would learn that two declarations disagree
+    # about one name — this tree's recurring defect. Derived over the live
+    # census rather than over examples, so it speaks up the day it happens.
+    contested = [
+        stem
+        for stem in set(census()) | set(rust_census())
+        if schema_pins(stem)
+        and (grammar_pins(stem) or any(covers(a, stem) for a in pin_artifact_addresses()))
+    ]
+    mislabelled = [stem for stem in contested if site_vocabulary(stem) != "both"]
+    if mislabelled:
+        failed += 1
+        print(
+            f"FAIL: {mislabelled} are claimed by BOTH declarations and this "
+            "derivation answered with one of them. A name two vocabularies "
+            "claim is a finding, not a tie to break.",
+            file=sys.stderr,
+        )
+    vocab_cases: list[tuple[str, str, str]] = [
+        ("an emitted grammar's family is paint", "chart.candle", "paint"),
+        ("a screen pin's family is paint", "lab.frame", "paint"),
+        ("a parametric declaration's family is a path", "value.elem", "path"),
+        ("★ and one nothing declares is neither, said as such", "nodegroups.node", "unknown"),
+    ]
+    for label, stem, want in vocab_cases:
+        if site_vocabulary(stem) != want:
+            failed += 1
+            print(
+                f"FAIL: {label}: site_vocabulary({stem!r}) -> "
+                f"{site_vocabulary(stem)!r}, wanted {want!r}",
+                file=sys.stderr,
+            )
+
     live_pins = pin_sources(set(read_budget()) | set(census()))
     for source in ("artifact", "schema", "assertion", ""):
         if not any(value == source for value in live_pins.values()):
@@ -2410,10 +2530,12 @@ def selftest() -> int:
             covers_cases,
             grammar_cases,
             schema_cases,
+            vocab_cases,
         )
     ) + (
         5  # R2147/R2166: four classifier words and the artifact corpus floor
         + 1  # R2166: the parametric-declaration corpus floor
+        + 1  # R2167: no family is claimed by BOTH vocabularies
         + 4  # R2164: the role rule's four derived cross-checks
         + 10  # the ad-hoc assertions above, pre-existing and left alone
     )

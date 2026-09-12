@@ -63,6 +63,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     access_node_by_tag,
     assert_eq,
+    chart_addresses,
     find_by_tag,
     run_demo,
     walk_nodes,
@@ -161,37 +162,43 @@ def body() -> None:
         for _ in range(3):
             tf.tick(0.016)
 
+        # ★★★★★ R2165 — the chart's prefix and overlay part as one pair, and
+        # `under(...)` for the family prefixes this walk counts and classifies
+        # by: the separator belongs to the grammar, not to each site.
+        c = chart_addresses(tf, viewport=VIEWPORT)
+
         # ── (A) the grid is a coordinate system, not two rulers ──────
         snap = snapshot(tf)
-        rings = tags_with_prefix(snap, "chart.ring.")
+        rings = tags_with_prefix(snap, c.under("ring_at"))
         assert rings, "radial gridlines are rings"
-        assert "chart.ring.0" not in rings, (
+        assert c.at("ring_at", index=0) not in rings, (
             "the innermost tick is the centre, so it draws no ring — and the "
             "tags keep the TICK index rather than renumbering around the hole"
         )
-        spokes = count_prefix(snap, "chart.spoke.")
+        spokes = count_prefix(snap, c.under("spoke_at"))
         assert spokes > 0, "angular gridlines are spokes"
-        assert find_by_tag(snap, "chart.rim") is not None, (
+        assert find_by_tag(snap, c.at("rim")) is not None, (
             "a closed axis has a rim — the plot's edge is a circle"
         )
         assert_eq(
-            count_prefix(snap, "chart.label.a."),
+            count_prefix(snap, c.under("label_a")),
             spokes,
             "one angular label per spoke",
         )
         # Every ring is concentric on the same centre, which is what makes
         # this ONE coordinate system rather than a stack of shapes.
         centres = [centre(rect(snap, t)) for t in rings]
-        for k, c in enumerate(centres):
-            assert abs(c[0] - centres[0][0]) <= 1.5 and abs(c[1] - centres[0][1]) <= 1.5, (
-                f"ring {k} is concentric with ring 0: {c} vs {centres[0]}"
-            )
+        for k, ring_centre in enumerate(centres):
+            assert (
+                abs(ring_centre[0] - centres[0][0]) <= 1.5
+                and abs(ring_centre[1] - centres[0][1]) <= 1.5
+            ), f"ring {k} is concentric with ring 0: {ring_centre} vs {centres[0]}"
         # ...and every sample sits at its own radius from that centre, in the
         # order the data does. Bearing 90 has the largest gust, so its mark is
         # furthest out.
         cx, cy = centres[0]
         radii = [
-            math.dist(centre(rect(snap, f"chart.point.0.{j}")), (cx, cy))
+            math.dist(centre(rect(snap, c.at("point", index=0, at=j))), (cx, cy))
             for j in range(len(GUSTS))
         ]
         biggest = max(range(len(GUSTS)), key=lambda j: GUSTS[j][1])
@@ -204,20 +211,20 @@ def body() -> None:
 
         # ── (B) PAST THE FLOOR: the trace closes by derivation
         # ──────────────
-        assert closes(snap, "chart.series.0"), (
+        assert closes(snap, c.at("series", index=0)), (
             "PAST THE FLOOR: the segment from the last sample back to the first is "
             "the AXIS's doing. A toolkit radar gets it by appending the first "
             "point again, putting a duplicate in the data the model lacks"
         )
         assert_eq(
-            len(commands(snap, "chart.series.0")),
+            len(commands(snap, c.at("series", index=0))),
             len(GUSTS) + 1,
             "five samples and a Close, with nothing repeated",
         )
 
         # ── (C) PAST THE FLOOR: an out-of-period bearing is PLACED
         # ──────────
-        wrapped = rect(snap, f"chart.point.0.{WRAPPED_INDEX}")
+        wrapped = rect(snap, c.at("point", index=0, at=WRAPPED_INDEX))
         assert wrapped is not None, (
             f"PAST THE FLOOR: {WRAPPED_BEARING:.0f} degrees is a bearing of 12, so "
             "the reading is drawn. The toolkit's angular axis is an ordinary "
@@ -225,7 +232,7 @@ def body() -> None:
         )
         # And it lands where a 12-degree bearing lands: just clockwise of the
         # 0-degree sample, on the same side of the vertical.
-        north = centre(rect(snap, "chart.point.0.0"))
+        north = centre(rect(snap, c.at("point", index=0, at=0)))
         near = centre(wrapped)
         assert near[0] > cx, f"12 degrees is clockwise of north: {near}"
         assert abs(near[0] - north[0]) < abs(near[0] - cx) + 40, (
@@ -240,8 +247,8 @@ def body() -> None:
 
         # ── (D) the seam is labelled ONCE ────────────────────────────
         seats = []
-        for k in range(count_prefix(snap, "chart.label.a.")):
-            seats.append(tuple(rect(snap, f"chart.label.a.{k}").values()))
+        for k in range(count_prefix(snap, c.under("label_a"))):
+            seats.append(tuple(rect(snap, c.at("label_a", index=k)).values()))
         assert_eq(
             len(set(seats)),
             len(seats),
@@ -253,22 +260,22 @@ def body() -> None:
         # ─────
         toggle(tf, SECTOR_TAG)
         snap = snapshot(tf)
-        assert not closes(snap, "chart.series.0"), (
+        assert not closes(snap, c.at("series", index=0)), (
             "a sector is not periodic, so the trace stays open"
         )
         assert_eq(
-            find_by_tag(snap, f"chart.point.0.{WRAPPED_INDEX}"),
+            find_by_tag(snap, c.at("point", index=0, at=WRAPPED_INDEX)),
             None,
             "and the same reading is now genuinely off-scale — wrapping is a "
             "property of the SWEEP, not of the value",
         )
         assert_eq(
-            find_by_tag(snap, "chart.rim"),
+            find_by_tag(snap, c.at("rim")),
             None,
             "a sector draws no full-circle rim: it would claim angles the "
             "axis does not carry",
         )
-        assert count_prefix(snap, "chart.spoke.") > 0, "but it keeps its spokes"
+        assert count_prefix(snap, c.under("spoke_at")) > 0, "but it keeps its spokes"
         text = caption(snap)
         assert "Half turn" in text, text
         assert "0 wrapped, 1 off-scale" in text, text
@@ -277,11 +284,11 @@ def body() -> None:
         # ── (F) PAST THE FLOOR: the winding is a declaration
         # ────────────────
         snap = snapshot(tf)
-        east_cw = centre(rect(snap, "chart.point.0.1"))
+        east_cw = centre(rect(snap, c.at("point", index=0, at=1)))
         assert "increase clockwise" in caption(snap), caption(snap)
         toggle(tf, WINDING_TAG)
         snap = snapshot(tf)
-        east_ccw = centre(rect(snap, "chart.point.0.1"))
+        east_ccw = centre(rect(snap, c.at("point", index=0, at=1)))
         assert east_cw[0] > east_ccw[0] + 20, (
             "PAST THE FLOOR: the 90-degree bearing sits at 3 o'clock clockwise and "
             f"at 9 o'clock the other way. polar chart hard-codes the first: "
@@ -299,24 +306,24 @@ def body() -> None:
         pick_form(tf, FORM_RADAR)
         snap = snapshot(tf)
         assert_eq(
-            count_prefix(snap, "chart.spoke."),
+            count_prefix(snap, c.under("spoke_at")),
             len(FACETS),
             "one spoke per facet — the angular axis is nominal here",
         )
         assert_eq(
-            [node(snap, f"chart.label.a.{k}")["content"] for k in range(len(FACETS))],
+            [node(snap, c.at("label_a", index=k))["content"] for k in range(len(FACETS))],
             FACETS,
             "and each is NAMED, from the category list the chart was built with",
         )
         assert_eq(
-            count_prefix(snap, "chart.area."),
+            count_prefix(snap, c.under("area")),
             SERIES_COUNT,
             "a radar is filled by default",
         )
         for i in range(SERIES_COUNT):
-            assert closes(snap, f"chart.series.{i}"), f"series {i} closes"
+            assert closes(snap, c.at("series", index=i)), f"series {i} closes"
             assert_eq(
-                len(commands(snap, f"chart.series.{i}")),
+                len(commands(snap, c.at("series", index=i))),
                 len(FACETS) + 1,
                 f"five vertices and a Close on series {i}",
             )
