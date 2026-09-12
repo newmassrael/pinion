@@ -2,17 +2,21 @@
 //!
 //! # What was missing, and how it hid
 //!
-//! [`address`](super::address) declares the dotted names of painted *marks*.
+//! [`address`](crate::address) declares the dotted names of painted *marks*.
 //! This screen names a second dotted vocabulary that looks exactly like the
 //! first and is not it: the **configuration keys** of the document the lab
 //! edits — `transport.link.tx.batch_size`, `admin.permissions.read`. They are
 //! the argument a form row is built from, never the address of a mark.
 //!
-//! That vocabulary already has an authority. [`sourced_surface`] reads
+//! That vocabulary already has an authority. `settings::sourced_surface` reads
 //! `docs/analyzer-config-surface.json` — the target's own declared option
-//! surface, compiled in — and [`schema`] **asserts** every refinement is keyed
-//! at a path it declares. So one reader of these keys was held to the
+//! surface, compiled in — and `settings::schema` **asserts** every refinement
+//! is keyed at a path it declares. So one reader of these keys was held to the
 //! declaration.
+//!
+//! ⚠ Those two are named in code spans rather than linked, because `settings`
+//! is a private module and this page is public: rustdoc refuses a public page
+//! linking into a private one, and the push gate is what said so.
 //!
 //! **Exactly one.** Every other reader re-typed the key: the row builder, the
 //! per-role default table, the palette's add-key groups, the screen
@@ -42,15 +46,12 @@
 //! Two assertions in `tests.rs`, and they answer different questions:
 //!
 //! * `r2155_a_config_key_is_sourced` — every const here is a path
-//!   [`sourced_surface`] declares. This is what turns a typo into a **test
-//!   failure** instead of a control that quietly edits nothing.
+//!   `settings::sourced_surface` declares. This is what turns a typo into a
+//!   **test failure** instead of a control that quietly edits nothing.
 //! * `r2155_a_config_key_is_typed_in_one_place` — no source file outside this
 //!   one spells any of them. This is the half that stops the defect coming
 //!   back: without it, converting today's 35 sites just clears the way for the
 //!   thirty-sixth.
-//!
-//! [`sourced_surface`]: super::settings::sourced_surface
-//! [`schema`]: super::settings::schema
 
 /// Whether a router may grant write access — a boolean leaf, not a set.
 pub const ADMIN_PERMISSIONS_READ: &str = "admin.permissions.read";
