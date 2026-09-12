@@ -446,27 +446,50 @@ def test_only_modules() -> frozenset[Path]:
     return frozenset(found)
 
 
-def rust_roles(path: Path, text: str) -> tuple[int, int]:
-    """`(reader, assertion)` counts for the spelled sites in one Rust file.
+def rust_site_roles(path: Path, text: str) -> list[tuple[int, str, str]]:
+    """`(line, family stem, role)` for every spelled site in one Rust file,
+    where role is `"reader"` or `"assertion"`.
 
-    A comment line is neither: it is prose about an address, which
-    [`rust_sites_in`] already declines to treat as a literal.
+    ★★★★★ R2164 — **THE one place that says what a Rust site IS**, because the
+    census used to say it in two and the two disagreed about the same line.
 
-    ★ R2158 — a file the parent declares behind `#[cfg(test)]` is assertions
-    THROUGHOUT; see [`test_only_modules`] for what that was costing.
+    R2158 measured that a file the parent declares behind `#[cfg(test)]` is
+    assertions throughout, and taught [`rust_roles`] so — which is how the floor
+    of 290 is computed. [`asserted_families`], which decides whether a family's
+    VALUE is held, kept its own copy of the rule: it required a literal
+    `#[cfg(test)]` *inside* the file and looked only at [`test_spans`]. So a
+    line in `examples/hello-topology/src/tests.rs` counted as an assertion when
+    the census tallied roles and as nothing at all when the census asked what
+    pinned the family — and the second answer is the one that labels a family
+    BLOCKED, this file's word for *work no round may finish*.
+
+    Measured at R2164: **seven of the twenty-one BLOCKED families are asserted
+    in a test-only module**, carrying 7 walk and 32 Rust sites — 39 of the 79
+    BLOCKED sites were not blocked at all.
+
+    ⇒ the two callers keep their own POPULATIONS, which differ on purpose (the
+    ratchet excludes declaring files; the pin question is asked over the wide
+    corpus), and share the ROLE, which never should have differed.
+
+    A comment line is neither role and is dropped: it is prose about an address,
+    which [`rust_sites_in`] already declines to treat as a literal.
     """
     whole_file_is_test = path in test_only_modules()
     spans = test_spans(text)
     lines = text.splitlines()
-    reader = assertion = 0
-    for line, _stem in rust_sites_in(text):
+    out: list[tuple[int, str, str]] = []
+    for line, stem in rust_sites_in(text):
         if lines[line - 1].lstrip().startswith("//"):
             continue
-        if whole_file_is_test or any(first <= line <= last for first, last in spans):
-            assertion += 1
-        else:
-            reader += 1
-    return reader, assertion
+        is_test = whole_file_is_test or any(first <= line <= last for first, last in spans)
+        out.append((line, stem, "assertion" if is_test else "reader"))
+    return out
+
+
+def rust_roles(path: Path, text: str) -> tuple[int, int]:
+    """`(reader, assertion)` counts for the spelled sites in one Rust file."""
+    roles = [role for _line, _stem, role in rust_site_roles(path, text)]
+    return roles.count("reader"), roles.count("assertion")
 
 
 def rust_role_totals() -> tuple[int, int]:
@@ -1155,7 +1178,18 @@ def covers(address: str, stem: str) -> bool:
 
 @functools.lru_cache(maxsize=1)
 def asserted_families() -> dict[str, int]:
-    """family stem -> how many ASSERTIONS spell it, over the wide Rust corpus."""
+    """family stem -> how many ASSERTIONS spell it, over the wide Rust corpus.
+
+    ⚠ R2164 — the role comes from [`rust_site_roles`] now and not from a second
+    copy of the rule. The copy this replaced required a literal `#[cfg(test)]`
+    INSIDE the file, which a test-only module need not contain, so it answered
+    "nothing asserts this" for lines the same tool was counting as assertions
+    one function away. See [`rust_site_roles`] for what that was labelling.
+
+    ★ The POPULATION is still the wide one — every Rust file under
+    [`RUST_ROOTS`], declaring files included — because this asks whether a
+    value is held ANYWHERE, not how much this tree still owes.
+    """
     found: dict[str, int] = {}
     for root in RUST_ROOTS:
         for path in sorted((ROOT / root).rglob("*.rs")):
@@ -1163,14 +1197,8 @@ def asserted_families() -> dict[str, int]:
                 text = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            if "#[cfg(test)]" not in text:
-                continue
-            spans = test_spans(text)
-            lines = text.splitlines()
-            for line, stem in rust_sites_in(text):
-                if lines[line - 1].lstrip().startswith("//"):
-                    continue
-                if any(first <= line <= last for first, last in spans):
+            for _line, stem, role in rust_site_roles(path, text):
+                if role == "assertion":
                     found[stem] = found.get(stem, 0) + 1
     return found
 
@@ -1728,6 +1756,88 @@ def selftest() -> int:
             file=sys.stderr,
         )
 
+    # ★★★★★ R2164 — THE TWO HALVES MUST AGREE ABOUT THE SAME LINE, and they
+    # did not. `rust_roles` learned at R2158 that a file the parent declares
+    # behind `#[cfg(test)]` is assertions throughout; `asserted_families` kept
+    # its own copy of the rule, requiring a literal `#[cfg(test)]` INSIDE the
+    # file. So the same line was an assertion when the census tallied roles and
+    # nothing at all when it asked what pinned the family — and the second
+    # answer is the one that writes BLOCKED, this file's word for work no round
+    # may finish. Every case below is DERIVED from the tree; none names a file.
+    test_only = test_only_modules()
+    if not test_only:
+        failed += 1
+        print(
+            "FAIL: no test-only module was found — every case below is vacuous",
+            file=sys.stderr,
+        )
+    # (1) a test-only module has no READER in it. That is what the words mean,
+    #     and it is the invariant the pin question depends on.
+    leaked = []
+    for path in sorted(test_only):
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if rust_roles(path, body)[0]:
+            leaked.append(str(path.relative_to(ROOT)))
+    if leaked:
+        failed += 1
+        print(
+            f"FAIL: {leaked} are declared test-only and still count readers",
+            file=sys.stderr,
+        )
+    # (2) the blind spot itself: a test-only module need not contain the string
+    #     `#[cfg(test)]` at all, and the old rule skipped such a file whole.
+    #     Every stem such a file spells must be asserted. If NO such file
+    #     exists this case proves nothing, so its absence is a failure.
+    asserted = asserted_families()
+    invisible = 0
+    for path in sorted(test_only):
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        sites = rust_sites_in(body)
+        if not sites or "#[cfg(test)]" in body:
+            continue
+        invisible += 1
+        for _line, stem in sites:
+            if not asserted.get(stem):
+                failed += 1
+                print(
+                    f"FAIL: {path.relative_to(ROOT)} asserts {stem!r} and the "
+                    "pin question cannot see it",
+                    file=sys.stderr,
+                )
+    if not invisible:
+        failed += 1
+        print(
+            "FAIL: no test-only module lacks an in-file `#[cfg(test)]`, so the "
+            "case that found R2164's defect has no failing path any more",
+            file=sys.stderr,
+        )
+    # (3) and the totals reconcile: what the role tally calls an assertion over
+    #     the wide corpus is exactly what the pin question counts. This is the
+    #     contradiction stated as arithmetic, so it cannot come back as a third
+    #     copy of the rule somewhere else.
+    wide_assertions = 0
+    for root in RUST_ROOTS:
+        for path in sorted((ROOT / root).rglob("*.rs")):
+            try:
+                body = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            wide_assertions += rust_roles(path, body)[1]
+    if wide_assertions != sum(asserted.values()):
+        failed += 1
+        print(
+            f"FAIL: the role tally counts {wide_assertions} assertion(s) over "
+            f"the wide corpus and the pin question counts "
+            f"{sum(asserted.values())} — one line, two answers",
+            file=sys.stderr,
+        )
+
     # ★★★★★ R2116 — the RUST census's rule, against fixtures for the same
     # reason: what must not rot is the discrimination, not today's families.
     rust_cases: list[tuple[str, str, list[str]]] = [
@@ -2188,6 +2298,7 @@ def selftest() -> int:
         for case_list in (cases, needle_cases, rust_cases, role_cases, covers_cases, grammar_cases)
     ) + (
         4  # R2147: three classifier words and the artifact corpus floor
+        + 4  # R2164: the role rule's four derived cross-checks
         + 10  # the ad-hoc assertions above, pre-existing and left alone
     )
     print(f"painted_addresses selftest: {total - failed} of {total} cases OK")
