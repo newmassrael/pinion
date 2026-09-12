@@ -126,7 +126,16 @@ UNPINNED = ROOT / "docs" / "unpinned-families.tsv"
 #:
 #: ⚠ Anchored on purpose. `^` is what separates a string that is an address from
 #: a sentence that talks about one, and this file is full of the latter.
-ADDRESS = re.compile(r"^([a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)\.")
+#:
+#: ★★★★★ R2181 — **the family segment may carry an INSTANCE KEY**, and the stem
+#: drops it. A placed card is painted at `card.alarms#6.feed`: the kind, then
+#: its place on the board. This shape read the `#` as the end of the match and
+#: saw no address at all, so the shell's whole card vocabulary was invisible —
+#: concrete or templated, reader or assertion. Measured before writing: 26 walk
+#: readers, 17 Rust declarations and 31 assertions, in families whose value the
+#: shell's own `.pin` already holds (it folds the key as `card.alarms#*`, which
+#: is the same family by the same rule).
+ADDRESS = re.compile(r"^([a-z][a-z0-9_]*\.[a-z][a-z0-9_]*)(?:#(?:\d+|\{[^{}]*\}))?\.")
 
 #: The trees a painted address is COMPOSED in — the Rust side of the wall.
 #:
@@ -276,33 +285,23 @@ def _skipped(tree: ast.AST) -> set[int]:
 
 
 def sites(path: Path) -> list[tuple[int, str]]:
-    """`(line, family stem)` for every spelled painted address in `path`."""
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    except SyntaxError:
-        # A file this tool cannot parse is a file it must not judge.
-        return []
-    skip = _skipped(tree)
-    found: list[tuple[int, str]] = []
-    for node in ast.walk(tree):
-        pieces: list[str] = []
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if id(node) in skip:
-                continue
-            pieces = [node.value]
-        elif isinstance(node, ast.JoinedStr):
-            # An f-string's literal halves. `f"{parts['add']}{key}"` has none,
-            # which is the shape a converted site takes.
-            pieces = [
-                part.value
-                for part in node.values
-                if isinstance(part, ast.Constant) and isinstance(part.value, str)
-            ]
-        for piece in pieces:
-            match = ADDRESS.match(piece)
-            if match:
-                found.append((node.lineno, match.group(1)))
-    return sorted(found)
+    """`(line, family stem)` for every spelled painted address in `path`.
+
+    ★★★★★ R2181 — **a VIEW of [`_walk_literals`]**, which is the walk half's
+    one needle now. This read an f-string's constant HALVES and anchored each
+    one, while `_walk_literals` anchored the whole template, so the walk corpus
+    had two populations that nothing compared. Measured before merging: they
+    disagreed in 2 of 731 files, three sites, all
+    `f"{parts['item']}listen.endpoints.add"` — a prefix handed over and a
+    configuration key spelled after it, which the halves rule anchored at
+    `listen.endpoints` in the middle of a literal. The module header's claim is
+    that the needle is anchored at the START of a literal; that was true of one
+    reader and not the other. Those three are now counted where their family
+    really is unknown, by [`unanchored_reader_sites`].
+    """
+    return sorted(
+        (line, ADDRESS.match(literal).group(1)) for line, literal in _walk_literals(path)
+    )
 
 
 def scan() -> dict[str, list[tuple[str, int]]]:
@@ -428,6 +427,73 @@ def handed_to(text: str, start: int) -> str | None:
     return name if i >= 0 and text[i] == "." else None
 
 
+#: A Rust `&str` constant or static bound to one brace-free literal on one line —
+#: the value a `{NAME}` placeholder in a format string captures.
+RUST_STR_CONST = re.compile(
+    r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const|static)\s+([A-Z_][A-Z0-9_]*)\s*:\s*"
+    r"&(?:'static\s+)?str\s*=\s*\"([^\"\\{}]*)\"\s*;",
+    re.MULTILINE,
+)
+
+#: A placeholder that NAMES something — `{CHART_TAG}`, never `{}` or `{n:>3}`.
+_NAMED_PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def rust_str_constants(text: str) -> dict[str, str]:
+    """`NAME -> value` for every `&str` const or static `text` binds to ONE value.
+
+    ★★★★★ R2181 — a format string captures a name inline, so
+    `format!("{CHART_TAG}.label.x.{k}")` beside `const CHART_TAG: &str = "chart"`
+    spells `chart.label.x.{k}` exactly as the literal would. The needle read the
+    brace and saw no address. Measured before writing: 10 such literals anchor
+    once the constant is substituted.
+
+    ⚠ A name bound to two DIFFERENT values in one file (a `TAG` in each of two
+    modules) is dropped: which one a placeholder captures is a scoping question
+    this does not answer, and leaving the brace in place errs towards NOT
+    anchoring — which [`unanchored_reader_sites`] still counts. A value holding a
+    brace is never substituted either, because the brace it would insert is text
+    at runtime and a placeholder to this census.
+    """
+    values: dict[str, set[str]] = {}
+    for name, value in RUST_STR_CONST.findall(text):
+        values.setdefault(name, set()).add(value)
+    return {name: next(iter(v)) for name, v in values.items() if len(v) == 1}
+
+
+def resolve_placeholders(literal: str, constants: dict[str, str]) -> str:
+    """`literal` with every placeholder naming one of `constants` replaced by its
+    value, and every other placeholder left as it is."""
+    return _NAMED_PLACEHOLDER.sub(
+        lambda match: constants.get(match.group(1), match.group(0)), literal
+    )
+
+
+def rust_literals(text: str) -> list[tuple[int, int, str]]:
+    """`(offset, line, literal)` for every Rust string literal outside a comment
+    line, quotes stripped and constant placeholders resolved — **the one scan**
+    every Rust needle in this file reads.
+
+    ★★★★★ R2181 — [`rust_site_literals`] and [`non_address_literals`] each
+    walked [`RUST_LITERAL`] and each re-applied the comment rule, and a third
+    reader was about to join them. Resolving a constant in two of three copies
+    would have made the populations disagree on purpose, which is R2178's
+    finding one layer down. `offset` is the opening quote, which is what
+    [`handed_to`] reads back from.
+    """
+    lines = text.splitlines()
+    constants = rust_str_constants(text)
+    found: list[tuple[int, int, str]] = []
+    for match in RUST_LITERAL.finditer(text):
+        line = text.count("\n", 0, match.start()) + 1
+        if lines[line - 1].lstrip().startswith("//"):
+            continue
+        found.append(
+            (match.start(), line, resolve_placeholders(match.group(0)[1:-1], constants))
+        )
+    return found
+
+
 def rust_site_literals(text: str) -> list[tuple[int, str, str]]:
     """`(line, family stem, literal)` for every painted address Rust `text`
     spells — **THE needle**, and the only one.
@@ -451,19 +517,16 @@ def rust_site_literals(text: str) -> list[tuple[int, str, str]]:
     * a literal handed as the key of a [`NON_ADDRESS_CALLS`] method names a
       state slot, not a mark (R2178). Those are not dropped silently —
       [`non_address_literals`] counts them.
+
+    ★★★★★ R2181 — the literal is the one [`rust_literals`] hands over, so a
+    placeholder naming a same-file constant is read as that constant's value
+    and the literal carried is the address it spells.
     """
-    lines = text.splitlines()
     found: list[tuple[int, str, str]] = []
-    for match in RUST_LITERAL.finditer(text):
-        hit = ADDRESS.match(match.group(0)[1:])
-        if not hit:
-            continue
-        line = text.count("\n", 0, match.start()) + 1
-        if lines[line - 1].lstrip().startswith("//"):
-            continue
-        if handed_to(text, match.start()) in NON_ADDRESS_CALLS:
-            continue
-        found.append((line, hit.group(1), match.group(0)[1:-1]))
+    for offset, line, literal in rust_literals(text):
+        hit = ADDRESS.match(literal)
+        if hit and handed_to(text, offset) not in NON_ADDRESS_CALLS:
+            found.append((line, hit.group(1), literal))
     return sorted(found)
 
 
@@ -475,16 +538,12 @@ def non_address_literals(text: str) -> list[tuple[int, str, str]]:
     ★ R2160's rule: a census that drops its hard part measures comfort instead
     of remainder. An exclusion nobody can count is exactly that.
     """
-    lines = text.splitlines()
     found: list[tuple[int, str, str]] = []
-    for match in RUST_LITERAL.finditer(text):
-        hit = ADDRESS.match(match.group(0)[1:])
+    for offset, line, literal in rust_literals(text):
+        hit = ADDRESS.match(literal)
         if not hit:
             continue
-        line = text.count("\n", 0, match.start()) + 1
-        if lines[line - 1].lstrip().startswith("//"):
-            continue
-        method = handed_to(text, match.start())
+        method = handed_to(text, offset)
         if method in NON_ADDRESS_CALLS:
             found.append((line, hit.group(1), method))
     return sorted(found)
@@ -1199,6 +1258,27 @@ def check() -> int:
         f"reducible queue is {queue} (walks are all readers), and "
         f"the census cannot legitimately fall below {assertion + declaration}"
     )
+    # ★★★★★ R2181 — and the retyping the queue CANNOT count: a reader whose
+    # address has a runtime value where its family or head goes. R2180 wrote
+    # that the queue is a floor under the retyping and could not say by how
+    # much; this line says, every run, beside the number it qualifies. Split by
+    # whether the site can compose an address a `.pin` artifact holds, because
+    # the shape over-counts (an introspection path has it too) and that half is
+    # certainly paint. See [`unanchored_reader_sites`].
+    loose = unanchored_reader_sites()
+    held = sum(
+        1
+        for _corpus, _where, literal in loose
+        if any(template_denotes(literal, address) for address in pinned_addresses())
+    )
+    walk_loose = sum(1 for corpus, _where, _literal in loose if corpus == "walk")
+    print(
+        f"painted-addresses: and {len(loose)} reader site(s) the queue does NOT "
+        f"count (walk {walk_loose} / rust {len(loose) - walk_loose}) spell an "
+        f"address whose family or head is a runtime value — {held} of them can "
+        "compose an address a `.pin` artifact holds, so the queue is a FLOOR "
+        "under the retyping, not a count of it"
+    )
     # ★★★★★ R2147 — and WHETHER EACH FAMILY'S VALUE IS HELD AT ALL, which
     # neither line above can say. Converting a family's last speller removes
     # the only comparison its address had unless an artifact or an assertion
@@ -1674,18 +1754,9 @@ def pin_artifact_addresses() -> tuple[str, ...]:
     data; the marker is dropped here because this asks which FAMILY is covered,
     and a family is the same one whichever row of it was folded.
     """
-    out: list[str] = []
-    for path in sorted(ROOT.glob(PIN_ARTIFACTS)):
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        for line in text.splitlines():
-            line = line.strip()
-            if line and not line.startswith("#"):
-                out.append(line.replace("#*", ""))
-    out.extend(config_surface_paths())
-    return tuple(out)
+    return tuple(line.replace("#*", "") for line in pin_artifact_lines()) + tuple(
+        config_surface_paths()
+    )
 
 
 @functools.lru_cache(maxsize=1)
@@ -1994,6 +2065,157 @@ def may_denote_same(a: str, b: str) -> bool:
     )
 
 
+#: One segment of an address-shaped literal: word characters, an instance key
+#: and placeholders — never a space, a slash or an unbalanced brace.
+_SEGMENT = re.compile(r"^(?:[A-Za-z0-9_#:-]|\{[^{}]*\})+$")
+_FAMILY_WORD = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def unanchored_shape(literal: str) -> bool:
+    """Whether `literal` has an address's SHAPE and a family its text cannot
+    name.
+
+    ★★★★★ R2181 — R2174 and R2180 each found a screen's addresses composed in
+    places this census could not see, and R2180 wrote down that the reducible
+    queue is a floor under the retyping rather than a count of it, *by how much
+    unmeasured*. This is the reader that measures it. Two shapes:
+
+    * a word, a placeholder in the FAMILY segment, then a key —
+      `card.{id}.config`, where the card's kind is a runtime value;
+    * a placeholder as the whole HEAD — `{tag}.row.{slot}`, a prefix handed in.
+
+    Measured before this round's two exact rules (the instance key in
+    [`ADDRESS`], the constant in [`rust_str_constants`] and
+    [`_module_constants`]): 351 readers, against a queue of 61.
+
+    ⚠ SHAPE, not meaning, and it over-counts in a known direction: a walk's
+    `frame.{fid}.x` is an introspection path and `{name}.png` a file. That is
+    why [`check`] also says how many can compose an address a `.pin` artifact
+    holds — the part that is certainly paint.
+    """
+    if ADDRESS.match(literal) or "{{" in literal:
+        return False
+    segments = literal.split(".")
+    if len(segments) < 2 or not all(_SEGMENT.match(segment) for segment in segments):
+        return False
+    if not re.search(r"[a-z]", _PLACEHOLDER.sub("", literal)):
+        return False
+    head = segments[0]
+    if _PLACEHOLDER.search(head):
+        return _PLACEHOLDER.fullmatch(head) is not None
+    return (
+        len(segments) >= 3
+        and _FAMILY_WORD.match(head) is not None
+        and _PLACEHOLDER.search(segments[1]) is not None
+    )
+
+
+@functools.lru_cache(maxsize=None)
+def _template_pattern(template: str) -> re.Pattern[str]:
+    parts: list[str] = []
+    for index, segment in enumerate(template.split(".")):
+        if index == 0 and _PLACEHOLDER.fullmatch(segment):
+            parts.append(r"[^.]+(?:\.[^.]+)*")
+        else:
+            parts.append(
+                r"[^.]+".join(re.escape(piece) for piece in _PLACEHOLDER.split(segment))
+            )
+    return re.compile(r"\.".join(parts) + r"\Z")
+
+
+def template_denotes(template: str, address: str) -> bool:
+    """Whether `template` can compose the concrete `address`.
+
+    ★★★★★ R2181 — [`may_denote_same`]'s rule, with the one difference the
+    unanchored shapes need: a placeholder that is the whole HEAD is a handed
+    prefix and fills one or more WHOLE segments. Every other placeholder fills
+    one or more characters of one segment, exactly as there — and the selftest
+    holds the two to agreement wherever both apply, because they are two
+    implementations of one rule.
+    """
+    return _template_pattern(template).match(address) is not None
+
+
+@functools.lru_cache(maxsize=1)
+def pin_artifact_lines() -> tuple[str, ...]:
+    """Every address line of the committed `.pin` artifacts, as written — **the
+    one reader of that format**; fold markers are each caller's question."""
+    out: list[str] = []
+    for path in sorted(ROOT.glob(PIN_ARTIFACTS)):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                out.append(line)
+    return tuple(out)
+
+
+@functools.lru_cache(maxsize=1)
+def pinned_addresses() -> tuple[str, ...]:
+    """Every address a `.pin` artifact holds, each fold standing for ONE value.
+
+    A pin is folded by `pinion_core::containment::repeating_site`, which writes
+    `*` where a POSITION was — a run of digits and index separators — in three
+    places: a whole segment (`3_2`), a `#` suffix (`#0`), and an index glued to
+    a name (`0_direction` → `*_direction`). Every one of them began with a
+    digit, so `0` is a member of each, and one replacement is the whole rule.
+    ★ The selftest's fold arm is what found the third shape: the first draft
+    knew two, measured from the ten commonest fold forms rather than all.
+
+    ⚠ Not [`pin_artifact_addresses`], which DROPS the marker because it asks
+    which family is covered. This asks whether a template can compose a held
+    address, and dropping the marker changes the address — `card.alarms#*.feed`
+    would read as `card.alarms.feed`, which nothing paints.
+    """
+    return tuple(line.replace("*", "0") for line in pin_artifact_lines())
+
+
+def rust_unanchored_literals(text: str) -> list[tuple[int, str]]:
+    """`(line, literal)` for every Rust literal of [`unanchored_shape`] — the
+    same scan and the same owner-cache rule as [`rust_site_literals`]."""
+    return sorted(
+        (line, literal)
+        for offset, line, literal in rust_literals(text)
+        if unanchored_shape(literal) and handed_to(text, offset) not in NON_ADDRESS_CALLS
+    )
+
+
+def unanchored_reader_sites() -> tuple[tuple[str, str, str], ...]:
+    """`(corpus, where, literal)` for every READER whose address this census
+    cannot give a family — the retyping the reducible queue does not count.
+
+    Drawn from the RATCHET's populations, so it sits beside the queue on the
+    same terms: every walk site is a reader, and a Rust site is one under
+    [`site_role_at`].
+
+    ⚠⚠ REPORTED, NOT CHARGED. A site here may compose addresses in several
+    families (`card.{id}.close` is every card's close), and a ratchet keyed by
+    family has no row for it yet; charging each such site to the families it
+    can compose is the next instalment. Until then the number is printed every
+    run beside the queue it qualifies, so the queue cannot be read as a count
+    of what is left.
+    """
+    found: list[tuple[str, str, str]] = []
+    for path in sources():
+        where = str(path.relative_to(ROOT))
+        for line, literal in _walk_unanchored(path):
+            found.append(("walk", f"{where}:{line}", literal))
+    for path in rust_sources():
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        where = str(path.relative_to(ROOT))
+        role_at = site_role_at(path, body)
+        for line, literal in rust_unanchored_literals(body):
+            if role_at(line) == "reader":
+                found.append(("rust", f"{where}:{line}", literal))
+    return tuple(found)
+
+
 def _walk_literals(path: Path) -> list[tuple[int, str]]:
     """`(line, whole address)` for every address literal a walk spells.
 
@@ -2003,35 +2225,126 @@ def _walk_literals(path: Path) -> list[tuple[int, str]]:
     SHAPE (`{}` per interpolated value), so a walk's composed address can be
     matched against a Rust template rather than truncated to its constant head.
     """
+    return [
+        (line, literal)
+        for line, literal in python_literals(path.read_text(encoding="utf-8"))
+        if ADDRESS.match(literal)
+    ]
+
+
+def _walk_unanchored(path: Path) -> list[tuple[int, str]]:
+    """`(line, literal)` for every walk literal of [`unanchored_shape`]."""
+    return [
+        (line, literal)
+        for line, literal in python_literals(path.read_text(encoding="utf-8"))
+        if unanchored_shape(literal)
+    ]
+
+
+def _module_constants(tree: ast.Module) -> dict[str, str]:
+    """`NAME -> value` for every name bound EXACTLY ONCE in the whole file, by a
+    module-level assignment of a brace-free string.
+
+    ★★★★★ R2181 — the walk half of [`rust_str_constants`]. `VIEW = "nodeflow"`
+    and then `f"{VIEW}.node.{n}.label"` spells `nodeflow.node.{n}.label`, and the
+    census read the interpolation as a runtime value. Measured before writing:
+    38 walk literals anchor once such a name is substituted.
+
+    ⚠ ONCE IN THE FILE, not once at module level: a parameter, a loop variable,
+    an import, a `global` or any other binding of the same name anywhere makes
+    which value an f-string captures a scoping question, and this answers it by
+    not substituting. That errs towards NOT anchoring, which the unanchored
+    count still sees.
+    """
+    bindings: dict[str, int] = {}
+
+    def bind(name: str, times: int = 1) -> None:
+        bindings[name] = bindings.get(name, 0) + times
+
+    matched = tuple(
+        getattr(ast, kind) for kind in ("MatchAs", "MatchStar") if hasattr(ast, kind)
+    )
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            bind(node.id)
+        elif isinstance(node, ast.arg):
+            bind(node.arg)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bind(node.name)
+        elif isinstance(node, ast.alias):
+            bind((node.asname or node.name).split(".")[0])
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                bind(name, 2)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bind(node.name)
+        elif matched and isinstance(node, matched) and node.name:
+            bind(node.name)
+    found: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        elif isinstance(node, ast.AnnAssign):
+            target, value = node.target, node.value
+        else:
+            continue
+        if (
+            isinstance(target, ast.Name)
+            and isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and not {"{", "}"} & set(value.value)
+            and bindings.get(target.id) == 1
+        ):
+            found[target.id] = value.value
+    return found
+
+
+@functools.lru_cache(maxsize=None)
+def python_literals(source: str) -> tuple[tuple[int, str], ...]:
+    """`(line, literal)` for every string a Python `source` writes — **the walk
+    half's one scan**, docstrings and f-string halves excluded (see
+    [`_skipped`]).
+
+    ★★★★★ R2181 — keyed by the SOURCE rather than a path, so the three readers
+    of one walk share one parse per run and a selftest fixture written to a
+    reused temporary name can never be answered from another file's cache.
+
+    ★★★★★ R2179 — an f-string is the WHOLE template, `{}` for every
+    interpolated value. It kept only the constant halves, so `f"feed.row.{n}"`
+    became `feed.row.` and could never denote the address a Rust template
+    composes — the unit error [`may_denote_same`] repairs, one language over.
+    Since R2181 an interpolated NAME bound once to a module string is its value
+    instead (see [`_module_constants`]).
+    """
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = ast.parse(source)
     except SyntaxError:
-        return []
+        # A file this tool cannot parse is a file it must not judge.
+        return ()
     skip = _skipped(tree)
+    constants = _module_constants(tree)
+
+    def piece(part: ast.expr) -> str:
+        if isinstance(part, ast.Constant) and isinstance(part.value, str):
+            return part.value
+        if (
+            isinstance(part, ast.FormattedValue)
+            and isinstance(part.value, ast.Name)
+            and part.conversion == -1
+            and part.format_spec is None
+            and part.value.id in constants
+        ):
+            return constants[part.value.id]
+        return "{}"
+
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
-        literal: str | None = None
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if id(node) in skip:
-                continue
-            literal = node.value
+            if id(node) not in skip:
+                found.append((node.lineno, node.value))
         elif isinstance(node, ast.JoinedStr):
-            # ★★★★★ R2179 — the WHOLE template, `{}` for every interpolated
-            # value. This kept only the constant halves, so `f"feed.row.{n}"`
-            # became `feed.row.` and could never denote the address a Rust
-            # template composes — the unit error `may_denote_same` repairs, one
-            # language over. Measured before writing: 25 address f-strings in
-            # the walk corpus, none with a format spec, a conversion or a
-            # nested f-string; a spec would still fill one placeholder anyway.
-            literal = "".join(
-                part.value
-                if isinstance(part, ast.Constant) and isinstance(part.value, str)
-                else "{}"
-                for part in node.values
-            )
-        if literal is not None and ADDRESS.match(literal):
-            found.append((node.lineno, literal))
-    return found
+            found.append((node.lineno, "".join(piece(part) for part in node.values)))
+    return tuple(found)
 
 
 def rust_reader_duplication() -> tuple[int, int]:
@@ -2573,6 +2886,43 @@ def selftest() -> int:
             'a = "lab.form.item.listen.endpoints.0"\n',
             ["lab.form"],
         ),
+        (
+            "★★★★★ R2181 — an instance key belongs to the family segment, and "
+            "the stem drops it",
+            'a = "card.alarms#6.feed.row.0"\n',
+            ["card.alarms"],
+        ),
+        (
+            "★★★★★ and a templated key is the same family",
+            'a = f"card.packet#{n}.grip"\n',
+            ["card.packet"],
+        ),
+        (
+            "★★★★★ R2181 — a module string interpolated at the head IS its value",
+            'VIEW = "nodeflow"\na = f"{VIEW}.node.{n}.label"\n',
+            ["nodeflow.node"],
+        ),
+        (
+            "★★ but not when the name is bound anywhere else in the file",
+            'VIEW = "nodeflow"\ndef f(VIEW):\n    return f"{VIEW}.node.x"\n',
+            [],
+        ),
+        (
+            "★★ nor through a conversion, which changes the text",
+            'VIEW = "nodeflow"\na = f"{VIEW!r}.node.x"\n',
+            [],
+        ),
+        (
+            "★★★ R2181 — a key spelled after a handed prefix is anchored nowhere; "
+            "the constant-halves rule counted this at `listen.endpoints`",
+            "a = f\"{parts['item']}listen.endpoints.add\"\n",
+            [],
+        ),
+        (
+            "a runtime value in the family segment names no family",
+            'a = f"card.{cid}.grip"\n',
+            [],
+        ),
     ]
     failed = 0
     for name, source, want in cases:
@@ -2967,6 +3317,75 @@ def selftest() -> int:
                     file=sys.stderr,
                 )
                 break
+    # ★★★★★ R2181 — the UNANCHORED shape and the matcher that says which of those
+    # sites are certainly paint. Fixtures, for the reason above; and the matcher
+    # is held to `may_denote_same` wherever both apply, because they are two
+    # implementations of one rule and only one of them had cases.
+    shape_cases: list[tuple[str, str, bool]] = [
+        ("a runtime value in the family segment", "card.{id}.config", True),
+        ("a handed prefix at the head", "{tag}.row.{slot}", True),
+        ("★ a handed prefix and one member is an address too", "{tag}.head", True),
+        ("an anchored address is not unanchored", "lab.form.remove.{key}", False),
+        ("★ nor is one with a templated instance key", "card.alarms#{n}.feed", False),
+        ("a word and a placeholder is a prefix, as two words are", "state.{i}", False),
+        ("a sentence is not the shape", "the seat at {x}.y", False),
+        ("a path is not the shape", "scene/{x}.y", False),
+        ("a lone placeholder is not", "{}", False),
+        ("a head that is not ONE placeholder is not", "{a}{b}.row.x", False),
+        ("an escaped brace is text", "{{tag}}.row.x", False),
+        ("nothing but placeholders names nothing", "{}.{}", False),
+    ]
+    for label, literal, want in shape_cases:
+        if unanchored_shape(literal) != want:
+            failed += 1
+            print(
+                f"FAIL: {label}: unanchored_shape({literal!r}) -> {not want}",
+                file=sys.stderr,
+            )
+    compose_cases: list[tuple[str, tuple[str, str], bool]] = [
+        ("★ a handed prefix fills WHOLE segments",
+         ("{tag}.row.{slot}", "card.alarms#0.feed.row.0"), True),
+        ("but at least one of them",
+         ("{tag}.row.{slot}", "row.0"), False),
+        ("a family placeholder fills one segment",
+         ("card.{id}.feed", "card.alarms#0.feed"), True),
+        ("and never crosses a dot",
+         ("card.{id}.feed", "card.alarms#0.x.feed"), False),
+        ("a template is not its longer sibling",
+         ("card.{id}.feed", "card.alarms#0.feed.row.0"), False),
+    ]
+    for label, (template, address), want in compose_cases:
+        if template_denotes(template, address) != want:
+            failed += 1
+            print(
+                f"FAIL: {label}: template_denotes({template!r}, {address!r}) -> "
+                f"{not want}",
+                file=sys.stderr,
+            )
+    for label, (left, right), want in denote_cases:
+        for template, concrete in ((left, right), (right, left)):
+            if _PLACEHOLDER.search(concrete) or _PLACEHOLDER.fullmatch(
+                template.split(".")[0]
+            ):
+                continue
+            if template_denotes(template, concrete) != want:
+                failed += 1
+                print(
+                    f"FAIL: {label}: template_denotes and may_denote_same disagree "
+                    f"on ({template!r}, {concrete!r})",
+                    file=sys.stderr,
+                )
+    # A pin reader that found nothing would call every unanchored site unpinned,
+    # and a fold form nobody taught would leave a `*` no placeholder can match —
+    # both silent. Asserted against the tree, which carries both fold forms.
+    held_addresses = pinned_addresses()
+    if not held_addresses or any("*" in address for address in held_addresses):
+        failed += 1
+        print(
+            f"FAIL: pinned_addresses read {len(held_addresses)} address(es), "
+            "or left a fold marker in one — teach it the fold form",
+            file=sys.stderr,
+        )
     distinct = len({literal for _where, _stem, literal in address_literal_sites()})
     if distinct < 100:
         failed += 1
@@ -3208,6 +3627,45 @@ def selftest() -> int:
             "★★ a generic method outside the set is still a site",
             'node.with_tag::<Rc<S>>("lab.reset.view")',
             ["lab.reset"],
+        ),
+        (
+            "★★★★★ R2181 — an instance key belongs to the family segment",
+            'fn f() { press("card.alarms#6.feed"); }',
+            ["card.alarms"],
+        ),
+        (
+            "★★★★★ R2181 — a placeholder naming a same-file &str const is its value",
+            'const CHART_TAG: &str = "chart";\n'
+            'fn f(k: usize) -> String { format!("{CHART_TAG}.label.x.{k}") }',
+            ["chart.label"],
+        ),
+        (
+            "★★ a `pub(crate) static` binds one too, inside a module",
+            "mod voice {\n    pub(crate) static TAG: &'static str = \"audio\";\n}\n"
+            'fn f() { n(format!("{TAG}.voice.{id}")); }',
+            ["audio.voice"],
+        ),
+        (
+            "★★ a name bound to two values in one file is a scoping question, "
+            "and is left alone",
+            'mod a {\n    const TAG: &str = "one";\n}\nmod b {\n    const TAG: &str = "two";\n}\n'
+            'fn f() { t(format!("{TAG}.x.y")); }',
+            [],
+        ),
+        (
+            "★★ a const holding a brace is text at runtime, never a placeholder",
+            'const T: &str = "a.{}";\nfn f() { t(format!("{T}.x.y")); }',
+            [],
+        ),
+        (
+            "★ a format spec is not a capture this substitutes",
+            'const TAG: &str = "lab";\nfn f() { t(format!("{TAG:>4}.x.y")); }',
+            [],
+        ),
+        (
+            "a lowercase local is a runtime value, not a constant",
+            'fn f(tag: &str) { t(format!("{tag}.row.{slot}")); }',
+            [],
         ),
     ]
     for label, fixture, want in rust_cases:
