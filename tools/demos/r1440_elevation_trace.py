@@ -43,6 +43,7 @@ from rpc_verify import (
     assert_action_refused,
     assert_out_of_range,
     assert_rpc_error,
+    chart_addresses,
     find_by_tag,
     run_demo,
     wait_until,
@@ -50,8 +51,10 @@ from rpc_verify import (
 
 EXT = "/external"
 VIEWPORT = (660, 460)
-AREA = "chart.area.0"
-STRIP = "chart.colorbar.strip"
+#: ★★★★★ R2169 — these were two spelled addresses bound to walk-local names.
+#: Binding once is better than spelling five times, but the name is still the
+#: WALK's: the crate composes these, so a rename there leaves this stale and
+#: silent. `chart_addresses` is set in `body()` and these are composed from it.
 
 
 def _walk(node, out):
@@ -94,14 +97,14 @@ def color_hex(node: dict) -> str:
     return "#{:02x}{:02x}{:02x}".format(c["r"], c["g"], c["b"])
 
 
-def segment(ta: RpcSubprocess, k: int) -> dict:
-    node = find_by_tag(snap(ta), f"chart.series.0.seg.{k}")
+def segment(ta: RpcSubprocess, c, k: int) -> dict:
+    node = find_by_tag(snap(ta), c.at("series_seg", index=0, at=k))
     assert node is not None, f"segment {k} is in the paint scene"
     return node
 
 
-def area_stops(ta: RpcSubprocess) -> list[dict]:
-    node = find_by_tag(snap(ta), AREA)
+def area_stops(ta: RpcSubprocess, c) -> list[dict]:
+    node = find_by_tag(snap(ta), c.at("area", index=0))
     assert node is not None, "the area mark is in the paint scene"
     gradient = node.get("style", {}).get("gradient")
     assert gradient is not None, "the area carries a real gradient, not a flat fill"
@@ -118,6 +121,9 @@ def tags_with_prefix(ta: RpcSubprocess, prefix: str) -> list[str]:
 
 def body() -> None:
     with RpcSubprocess("hello-elevation-trace", request_timeout=12.0) as ta:
+        # ★★★★★ R2165 — prefix and overlay part from the frame, as one pair.
+        c = chart_addresses(ta, viewport=VIEWPORT)
+
         # ── Phase 1 — two channels that do NOT co-rank ────────────────
         assert_eq(query(ta, "encoding"), "diverging", "boots on the diverging map")
         assert_eq(query(ta, "filled"), True, "and with the area filled")
@@ -137,14 +143,14 @@ def body() -> None:
         ), "the summit really is higher than the steepest sample"
 
         # ── Phase 2 — the line is one path per segment ────────────────
-        seg_tags = tags_with_prefix(ta, "chart.series.0.seg.")
+        seg_tags = tags_with_prefix(ta, c.under("series_seg", index=0))
         assert_eq(len(seg_tags), segments, f"one path per segment, got {seg_tags}")
-        assert find_by_tag(snap(ta), "chart.series.0") is None, (
+        assert find_by_tag(snap(ta), c.at("series", index=0)) is None, (
             "and the flat polyline is NOT also drawn (it would double-strike)"
         )
         # Every segment is a stroked path with a real width.
         for k in range(segments):
-            node = segment(ta, k)
+            node = segment(ta, c, k)
             assert node["style"]["stroke"]["width"] >= 1, f"segment {k} has width"
 
         # ── Phase 3 — ★ a segment is the MEAN, not an endpoint ────────
@@ -152,7 +158,7 @@ def body() -> None:
         # painted colour would equal `endpoint_color_at k` instead.
         differed = 0
         for k in range(segments):
-            painted = color_hex(segment(ta, k))
+            painted = color_hex(segment(ta, c, k))
             assert_eq(
                 painted,
                 invoke(ta, "segment_color_at", str(k)),
@@ -170,18 +176,18 @@ def body() -> None:
             "silently one of them",
         )
         # Consecutive segments differ, so the trace varies along itself.
-        assert color_hex(segment(ta, 0)) != color_hex(segment(ta, 1)), (
+        assert color_hex(segment(ta, c, 0)) != color_hex(segment(ta, c, 1)), (
             "the colour changes along the trace"
         )
 
         # ── Phase 4 — the legend became a colour bar ──────────────────
-        assert find_by_tag(snap(ta), STRIP) is not None, "a colour bar is painted"
+        assert find_by_tag(snap(ta), c.at("colorbar_strip")) is not None, "a colour bar is painted"
         assert_eq(
-            tags_with_prefix(ta, "chart.legend."),
+            tags_with_prefix(ta, c.under("legend_root")),
             [],
             "no categorical swatch row while colour encodes magnitude",
         )
-        ticks = tags_with_prefix(ta, "chart.colorbar.tick.")
+        ticks = tags_with_prefix(ta, c.under("colorbar_tick"))
         assert_eq(len(ticks), 3, f"low + neutral + high, got {ticks}")
         neutral_hex = query(ta, "neutral_hex")
         assert_eq(
@@ -195,7 +201,7 @@ def body() -> None:
         )
 
         # ── Phase 5 — ★ the area's stops sit at the samples' x ────────
-        stops = area_stops(ta)
+        stops = area_stops(ta, c)
         assert_eq(len(stops), samples, "one stop per sample")
         offsets = [s["offset"] for s in stops]
         assert all(a < b for a, b in zip(offsets, offsets[1:])), (
@@ -229,14 +235,14 @@ def body() -> None:
 
         # ── Phase 6 — the fill toggle switches which geometry carries it ─
         set_filled(ta, False)
-        assert find_by_tag(snap(ta), AREA) is None, "no area mark when unfilled"
+        assert find_by_tag(snap(ta), c.at("area", index=0)) is None, "no area mark when unfilled"
         assert_eq(
-            len(tags_with_prefix(ta, "chart.series.0.seg.")),
+            len(tags_with_prefix(ta, c.under("series_seg", index=0))),
             segments,
             "but the segmented line is untouched",
         )
         set_filled(ta, True)
-        assert_eq(len(area_stops(ta)), samples, "and the gradient comes back")
+        assert_eq(len(area_stops(ta, c)), samples, "and the gradient comes back")
 
         # ── Phase 7 — sequential re-maps, off reverts to one polyline ──
         set_encoding(ta, "sequential")
@@ -245,25 +251,25 @@ def body() -> None:
             "the asymmetric domain is why map_diverging exists"
         )
         assert_eq(
-            len(tags_with_prefix(ta, "chart.series.0.seg.")),
+            len(tags_with_prefix(ta, c.under("series_seg", index=0))),
             segments,
             "still segmented",
         )
 
         set_encoding(ta, "off")
-        assert find_by_tag(snap(ta), "chart.series.0") is not None, (
+        assert find_by_tag(snap(ta), c.at("series", index=0)) is not None, (
             "★ the flat polyline returns"
         )
         assert_eq(
-            tags_with_prefix(ta, "chart.series.0.seg."),
+            tags_with_prefix(ta, c.under("series_seg", index=0)),
             [],
             "and the segments are gone",
         )
-        assert find_by_tag(snap(ta), STRIP) is None, "no bar without an encoding"
-        assert find_by_tag(snap(ta), "chart.legend.0.swatch") is not None, (
+        assert find_by_tag(snap(ta), c.at("colorbar_strip")) is None, "no bar without an encoding"
+        assert find_by_tag(snap(ta), c.at("legend_swatch", index=0)) is not None, (
             "the swatch row returns"
         )
-        area = find_by_tag(snap(ta), AREA)
+        area = find_by_tag(snap(ta), c.at("area", index=0))
         assert area is not None, "the area is still filled"
         assert area["style"].get("gradient") is None, (
             "but flat — no encoding, no gradient"

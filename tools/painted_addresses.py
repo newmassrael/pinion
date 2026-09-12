@@ -104,7 +104,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Iterable, NamedTuple
+from typing import Callable, Iterable, NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -446,6 +446,78 @@ def test_only_modules() -> frozenset[Path]:
     return frozenset(found)
 
 
+#: How a Rust item BINDS a value to a name — `const X: &str = …`, `static Y: …`.
+CONST_ITEM = re.compile(
+    r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const|static)\s+([A-Z_][A-Z0-9_]*)\s*:"
+)
+
+
+def const_items(text: str) -> dict[str, set[int]]:
+    """`const`/`static` name -> the 1-based lines its initializer covers.
+
+    PURE, and handed its text rather than a path for [`rust_sites_in`]'s reason:
+    what has to be tested is the discrimination, not today's files.
+
+    The span is closed by bracket depth rather than by a `;` alone, because the
+    shape this exists for is a multi-line array — `const HOVER_KEYS: [&str; 6]`
+    holds six addresses on six lines and every one of them is inside the item.
+    """
+    found: dict[str, set[int]] = {}
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        match = CONST_ITEM.match(lines[index])
+        if not match:
+            index += 1
+            continue
+        depth = 0
+        cursor = index
+        span: set[int] = set()
+        while cursor < len(lines):
+            line = lines[cursor]
+            depth += line.count("[") + line.count("(") + line.count("{")
+            depth -= line.count("]") + line.count(")") + line.count("}")
+            span.add(cursor + 1)
+            if line.rstrip().endswith(";") and depth <= 0:
+                break
+            cursor += 1
+        found.setdefault(match.group(1), set()).update(span)
+        index = cursor + 1
+    return found
+
+
+def declaring_lines(text: str, is_used: Callable[[str], bool]) -> set[int]:
+    """The lines of `text` that BIND an address to a name other code calls.
+
+    ★★★★★ R2169 — **this census knew a declaring FILE and not a declaring
+    SITE**, and R2168 measured what that cost: 46 Rust sites it counted as
+    readers owing conversion are `const`/`static` items — `const HOVER_KEYS`
+    in three examples, the tray's item keys, the legend consts — each one the
+    single name the rest of the code calls. Converting them is not possible:
+    there is nothing above a const to call, and the only way to make the site
+    disappear was to move the line into a file named `address.rs`, which is
+    what [`RUST_DECLARING_FILES`] already excuses.
+
+    ⇒ a `const` IS the repair this campaign asks for — one name, one place — so
+    it is recognised where it lives instead of being charged as debt.
+
+    ⚠⚠ BOTH HALVES ARE REQUIRED, and the second is what keeps this safe: the
+    name must be used somewhere beyond its own declaration. A const nobody
+    calls is dead code, not a declaration, and excusing one would hide a family
+    whose address nothing reaches. Measured at R2169 over all 46: every one is
+    used elsewhere in its package, and none is dead.
+
+    ⚠ This does NOT excuse a const that other sites ALSO spell. The const is the
+    declaration; the sites that spell it anyway are the readers, and they stay
+    in the queue — which is the whole point of charging the right column.
+    """
+    lines: set[int] = set()
+    for name, span in const_items(text).items():
+        if is_used(name):
+            lines |= span
+    return lines
+
+
 def rust_site_roles(path: Path, text: str) -> list[tuple[int, str, str]]:
     """`(line, family stem, role)` for every spelled site in one Rust file,
     where role is `"reader"` or `"assertion"`.
@@ -477,33 +549,76 @@ def rust_site_roles(path: Path, text: str) -> list[tuple[int, str, str]]:
     whole_file_is_test = path in test_only_modules()
     spans = test_spans(text)
     lines = text.splitlines()
+    # ★ R2169 — a third role. An ASSERTION still wins, so the floor of 290 is
+    # untouched by construction: what this carves out is part of the READER
+    # half, which is the half that was charging declarations as debt.
+    declaring = declaring_lines(text, lambda name: _name_is_used(path, name))
     out: list[tuple[int, str, str]] = []
     for line, stem in rust_sites_in(text):
         if lines[line - 1].lstrip().startswith("//"):
             continue
-        is_test = whole_file_is_test or any(first <= line <= last for first, last in spans)
-        out.append((line, stem, "assertion" if is_test else "reader"))
+        if whole_file_is_test or any(first <= line <= last for first, last in spans):
+            out.append((line, stem, "assertion"))
+        elif line in declaring:
+            out.append((line, stem, "declaration"))
+        else:
+            out.append((line, stem, "reader"))
     return out
 
 
-def rust_roles(path: Path, text: str) -> tuple[int, int]:
-    """`(reader, assertion)` counts for the spelled sites in one Rust file."""
+@functools.lru_cache(maxsize=None)
+def _package_text(package: str) -> str:
+    """Every Rust source of one package, concatenated — the corpus a const's
+    name is looked for in."""
+    blobs: list[str] = []
+    for root in RUST_ROOTS:
+        base = ROOT / root / package
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*.rs")):
+            try:
+                blobs.append(path.read_text(encoding="utf-8", errors="replace"))
+            except OSError:
+                continue
+    return "\n".join(blobs)
+
+
+def _package_of(path: Path) -> str:
+    """The package directory a Rust source belongs to, or `""`."""
+    try:
+        parts = path.relative_to(ROOT).parts
+    except ValueError:
+        return ""
+    return parts[1] if len(parts) > 1 and parts[0] in RUST_ROOTS else ""
+
+
+def _name_is_used(path: Path, name: str) -> bool:
+    """Whether `name` appears in its package beyond its own declaration."""
+    package = _package_of(path)
+    if not package:
+        return False
+    return _package_text(package).count(name) > 1
+
+
+def rust_roles(path: Path, text: str) -> tuple[int, int, int]:
+    """`(reader, assertion, declaration)` counts for one Rust file's sites."""
     roles = [role for _line, _stem, role in rust_site_roles(path, text)]
-    return roles.count("reader"), roles.count("assertion")
+    return roles.count("reader"), roles.count("assertion"), roles.count("declaration")
 
 
-def rust_role_totals() -> tuple[int, int]:
-    """`(reader, assertion)` over the whole Rust population."""
-    reader = assertion = 0
+def rust_role_totals() -> tuple[int, int, int]:
+    """`(reader, assertion, declaration)` over the whole Rust population."""
+    reader = assertion = declaration = 0
     for path in rust_sources():
         try:
             body = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        one, two = rust_roles(path, body)
+        one, two, three = rust_roles(path, body)
         reader += one
         assertion += two
-    return reader, assertion
+        declaration += three
+    return reader, assertion, declaration
 
 
 @functools.lru_cache(maxsize=1)
@@ -721,12 +836,12 @@ def check() -> int:
     # still has one has got. Printed every run because the number this debt is
     # judged by has a FLOOR it must not cross, and a floor nobody states is a
     # target nobody can reach.
-    reader, assertion = rust_role_totals()
+    reader, assertion, declaration = rust_role_totals()
     print(
-        f"painted-addresses: of the rust half, {reader} reader(s) and "
-        f"{assertion} assertion(s) — the reducible queue is "
-        f"{walk_total + reader} (walks are all readers), and the census cannot "
-        f"legitimately fall below {assertion}"
+        f"painted-addresses: of the rust half, {reader} reader(s), "
+        f"{assertion} assertion(s) and {declaration} declaration(s) — the "
+        f"reducible queue is {walk_total + reader} (walks are all readers), and "
+        f"the census cannot legitimately fall below {assertion + declaration}"
     )
     # ★★★★★ R2147 — and WHETHER EACH FAMILY'S VALUE IS HELD AT ALL, which
     # neither line above can say. Converting a family's last speller removes
@@ -1873,16 +1988,16 @@ def selftest() -> int:
     # The case that matters most is the third: it is the shape that refuted the
     # naive "everything after the first #[cfg(test)]" rule on this tree's own
     # 54 files, and it is what a later simplification would break first.
-    role_cases: list[tuple[str, str, tuple[int, int]]] = [
+    role_cases: list[tuple[str, str, tuple[int, int, int]]] = [
         (
             "a literal in production is a reader",
             'fn view() { tag("lab.node.T-01"); }\n',
-            (1, 0),
+            (1, 0, 0),
         ),
         (
             "a literal inside a #[cfg(test)] module is an assertion",
             '#[cfg(test)]\nmod tests {\n  fn t() { assert("lab.node.T-01"); }\n}\n',
-            (0, 1),
+            (0, 1, 0),
         ),
         (
             "★★★★★ a production item AFTER the test module is still a READER — "
@@ -1890,24 +2005,24 @@ def selftest() -> int:
             "of this tree have the shape",
             '#[cfg(test)]\nmod tests {\n  fn t() { assert("lab.node.A"); }\n}\n'
             'const W: &str = "lab.node.B";\n',
-            (1, 1),
+            (1, 1, 0),
         ),
         (
             "★ a #[cfg(test)] on a single fn covers only that fn",
             '#[cfg(test)]\nfn helper() { tag("lab.node.A"); }\n'
             'fn view() { tag("lab.node.B"); }\n',
-            (1, 1),
+            (1, 1, 0),
         ),
         (
             "a comment is neither a reader nor an assertion",
             '// lab.node.T-01 is the card\nfn view() {}\n',
-            (0, 0),
+            (0, 0, 0),
         ),
         (
             "two test modules both count as assertions",
             '#[cfg(test)]\nmod a {\n  fn t() { assert("lab.node.A"); }\n}\n'
             '#[cfg(test)]\nmod b {\n  fn t() { assert("lab.node.B"); }\n}\n',
-            (0, 2),
+            (0, 2, 0),
         ),
     ]
     for label, fixture, want in role_cases:
@@ -1915,6 +2030,53 @@ def selftest() -> int:
         if got != want:
             failed += 1
             print(f"FAIL: {label}: rust_roles -> {got}, wanted {want}", file=sys.stderr)
+
+    # ★★★★★ R2169 — the DECLARING SITE, against fixtures for the reason above:
+    # what must not rot is the discrimination between a name other code calls
+    # and a literal used inline. Tested on [`declaring_lines`] rather than
+    # through `rust_roles`, because the "is it used" half needs a package and
+    # the rule must be checkable without one.
+    used = {"HOVER_KEYS", "CARD_TAG", "SPAN"}
+    declaring_cases: list[tuple[str, str, set[int]]] = [
+        (
+            "a const bound to one address is a declaration",
+            'const CARD_TAG: &str = "lab.node.T-01";\n',
+            {1},
+        ),
+        (
+            "★ a multi-line const array covers EVERY line it holds — the shape "
+            "that had six addresses charged as six readers",
+            'const HOVER_KEYS: [&str; 2] = [\n    "a.hover.one",\n    "a.hover.two",\n];\n',
+            {1, 2, 3, 4},
+        ),
+        (
+            "★★ a const whose name NOTHING else calls is dead code, not a "
+            "declaration — the half that keeps this from excusing a family "
+            "whose address nothing reaches",
+            'const UNUSED: &str = "lab.node.T-01";\n',
+            set(),
+        ),
+        (
+            "an inline literal is not a declaration",
+            'fn view() { tag("lab.node.T-01"); }\n',
+            set(),
+        ),
+        (
+            "★ a let binding is not one either — it is not a NAME other code "
+            "can call, only a local",
+            'fn view() { let t = "lab.node.T-01"; use_it(t); }\n',
+            set(),
+        ),
+    ]
+    for label, fixture, want in declaring_cases:
+        got = declaring_lines(fixture, lambda name: name in used)
+        if got != want:
+            failed += 1
+            print(
+                f"FAIL: {label}: declaring_lines -> {sorted(got)}, "
+                f"wanted {sorted(want)}",
+                file=sys.stderr,
+            )
 
     # ★★★★★ R2147 — the rule that says a family's VALUE is held. Against
     # fixtures, because what must not rot is the discrimination: a family
@@ -2080,7 +2242,7 @@ def selftest() -> int:
     # a bug that lost or invented sites would show up as arithmetic rather than
     # as a number nobody re-derives.
     retyped_n, single_n = rust_reader_duplication()
-    reader_total, _assert_total = rust_role_totals()
+    reader_total, _assert_total, _decl_total = rust_role_totals()
     if retyped_n + single_n != reader_total:
         failed += 1
         print(
@@ -2686,6 +2848,7 @@ def selftest() -> int:
             grammar_cases,
             schema_cases,
             vocab_cases,
+            declaring_cases,
         )
     ) + (
         5  # R2147/R2166: four classifier words and the artifact corpus floor

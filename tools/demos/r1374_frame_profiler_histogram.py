@@ -50,6 +50,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     abs_rects_of,
+    chart_addresses,
     run_demo,
     wait_until,
 )
@@ -98,8 +99,10 @@ def rects(tf: RpcSubprocess) -> dict[str, tuple[int, int, int, int]]:
     return abs_rects_of(tf.snapshot(source="paint", viewport=VIEWPORT))
 
 
-def bar(r: dict[str, tuple[int, int, int, int]], k: int) -> tuple[int, int, int, int]:
-    tag = f"histogram.bar.{k}"
+# ⚠ Each helper takes the composer as an ARGUMENT, and this screen paints TWO
+# charts, so the composer also carries WHICH one is meant (R2162, R2165).
+def bar(r: dict[str, tuple[int, int, int, int]], h, k: int) -> tuple[int, int, int, int]:
+    tag = h.at("bar", index=k)
     assert tag in r, f"{tag} present in the paint scene"
     return r[tag]
 
@@ -120,21 +123,21 @@ def find_node(node, tag: str):
     return None
 
 
-def bar_fill(snap, k: int) -> tuple[int, int, int]:
-    node = find_node(snap, f"histogram.bar.{k}")
-    assert node is not None, f"histogram.bar.{k} node present in the snapshot"
+def bar_fill(snap, h, k: int) -> tuple[int, int, int]:
+    node = find_node(snap, h.at("bar", index=k))
+    assert node is not None, f"{h.at('bar', index=k)} node present in the snapshot"
     fill = (node.get("style") or {}).get("fill")
     assert fill is not None, f"bar {k} carries a queryable style.fill"
     return (fill["r"], fill["g"], fill["b"])
 
 
-def wait_histogram(tf: RpcSubprocess) -> dict[str, tuple[int, int, int, int]]:
+def wait_histogram(tf: RpcSubprocess, h) -> dict[str, tuple[int, int, int, int]]:
     """Poll the paint snapshot until the histogram panel's bars have painted
     (the measured-rect seam publishes + the re-view lands its bars)."""
 
     def ready() -> Any:
         r = rects(tf)
-        return r if f"histogram.bar.{HIST_BINS - 1}" in r else None
+        return r if h.at("bar", index=HIST_BINS - 1) in r else None
 
     return wait_until(ready, desc="the histogram panel paints its bars")
 
@@ -144,20 +147,25 @@ def body() -> None:
         _wait_available(tf)
         # Drive several fresh frames so the rolling window has a distribution to
         # bin, then let the histogram's measured-rect seam settle.
+        # ★★★★★ R2165 — TWO charts on this screen, so each composer names the
+        # one it means rather than being guessed from a single-chart unpacking.
+        hist = chart_addresses(tf, viewport=VIEWPORT, prefix="histogram")
+        line = chart_addresses(tf, viewport=VIEWPORT, prefix="chart")
+
         base = int(tf.frame_timings()["frame_count"])
         for i in range(6):
             _drive_frame_beyond(tf, base + i, f"driven frame {i + 1}")
-        r = wait_histogram(tf)
+        r = wait_histogram(tf, hist)
 
         # ── (A) one bar per bin + axes, a DISTINCT panel below the timeline ──
         for k in range(HIST_BINS):
-            assert f"histogram.bar.{k}" in r, f"bar {k} of the distribution painted"
-        assert f"histogram.bar.{HIST_BINS}" not in r, "no phantom extra bin"
-        assert "histogram.axis.x" in r, "the histogram has its own x-axis"
-        assert "histogram.axis.y" in r, "and its own y-axis"
-        assert "chart.series.0" in r, "the timeline (line chart) still paints"
-        timeline_axis_y = r["chart.axis.x"][1]
-        hist_axis_y = r["histogram.axis.x"][1]
+            assert hist.at("bar", index=k) in r, f"bar {k} of the distribution painted"
+        assert hist.at("bar", index=HIST_BINS) not in r, "no phantom extra bin"
+        assert hist.at("axis_x") in r, "the histogram has its own x-axis"
+        assert hist.at("axis_y") in r, "and its own y-axis"
+        assert line.at("series", index=0) in r, "the timeline (line chart) still paints"
+        timeline_axis_y = r[line.at("axis_x")][1]
+        hist_axis_y = r[hist.at("axis_x")][1]
         assert hist_axis_y > timeline_axis_y, (
             "the histogram is a distinct panel BELOW the timeline "
             f"(timeline x-axis at y={timeline_axis_y}, histogram at y={hist_axis_y})"
@@ -166,13 +174,13 @@ def body() -> None:
         # ── (B) every bar sits on the one baseline (the x-axis) ──────────────
         baseline = hist_axis_y
         for k in range(HIST_BINS):
-            _, y, _, h = bar(r, k)
+            _, y, _, h = bar(r, hist, k)
             assert abs((y + h) - baseline) <= 3, (
                 f"bar {k}'s bottom edge (y+h={y + h}) sits on the baseline {baseline}"
             )
 
         # ── (C) bars are laid out left-to-right, non-overlapping order ───────
-        xs = [bar(r, k)[0] for k in range(HIST_BINS)]
+        xs = [bar(r, hist, k)[0] for k in range(HIST_BINS)]
         assert xs == sorted(xs), f"bars ascend left-to-right by x: {xs}"
         assert len(set(xs)) == HIST_BINS, "each bar occupies its own x slot"
 
@@ -181,17 +189,17 @@ def body() -> None:
         # were binned" check (a broken binning would leave every bar at the 1px
         # stub floor). Not asserting `min >= 1`: the `max(1.0)` clamp forces it,
         # so it could never fail.
-        heights = [bar(r, k)[3] for k in range(HIST_BINS)]
+        heights = [bar(r, hist, k)[3] for k in range(HIST_BINS)]
         assert max(heights) > 8, (
             f"the modal bin has a real bar (frames landed in it); heights={heights}"
         )
-        widths = [bar(r, k)[2] for k in range(HIST_BINS)]
+        widths = [bar(r, hist, k)[2] for k in range(HIST_BINS)]
         assert min(widths) >= 1 and max(widths) - min(widths) <= 2, (
             f"the bars share a uniform slot width: {widths}"
         )
 
         # ── (E) layout-native: a real resize re-spans the bars ───────────────
-        before_right = max(x + w for (x, _, w, _) in (bar(r, k) for k in range(HIST_BINS)))
+        before_right = max(x + w for (x, _, w, _) in (bar(r, hist, k) for k in range(HIST_BINS)))
         resp = tf.request("scene/resize", {"width": 1040, "height": 560})
         assert resp is not None and resp.result is not None, "scene/resize accepted"
 
@@ -200,20 +208,21 @@ def body() -> None:
             if s["rect"]["w"] != 1040:
                 return None
             rr = abs_rects_of(s)
-            return rr if f"histogram.bar.{HIST_BINS - 1}" in rr else None
+            return rr if hist.at("bar", index=HIST_BINS - 1) in rr else None
 
         r2 = wait_until(widened, desc="the window settles wider and the histogram repaints")
         after_right = max(
-            x + w for (x, _, w, _) in (r2[f"histogram.bar.{k}"] for k in range(HIST_BINS))
+            x + w
+            for (x, _, w, _) in (r2[hist.at("bar", index=k)] for k in range(HIST_BINS))
         )
         assert after_right > before_right, (
             f"a wider window re-spans the histogram: rightmost edge "
             f"{before_right} -> {after_right} (a stale body would not move)"
         )
         # The baseline invariant still holds at the new size.
-        base2 = r2["histogram.axis.x"][1]
+        base2 = r2[hist.at("axis_x")][1]
         for k in range(HIST_BINS):
-            _, y, _, h = r2[f"histogram.bar.{k}"]
+            _, y, _, h = r2[hist.at("bar", index=k)]
             assert abs((y + h) - base2) <= 3, f"bar {k} still on the baseline after resize"
 
         # ── (F) the over-budget colour classification reaches the wire ───────
@@ -229,10 +238,11 @@ def body() -> None:
 
         def coloured() -> Any:
             s = tf.snapshot(source="paint", viewport=(1040, 560))
-            return s if find_node(s, f"histogram.bar.{HIST_BINS - 1}") is not None else None
+            found = find_node(s, hist.at("bar", index=HIST_BINS - 1))
+            return s if found is not None else None
 
         snap_f = wait_until(coloured, desc="the histogram repaints under the 1s budget")
-        fills = [bar_fill(snap_f, k) for k in range(HIST_BINS)]
+        fills = [bar_fill(snap_f, hist, k) for k in range(HIST_BINS)]
         assert len(set(fills)) == 1, (
             f"under a 1s budget no bin is over -> every bar carries the one "
             f"under-budget colour (the classification, over the wire); got {sorted(set(fills))}"
