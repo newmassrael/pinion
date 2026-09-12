@@ -5385,8 +5385,48 @@ def bounded_row(tf, *, ext: str = "/external") -> dict:
     ⚠ Goes through [`screen_spec`] for the reason [`form_part_prefixes`] does:
     two screens publish `spec` in two spellings and that difference belongs to
     one place.
+
+    ★ R2156 — one member of [`form_row`]'s roster now, rather than its own
+    published key. The name stays because *the bounded row* is what its callers
+    mean, and the extra columns are this role's alone.
     """
-    return screen_spec(tf, ext)["bounded"]
+    return form_row(tf, "bounded", ext=ext)
+
+
+def form_row(tf, role: str, *, ext: str = "/external") -> dict:
+    """The settings row playing one ROLE, as the screen declares it.
+
+    ★★★★★ R2156 — the walks' half of the second vocabulary. A configuration key
+    is the target's word, not the screen's, and a walk that spells one is making
+    a second unchecked claim about which row it means: `listen.endpoints` is
+    *the listening row*, `connect.endpoints` is *the row worked out from the
+    wires*, and a walk naming the string is right only for as long as the screen
+    keeps using that key for that job.
+
+        row = form_row(tf, "dialled")
+        tf.invoke(f"{EXT}/author_field", row["key"])
+
+    Every row carries `role`, `key` and `control` — the address that row's
+    control is painted under, for the reason [`form_part_tag`] exists. The
+    `bounded` role carries its bounds as well; [`bounded_row`] is the name for
+    that one.
+
+    ⚠ A role the screen does not publish is an `AssertionError` naming the ones
+    it does, never an empty dict. This is [`published_tags`]' refusal, and it is
+    the whole point: a walk handed `{}` would compose `None` into an address,
+    find nothing, and report that the SCREEN did not paint the row — which is
+    the silence this campaign exists to remove, one language further out.
+    """
+    rows = screen_spec(tf, ext)["rows"]
+    for row in rows:
+        if row.get("role") == role:
+            return row
+    raise AssertionError(
+        f"this screen publishes no form row playing the role {role!r}. It "
+        f"publishes {sorted(row.get('role') for row in rows)}. A walk cannot "
+        "name a Rust item, so a role it is not handed is one it would have to "
+        "spell a configuration key for."
+    )
 
 
 def form_part_tag(tf, part: str, key: str, *, ext: str = "/external") -> str:

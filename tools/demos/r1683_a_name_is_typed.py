@@ -50,6 +50,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     assert_router_press_moves,
+    form_row,
     inspector_seats,
     run_demo,
 )
@@ -174,19 +175,24 @@ def body() -> None:
         assert "edge-01" in q(tf, "nodes").split(","), "and renamed nothing"
 
         # ── (G) the same field, the other target ────────────────────
+        # ★ R2156 — the key the screen's own operation table says this act
+        # types in, asked for rather than spelled. The whole point of the row
+        # is that the catalogue does NOT offer it, so a walk naming the string
+        # was claiming that about a path it could not check.
+        typed = form_row(tf, "typed")["key"]
         keys_before = [f["key"] for f in json.loads(q(tf, "form"))]
-        assert "transport.unicast.lowlatency" not in keys_before, "not held, and not offered"
-        assert all(
-            chip != "transport.unicast.lowlatency" for chip in spec.get("addable", [])
-        ), "the catalogue does not offer it, which is the point of typing one"
+        assert typed not in keys_before, "not held, and not offered"
+        assert all(chip != typed for chip in spec.get("addable", [])), (
+            "the catalogue does not offer it, which is the point of typing one"
+        )
 
         press(tf, seat["addkey"])
         assert_eq(editing(tf)["target"], "key", "★ the same field, a different target")
         assert_eq(editing(tf)["text"], "", "and this one opens empty — there is no key yet")
-        type_keys(tf, "transport.unicast.lowlatency")
+        type_keys(tf, typed)
         press(tf, seat["rename"])
         keys_after = [f["key"] for f in json.loads(q(tf, "form"))]
-        assert "transport.unicast.lowlatency" in keys_after, (
+        assert typed in keys_after, (
             "★★ a path the catalogue never offered is on the form, typed"
         )
         assert_eq(
@@ -196,12 +202,11 @@ def body() -> None:
 
         # Twice is refused rather than silently duplicated.
         press(tf, seat["addkey"])
-        tf.invoke(f"{EXT}/type", "transport.unicast.lowlatency")
+        tf.invoke(f"{EXT}/type", typed)
         why = refused(tf, "apply", "")
         assert "already holds" in why, f"a key it already has is refused: {why}"
         assert_eq(
-            len([f for f in json.loads(q(tf, "form"))
-                 if f["key"] == "transport.unicast.lowlatency"]),
+            len([f for f in json.loads(q(tf, "form")) if f["key"] == typed]),
             1,
             "★ and there is still exactly one such row",
         )

@@ -61,6 +61,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     find_by_tag,
+    form_row,
     inspector_tag,
     run_demo,
     texts_of,
@@ -259,7 +260,7 @@ def body() -> None:
             )
         overlap = set(s["choices"]) & set(s["formats"]) | set(s["formats"]) & set(s["free"])
         assert_eq(overlap, set(), "and no leaf is in two classes")
-        assert "listen.endpoints" in s["formats"], (
+        assert form_row(tf, "listening")["key"] in s["formats"], (
             f"★ a list of formatted strings IS a formatted string surface — a "
             f"meter reading only scalars would miss this screen's two most "
             f"important strings: {s['formats']}"

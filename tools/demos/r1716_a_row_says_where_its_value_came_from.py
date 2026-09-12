@@ -82,9 +82,26 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     form_part_prefixes,
     form_part_tag,
+    form_row,
     run_demo,
     screen_spec,
 )
+
+
+def dialled_key(tf) -> str:
+    """The row this walk is about: the one worked out from the WIRES.
+
+    ⚠ `_key`, because this file already binds `dialled` to the LIST of
+    addresses that row holds. Two meanings under one name is a defect this
+    repository counts by the dozen, and Python's scoping turns this particular
+    one into a function-wide `UnboundLocalError` rather than a shadowed read.
+
+    ★ R2156 — asked for rather than spelled. Which configuration path carries
+    the dialled addresses is the screen's own answer (it names that row
+    internally and publishes the role), and a walk spelling the path was making
+    a second claim about it that nothing checked.
+    """
+    return form_row(tf, "dialled")["key"]
 
 EXAMPLE = "hello-node-lab"
 EXT = "/external"
@@ -341,7 +358,7 @@ def e_drawing_a_link_moves_the_row(tf) -> None:
     assert dialling, "E: no card on this canvas dials anything, so there is no derived row to be about"
     subject = dialling[0]
     tf.invoke(f"{EXT}/select", subject)
-    opening = row(tf, "connect.endpoints")
+    opening = row(tf, dialled_key(tf))
     assert_eq(opening["source"], "wire", "E: it says so")
     dialled = [part.strip() for part in opening["value"].split(",")]
     # ★ R2079 — ONE PER DRAWN LINK, counted off the model rather than the two
@@ -398,7 +415,7 @@ def e_drawing_a_link_moves_the_row(tf) -> None:
     tf.invoke(f"{EXT}/set_field", "listen.endpoints=tcp/0.0.0.0:7449, tcp/0.0.0.0:7450")
     tf.invoke(f"{EXT}/select", subject)
     tf.invoke(f"{EXT}/connect", f"{subject},{grow_to}")
-    grown = [part.strip() for part in row(tf, "connect.endpoints")["value"].split(",")]
+    grown = [part.strip() for part in row(tf, dialled_key(tf))["value"].split(",")]
     ok(
         f"E: ★★★★★ drawing a link MOVES the row ({grown})",
         len(grown) == len(dialled) + 1 and set(dialled) <= set(grown),
@@ -418,7 +435,7 @@ def e_drawing_a_link_moves_the_row(tf) -> None:
     assert drawn, "the link this section drew is in the model"
     tf.invoke(f"{EXT}/delete_link", str(drawn[0]["id"]))
     assert_eq(
-        [part.strip() for part in row(tf, "connect.endpoints")["value"].split(",")],
+        [part.strip() for part in row(tf, dialled_key(tf))["value"].split(",")],
         dialled,
         "E: ★ and undrawing it takes the address back out",
     )
@@ -573,9 +590,9 @@ def h_taking_the_wires_row_over_leaves_the_wires_reaching_it(tf) -> None:
     dials = sorted({link["from"] for link in json.loads(tf.query(f"{EXT}/links"))})
     assert dials, "H: no card dials anything, so there is no shared row to take over"
     tf.invoke(f"{EXT}/select", dials[0])
-    drawn = [part.strip() for part in row(tf, "connect.endpoints")["value"].split(",")]
-    tf.invoke(f"{EXT}/author_field", "connect.endpoints")
-    taken = row(tf, "connect.endpoints")
+    drawn = [part.strip() for part in row(tf, dialled_key(tf))["value"].split(",")]
+    tf.invoke(f"{EXT}/author_field", dialled_key(tf))
+    taken = row(tf, dialled_key(tf))
     assert_eq(
         taken["written"],
         ", ".join(drawn),
@@ -587,7 +604,7 @@ def h_taking_the_wires_row_over_leaves_the_wires_reaching_it(tf) -> None:
     # A row can hold both contributions now, so the payment is gone: writing an
     # address of your own leaves every drawn one reaching the row.
     tf.invoke(f"{EXT}/set_field", "connect.endpoints=tcp/10.0.0.21:7449")
-    shared = row(tf, "connect.endpoints")
+    shared = row(tf, dialled_key(tf))
     assert_eq(
         shared["written"],
         "tcp/10.0.0.21:7449",
@@ -616,9 +633,9 @@ def h_taking_the_wires_row_over_leaves_the_wires_reaching_it(tf) -> None:
         f"legitimate thing to want ({verdict})",
         verdict["may_launch"],
     )
-    tf.invoke(f"{EXT}/remove_field", "connect.endpoints")
+    tf.invoke(f"{EXT}/remove_field", dialled_key(tf))
     assert_eq(
-        row(tf, "connect.endpoints")["source"],
+        row(tf, dialled_key(tf))["source"],
         "wire",
         "H: ★ and giving their half back leaves the row worked out from the wires",
     )

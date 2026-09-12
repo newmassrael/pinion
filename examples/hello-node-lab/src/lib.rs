@@ -4749,7 +4749,7 @@ fn opening_id(id: &str) -> String {
 fn offered(key: &str) -> ConfigField {
     let (word, applies, opening) = match key {
         key::DISCOVERY_MULTICAST_ENABLED
-        | "timestamping.enabled"
+        | key::TIMESTAMPING_ENABLED
         | key::TRANSPORT_UNICAST_COMPRESSION_ENABLED => ("bool", Applies::Restart, "false"),
         "namespace" => ("path", Applies::Restart, "demo"),
         key::ROUTING_PEER_MODE => ("mode", Applies::Restart, "peer_to_peer"),
@@ -18384,24 +18384,126 @@ fn fields_wire() -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// ★★★★★ R2120 — the bounded row, with the address its control is painted
-/// under.
+/// ★★★★★ R2156 — **the form row playing each ROLE this screen names**, so a
+/// walk states the role and is handed the configuration key.
 ///
-/// The `control` column is here for the same reason `fields[].control` is: a
-/// walk is Python and cannot call [`address::form_control`], so without it
-/// every walk that presses this row composes the address itself and a wrong
-/// letter reads as the screen not painting the row.
-fn bounded_wire() -> serde_json::Value {
-    let row = settings::bounded_row();
-    serde_json::json!({
-        "key": row.key,
-        "floor": row.floor,
-        "ceiling": row.ceiling,
-        "at": row.at,
-        "over": row.over,
-        "allowed": row.allowed,
-        "control": address::form_control(row.key),
-    })
+/// R2120 published exactly one of these — the bounded row — and it worked: no
+/// walk spells that path or the value past its ceiling any more. What it did
+/// not do is make the ARRANGEMENT visible, so every other role stayed
+/// hand-spelled. Measured at R2156, eight walks named a configuration key
+/// outright, and each one meant a role this screen already knows:
+/// *the listening row*, *the row worked out from the wires*, *the switch the
+/// findings read*, *the key the add-key operation types*, *the row the wire can
+/// remove*.
+///
+/// ⇒ a roster rather than six sibling keys. The set of roles is then something
+/// a reader can COUNT and a gate can check, and adding the seventh is a row
+/// here instead of another top-level name nobody enumerates.
+///
+/// ⚠ `bounded` moved INTO this roster rather than being published twice. Two
+/// spellings of one fact is the defect this whole campaign is about, and a
+/// compatibility copy would have been exactly that with a kind word for it.
+///
+/// # What each role is derived from
+///
+/// * `bounded` — [`settings::bounded_row`], which asserts one row has a ceiling.
+/// * `typed` / `removable` — [`spec::verb_argument`], the operation table's own
+///   argument for `add_key` and `remove_field`, each asserted unique.
+/// * `listening` / `dialled` / `discovery` — the keys this screen reads by
+///   name: the endpoints the canvas draws links from, the row `dialled_row`
+///   works out from the wires, and the switch `Finding::DiscoveryOn` is raised
+///   by. Stated rather than searched for, because each IS the screen's own
+///   answer; the gate is what holds them to being sourced and present.
+///
+/// ⚠ The `control` column is on every row for the reason `fields[].control`
+/// is: a walk is Python and cannot call [`address::form_control`], so without
+/// it a walk pressing the row composes that address itself and a wrong letter
+/// reads as the screen not painting the row.
+/// The roster itself: `(role, key)`, in publishing order.
+///
+/// ⚠ Separate from [`rows_wire`] so the gate that checks the roster and the
+/// wire that carries it read ONE derivation. A gate holding its own copy of a
+/// list is the shape that passes while the published thing is wrong, and this
+/// tree has measured that twice — two checks over one population, and one
+/// population under two names.
+pub(crate) fn role_rows() -> Vec<(&'static str, &'static str)> {
+    let mut rows = vec![
+        ("listening", key::LISTEN_ENDPOINTS),
+        ("dialled", DIALLED_KEY),
+        ("discovery", key::DISCOVERY_MULTICAST_ENABLED),
+        ("typed", spec::verb_argument("add_key")),
+        ("removable", spec::verb_argument("remove_field")),
+        ("bounded", settings::bounded_row().key),
+    ];
+    // ⚠ Chosen LAST, from what the roles above have not already taken. The
+    // first draft picked freely and landed on the discovery switch, which the
+    // `discovery` role already names — caught by the gate's own de-duplication
+    // on its first run. Two roles on one row is not a tidiness problem: a walk
+    // asserting about the second would really be asserting about the first, and
+    // would keep passing after the two stopped meaning the same thing.
+    let taken: Vec<&'static str> = rows.iter().map(|(_, key)| *key).collect();
+    rows.push(("switched", switched_chip(&taken)));
+    rows
+}
+
+/// A catalogue chip the target types `bool`, and which the opening card does
+/// not already hold.
+///
+/// ⚠ **This role is *a* row, not *the* row, and the difference is stated
+/// rather than hidden.** The other five are unique by construction — one
+/// bounded row, one `add_key` argument. Three chips are boolean here, and a
+/// reader that needs one needs it because it is *testing what a boolean row
+/// looks like*, so any of them answers. The first the catalogue offers is
+/// taken, in the catalogue's own order, which is the reference's.
+///
+/// # Panics
+///
+/// If the catalogue offers no boolean chip the card lacks. A reader asking for
+/// this role is about to assert that a boolean row gets a toggle rather than a
+/// text box; handed nothing, it would assert that about no row at all and pass.
+fn switched_chip(taken: &[&'static str]) -> &'static str {
+    let held: Vec<&str> = spec::FIELDS.iter().map(|field| field.key).collect();
+    let found = spec::ADDABLE
+        .iter()
+        .copied()
+        .filter(|key| !held.contains(key) && !taken.contains(key))
+        .find(|key| {
+            matches!(
+                settings::shape_of(key),
+                Some(pinion_core::widgets::config_form::FieldType::Boolean)
+            )
+        });
+    found.expect(
+        "the catalogue offers no boolean chip that the opening card lacks and \
+         another role has not already taken, so a reader checking what a \
+         boolean row looks like has no row to add",
+    )
+}
+
+fn rows_wire() -> serde_json::Value {
+    let bounded = settings::bounded_row();
+    let rows: Vec<serde_json::Value> = role_rows()
+        .into_iter()
+        .map(|(role, key)| {
+            let mut described = serde_json::json!({
+                "role": role,
+                "key": key,
+                "control": address::form_control(key),
+            });
+            if role == "bounded" {
+                let object = described
+                    .as_object_mut()
+                    .expect("the description is an object");
+                object.insert("floor".into(), bounded.floor.into());
+                object.insert("ceiling".into(), bounded.ceiling.into());
+                object.insert("at".into(), bounded.at.into());
+                object.insert("over".into(), bounded.over.clone().into());
+                object.insert("allowed".into(), bounded.allowed.clone().into());
+            }
+            described
+        })
+        .collect();
+    serde_json::Value::Array(rows)
 }
 
 /// ★★★★★ R2104 — every seat of the canvas toolbar, beside the address it is
@@ -18963,17 +19065,14 @@ fn spec_json() -> serde_json::Value {
         // the local gate does, so the two cannot come to disagree about which
         // population a voice family stands over.
         "fields": fields_wire(),
-        // ★★★★★ R2120 — **the one row with a ceiling, and the values either
-        // side of it**, derived from the specification's own field table and
-        // the option surface's declared bounds.
-        //
-        // A walk that wanted to drive *a value the target refuses* used to
-        // spell the configuration path AND a number it believed was past the
-        // bound — two facts neither of which it could check, and the second of
-        // which this screen never published at all. Measured at R2120: eight
-        // walk sites, five of them carrying that number, and nothing anywhere
-        // deriving it from the bound the surface declares.
-        "bounded": bounded_wire(),
+        // ★★★★★ R2120 / R2156 — **the form row playing each ROLE this screen
+        // names**, so a walk states the role and is handed the configuration
+        // key. R2120 published one of these (the bounded row, with the values
+        // either side of its ceiling); R2156 measured eight walks still
+        // spelling a key outright and made the set a roster, so the roles are
+        // countable and the seventh is a row rather than another top-level
+        // name. See `rows_wire` for what each role is derived from.
+        "rows": rows_wire(),
         // ★★★★★ R2053 — **the prefix each part of a form row is addressed
         // under**, derived from the one place that composes them.
         //

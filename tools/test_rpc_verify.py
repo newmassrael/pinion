@@ -497,6 +497,49 @@ def test_chart_grammar_composes_what_the_crate_paints() -> None:
           "chart_overlay_address: `value` is not `value_at`")
 
 
+def test_form_row_hands_over_a_role_and_refuses_one_it_was_not_given() -> None:
+    """★★★★★ R2156 — the roster reader, tested the round it was written.
+
+    R2154 recorded what happens otherwise: `chart_family` shipped with one
+    caller and no case here, and the untested half was composing a string with
+    braces in it. A helper nobody tests is a second unchecked copy of the thing
+    it replaced.
+
+    The refusal is the half that matters. A walk handed `{}` for a role the
+    screen does not publish would read `None` out of it, compose that into an
+    address or an invocation, and report the SCREEN as not painting the row —
+    the silence this whole campaign exists to remove, one language further out.
+    """
+    published = {
+        "rows": [
+            {"role": "listening", "key": "listen.endpoints", "control": "lab.c.listen"},
+            {"role": "bounded", "key": "t.batch", "control": "lab.c.batch", "over": "9"},
+        ]
+    }
+    # ⚠ Delivered as a JSON VALUE, not a string holding JSON — R2129 made that
+    # the one shape every screen publishes, and `screen_spec` refuses the other.
+    tf = wired()
+    deliver(tf, {"jsonrpc": "2.0", "id": 1, "result": published})
+    row = rpc_verify.form_row(tf, "listening")
+    check(row["key"] == "listen.endpoints", f"form_row: hands over the role -> {row}")
+    check(row["control"] == "lab.c.listen", "form_row: and the row's own control")
+
+    # ★ The bounded role's extra columns ride on the same row, which is why
+    # `bounded_row` is a NAME for one member rather than a second reader.
+    deliver(tf, {"jsonrpc": "2.0", "id": 2, "result": published})
+    check(rpc_verify.bounded_row(tf)["over"] == "9",
+          "bounded_row: reads its member of the same roster")
+
+    deliver(tf, {"jsonrpc": "2.0", "id": 3, "result": published})
+    try:
+        rpc_verify.form_row(tf, "dialled")
+    except AssertionError as refusal:
+        check("listening" in str(refusal) and "bounded" in str(refusal),
+              "form_row: a role it was not handed is refused, naming the ones it has")
+    else:
+        check(False, "form_row: an unpublished role must be refused, not returned empty")
+
+
 def test_chart_family_cuts_the_template_where_the_fields_run_out() -> None:
     """★★★★★ R2154 — the STEM half of the grammar, which had no test at all.
 

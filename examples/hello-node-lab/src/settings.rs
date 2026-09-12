@@ -227,7 +227,7 @@ fn refinements() -> Vec<(&'static str, FieldType)> {
             key::ROUTING_PEER_MODE,
             choice(&["peer_to_peer", "linkstate"]),
         ),
-        ("control.default_permission", choice(&["deny", "allow"])),
+        (key::CONTROL_DEFAULT_PERMISSION, choice(&["deny", "allow"])),
         // The transports the palette's own legend has — a word outside that
         // set is an address no pin on this screen has.
         (
@@ -252,12 +252,12 @@ fn refinements() -> Vec<(&'static str, FieldType)> {
             key::TRANSPORT_UNICAST_MAX_LINKS,
             FieldType::Integer { min: 1, max: 1024 },
         ),
-        ("listen.timeout_ms", millis()),
-        ("connect.timeout_ms", millis()),
-        ("queries.timeout_ms", millis()),
+        (key::LISTEN_TIMEOUT_MS, millis()),
+        (key::CONNECT_TIMEOUT_MS, millis()),
+        (key::QUERIES_TIMEOUT_MS, millis()),
         (key::ROUTING_INTERESTS_TIMEOUT, millis()),
-        ("discovery.delay", millis()),
-        ("discovery.timeout", millis()),
+        (key::DISCOVERY_DELAY, millis()),
+        (key::DISCOVERY_TIMEOUT, millis()),
     ]
 }
 

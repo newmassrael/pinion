@@ -864,11 +864,11 @@ pub const ADDABLE: &[&str] = &[
     // it is a per-message traffic parameter, and the reference marks it as such
     // on its own rows.
     crate::key::DISCOVERY_MULTICAST_ENABLED,
-    "timestamping.enabled",
+    crate::key::TIMESTAMPING_ENABLED,
     crate::key::TRANSPORT_UNICAST_COMPRESSION_ENABLED,
     "namespace",
     crate::key::ROUTING_PEER_MODE,
-    "plugin_loading.search_dirs",
+    crate::key::PLUGIN_LOADING_SEARCH_DIRS,
 ];
 
 /// The graph's name and the zoom the screen opens at.
@@ -1044,6 +1044,40 @@ pub use pinion_core::operation::Operation as OperationSpec;
 /// this is, whatever the ceiling becomes.
 pub const VALIDATE_ARG: &str = "transport.link.tx.batch_size=65536";
 
+/// ★★★★★ R2156 — **the configuration key one operation is declared to drive.**
+///
+/// The operation table already names these: `add_key` carries the key a person
+/// types in, `remove_field` the row the wire can take out. A walk exercising
+/// either used to spell that key, which is a second, unchecked claim about
+/// which row the screen's own table drives — and one that goes silently wrong
+/// the day the table changes, because the walk then drives a row that exists
+/// while asserting about the one it meant.
+///
+/// # Panics
+///
+/// If the verb is not declared exactly once. A role is only a role while one
+/// row plays it: two would make this answer arbitrary and nought would make it
+/// a guess, and both are states a reader must not be handed a string from.
+/// [`crate::settings::bounded_row`] takes the same position for the same
+/// reason.
+#[must_use]
+pub fn verb_argument(verb: &str) -> &'static str {
+    let found: Vec<&'static str> = OPERATIONS
+        .iter()
+        .filter_map(|op| op.verb)
+        .filter(|(named, _)| *named == verb)
+        .map(|(_, argument)| argument)
+        .collect();
+    assert_eq!(
+        found.len(),
+        1,
+        "the operation table declares {} operation(s) with the verb {verb:?} \
+         and every reader drives THE one: {found:?}",
+        found.len(),
+    );
+    found[0]
+}
+
 /// The thirty operations, in the reference's own order.
 ///
 /// The order is kept because it groups the way the tool does — the node's life,
@@ -1169,7 +1203,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
     // ── the form ─────────────────────────────────────────────────
     OperationSpec {
         name: "add a field from the catalogue",
-        verb: Some(("add_field", "timestamping.enabled")),
+        verb: Some(("add_field", crate::key::TIMESTAMPING_ENABLED)),
         gesture: true,
         witness: "form",
         needs: None,

@@ -51,6 +51,7 @@ from rpc_verify import (  # noqa: E402
     bounded_row,
     card_tag,
     form_part_tag,
+    form_row,
     frame_tag,
     inspector_tag,
     link_endpoint_tag,
@@ -311,18 +312,21 @@ GESTURES = {
     "add a field from the catalogue": lambda tf: press(
         tf, part_tag(tf, "add", catalogue_key(tf))
     ),
+    # ★ R2156 — the key this very operation row declares, asked for rather than
+    # spelled: the table and the driver named the same path twice, and only one
+    # of the two would have moved.
     "add a field by typing its key": lambda tf: type_into(
-        tf, inspector_tag(tf, "addkey"), "transport.unicast.lowlatency"
+        tf, inspector_tag(tf, "addkey"), form_row(tf, "typed")["key"]
     ),
     "edit a field": lambda tf: press(
-        tf, part_tag(tf, "item", "listen.endpoints.add")
+        tf, part_tag(tf, "item", f"{form_row(tf, 'listening')['key']}.add")
     ),
     # ★★ R1686 — the seat at the trailing edge of a row's key line. This row
     # read `gesture: false` from R1677 until now: the wire could take a row out
     # and the screen offered no way to, which the table was written to make
     # impossible to forget.
     "remove a field": lambda tf: press(
-        tf, part_tag(tf, "remove", "admin.permissions.write")
+        tf, part_tag(tf, "remove", form_row(tf, "removable")["key"])
     ),
     # ★★★ R1716 — the same edge of a row nobody wrote: the seat takes the value
     # OVER. `mode` is worked out from the role on every card, so it is the row
@@ -553,11 +557,12 @@ def body() -> None:
         )
 
         # The same field, a different row, a different shape: a list ELEMENT.
-        press(tf, part_tag(tf, "item", "listen.endpoints.0"))
+        listening = form_row(tf, "listening")["key"]
+        press(tf, part_tag(tf, "item", f"{listening}.0"))
         editing = json.loads(q(tf, "editing"))
         assert_eq(
             editing["target"],
-            "value:listen.endpoints[0]",
+            f"value:{listening}[0]",
             "★★ a list's element is a target of its own — the add affordance "
             "puts a placeholder in the list, so a screen that could not edit "
             "one could only ever grow invented addresses",
@@ -565,7 +570,7 @@ def body() -> None:
         elements = [
             e.strip()
             for e in {f["key"]: f["value"] for f in json.loads(q(tf, "form"))}[
-                "listen.endpoints"
+                listening
             ].split(",")
         ]
         assert_eq(editing["text"], elements[0], "seeded with that element alone")
@@ -574,7 +579,7 @@ def body() -> None:
         after = [
             e.strip()
             for e in {f["key"]: f["value"] for f in json.loads(q(tf, "form"))}[
-                "listen.endpoints"
+                listening
             ].split(",")
         ]
         assert_eq(after[0], "tcp/0.0.0.0:7999", "★ the element that was pressed changed")

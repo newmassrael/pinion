@@ -93,6 +93,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_action_refused,
     assert_eq,
+    bounded_row,
     run_demo,
 )
 
@@ -247,7 +248,8 @@ def body() -> None:
         # screen. Spelled here until this round, and the value was the half
         # nothing could check: the ceiling lives in the option surface and this
         # walk had no way to read it.
-        key, over = spec["bounded"]["key"], spec["bounded"]["over"]
+        bounded = bounded_row(tf)
+        key, over = bounded["key"], bounded["over"]
         tf.invoke(f"{EXT}/select", spec["selected_node"])
         tf.invoke(f"{EXT}/set_field", f"{key}={over}")
         lossy = export(tf)

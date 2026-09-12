@@ -670,6 +670,36 @@ def check() -> int:
         f"{len(gone_checks)} are already converted, which is a check deleted "
         f"rather than a debt repaid"
     )
+    # ★★★★★ R2156 — the SECOND vocabulary, whose walk half had no gate at all.
+    # Printed every run, zero or not: the number whose absence let this go
+    # unseen is the one this line carries.
+    keys = spelled_config_keys()
+    print(
+        f"painted-addresses: {len(keys)} walk site(s) spell a sourced "
+        f"configuration key (a walk asks the screen which row plays the role "
+        f"it means; the answer here is zero, not a budget)"
+    )
+    if keys:
+        bad = True
+        print(
+            "painted-addresses: a walk spells a configuration key it could ask "
+            "for",
+            file=sys.stderr,
+        )
+        for path, line, key in keys:
+            print(f"  [key] {path}:{line}: {key}", file=sys.stderr)
+        print(
+            "painted-addresses: a configuration key is the TARGET's word, not\n"
+            "            the screen's, and a walk that spells one is claiming\n"
+            "            which row it means without anything checking that. Ask\n"
+            "            the screen instead — `rpc_verify.form_row(tf, <role>)`\n"
+            "            hands over the row playing a role, and the screen is\n"
+            "            what knows which key that is. If the role you need is\n"
+            "            not published, add it to that screen's roster; do not\n"
+            "            spell the key.",
+            file=sys.stderr,
+        )
+        return 1
     joined = sorted(set(gone_checks) - read_unpinned())
     if joined:
         print(
@@ -1065,6 +1095,71 @@ def deleted_checks(
     )
 
 
+def spelled_config_keys() -> list[tuple[str, int, str]]:
+    """`(file, line, key)` for every WALK site spelling a sourced config key.
+
+    ★★★★★ R2156 — the second vocabulary's walk-side gate, and the half that had
+    none. R2155 gave the configuration keys a declaring module and a Rust gate;
+    a walk cannot call that module, so its answer is to ask the screen which row
+    plays the role it means ([`rpc_verify.form_row`]). Nothing was watching
+    whether it did.
+
+    ⚠ **This is NOT the address ratchet and does not budget.** A spelled address
+    is sometimes a legitimate value pin — that is why the census above pins
+    rather than demands zero. A spelled config KEY never is: the value is pinned
+    by the surface artifact and by `r2155_a_config_key_is_sourced`, so a walk
+    carrying one is a second, unchecked claim about which row it means and
+    nothing else. The answer is zero, it IS zero, and a gate that can say so is
+    worth more than a budget that lets it drift.
+
+    ⚠ **Dotted paths only, and that is measured.** Seven sourced paths are
+    single words — `id`, `mode`, `namespace`, `metadata`, `plugins`,
+    `downsampling`, `low_pass_filter`. Measured at R2156, eighteen unrelated
+    examples in this tree spell one of those for their own reasons, so a needle
+    over them would report a defect wherever an ordinary English word occurs.
+    A gate that cries constantly is a gate somebody switches off.
+
+    ⚠ Counted with `ast` for this file's standing reason: a regex cannot tell a
+    key from a sentence about one, and this module's own prose spells several.
+    """
+    found: list[tuple[str, int, str]] = []
+    for path in sources():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        name = str(path.relative_to(ROOT))
+        found.extend((name, line, key) for line, key in config_keys_in(text))
+    return sorted(found)
+
+
+def config_keys_in(source: str) -> list[tuple[int, str]]:
+    """`(line, key)` for every sourced configuration key one source spells.
+
+    The needle itself, over a string rather than a path, so the corpus sweep and
+    the selftest that proves the needle works are ONE derivation. See
+    [`spelled_config_keys`] for what is counted and what is deliberately not.
+    """
+    needles = {path for path in config_surface_paths() if "." in path}
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        # A file this tool cannot parse is a file it must not judge.
+        return []
+    return sorted(
+        (node.lineno, node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value in needles
+    )
+
+
+# ⚠ The needle above was emptied on purpose at R2156 and the selftest said
+# `a walk spelling 'admin.enabled' was not caught` — so its zero on this tree
+# is a measurement rather than the silence of a check that looks at nothing.
+
+
 def read_unpinned() -> set[str]:
     """The converted-and-unpinned families this tree already carries."""
     if not UNPINNED.is_file():
@@ -1138,6 +1233,17 @@ def unspelled() -> int:
             "these by accident"
         )
     return 0
+
+
+def _config_keys_in(source: str) -> list[str]:
+    """The sourced config keys one snippet spells, for the selftest.
+
+    ⚠ A caller of [`config_keys_in`], never a second copy of its rule. The
+    needle and the thing that exercises the needle sharing one derivation is
+    this file's own subject: a gate holding its own copy of the rule it checks
+    passes while the real one is wrong, which R2125 paid for one layer up.
+    """
+    return [key for _line, key in config_keys_in(source)]
 
 
 def _counts(source: str) -> list[str]:
@@ -1481,6 +1587,50 @@ def selftest() -> int:
     # ★★★★★ And the RUST POPULATION, asserted rather than assumed — the same
     # class the oracle case below is about. A `rglob` that matched nothing, or
     # an exclusion that matched everything, both answer zero and read as a pass.
+    # ★★★★★ R2156 — the config-key needle, which answers ZERO on this tree and
+    # so proves nothing by running. A gate whose only observed state is empty is
+    # indistinguishable from one that looks at nothing, and this file has
+    # already recorded that shape twice. So the needle is exercised against a
+    # source that DOES carry a key, and against one that carries the single-word
+    # paths it must decline.
+    surface = config_surface_paths()
+    dotted = [path for path in surface if "." in path]
+    single = [path for path in surface if "." not in path]
+    if not dotted or not single:
+        failed += 1
+        print(
+            f"FAIL: the config surface offers {len(dotted)} dotted and "
+            f"{len(single)} single-word path(s); the needle's two arms cannot "
+            "both be exercised, so one of them is untested",
+            file=sys.stderr,
+        )
+    else:
+        caught = _config_keys_in(f'row(tf, "{dotted[0]}")\n')
+        if caught != [dotted[0]]:
+            failed += 1
+            print(
+                f"FAIL: a walk spelling {dotted[0]!r} was not caught: {caught}",
+                file=sys.stderr,
+            )
+        # ⚠ The other arm. `id` and `mode` are sourced paths AND ordinary
+        # English; a needle over them reports a defect wherever the word occurs.
+        declined = _config_keys_in(f'press(tf, "{single[0]}")\n')
+        if declined:
+            failed += 1
+            print(
+                f"FAIL: the single-word path {single[0]!r} was counted as a "
+                f"spelled key: {declined} — an ordinary word is not a key",
+                file=sys.stderr,
+            )
+        # ⚠ And a MENTION is not a site: a comment is not in the tree at all.
+        mentioned = _config_keys_in(f"# this walk is about {dotted[0]}\n")
+        if mentioned:
+            failed += 1
+            print(
+                f"FAIL: a comment naming {dotted[0]!r} was counted: {mentioned}",
+                file=sys.stderr,
+            )
+
     rust_pop = rust_sources()
     crates_seen = {
         path.relative_to(ROOT / RUST_CENSUS_ROOT).parts[0] for path in rust_pop

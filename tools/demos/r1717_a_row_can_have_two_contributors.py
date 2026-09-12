@@ -79,8 +79,18 @@ from rpc_verify import (  # noqa: E402
     assert_action_refused,
     assert_eq,
     form_part_tag,
+    form_row,
     run_demo,
 )
+
+
+def dialled_key(tf) -> str:
+    """The row this walk is about: the one worked out from the WIRES.
+
+    ★ R2156 — the role, not the key. See the same helper in `r1716`, including
+    why the name carries `_key`.
+    """
+    return form_row(tf, "dialled")["key"]
 
 EXAMPLE = "hello-node-lab"
 EXT = "/external"
@@ -196,8 +206,8 @@ def share_the_connect_row(tf) -> list[str]:
     that seed. The wires come straight back as the other half.
     """
     tf.invoke(f"{EXT}/select", subject_that_dials(tf))
-    drawn = parts(row(tf, "connect.endpoints")["value"])
-    tf.invoke(f"{EXT}/author_field", "connect.endpoints")
+    drawn = parts(row(tf, dialled_key(tf))["value"])
+    tf.invoke(f"{EXT}/author_field", dialled_key(tf))
     tf.invoke(f"{EXT}/set_field", f"connect.endpoints={OUTSIDE}")
     return drawn
 
@@ -212,7 +222,7 @@ def a_the_wire_publishes_both_halves(tf) -> None:
     # no wire-derived row since R2074 made it a pure sink (measured: every other
     # card reaches it, so it can dial nothing without closing a cycle).
     tf.invoke(f"{EXT}/select", subject_that_dials(tf))
-    opening = row(tf, "connect.endpoints")
+    opening = row(tf, dialled_key(tf))
     assert_eq(opening["source"], "wire", "A: the opening row is the canvas's alone")
     assert_eq(
         opening["written"],
@@ -229,7 +239,7 @@ def a_the_wire_publishes_both_halves(tf) -> None:
     assert_eq(written["source"], None, "A: a row somebody wrote names no source")
     assert_eq(written["written"], written["value"], "A: and its halves are the same thing")
     drawn = share_the_connect_row(tf)
-    shared = row(tf, "connect.endpoints")
+    shared = row(tf, dialled_key(tf))
     assert_eq(shared["source"], "wire", "A: ★★ a shared row names what it shares with")
     assert_eq(shared["written"], OUTSIDE, "A: ★★ and what somebody wrote, exactly")
     ok(
@@ -264,7 +274,7 @@ def b_one_row_holds_both_contributions(tf) -> None:
         for link in json.loads(tf.query(f"{EXT}/links"))
         if link["from"] == subject
     ]
-    shown = parts(row(tf, "connect.endpoints")["value"])
+    shown = parts(row(tf, dialled_key(tf))["value"])
     ok(
         f"B: ★★★★★ the row holds both contributions ({shown}) — one written "
         f"plus {len(drawn_now)} drawn",
@@ -292,7 +302,7 @@ def b_one_row_holds_both_contributions(tf) -> None:
     # An address said twice is one address. The canvas draws to `shown[1]`, so
     # writing it as well must not double it.
     tf.invoke(f"{EXT}/set_field", f"connect.endpoints={OUTSIDE}, {shown[1]}")
-    both = parts(row(tf, "connect.endpoints")["value"])
+    both = parts(row(tf, dialled_key(tf))["value"])
     # ★ R2079 — UNCHANGED, which is the claim. This spelled the expected list
     # as `[OUTSIDE, shown[1], shown[2]]` and raised `IndexError` once the
     # subject dialled one thing rather than two: the third slot was the
@@ -312,7 +322,7 @@ def b_one_row_holds_both_contributions(tf) -> None:
     written_now = {OUTSIDE, shown[1]}
     canvas_alone = [address for address in shown[1:] if address not in written_now]
     assert_eq(
-        row(tf, "connect.endpoints")["derived_elements"],
+        row(tf, dialled_key(tf))["derived_elements"],
         len(canvas_alone),
         f"B: and only what the canvas alone says is counted as its "
         f"({canvas_alone} of {shown[1:]})",
@@ -326,14 +336,14 @@ def b_one_row_holds_both_contributions(tf) -> None:
 def c_the_canvas_keeps_reaching_a_row_somebody_owns_half_of(tf) -> None:
     banner("C — drawing a link still moves a row somebody owns half of")
     tf.invoke(f"{EXT}/select", subject_that_dials(tf))
-    before = row(tf, "connect.endpoints")
+    before = row(tf, dialled_key(tf))
     # Give the card this dials a second address to land on, then draw the link.
     partner = a_card_the_subject_can_dial(tf)
     tf.invoke(f"{EXT}/select", partner)
     tf.invoke(f"{EXT}/set_field", "listen.endpoints=tcp/0.0.0.0:7449, tcp/0.0.0.0:7450")
     tf.invoke(f"{EXT}/select", subject_that_dials(tf))
     tf.invoke(f"{EXT}/connect", f"{subject_that_dials(tf)},{partner}")
-    grown = row(tf, "connect.endpoints")
+    grown = row(tf, dialled_key(tf))
     ok(
         f"C: ★★★★★ the drawn link reaches a row somebody owns half of "
         f"({parts(grown['value'])})",
@@ -365,7 +375,7 @@ def c_the_canvas_keeps_reaching_a_row_somebody_owns_half_of(tf) -> None:
     assert drawn, "the link this section drew is in the model"
     tf.invoke(f"{EXT}/delete_link", str(drawn[0]["id"]))
     assert_eq(
-        parts(row(tf, "connect.endpoints")["value"]),
+        parts(row(tf, dialled_key(tf))["value"]),
         parts(before["value"]),
         "C: ★ and undrawing it takes the address back out of the row",
     )
@@ -380,14 +390,14 @@ def d_a_moving_derivation_is_not_somebody_editing(tf) -> None:
     # Settle the form, so what follows is measured from a clean baseline.
     tf.invoke(f"{EXT}/run", "")
     tf.invoke(f"{EXT}/run", "")
-    settled = row(tf, "connect.endpoints")
+    settled = row(tf, dialled_key(tf))
     assert_eq(settled["edited"], False, "D: nothing is pending after a launch")
     partner = a_card_the_subject_can_dial(tf)
     tf.invoke(f"{EXT}/select", partner)
     tf.invoke(f"{EXT}/set_field", "listen.endpoints=tcp/0.0.0.0:7449, tcp/0.0.0.0:7460")
     tf.invoke(f"{EXT}/select", subject_that_dials(tf))
     tf.invoke(f"{EXT}/connect", f"{subject_that_dials(tf)},{partner}")
-    moved = row(tf, "connect.endpoints")
+    moved = row(tf, dialled_key(tf))
     ok(
         f"D: the shown value moved ({len(parts(moved['value']))} addresses, was "
         f"{len(parts(settled['value']))})",
@@ -401,7 +411,7 @@ def d_a_moving_derivation_is_not_somebody_editing(tf) -> None:
     )
     tf.invoke(f"{EXT}/set_field", f"connect.endpoints={OUTSIDE}, tcp/mine:1")
     assert_eq(
-        row(tf, "connect.endpoints")["edited"],
+        row(tf, dialled_key(tf))["edited"],
         True,
         "D: ★★ this is — the written half moved",
     )
@@ -426,11 +436,11 @@ def e_the_seat_gives_the_written_half_back(tf) -> None:
     seats = rects(tf)
     ok(
         "E: ★★ the seat on a shared row is neither of the other two acts",
-        part(tf, "disown", "connect.endpoints") in seats
-        and part(tf, "remove", "connect.endpoints") not in seats
-        and part(tf, "author", "connect.endpoints") not in seats,
+        part(tf, "disown", dialled_key(tf)) in seats
+        and part(tf, "remove", dialled_key(tf)) not in seats
+        and part(tf, "author", dialled_key(tf)) not in seats,
     )
-    seat = seats[part(tf, "disown", "connect.endpoints")]
+    seat = seats[part(tf, "disown", dialled_key(tf))]
     centre = (seat[0] + seat[2] // 2, seat[1] + seat[3] // 2)
     assert_eq(
         tf.invoke(f"{EXT}/point", f"{centre[0]},{centre[1]}"),
@@ -440,7 +450,7 @@ def e_the_seat_gives_the_written_half_back(tf) -> None:
         "that ignored it",
     )
     node = access_node_by_tag(
-        tf.request("scene/access").result, part(tf, "disown", "connect.endpoints")
+        tf.request("scene/access").result, part(tf, "disown", dialled_key(tf))
     )
     assert node is not None, "the seat is in the accessibility tree"
     ok(
@@ -448,7 +458,7 @@ def e_the_seat_gives_the_written_half_back(tf) -> None:
         "give back" in node["name"],
     )
     tf.click(centre)
-    back = row(tf, "connect.endpoints")
+    back = row(tf, dialled_key(tf))
     assert_eq(
         back["written"],
         None,
@@ -470,7 +480,7 @@ def e_the_seat_gives_the_written_half_back(tf) -> None:
         "E: ★★★ the screen says which act happened, in the words it happened in",
     )
     assert_action_refused(
-        lambda: tf.invoke(f"{EXT}/remove_field", "connect.endpoints"),
+        lambda: tf.invoke(f"{EXT}/remove_field", dialled_key(tf)),
         saying="wire",
     )
     ok("E: and a second press has nothing left to take", True)
@@ -485,7 +495,7 @@ def f_a_shared_row_carries_both_badges(tf) -> None:
     derived_only = rects(tf)
     ok(
         "F: a row with one contributor that nobody can edit shows its source",
-        part(tf, "source", "connect.endpoints") in derived_only,
+        part(tf, "source", dialled_key(tf)) in derived_only,
     )
     drawn = share_the_connect_row(tf)
     shared = rects(tf)
@@ -493,8 +503,8 @@ def f_a_shared_row_carries_both_badges(tf) -> None:
         "F: ★★★★★ a shared row shows BOTH — a reader may still type here, so "
         "what an edit costs is news, and part of what they read is not theirs, "
         "so where it came from is news too",
-        part(tf, "applies", "connect.endpoints") in shared
-        and part(tf, "source", "connect.endpoints") in shared,
+        part(tf, "applies", dialled_key(tf)) in shared
+        and part(tf, "source", dialled_key(tf)) in shared,
     )
     access = tf.request("scene/access").result
     # ★ R2050 — the address the screen publishes for that row's control.
@@ -503,7 +513,7 @@ def f_a_shared_row_carries_both_badges(tf) -> None:
         next(
             row["control"]
             for row in json.loads(tf.query(f"{EXT}/form"))
-            if row["key"] == "connect.endpoints"
+            if row["key"] == dialled_key(tf)
         ),
     )
     assert control is not None, "the control is in the tree"
@@ -552,7 +562,7 @@ def g_the_gate_says_the_fact_underneath(tf) -> None:
     banner("G — the surviving warning: this card dials outside the graph")
     tf.invoke(f"{EXT}/select", subject_that_dials(tf))
     findings = gate_text(tf)
-    drawn = parts(row(tf, "connect.endpoints")["value"])
+    drawn = parts(row(tf, dialled_key(tf))["value"])
     ok(
         f"G: ★★★ the address nothing in this graph listens on is named ({OUTSIDE})",
         OUTSIDE in findings and "nothing here listens on" in findings,
@@ -588,7 +598,7 @@ def g_the_gate_says_the_fact_underneath(tf) -> None:
         f"to reach an already-running peer ({verdict})",
         verdict["may_launch"],
     )
-    tf.invoke(f"{EXT}/remove_field", "connect.endpoints")
+    tf.invoke(f"{EXT}/remove_field", dialled_key(tf))
     ok(
         "G: and giving the half back takes the warning away",
         OUTSIDE not in gate_text(tf),

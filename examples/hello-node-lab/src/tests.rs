@@ -1259,6 +1259,68 @@ fn r2049_a_role_address_is_typed_in_one_place() {
 /// shape this whole debt is about, one level up. What keeps it honest is not a
 /// longer list but [`every_module_is_read`], which walks the `mod`
 /// declarations in `lib.rs` and refuses one this does not carry.
+/// ★★★★★ R2156 — **every ROLE the screen publishes names a real row.**
+///
+/// [`crate::key`] stopped the Rust half re-typing a configuration key; the
+/// roster stops the WALKS doing it, by letting them name the role and be handed
+/// the key. That only helps if the roster is true, and a published role has two
+/// ways to be false, so both are asserted:
+///
+/// * its key is one the target declares — otherwise the walk drives a row the
+///   schema does not carry and reads the silence as the screen not painting it;
+/// * its key is one this screen's own field table or palette actually reaches —
+///   otherwise the role names a row nobody can get to, and a walk that asks for
+///   it fails in a way that looks like the screen being broken.
+///
+/// ⚠ And the roster must not be EMPTY or the two loops above pass over nothing.
+/// That is the shape a green gate takes when it was never asked anything, and
+/// this repository has paid for it more than once.
+#[test]
+fn r2156_a_published_row_role_names_a_real_row() {
+    let sourced: Vec<&str> = crate::settings::sourced_paths()
+        .iter()
+        .map(String::as_str)
+        .collect();
+    // Every key this screen can reach: the opening card's own rows, plus the
+    // chips the palette offers, plus the key the add-key operation types in by
+    // hand. Derived rather than listed — a list here would go stale in the
+    // direction that excuses a role naming a row nobody can open.
+    let mut reachable: Vec<&str> = super::spec::FIELDS.iter().map(|f| f.key).collect();
+    reachable.extend(super::spec::ADDABLE.iter().copied());
+    reachable.push(super::spec::verb_argument("add_key"));
+    let roster = super::role_rows();
+    assert!(
+        roster.len() >= 6,
+        "the screen publishes {} role(s), which is not this screen's roster — \
+         the wire is broken rather than the screen small",
+        roster.len(),
+    );
+    for (role, key) in &roster {
+        assert!(
+            sourced.contains(key),
+            "★★★★★ the role {role:?} names {key:?}, which the sourced surface \
+             does not declare: a walk handed it drives a row the schema does \
+             not carry and reads the silence as the screen not painting it",
+        );
+        assert!(
+            reachable.contains(key),
+            "★★★★★ the role {role:?} names {key:?}, which this screen's fields, \
+             palette and operations never reach: the role names a row nobody \
+             can open, and a walk asking for it fails as if the screen were \
+             broken",
+        );
+    }
+    // ★ No two roles name one row. A roster is a set of JOBS, and two roles on
+    // one key means one of them has quietly stopped being its own job — the
+    // state in which a walk asserting about the second is really asserting
+    // about the first.
+    let mut keys: Vec<&str> = roster.iter().map(|(_, key)| *key).collect();
+    keys.sort_unstable();
+    let before = keys.len();
+    keys.dedup();
+    assert_eq!(before, keys.len(), "two role(s) name one row: {:?}", roster,);
+}
+
 /// ★★★★★ R2155 — **every configuration key this screen names is one the
 /// TARGET declares.**
 ///
@@ -1331,10 +1393,20 @@ fn r2155_a_config_key_is_sourced() {
 /// just clears the way for the thirty-sixth: the declaration would be where
 /// the keys *happen to be* rather than where they *come from*.
 ///
-/// ⚠ The needles are read out of [`crate::key::ALL`] rather than written here,
-/// so a key added to the declaration is policed from the moment it exists. A
-/// hand-written needle list is the shape that goes stale silently, and this
-/// crate has already paid for one.
+/// ⚠⚠ **R2156 moved the needle from [`crate::key::ALL`] to the SURFACE, and
+/// that found ten more sites.** Reading the needles out of the declaration can
+/// only ever police keys somebody has already declared — a sourced key nobody
+/// had moved in was invisible to this gate, which is the failure mode of every
+/// list that describes the work already done. The needles are the target's own
+/// dotted paths now, so the gate's reach is the whole vocabulary and a key
+/// still spelled anywhere is a key this crate is told to declare.
+///
+/// ⚠ **Dotted paths only, and that is measured rather than tidy.** Seven
+/// sourced paths are single words — `id`, `mode`, `namespace`, `metadata`,
+/// `plugins`, `downsampling`, `low_pass_filter` — and those are ordinary
+/// English that eighteen unrelated examples in this tree spell for their own
+/// reasons. A needle over them would report a defect wherever the word occurs,
+/// which is a gate that cries constantly and is therefore switched off.
 ///
 /// ⚠ `key.rs` is excused by NAME and nothing else is — including this file,
 /// which is in the population on the same terms as the rest. There is no
@@ -1349,12 +1421,24 @@ fn r2155_a_config_key_is_sourced() {
 /// has to say so, or its zero reads as *there are none*.
 #[test]
 fn r2155_a_config_key_is_typed_in_one_place() {
+    let needles: Vec<&str> = crate::settings::sourced_paths()
+        .iter()
+        .map(String::as_str)
+        .filter(|path| path.contains('.'))
+        .collect();
+    assert!(
+        needles.len() >= 100,
+        "the surface offers {} dotted path(s) to look for, which is not this \
+         target's vocabulary — the needle is broken rather than the surface \
+         small",
+        needles.len(),
+    );
     let sources = crate_sources();
     let spellers: Vec<(&str, &str)> = sources
         .iter()
         .filter(|(name, _)| *name != "key.rs")
         .flat_map(|(name, body)| {
-            crate::key::ALL.iter().filter_map(move |declared| {
+            needles.iter().filter_map(move |declared| {
                 // The QUOTED literal, so a key reached through the declaration
                 // (`key::LISTEN_ENDPOINTS`) is not counted as a spelling of it.
                 body.contains(&format!("\"{declared}\""))

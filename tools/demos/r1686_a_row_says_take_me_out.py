@@ -56,6 +56,7 @@ from rpc_verify import (  # noqa: E402
     assert_router_press_moves,
     find_by_tag,
     form_part_prefixes,
+    form_row,
     inspector_root,
     inspector_tag,
     pin_tag,
@@ -444,7 +445,7 @@ def body() -> None:
         assert_eq(dirty(tf), False, "and the form is clean again")
 
         # ── (F) a hand-typed path leaves no chip ───────────────────
-        typed = "transport.unicast.lowlatency"
+        typed = form_row(tf, "typed")["key"]
         press(tf, inspector_tag(tf, "addkey"))
         type_keys(tf, typed)
         press(tf, inspector_tag(tf, "rename"))
@@ -472,9 +473,10 @@ def body() -> None:
         tf.invoke(f"{EXT}/select", "P-03")
         ring_before = pin_ring(tf, "P-03")
         assert ring_before is not None, "a listening card's accept pin has a ring"
-        press(tf, f"{seat_of['remove']}listen.endpoints")
-        assert "listen.endpoints" not in keys(tf), "the row went"
-        assert "listen.endpoints" not in q(tf, "document"), (
+        listening = form_row(tf, "listening")["key"]
+        press(tf, f"{seat_of['remove']}{listening}")
+        assert listening not in keys(tf), "the row went"
+        assert listening not in q(tf, "document"), (
             "★★ and it left the deployable document — taking a row out is a "
             "change to the CONFIGURATION, not to a list of rows on a screen"
         )

@@ -40,7 +40,9 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_router_press_moves,
     behind_an_overflow,
+    bounded_row,
     call,
+    form_row,
     find_by_tag,
     inspector_seats,
     link_endpoint_prefix,
@@ -201,7 +203,7 @@ def body() -> None:
         # not check and a number that claimed to be past a bound declared
         # somewhere else entirely. Both come from the option surface now, and
         # `allowed` is the sentence the refusal itself renders.
-        bounded = spec["bounded"]
+        bounded = bounded_row(tf)
         # ★★★★★ R2103 — and the prefixes the CANVAS's two families are addressed
         # under, recovered from the rosters the screen publishes rather than
         # spelled. `address_prefix` takes a member's own key off the end of the
@@ -1562,13 +1564,15 @@ def body() -> None:
         click(tf, at(tf, f"{cards}P-01"))
         assert_eq(q(tf, "selected"), "P-01")
         form = json.loads(q(tf, "form"))
-        assert any(f["key"] == "discovery.multicast.enabled" for f in form), (
+        # ★ R2156 — the role, not the key. Which configuration path carries the
+        # discovery switch is the SCREEN's answer, and a walk that spelled it
+        # was right only while the screen kept using that path for that job.
+        discovery = form_row(tf, "discovery")["key"]
+        assert any(f["key"] == discovery for f in form), (
             "the peer the gate warned about holds the key it warned about"
         )
         painted = tags(paint(tf))
-        assert next(
-            f["control"] for f in form if f["key"] == "discovery.multicast.enabled"
-        ) in painted
+        assert next(f["control"] for f in form if f["key"] == discovery) in painted
         assert find_by_tag(paint(tf), ins_tag["id"]) is not None
         print("[M] selecting another node re-derives its rows, badges and degree")
 
@@ -1644,8 +1648,10 @@ def body() -> None:
             return sorted(t for t in tags(paint(tf)) if t.startswith(link_end)
                           and not t.endswith(spec["link_addresses"]["text"]))
 
+        listening = form_row(tf, "listening")["key"]
+
         def addresses() -> list:
-            row = next(f for f in json.loads(q(tf, "form")) if f["key"] == "listen.endpoints")
+            row = next(f for f in json.loads(q(tf, "form")) if f["key"] == listening)
             return [p.strip() for p in row["value"].split(",") if p.strip()]
 
         before_seats, before_addresses = len(seats()), len(addresses())

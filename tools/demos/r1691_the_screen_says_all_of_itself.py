@@ -61,6 +61,7 @@ from rpc_verify import (  # noqa: E402
     card_tag,
     form_part_prefixes,
     form_part_tag,
+    form_row,
     palette_seats,
     pin_tag,
     run_demo,
@@ -363,7 +364,10 @@ def body() -> None:
         # box — the exact defect, where a reader is told to type into a
         # toggle — was caught by nothing, because none of the five opening rows
         # is a boolean. So the row is ADDED, from the chip that offers it.
-        boolean_key = "timestamping.enabled"
+        # ★ R2156 — the role, not the key: what this block needs is *a* boolean
+        # chip the card does not hold, and the screen is what knows which of its
+        # three that is.
+        boolean_key = form_row(tf, "switched")["key"]
         press(tf, form_part_tag(tf, "add", boolean_key, ext=EXT))
         keys = {row["key"] for row in json.loads(q(tf, "form"))}
         assert boolean_key in keys, f"the chip added the row: {sorted(keys)}"

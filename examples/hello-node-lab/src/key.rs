@@ -104,14 +104,52 @@ pub const LISTEN_ENDPOINTS: &str = "listen.endpoints";
 /// The addresses it dials out to.
 pub const CONNECT_ENDPOINTS: &str = "connect.endpoints";
 
+// ★★★★★ R2156 — **eight more, found by aiming the gate at the SURFACE instead
+// of at this list.** R2155's one-place gate read its needles from [`ALL`],
+// which can only ever police keys somebody has already declared: a sourced key
+// nobody had moved here was invisible to it, and ten sites were. Those needles
+// come from `settings::sourced_paths` now, so the gate's reach is the whole
+// vocabulary rather than the part of it already repaid.
+
+/// Whether the control plane denies or allows by default.
+pub const CONTROL_DEFAULT_PERMISSION: &str = "control.default_permission";
+
+/// Whether messages carry a timestamp.
+pub const TIMESTAMPING_ENABLED: &str = "timestamping.enabled";
+
+/// Where plugins are looked for.
+pub const PLUGIN_LOADING_SEARCH_DIRS: &str = "plugin_loading.search_dirs";
+
+/// How long to wait for a listen endpoint.
+pub const LISTEN_TIMEOUT_MS: &str = "listen.timeout_ms";
+
+/// How long to wait when dialling out.
+pub const CONNECT_TIMEOUT_MS: &str = "connect.timeout_ms";
+
+/// How long a query waits for its answers.
+pub const QUERIES_TIMEOUT_MS: &str = "queries.timeout_ms";
+
+/// How long discovery holds off before shouting.
+pub const DISCOVERY_DELAY: &str = "discovery.delay";
+
+/// How long discovery waits before giving up.
+pub const DISCOVERY_TIMEOUT: &str = "discovery.timeout";
+
 /// Every key declared here, for the gates that read the set rather than one
 /// member.
 ///
 /// ⚠ A list rather than a derivation from the surface: the surface declares
-/// **111** paths and this screen names fifteen of them. Deriving the list
+/// **111** paths and this screen names a fraction of them. Deriving the list
 /// would make the gate assert that this screen uses every key the target has,
 /// which is false and would never pass. What the gate derives instead is the
 /// other direction — that every member here IS sourced.
+///
+/// ⚠⚠ **And this list is NOT the one-place gate's needle.** R2155 made that
+/// mistake: needles read from here can only police what is already declared,
+/// so a sourced key nobody had moved in was invisible and ten sites were.
+/// `r2155_a_config_key_is_typed_in_one_place` reads `sourced_paths` instead.
+/// What this list is for is the other assertion — that every key the screen
+/// declares is one the target carries.
 pub const ALL: &[&str] = &[
     ADMIN_PERMISSIONS_READ,
     ADMIN_PERMISSIONS_WRITE,
@@ -128,6 +166,14 @@ pub const ALL: &[&str] = &[
     ROUTING_INTERESTS_TIMEOUT,
     LISTEN_ENDPOINTS,
     CONNECT_ENDPOINTS,
+    CONTROL_DEFAULT_PERMISSION,
+    TIMESTAMPING_ENABLED,
+    PLUGIN_LOADING_SEARCH_DIRS,
+    LISTEN_TIMEOUT_MS,
+    CONNECT_TIMEOUT_MS,
+    QUERIES_TIMEOUT_MS,
+    DISCOVERY_DELAY,
+    DISCOVERY_TIMEOUT,
 ];
 
 /// One item of a list-valued row, as the form addresses it.
