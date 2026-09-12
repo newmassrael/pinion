@@ -355,8 +355,104 @@ def rust_sites_in(text: str) -> list[tuple[int, str]]:
     holds for one caller and not the needle is this session's recurring defect;
     the needle owns it, and the arithmetic is gated in [`selftest`].
     """
+    return [(line, stem) for line, stem, _literal in rust_site_literals(text)]
+
+
+#: ★★★★★ R2178 — the calls whose first argument is a name in ANOTHER namespace:
+#: the reactive owner's cache (`Owner::cache`, `cache_get_by_str`,
+#: `cache_contains`), which names a state slot, not a painted mark.
+#:
+#: Measured before this was written, so it is a class and not an exception: 167
+#: owner-cache keys in the Rust tree, exactly two dotted —
+#: `settings_panel.persistence.boot` and `todomvc.persistence.boot` — and the
+#: census counted both as READERS of a painted address and reported both
+#: BLOCKED, i.e. half of the four sites this campaign called work no round may
+#: finish. Of the 365 Rust census sites, grouped by the call each literal is
+#: handed to, these were the only reader-role literals in a non-paint API. The
+#: other context with volume, 45 literals handed to `query` / `intervene`, is
+#: already the `$schema` path vocabulary (R2166) and every one is an assertion.
+#:
+#: ⚠ A NAME rule, stated with its limit: a METHOD called `cache` on something
+#: other than an owner would also be read as a slot key. The dot is required,
+#: so a free function called `cache` is not, and a UFCS call
+#: `Owner::cache(&o, "k")` is not either — both err towards COUNTING, which is
+#: the direction this census is allowed to err in (see [`RUST_LITERAL`]).
+NON_ADDRESS_CALLS = frozenset({"cache", "cache_get_by_str", "cache_contains"})
+
+def handed_to(text: str, start: int) -> str | None:
+    """The method the literal beginning at `start` is the first argument of.
+
+    ★★★★★ R2178 — R2167's `site_vocabulary` recorded its own limit: *a tighter
+    derivation needs each SITE's namespace — the reader it is handed to — and
+    that is the next instalment.* This is that reader, narrowed to what was
+    measured to matter. PURE, and handed text rather than a path, so every case
+    is a fixture.
+
+    ⚠ A backward SCANNER, not a regex, and the first draft is why. It read the
+    turbofish as `::<[^>]*>`, which stops at the first `>` — so
+    `cache::<Rc<State>, _>("a.b.c")` was not recognised and its key was counted
+    as an address. A regex can only raise the nesting depth it survives; a
+    bracket counter has none.
+
+    Reads, right to left: whitespace, `(`, whitespace, an optional balanced
+    `<...>` preceded by `::`, the method name, and a `.` — the dot is required,
+    so a free function or a UFCS call answers `None`.
+    """
+    i = start - 1
+    while i >= 0 and text[i].isspace():
+        i -= 1
+    if i < 0 or text[i] != "(":
+        return None
+    i -= 1
+    while i >= 0 and text[i].isspace():
+        i -= 1
+    if i >= 0 and text[i] == ">":
+        depth = 0
+        while i >= 0:
+            if text[i] == ">":
+                depth += 1
+            elif text[i] == "<":
+                depth -= 1
+                if depth == 0:
+                    break
+            i -= 1
+        if i < 2 or text[i - 2 : i] != "::":
+            return None
+        i -= 3
+    end = i + 1
+    while i >= 0 and (text[i].isalnum() or text[i] == "_"):
+        i -= 1
+    name = text[i + 1 : end]
+    if not name or not (name[0].isalpha() or name[0] == "_"):
+        return None
+    return name if i >= 0 and text[i] == "." else None
+
+
+def rust_site_literals(text: str) -> list[tuple[int, str, str]]:
+    """`(line, family stem, literal)` for every painted address Rust `text`
+    spells — **THE needle**, and the only one.
+
+    ★★★★★ R2178 — this census had THREE copies of its Rust literal loop: this
+    one, [`rust_reader_duplication`] (R2168) and the Rust half of
+    [`address_spellings`] (R2168). Each re-spelled the comment rule R2170 moved
+    here, and the third only agreed with the needle by accident — it looked a
+    role up by LINE, so a non-address literal sharing a line with a real tag
+    would have been counted as a reader. R2175 named the copy and deferred it
+    because the repair needed the literal this needle dropped. Adding a SECOND
+    population rule to a needle with live copies would have made that
+    divergence deliberate, so the literal is carried now and the copies derive
+    from it.
+
+    Two population rules, both exact rather than guessed from shape (R2103's
+    refusal to guess stands):
+
+    * a line whose first non-space is `//` is prose about an address (R2170);
+    * a literal handed as the key of a [`NON_ADDRESS_CALLS`] method names a
+      state slot, not a mark (R2178). Those are not dropped silently —
+      [`non_address_literals`] counts them.
+    """
     lines = text.splitlines()
-    found: list[tuple[int, str]] = []
+    found: list[tuple[int, str, str]] = []
     for match in RUST_LITERAL.finditer(text):
         hit = ADDRESS.match(match.group(0)[1:])
         if not hit:
@@ -364,7 +460,32 @@ def rust_sites_in(text: str) -> list[tuple[int, str]]:
         line = text.count("\n", 0, match.start()) + 1
         if lines[line - 1].lstrip().startswith("//"):
             continue
-        found.append((line, hit.group(1)))
+        if handed_to(text, match.start()) in NON_ADDRESS_CALLS:
+            continue
+        found.append((line, hit.group(1), match.group(0)[1:-1]))
+    return sorted(found)
+
+
+def non_address_literals(text: str) -> list[tuple[int, str, str]]:
+    """`(line, stem, method)` for every literal with an address's SHAPE that is
+    handed to a [`NON_ADDRESS_CALLS`] method — what [`rust_site_literals`]
+    excludes, counted rather than dropped.
+
+    ★ R2160's rule: a census that drops its hard part measures comfort instead
+    of remainder. An exclusion nobody can count is exactly that.
+    """
+    lines = text.splitlines()
+    found: list[tuple[int, str, str]] = []
+    for match in RUST_LITERAL.finditer(text):
+        hit = ADDRESS.match(match.group(0)[1:])
+        if not hit:
+            continue
+        line = text.count("\n", 0, match.start()) + 1
+        if lines[line - 1].lstrip().startswith("//"):
+            continue
+        method = handed_to(text, match.start())
+        if method in NON_ADDRESS_CALLS:
+            found.append((line, hit.group(1), method))
     return sorted(found)
 
 
@@ -615,24 +736,40 @@ def rust_site_roles(path: Path, text: str) -> list[tuple[int, str, str]]:
     A comment line is neither role and is dropped: it is prose about an address,
     which [`rust_sites_in`] already declines to treat as a literal.
     """
+    role_at = site_role_at(path, text)
+    return [(line, stem, role_at(line)) for line, stem in rust_sites_in(text)]
+
+
+def site_role_at(path: Path, text: str):
+    """The role rule for one Rust file, as a function of a site's LINE.
+
+    ★★★★★ R2178 — split out of [`rust_site_roles`] so a caller that needs the
+    literal as well as the role pairs them STRUCTURALLY. Until this round the
+    only way to get both was to look a role up by line in a dict built from
+    `rust_site_roles`, which is how [`rust_reader_duplication`] did it — and a
+    dict keyed by line cannot tell two literals on one line apart, so it agreed
+    with the needle by accident.
+
+    ⚠ The comment-line skip that stood in `rust_site_roles` is gone, and that is
+    not a loosening: the needle drops comment lines before a role is ever asked
+    (R2170), so the skip could never fire. A rule written in two places is the
+    shape R2164 removed from this very function.
+    """
     whole_file_is_test = path in test_only_modules()
     spans = test_spans(text)
-    lines = text.splitlines()
     # ★ R2169 — a third role. An ASSERTION still wins, so the floor of 290 is
     # untouched by construction: what this carves out is part of the READER
     # half, which is the half that was charging declarations as debt.
     declaring = declaring_lines(text, lambda name: _name_is_used(path, name))
-    out: list[tuple[int, str, str]] = []
-    for line, stem in rust_sites_in(text):
-        if lines[line - 1].lstrip().startswith("//"):
-            continue
+
+    def role_at(line: int) -> str:
         if whole_file_is_test or any(first <= line <= last for first, last in spans):
-            out.append((line, stem, "assertion"))
-        elif line in declaring:
-            out.append((line, stem, "declaration"))
-        else:
-            out.append((line, stem, "reader"))
-    return out
+            return "assertion"
+        if line in declaring:
+            return "declaration"
+        return "reader"
+
+    return role_at
 
 
 @functools.lru_cache(maxsize=None)
@@ -778,7 +915,7 @@ def rust_census(
 
 
 @functools.lru_cache(maxsize=1)
-def rust_reader_scan() -> dict[str, tuple[tuple[str, int], ...]]:
+def rust_reader_scan() -> dict[str, tuple[tuple[str, int, str], ...]]:
     """Every Rust READER site, indexed by family stem.
 
     ★★★★★ R2175 — **the census had a queue and no way to ask which family a
@@ -800,16 +937,20 @@ def rust_reader_scan() -> dict[str, tuple[tuple[str, int], ...]]:
     all*), with a different cause. Two rounds of the same sentence is what says
     the repair belongs at the derivation rather than at the cause.
     """
-    index: dict[str, list[tuple[str, int]]] = {}
+    # ★★★★★ R2178 — each reader carries its LITERAL, paired with its role
+    # through `site_role_at` rather than looked up by line, so the duplication
+    # split below can be derived from here instead of re-walking the corpus.
+    index: dict[str, list[tuple[str, int, str]]] = {}
     for path in rust_sources():
         try:
             body = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         name = str(path.relative_to(ROOT))
-        for line, stem, role in rust_site_roles(path, body):
-            if role == "reader":
-                index.setdefault(stem, []).append((name, line))
+        role_at = site_role_at(path, body)
+        for line, stem, literal in rust_site_literals(body):
+            if role_at(line) == "reader":
+                index.setdefault(stem, []).append((name, line, literal))
     return {stem: tuple(found) for stem, found in index.items()}
 
 
@@ -903,6 +1044,18 @@ def write_budget(
     stems = set(counts) | set(rust_counts) | set(read_budget())
     kept = {
         stem: Pinned(counts.get(stem, 0), rust_counts.get(stem, 0)) for stem in stems
+    }
+    # ★★★★★ R2178 — a stem spelled only as a non-address name is not an address
+    # family, so it has no row in the address budget. Carrying it at zero would
+    # read as *converted*, which it never was; the third state the ratchet
+    # lacked is "never a family", and dropping the row is how it is recorded.
+    # See `non_address_stems` for why this cannot hide a converted family: that
+    # set requires a LIVE non-address spelling and no address spelling at all.
+    other = non_address_stems()
+    kept = {
+        stem: row
+        for stem, row in kept.items()
+        if not (stem in other and row == Pinned(0, 0))
     }
     if pin is not None:
         standing = kept.get(pin, Pinned(0, 0))
@@ -1005,6 +1158,23 @@ def check() -> int:
         f"painted-addresses: {walk_total} walk + {rust_total} rust spelled "
         f"site(s) in {len(families)} family/ies{trend}; {pinned} family/ies "
         f"pinned at zero in both"
+    )
+    # ★★★★★ R2178 — and what the Rust needle declined to count, beside the
+    # count it qualifies. Printed every run, zero or not: an exclusion nobody can
+    # see is a census measuring comfort (R2160), and this one removed half of
+    # what the campaign called BLOCKED.
+    excluded = [
+        f"{path.relative_to(ROOT)}:{line} .{method}(\"{stem}...\")"
+        for path in rust_sources()
+        for line, stem, method in non_address_literals(
+            path.read_text(encoding="utf-8", errors="replace")
+        )
+    ]
+    print(
+        f"painted-addresses: {len(excluded)} Rust literal(s) have an address's "
+        "shape and are handed to a non-address API — a key of the owner cache, "
+        "which names a state slot rather than a mark — so they are not sites"
+        + (f": {excluded}" if excluded else "")
     )
     # ★★★★★ R2144 — and WHAT THOSE SITES ARE, which the totals above cannot
     # say. The ratchet counts a spelled address the same whether a painter
@@ -1705,6 +1875,12 @@ def address_spellings() -> dict[str, int]:
     `address.rs` plus a reader elsewhere is two spellings, and the reader is the
     one that is retyping. Excluding the declaring file would hide that.
     """
+    # ★★★★★ R2178 — through THE needle. This was the fourth walk over the Rust
+    # corpus with its own copy of the literal loop and the comment rule, so a
+    # population rule added to the needle (a key handed to the owner cache is a
+    # slot name, not an address) would have gone on being counted here as an
+    # address spelling. The corpus stays the WIDE one, declaring files included,
+    # for the reason above; only the definition of a spelling is now shared.
     seen: dict[str, int] = {}
     for root in RUST_ROOTS:
         for path in sorted((ROOT / root).rglob("*.rs")):
@@ -1712,14 +1888,7 @@ def address_spellings() -> dict[str, int]:
                 text = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            lines = text.splitlines()
-            for match in RUST_LITERAL.finditer(text):
-                literal = match.group(0)[1:-1]
-                if not ADDRESS.match(literal):
-                    continue
-                line = text.count("\n", 0, match.start()) + 1
-                if lines[line - 1].lstrip().startswith("//"):
-                    continue
+            for _line, _stem, literal in rust_site_literals(text):
                 seen[literal] = seen.get(literal, 0) + 1
     for path in sources():
         for _line, literal in _walk_literals(path):
@@ -1772,24 +1941,17 @@ def rust_reader_duplication() -> tuple[int, int]:
     line into a file named `address.rs`, and a criterion a file rename can
     satisfy is measuring the file name rather than the property.
     """
+    # ★★★★★ R2178 — DERIVED from `rust_reader_scan`, which carries each
+    # reader's literal. This used to be a third walk over the Rust corpus with
+    # its own copy of the needle and of the comment rule, finding readers by
+    # looking a role up by LINE — so a non-address literal sharing a line with a
+    # real tag would have been counted as a reader here and nowhere else. The
+    # arithmetic arm in `selftest` (retyped + single == the role tally's
+    # readers) still holds this to an independent walk.
     spellings = address_spellings()
     retyped = single = 0
-    for path in rust_sources():
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        lines = text.splitlines()
-        roles = {line: role for line, _stem, role in rust_site_roles(path, text)}
-        for match in RUST_LITERAL.finditer(text):
-            literal = match.group(0)[1:-1]
-            if not ADDRESS.match(literal):
-                continue
-            line = text.count("\n", 0, match.start()) + 1
-            if lines[line - 1].lstrip().startswith("//"):
-                continue
-            if roles.get(line) != "reader":
-                continue
+    for sites in rust_reader_scan().values():
+        for _path, _line, literal in sites:
             if spellings.get(literal, 0) > 1:
                 retyped += 1
             else:
@@ -1930,6 +2092,44 @@ def pin_sources(families: Iterable[str]) -> dict[str, str]:
     return out
 
 
+@functools.lru_cache(maxsize=1)
+def non_address_stems() -> frozenset[str]:
+    """Stems the Rust census population spells ONLY as a non-address name —
+    a key handed to a [`NON_ADDRESS_CALLS`] method — and never as an address.
+
+    ★★★★★ R2178 — **the budget had two states for a family at zero and needed
+    three.** [`write_budget`] carries every family it has ever seen forward, so
+    a converted family cannot quietly reacquire a speller, and
+    [`deleted_checks`] reads any family at zero with no pin as *a check the
+    campaign deleted*. Both are right for an address. Neither has a word for a
+    stem that was never one: correcting the needle to stop counting the two
+    owner-cache keys would have dropped them to zero with no pin, `--check`
+    would have refused that as two deleted checks, and re-pinning would have
+    written them into `docs/unpinned-families.tsv` — growing the unreachable
+    half of this debt's closing criterion from two false positives to four.
+
+    ⚠ What separates these from a converted family is STATIC, and exact: a
+    converted family has no live occurrence left, while these are still spelled
+    in live code — only as a slot name. That is not the property R2172 found no
+    static test for (`echo.demo` survives only in comments, as converted
+    families' doc comments do), and it does not touch that finding.
+
+    ⚠ A stem that is ALSO spelled as an address anywhere in the population is
+    not in this set: it is a real family, and its non-address uses stay out of
+    its count by the needle rather than by this.
+    """
+    as_address: set[str] = set()
+    as_other: set[str] = set()
+    for path in rust_sources():
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        as_address.update(stem for _line, stem, _lit in rust_site_literals(text))
+        as_other.update(stem for _line, stem, _method in non_address_literals(text))
+    return frozenset(as_other - as_address)
+
+
 def deleted_checks(
     now: dict[str, int], rust_now: dict[str, int], families: Iterable[str]
 ) -> list[str]:
@@ -1940,12 +2140,20 @@ def deleted_checks(
     holds the address to a value any more, which is worse than the state before
     the repair: the literal a reader used to carry was at least compared with
     the paint on every run.
+
+    ★★★★★ R2178 — a stem in [`non_address_stems`] is never here. It reached
+    zero because the needle stopped calling a slot name an address, not because
+    a reader converted, so there was never a check to delete.
     """
     pins = pin_sources(families)
+    other = non_address_stems()
     return sorted(
         stem
         for stem in families
-        if not now.get(stem, 0) and not rust_now.get(stem, 0) and not pins[stem]
+        if not now.get(stem, 0)
+        and not rust_now.get(stem, 0)
+        and not pins[stem]
+        and stem not in other
     )
 
 
@@ -2788,6 +2996,61 @@ def selftest() -> int:
             r'let a = "he said \"go\""; let b = "lab.pin.P-01.dial";',
             ["lab.pin"],
         ),
+        # ★★★★★ R2178 — a key handed to the OWNER CACHE names a state slot, not
+        # a mark. The first five are the shapes the rule must recognise, two of
+        # them copied from the tree's own `.cache` calls; the last five are the
+        # ones it must NOT swallow, and they are what keep a name rule from
+        # becoming a blanket exemption.
+        (
+            "★ a key handed to the owner cache is not a site",
+            'owner.cache("todomvc.persistence.boot", move || State::load());',
+            [],
+        ),
+        (
+            "★ nor through a turbofish with a nested generic, across lines",
+            'let s = owner.cache::<Rc<State>, _>(\n    "a.b.c",\n    State::new,\n);',
+            [],
+        ),
+        (
+            "★ measured shape: two levels of generics",
+            'let w = owner.cache::<Signal<Vec<WindowSpec>>,_>("a.b.c", f);',
+            [],
+        ),
+        (
+            "★ measured shape: a path-qualified type in the turbofish",
+            'o.cache_get_by_str::<pinion_core::widgets::caret_blink::CaretBlink>("a.b.c")',
+            [],
+        ),
+        (
+            "★ and `cache_contains` is the same namespace",
+            'o.cache_contains::<u32>("a.b.c")',
+            [],
+        ),
+        (
+            "★★ a real tag on the same line as a cache key is still a site",
+            'owner.cache("hover_anim", f); node.with_tag("lab.reset.view");',
+            ["lab.reset"],
+        ),
+        (
+            "★★ a free function called `cache` is not the owner's method",
+            'cache("lab.reset.view")',
+            ["lab.reset"],
+        ),
+        (
+            "★★ nor is a UFCS call, which errs towards counting",
+            'Owner::cache(&owner, "lab.reset.view")',
+            ["lab.reset"],
+        ),
+        (
+            "★★ a literal that is not the FIRST argument is still a site",
+            'owner.cache(key, || tag("lab.reset.view"))',
+            ["lab.reset"],
+        ),
+        (
+            "★★ a generic method outside the set is still a site",
+            'node.with_tag::<Rc<S>>("lab.reset.view")',
+            ["lab.reset"],
+        ),
     ]
     for label, fixture, want in rust_cases:
         got = sorted(stem for _, stem in rust_sites_in(fixture))
@@ -3134,6 +3397,40 @@ def selftest() -> int:
             file=sys.stderr,
         )
 
+    # ★★★★★ R2178 — the ratchet's THIRD state: a stem spelled only as a slot
+    # name was never an address family, so it has no budget row and it is never
+    # a deleted check. Without this, correcting the needle would have filed two
+    # owner-cache keys into `docs/unpinned-families.tsv` and grown the
+    # unreachable half of the closing criterion from two false positives to
+    # four.
+    #
+    # ⚠ Stated rather than hidden: the `filed` half shares its derivation with
+    # `deleted_checks` and cannot fail today (see
+    # `debt-a-check-whose-two-sides-share-one-derivation`). The `carried` half
+    # reads the COMMITTED budget and fails whenever a re-pin was skipped. What
+    # both pin is a re-implementation of `write_budget` or `deleted_checks`
+    # that forgets the third state.
+    other = non_address_stems()
+    budget_rows = set(read_budget())
+    carried = sorted(other & budget_rows)
+    filed = sorted(
+        other
+        & set(
+            deleted_checks(
+                census(), rust_census(), budget_rows | set(census()) | set(rust_census())
+            )
+        )
+    )
+    if carried or filed:
+        failed += 1
+        print(
+            f"FAIL: stem(s) spelled only as a non-address name are treated as "
+            f"address families — carried in the budget: {carried}; filed as "
+            f"deleted checks: {filed}. They were never families, so neither "
+            "may name them. Run --write-budget.",
+            file=sys.stderr,
+        )
+
     # ★★★★★ R2103 — and the ORACLE, against this repository's real Rust.
     #
     # Every case above hands the pure rule a fixture, which is what keeps them
@@ -3303,6 +3600,7 @@ def selftest() -> int:
         + 4  # R2164: the role rule's four derived cross-checks
         + 3  # R2175: the queue's arithmetic arm and BLOCKED's two subset arms
         + 1  # R2176: a binary example's declaring module must stay private
+        + 1  # R2178: a slot-name stem has no budget row and is no deleted check
         + 10  # the ad-hoc assertions above, pre-existing and left alone
     )
     print(f"painted_addresses selftest: {total - failed} of {total} cases OK")
