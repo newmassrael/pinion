@@ -37,7 +37,9 @@ A regex over source text cannot tell an address from a sentence about one, and
 this file's own prose spells several. The needle is ANCHORED at the start of a
 string literal, so a docstring that MENTIONS `lab.form.control.x` mid-sentence is
 not a site while a string that IS that address is. Comments are not in the tree at
-all. The selftest pins both.
+all. The selftest pins both. ★★★★★ R2189 — or at the start of the path behind a
+MOUNT: `/external/node.0.x` is read as `node.0.x` (see `address_part`), because an
+RPC string that mounts a path spells that path.
 
 # ⚠ The harness is in the population
 
@@ -333,7 +335,8 @@ def rust_sites_in(text: str) -> list[tuple[int, str]]:
     and a case pinned to today's `examples/` rots the moment the family it names
     is converted. The reader that hands it the world is asserted separately.
 
-    A literal is a site when the address is ANCHORED at its start — the same rule
+    A literal is a site when the address is ANCHORED at its start (or at the start
+    of the path behind a mount, R2189's [`address_part`]) — the same rule
     the Python half uses, and for the same reason. A Rust doc comment is not a
     literal, so prose is out of this population; what covers prose is each
     screen's own gate, whose needle is the bare stem.
@@ -537,7 +540,7 @@ def rust_site_literals(text: str) -> list[tuple[int, str, str]]:
     for offset, line, literal in rust_literals(text):
         stem = family_of(literal)
         if stem and handed_to(text, offset) not in NON_ADDRESS_CALLS:
-            found.append((line, stem, literal))
+            found.append((line, stem, address_part(literal)))
     return sorted(found)
 
 
@@ -2226,6 +2229,66 @@ def declared_path_family(
     return None
 
 
+#: ★★★★★ R2189 — where an External's introspection path begins inside an RPC
+#: path, read from the tree's one declaration of it, as `pinion-rpc`'s parser
+#: reads it (`split_at_external`, R1890).
+WIRE_ADDRESS = ROOT / "crates" / "pinion-core" / "src" / "wire_address.rs"
+_SEPARATOR_DECLARATION = re.compile(r'pub const SEPARATOR: &str = "([^"]+)";')
+
+#: What may stand before the separator: nothing, or `/`-led segments — a tag
+#: chain, an index chain, a `/window[<id>]` prefix. A sentence is not one.
+_MOUNT_HEAD = re.compile(r"^(?:/[^/\s]+)*$")
+
+
+@functools.lru_cache(maxsize=1)
+def mount_separator() -> str:
+    """The separator an RPC path mounts an External's introspection path behind
+    (`pinion_core::wire_address::SEPARATOR`), read from its declaration.
+
+    ⚠ Refuses rather than guesses: a separator this census spelled for itself
+    would be a second copy of the grammar, the defect it exists to count.
+    """
+    hit = _SEPARATOR_DECLARATION.search(WIRE_ADDRESS.read_text(encoding="utf-8"))
+    if hit is None:
+        raise SystemExit(
+            f"painted-addresses: {WIRE_ADDRESS.relative_to(ROOT)} declares no "
+            "`pub const SEPARATOR: &str`; the census reads where a mounted path "
+            "begins from there and will not spell it itself."
+        )
+    return hit.group(1)
+
+
+def address_part(literal: str, separator: str | None = None) -> str:
+    """The part of `literal` an address rule judges: the introspection path
+    behind a mount — `/external/node.0.x` is `node.0.x` — or the literal itself.
+
+    ★★★★★ R2189 — every rule here was anchored at the START of a literal, and a
+    walk that asks through the RPC wire writes the mount first:
+    `tf.query("/external/node.0.x")` spells exactly what `q(tf, "node.0.x")`
+    spells, and the census charged the second and not the first. R2188 found it
+    by sweeping the node editor's walks after converting fifteen of them: 27
+    more spelled the same declared paths behind the mount. Measured with this
+    census's own scan before building: **463 walk literals in 28 families
+    across 67 files**, and none in Rust, which composes its paths
+    (`wire_address::path_at`). A dry run through every derivation with all
+    twenty caches cleared: walk 805 -> 1268; the Rust half, its roles, the
+    handed-prefix remainder, BLOCKED and the deleted checks unchanged; two new
+    budget rows, both held by a declared schema head; 26 rows risen, none fallen.
+
+    The head before the separator must itself be path-shaped ([`_MOUNT_HEAD`]),
+    so a sentence that mentions a mounted path stays prose. An unresolved
+    `{EXT}/node.0.x` carries no separator and is not read: that errs towards not
+    charging, the direction the unanchored count already reports.
+
+    `separator` is handed in by a fixture; the tree's is [`mount_separator`].
+    """
+    sep = mount_separator() if separator is None else separator
+    head, found, tail = literal.partition(sep)
+    if found and _MOUNT_HEAD.match(head):
+        return tail
+    return literal
+
+
 def family_of(literal: str) -> str | None:
     """The family `literal` is charged to: a concrete stem [`ADDRESS`] anchors,
     a [`template_family`], a [`declared_path_family`], or `None`.
@@ -2234,7 +2297,10 @@ def family_of(literal: str) -> str | None:
     it, so a concrete stem and a template stem cannot be derived by two rules.
     ★★★★★ R2187 — and a numeric-id path the screens DECLARE, read last because
     it is the only rule that asks the tree rather than the text.
+    ★★★★★ R2189 — every rule judges the [`address_part`], so a path written
+    behind its mount is charged as the path it spells.
     """
+    literal = address_part(literal)
     hit = ADDRESS.match(literal)
     if hit:
         return hit.group(1)
@@ -2259,6 +2325,8 @@ def unanchored_shape(literal: str) -> bool:
     `docs/unpinned-families.tsv`. Telling the two apart needs each site's
     NAMESPACE — the reader it is handed to — which this census does not have.
     """
+    # R2189 — judged on the same part [`family_of`] judges.
+    literal = address_part(literal)
     if ADDRESS.match(literal) or "{{" in literal:
         return False
     segments = literal.split(".")
@@ -2383,9 +2451,11 @@ def _walk_literals(path: Path) -> list[tuple[int, str]]:
     [`may_denote_same`] compares. Since R2179 an f-string keeps its placeholder
     SHAPE (`{}` per interpolated value), so a walk's composed address can be
     matched against a Rust template rather than truncated to its constant head.
+    Since R2189 the address carried is the [`address_part`]: a mounted path is
+    compared as the path, not as the RPC string around it.
     """
     return [
-        (line, literal)
+        (line, address_part(literal))
         for line, literal in python_literals(path.read_text(encoding="utf-8"))
         if family_of(literal)
     ]
@@ -3515,6 +3585,39 @@ def selftest() -> int:
                 f"FAIL: {label}: family_of({literal!r}) -> {got!r}, wanted {want!r}",
                 file=sys.stderr,
             )
+    # ★★★★★ R2189 — a mounted path is judged behind its separator. The
+    # separator is handed in so no case depends on today's tree, and then the
+    # tree's own is read and used, so the rule and its SSOT are held together.
+    mount_cases: list[tuple[str, str, str]] = [
+        ("a root mount", "/external/node.0.x", "node.0.x"),
+        ("a tagged mount", "/grid/external/value.3", "value.3"),
+        ("a window prefix and an index chain",
+         "/window[main]/0/1/external/selected.0", "selected.0"),
+        ("an unmounted literal is itself", "node.0.x", "node.0.x"),
+        ("★★ a sentence that mentions a mounted path stays prose",
+         "see /external/node.0.x", "see /external/node.0.x"),
+        ("an unresolved mount carries no separator", "{}/node.{}.x", "{}/node.{}.x"),
+    ]
+    for label, literal, want in mount_cases:
+        got = address_part(literal, "/external/")
+        if got != want:
+            failed += 1
+            print(
+                f"FAIL: {label}: address_part({literal!r}) -> {got!r}, wanted {want!r}",
+                file=sys.stderr,
+            )
+    sep = mount_separator()
+    tree_mount_cases: list[tuple[str, object, object]] = [
+        ("★ the tree's separator is read and mounts a path",
+         address_part(f"/grid{sep}card.alarms.feed"), "card.alarms.feed"),
+        ("★★ and a family is charged behind it",
+         family_of(f"/panel{sep}expanded.cat.Physics"), "expanded.cat"),
+        ("but a composed path behind it is not a spelling", family_of(f"{sep}{{}}"), None),
+    ]
+    for label, got, want in tree_mount_cases:
+        if got != want:
+            failed += 1
+            print(f"FAIL: {label}: {got!r}, wanted {want!r}", file=sys.stderr)
     # ★★★★★ R2187 — a numeric-id path is charged by the DECLARATIONS it
     # composes, handed in here so no case depends on today's tree.
     declared = (
@@ -4447,22 +4550,22 @@ def selftest() -> int:
     #
     # The two trailing constants are ad-hoc assertions with no list to count,
     # and they are NAMED rather than folded into one number nobody can read.
-    total = sum(
-        len(case_list)
-        for case_list in (
-            cases,
-            needle_cases,
-            rust_cases,
-            role_cases,
-            covers_cases,
-            grammar_cases,
-            schema_cases,
-            vocab_cases,
-            declaring_cases,
-            word_cases,
-            denote_cases,
-        )
-    ) + (
+    #
+    # ★★★★★ R2189 — the case lists are DERIVED from what this function defines,
+    # every list named `cases` or `*_cases`. The tuple this replaced was a
+    # hand-kept list and it had drifted: `shape_cases`, `compose_cases`,
+    # `family_cases`, `template_stem_cases` and `declared_cases` (R2181-R2187)
+    # ran and could fail while the total never counted them, so the "N of N"
+    # this prints undercounted, and a counterfactual that failed five of R2189's
+    # mount cases printed "133 of 138". A new case list is counted by being
+    # named like one.
+    scope = dict(locals())
+    case_lists = [
+        value
+        for name, value in scope.items()
+        if (name == "cases" or name.endswith("_cases")) and isinstance(value, list)
+    ]
+    total = sum(len(case_list) for case_list in case_lists) + (
         5  # R2147/R2166: four classifier words and the artifact corpus floor
         + 1  # R2166: the parametric-declaration corpus floor
         + 1  # R2167: no family is claimed by BOTH vocabularies
