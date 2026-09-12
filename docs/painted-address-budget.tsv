@@ -74,10 +74,10 @@ detail.input_default	0	3
 detail.resolved_input	0	2
 dev.cell	1	2
 discovery.multicast	1	0
-dissolvable.{}	2	1
-dissolve_severs.{}	4	1
+dissolvable.{}	0	1
+dissolve_severs.{}	0	1
 echo.demo	0	0
-edge.{}	6	13
+edge.{}	0	13
 effective_resize_mode.{}	3	0
 expanded.arr	1	0
 expanded.cat	1	2
@@ -91,7 +91,7 @@ float.{}	5	7
 flow.node	0	2
 flow.trace	0	2
 flow.watch	0	1
-frame.{}	44	23
+frame.{}	0	23
 group.{}	8	4
 group_at.{}	13	0
 has_pane.{}	3	2
@@ -164,7 +164,7 @@ modified.{}	22	26
 name.elem	0	1
 name.{}	32	11
 no.such	1	0
-node.{}	138	96
+node.{}	0	96
 nodegroups.frame	0	0
 nodegroups.node	2	0
 nodegroups.pinlabel	1	0

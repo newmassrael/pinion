@@ -62,6 +62,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import importlib
+import inspect
 import itertools
 import re
 import sys
@@ -107,9 +108,23 @@ def _addresses_in(args: tuple, kwargs: dict) -> list[str]:
 
 
 def _wrap(where, name: str, log: list[str]) -> bool:
-    """Wrap one callable so its address-shaped arguments are recorded."""
+    """Wrap one FUNCTION so its address-shaped arguments are recorded.
+
+    ★★★★★ R2188 — **functions only, and a class is not one.** This took
+    anything `callable`, and a class is callable: every class a walk imports —
+    `RpcError`, `RpcSubprocess`, `Path` — was replaced in the walk's namespace by
+    a plain function, so `except RpcError:` raised `TypeError: catching classes
+    that do not inherit from BaseException is not allowed`, and an `isinstance`
+    against an imported class would have too. Measured when R2188 recorded its
+    before-traces: `r1234_node_frame_move_resize` and `r1227_node_comment_frames`
+    could not be traced at all — each ends by catching a refused write — and the
+    nine that did record were recorded by the same wrong wrapper.
+
+    A constructor is not where a walk asks the paint for an address, so nothing
+    this tool exists to see is lost by leaving classes alone.
+    """
     original = getattr(where, name, None)
-    if not callable(original) or getattr(original, "_address_traced", False):
+    if not inspect.isfunction(original) or getattr(original, "_address_traced", False):
         return False
 
     def traced(*args, **kwargs):
@@ -323,6 +338,39 @@ def selftest() -> int:
         picked == ["chart.grid.y.", "lab.node.P-01"],
         f"address-shaped arguments are picked out of a call: {picked}",
     )
+    # ★★★★★ R2188 — what `_wrap` takes, against a module-shaped fixture: a walk
+    # imports an exception CLASS and catches it, and wrapping the class broke
+    # that catch in two of the walks this tool was asked to trace.
+    import types  # noqa: PLC0415 — the selftest's own need
+
+    walk = types.ModuleType("fixture_walk")
+
+    class Refused(Exception):
+        pass
+
+    def helper(tag: str) -> str:
+        return tag
+
+    walk.Refused = Refused
+    walk.helper = helper
+    wrap_log: list[str] = []
+    check(
+        not _wrap(walk, "Refused", wrap_log),
+        "★★ an imported exception CLASS is not wrapped",
+    )
+    check(walk.Refused is Refused, "and the walk's name still holds the class itself")
+    check(_wrap(walk, "helper", wrap_log), "a walk's own function is wrapped")
+    walk.helper("lab.node.P-01")
+    check(
+        wrap_log == ["helper lab.node.P-01"],
+        f"and records its address argument: {wrap_log}",
+    )
+    caught = False
+    try:
+        raise walk.Refused()
+    except walk.Refused:
+        caught = True
+    check(caught, "★★ so `except` on the class still catches")
     # ★★ The comparison reports a difference and reports sameness, and the two
     # are different exit codes because a round reads this as a verdict.
     import tempfile  # noqa: PLC0415 — the selftest's own need

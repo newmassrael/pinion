@@ -86,9 +86,9 @@ def body() -> None:
         assert has_tag(tf, f"{G}#detail_in_1"), "the input-1 default row paints"
 
         # ── (C) selection-relative alias == absolute address ────────
-        assert_eq(gq(tf, "detail.title"), gq(tf, "node.2.title"), "detail.title == node.2.title")
-        assert_eq(gq(tf, "detail.x"), gq(tf, "node.2.x"), "detail.x == node.2.x")
-        assert_eq(gq(tf, "detail.inputs"), gq(tf, "node.2.inputs"), "detail.inputs == node.2.inputs")
+        assert_eq(gq(tf, "detail.title"), gq(tf, gp.at("node.title", id=2)), "detail.title == node.2.title")
+        assert_eq(gq(tf, "detail.x"), gq(tf, gp.at("node.x", id=2)), "detail.x == node.2.x")
+        assert_eq(gq(tf, "detail.inputs"), gq(tf, gp.at("node.inputs", id=2)), "detail.inputs == node.2.inputs")
         # ★★★★★ R2166 — these are §7 `$schema` PATHS the screen declares
         # (`detail.input_default.<port>` and `node.<id>.input_default.<port>`),
         # not painted addresses. Asked for rather than re-typed.
@@ -99,10 +99,10 @@ def body() -> None:
 
         # ── (D) edit via the panel — intervene detail.<field> ───────
         tf.intervene("/external/detail.title", "Albedo")
-        assert_eq(gq(tf, "node.2.title"), "Albedo", "intervene detail.title renamed node 2")
+        assert_eq(gq(tf, gp.at("node.title", id=2)), "Albedo", "intervene detail.title renamed node 2")
         assert_eq(gq(tf, "detail.title"), "Albedo", "the panel reflects the rename")
         tf.intervene("/external/detail.x", 300)
-        assert_eq(gq(tf, "node.2.x"), 300, "intervene detail.x moved node 2")
+        assert_eq(gq(tf, gp.at("node.x", id=2)), 300, "intervene detail.x moved node 2")
         assert_eq(gq(tf, "detail.x"), 300, "the panel reflects the move")
 
         # ── (E) re-select node 0 (Texture, 0 inputs) ────────────────

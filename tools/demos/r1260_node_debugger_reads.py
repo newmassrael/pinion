@@ -74,15 +74,15 @@ def body() -> None:
         )
         assert_eq(q(tf, "eval.cycle_nodes"), "", "a DAG has no cycle nodes")
         assert_eq(q(tf, "eval.acyclic"), True, "seed graph is a DAG")
-        assert_eq(rgb(q(tf, "node.2.value")), (64, 64, 64), "Multiply(grey, grey) = 64")
+        assert_eq(rgb(q(tf, gp.at("node.value", id=2))), (64, 64, 64), "Multiply(grey, grey) = 64")
 
         # ── (B) authoring a source propagates through resolved_input ──
-        tf.intervene("/external/node.0.value", "#ff0000")  # Texture -> red
-        assert_eq(rgb(q(tf, "node.0.value")), (255, 0, 0), "Texture authored red")
-        assert_eq(rgb(q(tf, "node.2.resolved_input.0")), (255, 0, 0), "Multiply.in0 now sees red (the wire)")
-        assert_eq(rgb(q(tf, "node.2.resolved_input.1")), (0x80, 0x80, 0x80), "in1 unchanged (Color still grey)")
+        tf.intervene(f"/external/{gp.at('node.value', id=0)}", "#ff0000")  # Texture -> red
+        assert_eq(rgb(q(tf, gp.at("node.value", id=0))), (255, 0, 0), "Texture authored red")
+        assert_eq(rgb(q(tf, gp.at("node.resolved_input", id=2, port=0))), (255, 0, 0), "Multiply.in0 now sees red (the wire)")
+        assert_eq(rgb(q(tf, gp.at("node.resolved_input", id=2, port=1))), (0x80, 0x80, 0x80), "in1 unchanged (Color still grey)")
         # The resolved inputs explain the node's value: mul(red, grey) = (128,0,0).
-        assert_eq(rgb(q(tf, "node.2.value")), (128, 0, 0), "value follows from the resolved inputs")
+        assert_eq(rgb(q(tf, gp.at("node.value", id=2))), (128, 0, 0), "value follows from the resolved inputs")
         # detail.resolved_input mirrors the selected node.
         tf.intervene("/external/selected_ids", "2")
         mirrored = gp.at("detail.resolved_input", port=0)
@@ -94,8 +94,8 @@ def body() -> None:
         assert_eq((scalar, add), (4, 5), "Scalar=4, Add=5")
         assert_eq(inv(tf, "add_edge", f"{scalar},0,{add},0"), True, "Scalar.out (Float) -> Add.in0 (Vector)")
         # in0 = broadcast(0.0) = black; the debugger sees the coercion, not the raw Float.
-        assert_eq(rgb(q(tf, "node.5.resolved_input.0")), (0, 0, 0), "resolved_input shows the Float->Vector broadcast")
-        assert_eq(rgb(q(tf, "node.5.resolved_input.1")), (0x80, 0x80, 0x80), "in1 is the unwired grey default")
+        assert_eq(rgb(q(tf, gp.at("node.resolved_input", id=5, port=0))), (0, 0, 0), "resolved_input shows the Float->Vector broadcast")
+        assert_eq(rgb(q(tf, gp.at("node.resolved_input", id=5, port=1))), (0x80, 0x80, 0x80), "in1 is the unwired grey default")
 
         # ── (D) ★ a cycle is UNREACHABLE, by both paths ──────────────
         # R1596 — this section used to build a 2-cycle with two `add_edge`
@@ -123,7 +123,7 @@ def body() -> None:
         assert_eq(q(tf, "eval.cycle_nodes"), "", "and nobody is on a cycle")
 
         # The other reads are unaffected by the two loose nodes.
-        assert_eq(q(tf, "node.6.resolved_input.0"), q(tf, "node.6.input_default.0"),
+        assert_eq(q(tf, gp.at("node.resolved_input", id=6, port=0)), q(tf, gp.at("node.input_default", id=6, port=0)),
                   "an unwired input resolves its own default")
         # Terminal = Multiply(red, grey) = (128,0,0); the loose pair doesn't touch it.
         assert_eq(rgb(q(tf, "eval.output")), (128, 0, 0), "the loose pair leaves the terminal intact")
@@ -134,7 +134,7 @@ def body() -> None:
         assert_eq(q(tf, "eval.acyclic"), True, "the graph is a DAG")
         # Node 7 lost its wire from 6, so in0 falls back to its grey default —
         # resolvable again (not null).
-        assert_eq(rgb(q(tf, "node.7.resolved_input.0")), (0x80, 0x80, 0x80), "node 7 in0 is its grey default again")
+        assert_eq(rgb(q(tf, gp.at("node.resolved_input", id=7, port=0))), (0x80, 0x80, 0x80), "node 7 in0 is its grey default again")
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
 )
 
@@ -49,6 +50,7 @@ def rgb(v: Any) -> tuple[int, int, int]:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         assert_eq(q(tf, "node_count"), 4, "4 seed nodes")
         # ── (A) grow the graph: a chain of Add nodes off the Color source (1) ──
         prev = 1  # the seed Color source (grey), a Vector output
@@ -71,25 +73,29 @@ def body() -> None:
         # Each Add sums its wired in0 with its grey (0x80) in1 default, saturating;
         # after the first couple of links the chain pins white. The terminal (the
         # seed Output <- Multiply, untouched) is unaffected by the new branch.
-        assert_eq(rgb(q(tf, f"node.{last}.value")), (255, 255, 255), "the chain end saturates to white")
-        assert_eq(q(tf, f"node.{last}.op"), "Add", "the chain end is an Add")
+        assert_eq(rgb(q(tf, gp.at("node.value", id=last))), (255, 255, 255), "the chain end saturates to white")
+        assert_eq(q(tf, gp.at("node.op", id=last)), "Add", "the chain end is an Add")
         assert_eq(rgb(q(tf, "eval.output")), (64, 64, 64), "the seed terminal is untouched")
 
         # ── (C) per-node reads are correct at scale ──────────────────
-        assert_eq(q(tf, f"node.{first_add}.op"), "Add", "the first chained node is an Add")
-        assert_eq(q(tf, f"node.{first_add}.is_source"), False, "an Add is not a source")
+        assert_eq(q(tf, gp.at("node.op", id=first_add)), "Add", "the first chained node is an Add")
+        assert_eq(q(tf, gp.at("node.is_source", id=first_add)), False, "an Add is not a source")
         # first_add.in0 is wired from the Color source (grey); in1 is its default.
-        assert_eq(rgb(q(tf, f"node.{first_add}.resolved_input.0")), (0x80, 0x80, 0x80), "in0 <- Color grey")
-        assert_eq(rgb(q(tf, f"node.{first_add}.resolved_input.1")), (0x80, 0x80, 0x80), "in1 grey default")
+        first_in0 = gp.at("node.resolved_input", id=first_add, port=0)
+        first_in1 = gp.at("node.resolved_input", id=first_add, port=1)
+        assert_eq(rgb(q(tf, first_in0)), (0x80, 0x80, 0x80), "in0 <- Color grey")
+        assert_eq(rgb(q(tf, first_in1)), (0x80, 0x80, 0x80), "in1 grey default")
         # A mid-chain node is wired (its in0 default is hidden) and evaluates white.
         mid = first_add + CHAIN // 2
-        assert_eq(q(tf, f"node.{mid}.op"), "Add", "mid-chain is an Add")
-        assert_eq(rgb(q(tf, f"node.{mid}.value")), (255, 255, 255), "mid-chain already saturated")
-        assert_eq(q(tf, f"node.{mid}.inputs"), 2, "an Add has 2 input ports")
-        assert_eq(q(tf, f"node.{mid}.outputs"), 1, "and 1 output port")
-        assert_eq(q(tf, f"node.{mid}.is_reroute"), False, "a chained Add is not a reroute")
-        assert_eq(rgb(q(tf, f"node.{mid}.resolved_input.0")), (255, 255, 255), "mid.in0 <- prev (white)")
-        assert_eq(rgb(q(tf, f"node.{mid}.resolved_input.1")), (0x80, 0x80, 0x80), "mid.in1 grey default")
+        assert_eq(q(tf, gp.at("node.op", id=mid)), "Add", "mid-chain is an Add")
+        assert_eq(rgb(q(tf, gp.at("node.value", id=mid))), (255, 255, 255), "mid-chain already saturated")
+        assert_eq(q(tf, gp.at("node.inputs", id=mid)), 2, "an Add has 2 input ports")
+        assert_eq(q(tf, gp.at("node.outputs", id=mid)), 1, "and 1 output port")
+        assert_eq(q(tf, gp.at("node.is_reroute", id=mid)), False, "a chained Add is not a reroute")
+        mid_in0 = gp.at("node.resolved_input", id=mid, port=0)
+        mid_in1 = gp.at("node.resolved_input", id=mid, port=1)
+        assert_eq(rgb(q(tf, mid_in0)), (255, 255, 255), "mid.in0 <- prev (white)")
+        assert_eq(rgb(q(tf, mid_in1)), (0x80, 0x80, 0x80), "mid.in1 grey default")
         # detail.* mirrors a selected chain node at scale.
         tf.intervene("/external/selected_ids", str(mid))
         assert_eq(q(tf, "detail.op"), "Add", "detail.op mirrors the selected chain node")
@@ -99,8 +105,8 @@ def body() -> None:
         eids = q(tf, "edge_ids").split(",")
         assert_eq(len(eids), 3 + CHAIN, "edge_ids enumerates every wire")
         # The seed sources are still authorable at scale.
-        assert_eq(q(tf, "node.0.is_source"), True, "Texture still a source")
-        assert_eq(q(tf, "node.1.is_source"), True, "Color still a source")
+        assert_eq(q(tf, gp.at("node.is_source", id=0)), True, "Texture still a source")
+        assert_eq(q(tf, gp.at("node.is_source", id=1)), True, "Color still a source")
         # The full node id set is intact (no drops from the paint index change).
         ids = q(tf, "node_ids").split(",")
         assert_eq(len(ids), 4 + CHAIN, "node_ids enumerates the whole graph")

@@ -61,6 +61,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     assert_no_such_member,
+    external_paths,
     run_demo,
 )
 
@@ -104,6 +105,7 @@ def refused(tf: RpcSubprocess, path: str) -> str:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf, EXT)
         for _ in range(3):
             tf.tick(0.016)
 
@@ -114,46 +116,46 @@ def body() -> None:
         select(tf, every[:2])
         frame = int(inv(tf, "add_frame", None))
         assert frame not in every, f"A: a frame is a fresh node: {frame}"
-        assert_eq(csv(tf, f"frame.{frame}.contains"), every[:2], "A: it holds the selection")
+        assert_eq(csv(tf, gp.at("frame.contains", id=frame)), every[:2], "A: it holds the selection")
         assert_eq(q(tf, "frame_count"), 1, "A: and there is one frame")
         # Read it from the MEMBER's end too -- the DCC has only this direction.
-        assert_eq(q(tf, f"node.{every[0]}.parent"), frame, "A: the member names its frame")
-        assert q(tf, f"node.{every[2]}.parent") is None, "A: an outsider names none"
+        assert_eq(q(tf, gp.at("node.parent", id=every[0])), frame, "A: the member names its frame")
+        assert q(tf, gp.at("node.parent", id=every[2])) is None, "A: an outsider names none"
 
         # -- (B) * a resize does NOT move membership -------------------------
-        held = csv(tf, f"frame.{frame}.contains")
-        was = (int(q(tf, f"frame.{frame}.w")), int(q(tf, f"frame.{frame}.h")))
+        held = csv(tf, gp.at("frame.contains", id=frame))
+        was = (int(q(tf, gp.at("frame.w", id=frame))), int(q(tf, gp.at("frame.h", id=frame))))
         # Asked for more than the world has; the clamp decides, so the assertion
         # reads the answer back rather than repeating the request.
-        tf.intervene(f"{EXT}/frame.{frame}.x", 0)
-        tf.intervene(f"{EXT}/frame.{frame}.y", 0)
-        tf.intervene(f"{EXT}/frame.{frame}.w", 100000)
-        tf.intervene(f"{EXT}/frame.{frame}.h", 100000)
-        now = (int(q(tf, f"frame.{frame}.w")), int(q(tf, f"frame.{frame}.h")))
+        tf.intervene(f"{EXT}/{gp.at('frame.x', id=frame)}", 0)
+        tf.intervene(f"{EXT}/{gp.at('frame.y', id=frame)}", 0)
+        tf.intervene(f"{EXT}/{gp.at('frame.w', id=frame)}", 100000)
+        tf.intervene(f"{EXT}/{gp.at('frame.h', id=frame)}", 100000)
+        now = (int(q(tf, gp.at("frame.w", id=frame))), int(q(tf, gp.at("frame.h", id=frame))))
         assert now[0] > was[0] and now[1] > was[1], f"B: the box grew: {was} -> {now}"
         # The box now geometrically COVERS every node -- which is exactly the
         # condition the old rectangle test read as membership. Asserting the
         # covering FIRST is what stops the next assertion passing by accident.
-        fx, fy = int(q(tf, f"frame.{frame}.x")), int(q(tf, f"frame.{frame}.y"))
+        fx, fy = int(q(tf, gp.at("frame.x", id=frame))), int(q(tf, gp.at("frame.y", id=frame)))
         for outsider in every[2:]:
             ox, oy = where[outsider]
             assert (
                 fx <= ox <= fx + now[0] and fy <= oy <= fy + now[1]
             ), f"B: node {outsider} at ({ox},{oy}) must be inside ({fx},{fy})+{now}"
         assert_eq(
-            csv(tf, f"frame.{frame}.contains"),
+            csv(tf, gp.at("frame.contains", id=frame)),
             held,
             "B: * and what it HOLDS did not move -- a rectangle test would say all of them",
         )
         for outsider in every[2:]:
-            assert q(tf, f"node.{outsider}.parent") is None, "B: nobody was adopted"
+            assert q(tf, gp.at("node.parent", id=outsider)) is None, "B: nobody was adopted"
 
         # -- (C) attach is the ACT that joins, and it names who moved --------
         select(tf, every[2:])
         moved = [int(n) for n in str(inv(tf, "attach", None)).split(",")]
         assert_eq(moved, every[2:], "C: attach names who joined")
         assert_eq(
-            csv(tf, f"frame.{frame}.contains"), every, "C: and now the frame holds all of them"
+            csv(tf, gp.at("frame.contains", id=frame)), every, "C: and now the frame holds all of them"
         )
         # Running it again moves nobody, and can SAY so.
         assert_eq(str(inv(tf, "attach", None)), "", "C: a second attach is a no-op it can name")
@@ -161,34 +163,34 @@ def body() -> None:
         # -- (D) detach is one level, proven against a NEST ------------------
         select(tf, [every[0]])
         inner = int(inv(tf, "add_frame", None))
-        assert_eq(q(tf, f"node.{every[0]}.parent"), inner, "D: the inner frame took it")
-        assert_eq(q(tf, f"frame.{inner}.parent"), frame, "D: and sits inside the outer one")
-        assert_eq(csv(tf, f"frame.{inner}.contains"), [every[0]], "D: inner holds the node")
-        assert every[0] not in csv(tf, f"frame.{frame}.contains"), "D: outer no longer does"
-        assert every[0] in csv(tf, f"frame.{frame}.contents"), "D: but still CONTAINS it"
+        assert_eq(q(tf, gp.at("node.parent", id=every[0])), inner, "D: the inner frame took it")
+        assert_eq(q(tf, gp.at("frame.parent", id=inner)), frame, "D: and sits inside the outer one")
+        assert_eq(csv(tf, gp.at("frame.contains", id=inner)), [every[0]], "D: inner holds the node")
+        assert every[0] not in csv(tf, gp.at("frame.contains", id=frame)), "D: outer no longer does"
+        assert every[0] in csv(tf, gp.at("frame.contents", id=frame)), "D: but still CONTAINS it"
         # One level out lands in the OUTER frame, not on the canvas.
         select(tf, [every[0]])
         assert_eq(str(inv(tf, "detach", None)), str(every[0]), "D: detach names who left")
         assert_eq(
-            q(tf, f"node.{every[0]}.parent"),
+            q(tf, gp.at("node.parent", id=every[0])),
             frame,
             "D: * one level -- the DCC's detach clears the parent outright",
         )
         # Repeat and it reaches the canvas, which is what composing means.
         select(tf, [every[0]])
         inv(tf, "detach", None)
-        assert q(tf, f"node.{every[0]}.parent") is None, "D: twice reaches the canvas"
+        assert q(tf, gp.at("node.parent", id=every[0])) is None, "D: twice reaches the canvas"
         assert_eq(str(inv(tf, "detach", None)), "", "D: and a third time moves nobody")
 
         # -- (E) a dissolve says what it would COST --------------------------
         # The sink: nothing flows past it, so dissolving it cuts nothing.
         sink = every[3]
-        assert q(tf, f"dissolvable.{sink}") is True, "E: a sink's dissolve is lossless"
-        assert_eq(str(q(tf, f"dissolve_severs.{sink}")), "", "E: and cuts nothing")
+        assert q(tf, gp.at("dissolvable", id=sink)) is True, "E: a sink's dissolve is lossless"
+        assert_eq(str(q(tf, gp.at("dissolve_severs", id=sink))), "", "E: and cuts nothing")
         # A source: its outgoing wire has no upstream to be bridged from.
         source = every[0]
-        assert q(tf, f"dissolvable.{source}") is False, "E: a source's dissolve is lossy"
-        cut = str(q(tf, f"dissolve_severs.{source}"))
+        assert q(tf, gp.at("dissolvable", id=source)) is False, "E: a source's dissolve is lossy"
+        cut = str(q(tf, gp.at("dissolve_severs", id=source)))
         assert cut, f"E: * and it NAMES the wire it would cut: {cut!r}"
         # The prediction IS the operation: run it and exactly that wire is gone.
         assert int(cut) in csv(tf, "edge_ids"), "E: the named wire is there first"
@@ -205,7 +207,7 @@ def body() -> None:
         # the collapsed answer's variant name; asserting on the arm and on the
         # id is the fact, where the word was the encoding.
         assert_no_such_member(
-            lambda: q(tf, "dissolve_severs.9999"), saying="9999"
+            lambda: q(tf, gp.at("dissolve_severs", id=9999)), saying="9999"
         )
 
         # -- (F) a cycle cannot be authored ----------------------------------

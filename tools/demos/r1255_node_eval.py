@@ -41,8 +41,10 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
+    ExternalPaths,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
 )
 
@@ -62,62 +64,64 @@ def rgb(v: Any) -> tuple[int, int, int]:
     return (v["r"], v["g"], v["b"])
 
 
-def node_rgb(tf: RpcSubprocess, node: int) -> tuple[int, int, int]:
-    return rgb(q(tf, f"node.{node}.value"))
+def node_rgb(tf: RpcSubprocess, gp: ExternalPaths, node: int) -> tuple[int, int, int]:
+    return rgb(q(tf, gp.at("node.value", id=node)))
 
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
+
         # ── (A) the seed graph evaluates ─────────────────────────────
         assert_eq(q(tf, "node_count"), 4, "4 seed nodes")
         assert_eq(q(tf, "edge_count"), 3, "3 seed edges")
         assert_eq(q(tf, "eval.acyclic"), True, "the seed graph is a DAG")
         # Sources are their Vector constant (mid-grey); Multiply blends
         # grey*grey/255 = 64; the Output sink reports its resolved input.
-        assert_eq(node_rgb(tf, 0), GREY, "Texture source = grey constant")
-        assert_eq(node_rgb(tf, 1), GREY, "Color source = grey constant")
-        assert_eq(node_rgb(tf, 2), (64, 64, 64), "Multiply(grey, grey) = grey*grey/255")
-        assert_eq(node_rgb(tf, 3), (64, 64, 64), "Output.value = the Multiply result")
+        assert_eq(node_rgb(tf, gp, 0), GREY, "Texture source = grey constant")
+        assert_eq(node_rgb(tf, gp, 1), GREY, "Color source = grey constant")
+        assert_eq(node_rgb(tf, gp, 2), (64, 64, 64), "Multiply(grey, grey) = grey*grey/255")
+        assert_eq(node_rgb(tf, gp, 3), (64, 64, 64), "Output.value = the Multiply result")
         assert_eq(rgb(q(tf, "eval.output")), (64, 64, 64), "eval.output = the terminal")
         # The rename-stable compute identity (R1256) — the AI reads `op` to know
         # what a node computes; Texture vs Color (both ()->Vector) are otherwise
         # structurally identical, and title is rewritable.
-        assert_eq(q(tf, "node.0.op"), "Texture", "node 0 op = Texture")
-        assert_eq(q(tf, "node.1.op"), "Color", "node 1 op = Color (same signature as Texture)")
-        assert_eq(q(tf, "node.2.op"), "Multiply", "node 2 op = Multiply")
+        assert_eq(q(tf, gp.at("node.op", id=0)), "Texture", "node 0 op = Texture")
+        assert_eq(q(tf, gp.at("node.op", id=1)), "Color", "node 1 op = Color (same signature as Texture)")
+        assert_eq(q(tf, gp.at("node.op", id=2)), "Multiply", "node 2 op = Multiply")
 
         # ── (B) a fresh unwired Add computes over its pin defaults ────
         add = inv(tf, "add_node", "Add")
         assert_eq(add, 4, "add_node minted node 4")
         assert_eq(q(tf, "node_count"), 5, "one node added")
-        assert_eq(q(tf, "node.4.op"), "Add", "op=Add (not derivable from its (V,V)->V signature)")
+        assert_eq(q(tf, gp.at("node.op", id=4)), "Add", "op=Add (not derivable from its (V,V)->V signature)")
         # Both inputs unconnected -> both grey defaults; 128+128 saturates at 255.
-        assert_eq(node_rgb(tf, 4), (255, 255, 255), "Add(grey, grey) saturates to white")
+        assert_eq(node_rgb(tf, gp, 4), (255, 255, 255), "Add(grey, grey) saturates to white")
 
         # ── (C) intervene the pin defaults -> re-compute ─────────────
-        tf.intervene("/external/node.4.input_default.0", "#300000")
-        tf.intervene("/external/node.4.input_default.1", "#003000")
-        assert_eq(node_rgb(tf, 4), (48, 48, 0), "Add(#300000, #003000) = #303000")
-        tf.intervene("/external/node.4.input_default.0", "#ff0000")
-        assert_eq(node_rgb(tf, 4), (255, 48, 0), "changing in0's default re-computes")
+        tf.intervene(f"/external/{gp.at('node.input_default', id=4, port=0)}", "#300000")
+        tf.intervene(f"/external/{gp.at('node.input_default', id=4, port=1)}", "#003000")
+        assert_eq(node_rgb(tf, gp, 4), (48, 48, 0), "Add(#300000, #003000) = #303000")
+        tf.intervene(f"/external/{gp.at('node.input_default', id=4, port=0)}", "#ff0000")
+        assert_eq(node_rgb(tf, gp, 4), (255, 48, 0), "changing in0's default re-computes")
 
         # ── (D) wire Add -> Output: the terminal moves ───────────────
         # Output.in0 is already wired (edge 2 from Multiply); the one-wire rule
         # displaces it, so edge_count stays 3 (+1 added, -1 displaced).
         assert_eq(inv(tf, "add_edge", "4,0,3,0"), True, "Add -> Output.in0")
         assert_eq(q(tf, "edge_count"), 3, "the new wire displaced the old one")
-        assert_eq(node_rgb(tf, 3), (255, 48, 0), "Output now reports Add's value")
+        assert_eq(node_rgb(tf, gp, 3), (255, 48, 0), "Output now reports Add's value")
         assert_eq(rgb(q(tf, "eval.output")), (255, 48, 0), "eval.output followed the rewire")
         assert_eq(q(tf, "eval.acyclic"), True, "still a DAG")
 
         # ── (E) Scalar (Float) -> Vector input broadcasts ────────────
         scal = inv(tf, "add_node", "Scalar")
         assert_eq(scal, 5, "add_node minted the Scalar (node 5)")
-        assert_eq(q(tf, "node.5.value"), 0.0, "Scalar source = its Float constant 0.0")
+        assert_eq(q(tf, gp.at("node.value", id=5)), 0.0, "Scalar source = its Float constant 0.0")
         # Float -> Vector is the one lattice coercion; the wire is accepted and
         # the scalar broadcasts (0.0 -> black), overriding in0's #ff0000 default.
         assert_eq(inv(tf, "add_edge", "5,0,4,0"), True, "Scalar.out (Float) -> Add.in0 (Vector)")
-        assert_eq(node_rgb(tf, 4), (0, 48, 0), "in0 = broadcast(0.0)=black; in1 = #003000 default")
+        assert_eq(node_rgb(tf, gp, 4), (0, 48, 0), "in0 = broadcast(0.0)=black; in1 = #003000 default")
         assert_eq(rgb(q(tf, "eval.output")), (0, 48, 0), "terminal follows the broadcast")
 
         # ── (F) a cycle is uncomputable + detected ───────────────────
@@ -143,7 +147,7 @@ def body() -> None:
         assert_eq(inv(tf, "delete_node", 6), True, "delete node 6 (and its incident edges)")
         assert_eq(q(tf, "eval.acyclic"), True, "still a DAG")
         # Node 7 lost its wired in0 -> falls back to its grey default.
-        assert_eq(node_rgb(tf, 7), (255, 255, 255), "the survivor computes over its defaults again")
+        assert_eq(node_rgb(tf, gp, 7), (255, 255, 255), "the survivor computes over its defaults again")
 
 
 if __name__ == "__main__":

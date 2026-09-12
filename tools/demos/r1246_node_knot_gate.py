@@ -33,8 +33,10 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
+    ExternalPaths,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -69,18 +71,20 @@ def in_port0_center(x: int, y: int) -> tuple[int, int]:
     return (x + PORT_SIZE // 2, y + PORT_ROW0_TOP + PORT_SIZE // 2)
 
 
-def wires(tf: RpcSubprocess) -> set[str]:
+def wires(tf: RpcSubprocess, gp: ExternalPaths) -> set[str]:
     ids = q(tf, "edge_ids")
-    return {q(tf, f"edge.{e}") for e in ids.split(",")} if ids else set()
+    return {q(tf, gp.at("edge", id=e)) for e in ids.split(",")} if ids else set()
 
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
+
         # ── (A) boot + splice a reroute into edge 0 ─────────────────
         assert_eq(q(tf, "node_count"), 4, "4 seed nodes")
-        assert_eq(q(tf, "edge.0"), "0:0->2:0", "edge 0 = node0.out0 -> node2.in0")
-        n0x, n0y = q(tf, "node.0.x"), q(tf, "node.0.y")
-        n2x, n2y = q(tf, "node.2.x"), q(tf, "node.2.y")
+        assert_eq(q(tf, gp.at("edge", id=0)), "0:0->2:0", "edge 0 = node0.out0 -> node2.in0")
+        n0x, n0y = q(tf, gp.at("node.x", id=0)), q(tf, gp.at("node.y", id=0))
+        n2x, n2y = q(tf, gp.at("node.x", id=2)), q(tf, gp.at("node.y", id=2))
         fx, fy = out_port0_center(n0x, n0y)
         tx, ty = in_port0_center(n2x, n2y)
         mid = ((fx + tx) / 2.0, (fy + ty) / 2.0)  # the knot sits here
@@ -89,9 +93,9 @@ def body() -> None:
         assert_eq(rid, 4, "the reroute mints node id 4")
         assert_eq(q(tf, "node_count"), 5, "the knot is spliced in")
         assert_eq(q(tf, "edge_count"), 4, "net +1 edge (removed 1, added 2)")
-        assert_eq(q(tf, f"node.{rid}.is_reroute"), True, "node 4 is a reroute")
-        assert_eq(q(tf, f"node.{rid}.inputs"), 1, "the knot has one input")
-        assert_eq(q(tf, f"node.{rid}.outputs"), 1, "the knot has one output")
+        assert_eq(q(tf, gp.at("node.is_reroute", id=rid)), True, "node 4 is a reroute")
+        assert_eq(q(tf, gp.at("node.inputs", id=rid)), 1, "the knot has one input")
+        assert_eq(q(tf, gp.at("node.outputs", id=rid)), 1, "the knot has one output")
         assert_eq(q(tf, "renaming"), None, "no rename in flight")
 
         # ── (B) DOUBLE-CLICK the knot -> NO-OP ──────────────────────
@@ -103,7 +107,7 @@ def body() -> None:
         assert_eq(q(tf, "reroute_ids"), str(rid), "the knot is still there")
         assert_eq(q(tf, "renaming"), None, "no phantom rename armed on the knot")
         assert_eq(q(tf, "editing"), None, "no inline editor of any kind armed")
-        assert_eq(q(tf, f"node.{rid}.is_reroute"), True, "still a reroute after double-click")
+        assert_eq(q(tf, gp.at("node.is_reroute", id=rid)), True, "still a reroute after double-click")
 
         # ── (C) begin_rename on the knot is refused (every route) ───
         assert_eq(inv(tf, "begin_rename", rid), False, "invoke begin_rename <knot> refused")
@@ -119,7 +123,7 @@ def body() -> None:
         assert_eq(q(tf, "node_count"), 4, "the knot is gone")
         assert_eq(q(tf, "edge_count"), 3, "net -1 edge (removed 2, added 1 bridge)")
         assert_eq(q(tf, "reroute_ids"), "", "no reroutes remain")
-        assert "0:0->2:0" in wires(tf), "node0 -> node2.in0 reconnected by the dissolve"
+        assert "0:0->2:0" in wires(tf, gp), "node0 -> node2.in0 reconnected by the dissolve"
         assert_eq(tf.query(f"{UNDO}/undo_label"), "Dissolve node", "one labelled dissolve step")
         assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo restores the hop")
         assert_eq(q(tf, "node_count"), 5, "the knot is back")
@@ -128,8 +132,8 @@ def body() -> None:
         # ── (E) a COMPUTE node's double-click still renames ─────────
         # Dissolve the knot again for a clean state, then rename node 2.
         assert_eq(inv(tf, "dissolve_node", rid), True, "re-dissolve for the rename check")
-        cx = q(tf, "node.2.x") + NODE_W // 2
-        cy = q(tf, "node.2.y") + (HEADER_H + 2 * PORT_PITCH + 10) // 2
+        cx = q(tf, gp.at("node.x", id=2)) + NODE_W // 2
+        cy = q(tf, gp.at("node.y", id=2)) + (HEADER_H + 2 * PORT_PITCH + 10) // 2
         tf.double_click(at=W(cx, cy))
         wait_until(lambda: q(tf, "renaming") is not None,
                    desc="a compute node's double-click opens the title rename")

@@ -50,6 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
 )
 
@@ -89,6 +90,7 @@ def refused(tf: RpcSubprocess, args: str) -> str:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf, EXT)
         for _ in range(3):
             tf.tick(0.016)
 
@@ -97,9 +99,9 @@ def body() -> None:
         assert len(every) >= 4, f"A: the seeded graph: {every}"
         # The Multiply: two wired inputs, one wired output.
         target = 2
-        assert_eq(q(tf, f"node.{target}.op"), "Multiply", "A: the seed's compute node")
-        tf.intervene(f"{EXT}/node.{target}.title", "keep me")
-        tf.intervene(f"{EXT}/node.{target}.x", 123)
+        assert_eq(q(tf, gp.at("node.op", id=target)), "Multiply", "A: the seed's compute node")
+        tf.intervene(f"{EXT}/{gp.at('node.title', id=target)}", "keep me")
+        tf.intervene(f"{EXT}/{gp.at('node.x', id=target)}", 123)
         edges_before = csv(tf, "edge_ids")
 
         carried, severed, discarded = cost(tf, target, "Add")
@@ -109,16 +111,16 @@ def body() -> None:
         assert_eq(csv(tf, "edge_ids"), edges_before, "A: and the graph agrees")
 
         # * The id names the SAME node, with a different body.
-        assert_eq(q(tf, f"node.{target}.op"), "Add", "A: * same id, new body")
-        assert_eq(q(tf, f"node.{target}.title"), "keep me", "A: the rename survived")
-        assert_eq(q(tf, f"node.{target}.x"), 123, "A: and the position")
-        assert q(tf, f"node.{target}.h") is not None, "A: it is a real node"
+        assert_eq(q(tf, gp.at("node.op", id=target)), "Add", "A: * same id, new body")
+        assert_eq(q(tf, gp.at("node.title", id=target)), "keep me", "A: the rename survived")
+        assert_eq(q(tf, gp.at("node.x", id=target)), 123, "A: and the position")
+        assert q(tf, gp.at("node.h", id=target)) is not None, "A: it is a real node"
 
         # One undoable step, and it goes back.
         assert_eq(q(tf, "eval.acyclic"), True, "A: still a DAG")
         tf.invoke(f"{UNDO}/undo", None)
-        assert_eq(q(tf, f"node.{target}.op"), "Multiply", "A: undo restores the kind")
-        assert_eq(q(tf, f"node.{target}.title"), "keep me", "A: rename predates the swap")
+        assert_eq(q(tf, gp.at("node.op", id=target)), "Multiply", "A: undo restores the kind")
+        assert_eq(q(tf, gp.at("node.title", id=target)), "keep me", "A: rename predates the swap")
 
         # -- (B) a lossy swap NAMES the wire, verified against the graph -----
         # `Output` is a sink: one input, no output at all. Swapping the Multiply
@@ -146,15 +148,16 @@ def body() -> None:
         # -- (C) an authored value that loses its port is named too ----------
         # Author on the Lerp's Float factor, then swap for a kind without one.
         lerp = int(inv(tf, "add_node", "Lerp"))
-        tf.intervene(f"{EXT}/node.{lerp}.input_default.2", 0.5)
-        assert_eq(q(tf, f"node.{lerp}.input_default.2"), 0.5, "C: the value is authored")
+        factor = gp.at("node.input_default", id=lerp, port=2)
+        tf.intervene(f"{EXT}/{factor}", 0.5)
+        assert_eq(q(tf, factor), 0.5, "C: the value is authored")
         carried, severed, discarded = cost(tf, lerp, "Add")
         assert discarded.startswith("in2="), f"C: the port that lost it: {discarded!r}"
         assert "0.5" in discarded, (
             f"C: * and WHAT it was -- the swap already happened, so an address "
             f"alone leaves a client nothing to show: {discarded!r}"
         )
-        assert_eq(q(tf, f"node.{lerp}.op"), "Add", "C: and the node is still the node")
+        assert_eq(q(tf, gp.at("node.op", id=lerp)), "Add", "C: and the node is still the node")
 
         # -- (D) a structural body is refused BY NAME ------------------------
         tf.intervene(f"{EXT}/selected_ids", str(every[0]))

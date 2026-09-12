@@ -42,10 +42,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
+    ExternalPaths,
     RpcSubprocess,
     assert_eq,
     assert_no_such_member,
     assert_rpc_error,
+    external_paths,
     find_by_tag,
     run_demo,
 )
@@ -58,26 +60,26 @@ def q(tf: RpcSubprocess, path: str):
     return tf.query(f"/external/{path}")
 
 
-def nx(tf: RpcSubprocess, nid: int) -> int:
-    return q(tf, f"node.{nid}.x")
+def nx(tf: RpcSubprocess, gp: ExternalPaths, nid: int) -> int:
+    return q(tf, gp.at("node.x", id=nid))
 
 
-def ny(tf: RpcSubprocess, nid: int) -> int:
-    return q(tf, f"node.{nid}.y")
+def ny(tf: RpcSubprocess, gp: ExternalPaths, nid: int) -> int:
+    return q(tf, gp.at("node.y", id=nid))
 
 
-def nh(tf: RpcSubprocess, nid: int) -> int:
-    return q(tf, f"node.{nid}.h")
+def nh(tf: RpcSubprocess, gp: ExternalPaths, nid: int) -> int:
+    return q(tf, gp.at("node.h", id=nid))
 
 
-def centre(tf: RpcSubprocess, nid: int) -> float:
+def centre(tf: RpcSubprocess, gp: ExternalPaths, nid: int) -> float:
     """A card's vertical middle — where an edge actually attaches."""
-    return ny(tf, nid) + nh(tf, nid) / 2
+    return ny(tf, gp, nid) + nh(tf, gp, nid) / 2
 
 
-def place(tf: RpcSubprocess, nid: int, x: int, y: int) -> None:
-    tf.intervene(f"/external/node.{nid}.x", x)
-    tf.intervene(f"/external/node.{nid}.y", y)
+def place(tf: RpcSubprocess, gp: ExternalPaths, nid: int, x: int, y: int) -> None:
+    tf.intervene(f"/external/{gp.at('node.x', id=nid)}", x)
+    tf.intervene(f"/external/{gp.at('node.y', id=nid)}", y)
 
 
 def auto_layout(tf: RpcSubprocess):
@@ -99,6 +101,8 @@ def add_edge(tf: RpcSubprocess, frm: int, frm_port: int, to: int, to_port: int) 
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
+
         # ── (A) the new reads exist and are honest ───────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, G) is not None, "graph canvas present"
@@ -106,7 +110,7 @@ def body() -> None:
         assert_eq(q(tf, "edge_count"), 3, "3 seed edges")
 
         # `node.<id>.h` — the height read the centre arithmetic needs.
-        heights = {nid: nh(tf, nid) for nid in (0, 1, 2, 3)}
+        heights = {nid: nh(tf, gp, nid) for nid in (0, 1, 2, 3)}
         for nid, h in heights.items():
             assert h > 0, f"node {nid} has a real height, got {h}"
         assert len(set(heights.values())) > 1, (
@@ -120,14 +124,14 @@ def body() -> None:
         # read-only from the declaration without risking a fresh false
         # statement. The scalar measurements below are the case it can decide.
         assert_rpc_error(
-            lambda: tf.intervene("/external/node.0.h", 99), data="UnknownIntervenePath"
+            lambda: tf.intervene(f"/external/{gp.at('node.h', id=0)}", 99), data="UnknownIntervenePath"
         )
         # ★ R1670 — `node.999.h` is a DECLARED family addressed with an index
         # the graph does not hold, which R1667 split out of the collapsed
         # `UnknownIntrospectPath`: that word means stop asking for this name,
         # and this means read the family's count and ask again. The refusal
         # names the index it refused against, so a client can act on it.
-        assert_no_such_member(lambda: q(tf, "node.999.h"), saying="999")
+        assert_no_such_member(lambda: q(tf, gp.at("node.h", id=999)), saying="999")
 
         # `layout_crossings` — the tidiness metric, derived not cached.
         crossings = q(tf, "layout_crossings")
@@ -137,21 +141,21 @@ def body() -> None:
         # ── (B) ★ Brandes-Köpf: a chain comes out dead straight ──────
         # Scramble, tidy, then every edge of the seed chain must join two equal
         # centres. Stacking tops (R1383) could not do this for unequal heights.
-        place(tf, 3, 40, 60)
-        place(tf, 2, 240, 300)
-        place(tf, 1, 500, 60)
-        place(tf, 0, 520, 260)
+        place(tf, gp, 3, 40, 60)
+        place(tf, gp, 2, 240, 300)
+        place(tf, gp, 1, 500, 60)
+        place(tf, gp, 0, 520, 260)
         assert_eq(auto_layout(tf), True, "auto_layout rearranged the scrambled graph")
 
         # Multiply(2) -> Output(3) is a 1-in / 1-out hop: the solver aligns it.
         assert_eq(
-            centre(tf, 2),
-            centre(tf, 3),
+            centre(tf, gp, 2),
+            centre(tf, gp, 3),
             "★ the Multiply -> Output edge is dead straight (equal centres)",
         )
-        assert nh(tf, 2) != nh(tf, 3) or True, "heights may differ; centres still match"
+        assert nh(tf, gp, 2) != nh(tf, gp, 3) or True, "heights may differ; centres still match"
         # And the two sources still stack clear of one another.
-        gap = abs(centre(tf, 0) - centre(tf, 1))
+        gap = abs(centre(tf, gp, 0) - centre(tf, gp, 1))
         assert gap >= (heights[0] + heights[1]) / 2, (
             f"the source pair keeps a card's clearance, got {gap}"
         )
@@ -167,11 +171,11 @@ def body() -> None:
             "and the crossing count is unchanged — coordinates are not order",
         )
         # Idempotent in the positions too.
-        tidy = {nid: (nx(tf, nid), ny(tf, nid)) for nid in (0, 1, 2, 3)}
+        tidy = {nid: (nx(tf, gp, nid), ny(tf, gp, nid)) for nid in (0, 1, 2, 3)}
         assert_eq(auto_layout(tf), False, "still a no-op")
         for nid, (x, y) in tidy.items():
-            assert_eq(nx(tf, nid), x, f"node {nid} x unchanged")
-            assert_eq(ny(tf, nid), y, f"node {nid} y unchanged")
+            assert_eq(nx(tf, gp, nid), x, f"node {nid} x unchanged")
+            assert_eq(ny(tf, gp, nid), y, f"node {nid} y unchanged")
 
         # ── (D) ★ a LONG edge: the split gives it a slot ─────────────
         # Grow the spine to four layers, then add an edge that skips two of them.
@@ -189,11 +193,11 @@ def body() -> None:
 
         assert_eq(auto_layout(tf), True, "the wider graph re-tidies")
         # Forward flow is preserved across the long edge.
-        assert nx(tf, 0) < nx(tf, 2) < nx(tf, a) < nx(tf, b), (
+        assert nx(tf, gp, 0) < nx(tf, gp, 2) < nx(tf, gp, a) < nx(tf, gp, b), (
             "every hop still advances a column, long edge included"
         )
-        pitch = nx(tf, 2) - nx(tf, 0)
-        span_cols = (nx(tf, b) - nx(tf, 0)) // pitch
+        pitch = nx(tf, gp, 2) - nx(tf, gp, 0)
+        span_cols = (nx(tf, gp, b) - nx(tf, gp, 0)) // pitch
         assert span_cols >= 3, (
             f"★ the long edge really spans >= 3 layers (got {span_cols}) — below "
             "that it has no inner segment and the paper guarantees nothing"
@@ -225,8 +229,8 @@ def body() -> None:
         # positions cannot change it (crossings are structural), but adding an
         # edge can.
         structural = q(tf, "layout_crossings")
-        place(tf, b, 900, 700)
-        place(tf, 0, 20, 20)
+        place(tf, gp, b, 900, 700)
+        place(tf, gp, 0, 20, 20)
         assert_eq(
             q(tf, "layout_crossings"),
             structural,
@@ -240,15 +244,15 @@ def body() -> None:
         )
 
         # ── (F) determinism: same graph, same layout, from anywhere ──
-        first = {nid: (nx(tf, nid), ny(tf, nid)) for nid in (0, 1, 2, 3, a, b)}
+        first = {nid: (nx(tf, gp, nid), ny(tf, gp, nid)) for nid in (0, 1, 2, 3, a, b)}
         for nid, (x, y) in first.items():
-            place(tf, nid, x + 137, y + 91)
+            place(tf, gp, nid, x + 137, y + 91)
         # ★ A uniformly shifted tidy graph is STILL tidy: the layout anchors at the
         # graph's own top-left, so it asks for the same relative arrangement and
         # nothing needs to move. That is a stronger determinism statement than "it
         # re-tidies" — it says the solver reads structure and nothing else.
         assert_eq(auto_layout(tf), False, "★ a uniformly shifted tidy graph needs no move")
-        shifted = {nid: (nx(tf, nid), ny(tf, nid)) for nid in first}
+        shifted = {nid: (nx(tf, gp, nid), ny(tf, gp, nid)) for nid in first}
         for nid in first:
             assert_eq(
                 (shifted[nid][0] - first[nid][0], shifted[nid][1] - first[nid][1]),
@@ -257,12 +261,12 @@ def body() -> None:
             )
         # Scrambling non-uniformly, by contrast, DOES need a pass — so the no-op
         # above is a property of the shift, not of a solver that gave up.
-        place(tf, b, 20, 660)
-        place(tf, 0, 940, 30)
+        place(tf, gp, b, 20, 660)
+        place(tf, gp, 0, 940, 30)
         assert_eq(auto_layout(tf), True, "a genuinely scrambled graph re-tidies")
         for nid in first:
             assert_eq(
-                (nx(tf, nid) - nx(tf, 0), ny(tf, nid) - ny(tf, 0)),
+                (nx(tf, gp, nid) - nx(tf, gp, 0), ny(tf, gp, nid) - ny(tf, gp, 0)),
                 (shifted[nid][0] - shifted[0][0], shifted[nid][1] - shifted[0][1]),
                 f"node {nid} lands on the same SHAPE as before the scramble",
             )

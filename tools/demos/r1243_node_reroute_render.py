@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -84,16 +85,18 @@ def in_port0_center(x: int, y: int) -> tuple[int, int]:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
+
         # ── (A) boot ─────────────────────────────────────────────────
         assert_eq(q(tf, "node_count"), 4, "4 seed nodes")
         assert_eq(q(tf, "edge_count"), 3, "3 seed edges")
-        assert_eq(q(tf, "edge.0"), "0:0->2:0", "edge 0 = node0.out0 -> node2.in0")
+        assert_eq(q(tf, gp.at("edge", id=0)), "0:0->2:0", "edge 0 = node0.out0 -> node2.in0")
         assert_eq(q(tf, "reroute_ids"), "", "no reroutes at boot")
 
         # Reconstruct edge 0's endpoints from the node positions, then its
         # midpoint (the cubic's t=0.5 is exactly the straight midpoint).
-        n0x, n0y = q(tf, "node.0.x"), q(tf, "node.0.y")
-        n2x, n2y = q(tf, "node.2.x"), q(tf, "node.2.y")
+        n0x, n0y = q(tf, gp.at("node.x", id=0)), q(tf, gp.at("node.y", id=0))
+        n2x, n2y = q(tf, gp.at("node.x", id=2)), q(tf, gp.at("node.y", id=2))
         fx, fy = out_port0_center(n0x, n0y)
         tx, ty = in_port0_center(n2x, n2y)
         mid = ((fx + tx) / 2.0, (fy + ty) / 2.0)
@@ -111,22 +114,22 @@ def body() -> None:
         assert_eq(q(tf, "edge_count"), 4, "net +1 edge (removed 1, added 2)")
         rid = int(q(tf, "reroute_ids"))
         assert_eq(rid, 4, "the double-click minted reroute node 4")
-        assert_eq(q(tf, f"node.{rid}.is_reroute"), True, "the new node is a reroute")
+        assert_eq(q(tf, gp.at("node.is_reroute", id=rid)), True, "the new node is a reroute")
         assert "0" not in q(tf, "edge_ids").split(","), "the double-clicked edge 0 is gone"
         # The path now routes node0 -> R -> node2, typed.
-        wires = {e: q(tf, f"edge.{e}") for e in q(tf, "edge_ids").split(",")}
+        wires = {e: q(tf, gp.at("edge", id=e)) for e in q(tf, "edge_ids").split(",")}
         vals = set(wires.values())
         assert f"0:0->{rid}:0" in vals, "node0 now feeds the reroute"
         assert f"{rid}:0->2:0" in vals, "the reroute feeds node2's original input"
-        assert_eq(q(tf, f"node.{rid}.input_types"), "Vector", "input adopts the wire type")
-        assert_eq(q(tf, f"node.{rid}.output_types"), "Vector", "output adopts the wire type")
+        assert_eq(q(tf, gp.at("node.input_types", id=rid)), "Vector", "input adopts the wire type")
+        assert_eq(q(tf, gp.at("node.output_types", id=rid)), "Vector", "output adopts the wire type")
         # The gesture keeps the NEW KNOT selected — no edge selection, not the
         # fresh A->R wire under the cursor (the spent-release latch).
         assert_eq(q(tf, "selected_edge"), None, "no edge is selected after the splice")
         assert_eq(q(tf, "selected"), rid, "the new reroute knot is the selection")
 
         # ── (D) the knot is CENTRED by its DOT half, not a card half ──
-        kx, ky = q(tf, f"node.{rid}.x"), q(tf, f"node.{rid}.y")
+        kx, ky = q(tf, gp.at("node.x", id=rid)), q(tf, gp.at("node.y", id=rid))
         assert_eq(kx, mid_ix - KNOT_SIZE // 2,
                   "knot x centres the DOT on the wire midpoint (KNOT_SIZE/2)")
         assert_eq(ky, mid_iy - KNOT_SIZE // 2, "knot y centres the DOT")
@@ -140,7 +143,7 @@ def body() -> None:
         assert_eq(undo(tf), True, "undo the splice")
         assert_eq(q(tf, "node_count"), 4, "the reroute node is gone")
         assert_eq(q(tf, "edge_count"), 3, "back to 3 edges")
-        assert_eq(q(tf, "edge.0"), "0:0->2:0", "edge 0 restored verbatim")
+        assert_eq(q(tf, gp.at("edge", id=0)), "0:0->2:0", "edge 0 restored verbatim")
         assert_eq(q(tf, "reroute_ids"), "", "no reroutes after undo")
         assert_eq(redo(tf), True, "redo re-splices")
         assert_eq(q(tf, "node_count"), 5, "the reroute is back")
@@ -153,7 +156,7 @@ def body() -> None:
         # wire (all in y 110..254) — genuinely empty canvas.
         tf.double_click(at=W(620.0, 400.0))
         # Give the drain a beat, then assert nothing changed.
-        assert_eq(q(tf, "edge.0"), "0:0->2:0", "edge 0 still intact")
+        assert_eq(q(tf, gp.at("edge", id=0)), "0:0->2:0", "edge 0 still intact")
         assert_eq(q(tf, "node_count"), 4, "a double-click off any wire splices nothing")
         assert_eq(q(tf, "reroute_ids"), "", "no reroute from an empty double-click")
 

@@ -33,6 +33,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
 )
 
@@ -61,6 +62,7 @@ def rgb(v: Any) -> tuple[int, int, int]:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         assert_eq(q(tf, "node_count"), 4, "4 seed nodes")
         valid = q(tf, "serialized")
         assert isinstance(valid, str) and "schema_version" in valid, "serialized is the JSON blob"
@@ -69,8 +71,8 @@ def body() -> None:
         assert_eq(set_graph(tf, valid), True, "set_graph accepts a serialized live graph")
         assert_eq(q(tf, "node_count"), 4, "the round-trip preserved the graph")
         assert_eq(q(tf, "edge_count"), 3, "edges preserved")
-        assert_eq(q(tf, "node.0.op"), "Texture", "op preserved")
-        assert_eq(q(tf, "node.2.op"), "Multiply", "op preserved")
+        assert_eq(q(tf, gp.at("node.op", id=0)), "Texture", "op preserved")
+        assert_eq(q(tf, gp.at("node.op", id=2)), "Multiply", "op preserved")
         assert_eq(rgb(q(tf, "eval.output")), (64, 64, 64), "it still evaluates (grey64)")
 
         # ── (B) a modified but VALID blob is applied ─────────────────
@@ -79,8 +81,8 @@ def body() -> None:
         # name string at all and a rename to the name it already shows journals
         # nothing. The node is renamed through the model first, so the string
         # edit below has something to bite on.
-        tf.intervene("/external/node.0.title", "Albedo")
-        assert_eq(q(tf, "node.0.title"), "Albedo", "the model rename landed")
+        tf.intervene(f"/external/{gp.at('node.title', id=0)}", "Albedo")
+        assert_eq(q(tf, gp.at("node.title", id=0)), "Albedo", "the model rename landed")
         valid = q(tf, "serialized")
         # ★ R1689 — the archive is written INDENTED, so the edit is made on the
         # PARSED value's text rather than on an assumed spelling of it. A string
@@ -89,8 +91,8 @@ def body() -> None:
         renamed = re.sub(r'"label":\s*"Albedo"', '"label": "Ochre"', valid)
         assert renamed != valid, "the rename edit changed the blob"
         assert_eq(set_graph(tf, renamed), True, "a valid modification is accepted")
-        assert_eq(q(tf, "node.0.title"), "Ochre", "the rename applied")
-        assert_eq(q(tf, "node.0.op"), "Texture", "op is unchanged by a rename (R1256 identity)")
+        assert_eq(q(tf, gp.at("node.title", id=0)), "Ochre", "the rename applied")
+        assert_eq(q(tf, gp.at("node.op", id=0)), "Texture", "op is unchanged by a rename (R1256 identity)")
 
         # ── (C) ★ three of the old violations are UNREPRESENTABLE ────
         # R1596 — the editor's blob carried a per-node port list, a flat node
@@ -115,7 +117,7 @@ def body() -> None:
         assert dangling != renamed, "the dangling-endpoint edit changed the blob"
         reject(tf, dangling, "a link naming a node that is not there")
         assert_eq(q(tf, "node_count"), 4, "no nodes were installed from the bad blob")
-        assert_eq(q(tf, "node.0.title"), "Ochre", "the graph is unchanged after the reject")
+        assert_eq(q(tf, gp.at("node.title", id=0)), "Ochre", "the graph is unchanged after the reject")
 
         # A node claiming a parent that is not there (R1589's forest), which the
         # editor's own checker never had at all.
@@ -123,18 +125,18 @@ def body() -> None:
         assert orphan != renamed, "the parent edit changed the blob"
         reject(tf, orphan, "a node inside a frame that is not there")
         assert_eq(q(tf, "node_count"), 4, "graph unchanged")
-        assert_eq(q(tf, "node.0.title"), "Ochre", "still the last valid state")
+        assert_eq(q(tf, gp.at("node.title", id=0)), "Ochre", "still the last valid state")
 
         # ── (E) malformed JSON is rejected ───────────────────────────
         reject(tf, "{not json", "malformed JSON")
         reject(tf, '{"schema_version":999}', "a schema mismatch")
         assert_eq(q(tf, "node_count"), 4, "still unchanged after every reject")
-        assert_eq(q(tf, "node.0.title"), "Ochre", "still the last VALID state (B)")
+        assert_eq(q(tf, gp.at("node.title", id=0)), "Ochre", "still the last VALID state (B)")
         assert_eq(q(tf, "eval.acyclic"), True, "the surviving graph is a DAG")
 
         # ── a final valid write proves the path still accepts good input ─
         assert_eq(set_graph(tf, valid), True, "a valid blob is still accepted after the rejects")
-        assert_eq(q(tf, "node.0.title"), "Albedo", "restored to the graph (B) started from")
+        assert_eq(q(tf, gp.at("node.title", id=0)), "Albedo", "restored to the graph (B) started from")
         assert_eq(rgb(q(tf, "eval.output")), (64, 64, 64), "and it evaluates to the seed terminal")
 
 

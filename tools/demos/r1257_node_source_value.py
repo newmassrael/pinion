@@ -35,6 +35,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
 )
 
@@ -65,62 +66,64 @@ def rgb(v: Any) -> tuple[int, int, int]:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
+
         # ── (A) boot: which nodes are authorable sources ─────────────
-        assert_eq(q(tf, "node.0.is_source"), True, "Texture is a source")
-        assert_eq(q(tf, "node.1.is_source"), True, "Color is a source")
-        assert_eq(q(tf, "node.2.is_source"), False, "Multiply is a compute op")
-        assert_eq(q(tf, "node.3.is_source"), False, "Output is a sink")
+        assert_eq(q(tf, gp.at("node.is_source", id=0)), True, "Texture is a source")
+        assert_eq(q(tf, gp.at("node.is_source", id=1)), True, "Color is a source")
+        assert_eq(q(tf, gp.at("node.is_source", id=2)), False, "Multiply is a compute op")
+        assert_eq(q(tf, gp.at("node.is_source", id=3)), False, "Output is a sink")
         # is_source is orthogonal to op identity (R1256): both sources, distinct ops.
-        assert_eq(q(tf, "node.0.op"), "Texture", "node 0 op = Texture")
-        assert_eq(q(tf, "node.1.op"), "Color", "node 1 op = Color")
+        assert_eq(q(tf, gp.at("node.op", id=0)), "Texture", "node 0 op = Texture")
+        assert_eq(q(tf, gp.at("node.op", id=1)), "Color", "node 1 op = Color")
         # Sources start at their type constant (grey); terminal = grey*grey/255.
-        assert_eq(rgb(q(tf, "node.0.value")), (0x80, 0x80, 0x80), "Texture default grey")
-        assert_eq(rgb(q(tf, "node.1.value")), (0x80, 0x80, 0x80), "Color default grey")
+        assert_eq(rgb(q(tf, gp.at("node.value", id=0))), (0x80, 0x80, 0x80), "Texture default grey")
+        assert_eq(rgb(q(tf, gp.at("node.value", id=1))), (0x80, 0x80, 0x80), "Color default grey")
         assert_eq(rgb(q(tf, "eval.output")), (64, 64, 64), "terminal grey64")
         assert_eq(q(tf, "eval.acyclic"), True, "the seed graph is a DAG")
 
         # ── (B) author the sources -> the graph re-evaluates ─────────
-        tf.intervene("/external/node.0.value", "#ff8040")  # Texture (255,128,64)
-        tf.intervene("/external/node.1.value", "#ffffff")  # Color white (identity)
-        assert_eq(rgb(q(tf, "node.0.value")), (255, 128, 64), "Texture now the authored colour")
-        assert_eq(rgb(q(tf, "node.1.value")), (255, 255, 255), "Color now white")
+        tf.intervene(f"/external/{gp.at('node.value', id=0)}", "#ff8040")  # Texture (255,128,64)
+        tf.intervene(f"/external/{gp.at('node.value', id=1)}", "#ffffff")  # Color white (identity)
+        assert_eq(rgb(q(tf, gp.at("node.value", id=0))), (255, 128, 64), "Texture now the authored colour")
+        assert_eq(rgb(q(tf, gp.at("node.value", id=1))), (255, 255, 255), "Color now white")
         # Multiply by white is the identity, so the terminal is the Texture colour.
-        assert_eq(rgb(q(tf, "node.2.value")), (255, 128, 64), "Multiply(tex, white) = tex")
+        assert_eq(rgb(q(tf, gp.at("node.value", id=2))), (255, 128, 64), "Multiply(tex, white) = tex")
         assert_eq(rgb(q(tf, "eval.output")), (255, 128, 64), "terminal followed the source edits")
-        assert_eq(q(tf, "node.0.is_source"), True, "authoring a source does not change its is_source")
+        assert_eq(q(tf, gp.at("node.is_source", id=0)), True, "authoring a source does not change its is_source")
         assert_eq(q(tf, "eval.acyclic"), True, "still a DAG after the source edits")
 
         # ── (C) DERIVED values are read-only; sources are typed ──────
-        expect_error(lambda: tf.intervene("/external/node.2.value", "#00ff00"),
+        expect_error(lambda: tf.intervene(f"/external/{gp.at('node.value', id=2)}", "#00ff00"),
                       "authoring a compute op's value is ReadOnly")
-        expect_error(lambda: tf.intervene("/external/node.3.value", "#00ff00"),
+        expect_error(lambda: tf.intervene(f"/external/{gp.at('node.value', id=3)}", "#00ff00"),
                       "authoring the sink's value is ReadOnly")
-        expect_error(lambda: tf.intervene("/external/node.0.value", 0.5),
+        expect_error(lambda: tf.intervene(f"/external/{gp.at('node.value', id=0)}", 0.5),
                       "a float against a Vector source is a TypeMismatch")
 
         # ── (D) a Scalar (Float) source ──────────────────────────────
         scalar = inv(tf, "add_node", "Scalar")
         assert_eq(scalar, 4, "add Scalar -> node 4")
         assert_eq(q(tf, "node_count"), 5, "one node added")
-        assert_eq(q(tf, "node.4.op"), "Scalar", "op = Scalar")
-        assert_eq(q(tf, "node.4.is_source"), True, "Scalar is a source")
-        assert_eq(q(tf, "node.4.value"), 0.0, "Scalar default 0.0")
-        tf.intervene("/external/node.4.value", 0.75)
-        assert_eq(q(tf, "node.4.value"), 0.75, "the Float authored the Scalar")
-        expect_error(lambda: tf.intervene("/external/node.4.value", "#ff0000"),
+        assert_eq(q(tf, gp.at("node.op", id=4)), "Scalar", "op = Scalar")
+        assert_eq(q(tf, gp.at("node.is_source", id=4)), True, "Scalar is a source")
+        assert_eq(q(tf, gp.at("node.value", id=4)), 0.0, "Scalar default 0.0")
+        tf.intervene(f"/external/{gp.at('node.value', id=4)}", 0.75)
+        assert_eq(q(tf, gp.at("node.value", id=4)), 0.75, "the Float authored the Scalar")
+        expect_error(lambda: tf.intervene(f"/external/{gp.at('node.value', id=4)}", "#ff0000"),
                      "a hex against a Float source is a TypeMismatch")
         # The Scalar is disconnected, so the terminal is untouched by it.
         assert_eq(rgb(q(tf, "eval.output")), (255, 128, 64), "a disconnected source leaves the terminal")
 
         # ── (E) a source edit is one undoable step ───────────────────
-        tf.intervene("/external/node.0.value", "#000000")  # Texture -> black
-        assert_eq(rgb(q(tf, "node.0.value")), (0, 0, 0), "Texture is black")
+        tf.intervene(f"/external/{gp.at('node.value', id=0)}", "#000000")  # Texture -> black
+        assert_eq(rgb(q(tf, gp.at("node.value", id=0))), (0, 0, 0), "Texture is black")
         assert_eq(rgb(q(tf, "eval.output")), (0, 0, 0), "terminal follows to black")
         assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo the source edit")
-        assert_eq(rgb(q(tf, "node.0.value")), (255, 128, 64), "the source reverted to #ff8040")
+        assert_eq(rgb(q(tf, gp.at("node.value", id=0))), (255, 128, 64), "the source reverted to #ff8040")
         assert_eq(rgb(q(tf, "eval.output")), (255, 128, 64), "and the terminal with it")
         assert_eq(tf.invoke(f"{UNDO}/redo", None), True, "redo re-applies the black")
-        assert_eq(rgb(q(tf, "node.0.value")), (0, 0, 0), "the source is black again")
+        assert_eq(rgb(q(tf, gp.at("node.value", id=0))), (0, 0, 0), "the source is black again")
 
 
 if __name__ == "__main__":

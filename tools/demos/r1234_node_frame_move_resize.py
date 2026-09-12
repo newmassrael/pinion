@@ -42,6 +42,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -63,10 +64,10 @@ def select(tf: RpcSubprocess, ids: list[int]) -> None:
                desc=f"selection = {csv}")
 
 
-def set_rect(tf: RpcSubprocess, fid: int, field: str, value: int) -> None:
-    tf.intervene(f"/external/frame.{fid}.{field}", value)
-    wait_until(lambda: True if q(tf, f"frame.{fid}.{field}") == value else None,
-               desc=f"frame.{fid}.{field} = {value}")
+def set_rect(tf: RpcSubprocess, path: str, value: int) -> None:
+    tf.intervene(f"/external/{path}", value)
+    wait_until(lambda: True if q(tf, path) == value else None,
+               desc=f"{path} = {value}")
 
 
 def undo(tf: RpcSubprocess) -> bool:
@@ -83,6 +84,8 @@ def undo_label(tf: RpcSubprocess) -> Any:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
+
         # ── (A) boot ─────────────────────────────────────────────────
         assert_eq(q(tf, "node_count"), 4, "4 seed nodes")
         assert_eq(q(tf, "frame_count"), 0, "no frames at boot")
@@ -94,42 +97,42 @@ def body() -> None:
         # so it mints from the NODE counter: the seed graph holds four, and the
         # frame is the fifth thing in the tree.
         assert_eq(fid, 4, "the frame mints the next NODE id")
-        assert_eq(q(tf, f"frame.{fid}.contains"), "0,1", "the two framed nodes are inside")
-        fx0 = q(tf, f"frame.{fid}.x")
-        fy0 = q(tf, f"frame.{fid}.y")
-        n0x, n1x, n2x = q(tf, "node.0.x"), q(tf, "node.1.x"), q(tf, "node.2.x")
+        assert_eq(q(tf, gp.at("frame.contains", id=fid)), "0,1", "the two framed nodes are inside")
+        fx0 = q(tf, gp.at("frame.x", id=fid))
+        fy0 = q(tf, gp.at("frame.y", id=fid))
+        n0x, n1x, n2x = q(tf, gp.at("node.x", id=0)), q(tf, gp.at("node.x", id=1)), q(tf, gp.at("node.x", id=2))
 
         # ── (C) MOVE x: frame + contents shift, outsider does not ────
-        set_rect(tf, fid, "x", fx0 + 60)
-        assert_eq(q(tf, f"frame.{fid}.x"), fx0 + 60, "frame moved right by 60")
-        assert_eq(q(tf, "node.0.x"), n0x + 60, "framed node 0 moved with the frame")
-        assert_eq(q(tf, "node.1.x"), n1x + 60, "framed node 1 moved with the frame")
-        assert_eq(q(tf, "node.2.x"), n2x, "node 2 (outside the frame) is untouched")
+        set_rect(tf, gp.at("frame.x", id=fid), fx0 + 60)
+        assert_eq(q(tf, gp.at("frame.x", id=fid)), fx0 + 60, "frame moved right by 60")
+        assert_eq(q(tf, gp.at("node.x", id=0)), n0x + 60, "framed node 0 moved with the frame")
+        assert_eq(q(tf, gp.at("node.x", id=1)), n1x + 60, "framed node 1 moved with the frame")
+        assert_eq(q(tf, gp.at("node.x", id=2)), n2x, "node 2 (outside the frame) is untouched")
         assert_eq(undo_label(tf), "Move frame", "the move is a single labelled step")
         assert_eq(undo(tf), True, "one undo reverts the whole move")
-        assert_eq(q(tf, f"frame.{fid}.x"), fx0, "frame restored")
-        assert_eq(q(tf, "node.0.x"), n0x, "node 0 restored")
-        assert_eq(q(tf, "node.1.x"), n1x, "node 1 restored")
+        assert_eq(q(tf, gp.at("frame.x", id=fid)), fx0, "frame restored")
+        assert_eq(q(tf, gp.at("node.x", id=0)), n0x, "node 0 restored")
+        assert_eq(q(tf, gp.at("node.x", id=1)), n1x, "node 1 restored")
         assert_eq(redo(tf), True, "redo the move")
-        assert_eq(q(tf, "node.0.x"), n0x + 60, "node 0 re-moved by redo")
+        assert_eq(q(tf, gp.at("node.x", id=0)), n0x + 60, "node 0 re-moved by redo")
         # settle back to the un-moved baseline for the next section.
         assert_eq(undo(tf), True, "undo back to baseline")
-        assert_eq(q(tf, f"frame.{fid}.x"), fx0, "frame back at origin")
+        assert_eq(q(tf, gp.at("frame.x", id=fid)), fx0, "frame back at origin")
 
         # ── (D) MOVE y: contents come along on the other axis ────────
-        n0y = q(tf, "node.0.y")
-        set_rect(tf, fid, "y", fy0 + 40)
-        assert_eq(q(tf, f"frame.{fid}.y"), fy0 + 40, "frame moved down by 40")
-        assert_eq(q(tf, "node.0.y"), n0y + 40, "member moved down with it")
+        n0y = q(tf, gp.at("node.y", id=0))
+        set_rect(tf, gp.at("frame.y", id=fid), fy0 + 40)
+        assert_eq(q(tf, gp.at("frame.y", id=fid)), fy0 + 40, "frame moved down by 40")
+        assert_eq(q(tf, gp.at("node.y", id=0)), n0y + 40, "member moved down with it")
         assert_eq(undo(tf), True, "undo the y-move")
-        assert_eq(q(tf, "node.0.y"), n0y, "member y restored")
+        assert_eq(q(tf, gp.at("node.y", id=0)), n0y, "member y restored")
 
         # ── (E) RESIZE w: grow to swallow the whole graph ────────────
-        n0x_b, n0y_b = q(tf, "node.0.x"), q(tf, "node.0.y")
-        set_rect(tf, fid, "w", 800)
-        assert_eq(q(tf, f"frame.{fid}.w"), 800, "width grew to 800")
-        assert_eq(q(tf, "node.0.x"), n0x_b, "a resize does not drag node 0 (x)")
-        assert_eq(q(tf, "node.0.y"), n0y_b, "a resize does not drag node 0 (y)")
+        n0x_b, n0y_b = q(tf, gp.at("node.x", id=0)), q(tf, gp.at("node.y", id=0))
+        set_rect(tf, gp.at("frame.w", id=fid), 800)
+        assert_eq(q(tf, gp.at("frame.w", id=fid)), 800, "width grew to 800")
+        assert_eq(q(tf, gp.at("node.x", id=0)), n0x_b, "a resize does not drag node 0 (x)")
+        assert_eq(q(tf, gp.at("node.y", id=0)), n0y_b, "a resize does not drag node 0 (y)")
         # ★R1596 — MEMBERSHIP DOES NOT MOVE WITH THE BOX. The editor re-derived
         # it from the rectangle on every read, so widening the frame silently
         # adopted the other two nodes and undoing the resize abandoned them
@@ -137,32 +140,32 @@ def body() -> None:
         # edited membership. It is `Node::parent` now (R1589, the DCC's model), and
         # joining is the explicit act `attach` performs.
         assert_eq(
-            q(tf, f"frame.{fid}.contains"), "0,1",
+            q(tf, gp.at("frame.contains", id=fid)), "0,1",
             "a resize changes the box, not what the frame holds"
         )
         assert_eq(undo_label(tf), "Resize frame", "a resize is its own labelled step")
         assert_eq(undo(tf), True, "undo the resize")
-        assert_eq(q(tf, f"frame.{fid}.contains"), "0,1", "and undoing it leaves them alone too")
+        assert_eq(q(tf, gp.at("frame.contains", id=fid)), "0,1", "and undoing it leaves them alone too")
         # The geometry DID cover them while the box was wide -- which is the
         # question a gesture asks, and `attach` is what turns it into membership.
-        set_rect(tf, fid, "w", 800)
+        set_rect(tf, gp.at("frame.w", id=fid), 800)
         select(tf, [2, 3])
         assert_eq(tf.invoke("/external/attach", None), "2,3", "attach names who joined")
-        assert_eq(q(tf, f"frame.{fid}.contains"), "0,1,2,3", "and now it holds all four")
+        assert_eq(q(tf, gp.at("frame.contains", id=fid)), "0,1,2,3", "and now it holds all four")
         select(tf, [2, 3])
         tf.invoke("/external/detach", None)
         assert_eq(undo(tf), True, "back to the resize baseline")
         assert_eq(undo(tf), True, "and past it")
 
         # ── (F) RESIZE clamp: never collapse below the chrome ────────
-        tf.intervene(f"/external/frame.{fid}.w", 1)
-        wait_until(lambda: True if q(tf, f"frame.{fid}.w") == FRAME_MIN else None,
+        tf.intervene(f"/external/{gp.at('frame.w', id=fid)}", 1)
+        wait_until(lambda: True if q(tf, gp.at("frame.w", id=fid)) == FRAME_MIN else None,
                    desc="width clamped to the minimum")
-        assert_eq(q(tf, f"frame.{fid}.w"), FRAME_MIN, "width clamped to the minimum")
-        tf.intervene(f"/external/frame.{fid}.h", 0)
-        wait_until(lambda: True if q(tf, f"frame.{fid}.h") == FRAME_MIN else None,
+        assert_eq(q(tf, gp.at("frame.w", id=fid)), FRAME_MIN, "width clamped to the minimum")
+        tf.intervene(f"/external/{gp.at('frame.h', id=fid)}", 0)
+        wait_until(lambda: True if q(tf, gp.at("frame.h", id=fid)) == FRAME_MIN else None,
                    desc="height clamped to the minimum")
-        assert_eq(q(tf, f"frame.{fid}.h"), FRAME_MIN, "height clamped to the minimum")
+        assert_eq(q(tf, gp.at("frame.h", id=fid)), FRAME_MIN, "height clamped to the minimum")
 
         # ── (G) rigid group clamp at the world edge ──────────────────
         # A fresh frame around {0,1}. R1596 — the first frame still HOLDS them
@@ -173,28 +176,28 @@ def body() -> None:
         tf.invoke("/external/detach", None)
         fid2 = tf.invoke("/external/add_frame", None)
         assert fid2 > fid, f"a second frame mints past the first: {fid} -> {fid2}"
-        assert_eq(q(tf, f"frame.{fid2}.contains"), "0,1", "it holds nodes 0,1")
-        rel = q(tf, f"frame.{fid2}.x") - q(tf, "node.0.x")
-        tf.intervene(f"/external/frame.{fid2}.x", 1_000_000)
-        wait_until(lambda: True if q(tf, "node.0.x") <= WORLD_MAX_NODE_X else None,
+        assert_eq(q(tf, gp.at("frame.contains", id=fid2)), "0,1", "it holds nodes 0,1")
+        rel = q(tf, gp.at("frame.x", id=fid2)) - q(tf, gp.at("node.x", id=0))
+        tf.intervene(f"/external/{gp.at('frame.x', id=fid2)}", 1_000_000)
+        wait_until(lambda: True if q(tf, gp.at("node.x", id=0)) <= WORLD_MAX_NODE_X else None,
                    desc="node clamped onto the world surface")
-        assert q(tf, "node.0.x") <= WORLD_MAX_NODE_X, "node 0 stayed on the world surface"
-        assert q(tf, "node.1.x") <= WORLD_MAX_NODE_X, "node 1 stayed on the world surface"
-        assert_eq(q(tf, f"frame.{fid2}.x") - q(tf, "node.0.x"), rel,
+        assert q(tf, gp.at("node.x", id=0)) <= WORLD_MAX_NODE_X, "node 0 stayed on the world surface"
+        assert q(tf, gp.at("node.x", id=1)) <= WORLD_MAX_NODE_X, "node 1 stayed on the world surface"
+        assert_eq(q(tf, gp.at("frame.x", id=fid2)) - q(tf, gp.at("node.x", id=0)), rel,
                   "the frame->member offset is preserved (rigid group move)")
         # R1240 — the frame's own RIGHT edge stays on-world (no FRAME_PAD overhang).
-        assert q(tf, f"frame.{fid2}.x") + q(tf, f"frame.{fid2}.w") <= 2048, "frame right edge on-world"
+        assert q(tf, gp.at("frame.x", id=fid2)) + q(tf, gp.at("frame.w", id=fid2)) <= 2048, "frame right edge on-world"
 
         # ── (H) rejects ──────────────────────────────────────────────
         type_err = False
         try:
-            tf.intervene(f"/external/frame.{fid}.w", "wide")
+            tf.intervene(f"/external/{gp.at('frame.w', id=fid)}", "wide")
         except RpcError:
             type_err = True
         assert type_err, "a non-Int rect value is a typed error"
         unknown = False
         try:
-            tf.intervene("/external/frame.99.x", 0)
+            tf.intervene(f"/external/{gp.at('frame.x', id=99)}", 0)
         except RpcError:
             unknown = True
         assert unknown, "an unknown frame id is a typed error"

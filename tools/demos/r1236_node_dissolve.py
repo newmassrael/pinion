@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
 )
 
@@ -50,6 +51,8 @@ def dissolve(tf: RpcSubprocess, node: int) -> Any:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
+
         # ── (A) boot ─────────────────────────────────────────────────
         assert_eq(q(tf, "node_count"), 4, "4 seed nodes")
         assert_eq(q(tf, "edge_count"), 3, "3 seed edges")
@@ -60,20 +63,20 @@ def body() -> None:
         assert_eq(q(tf, "node_count"), 5, "the hop node0 -> R -> node2 exists")
         # R1241 — the eligibility read (no mutate-to-probe): only the reroute is
         # dissolvable; the read predicts the verb.
-        assert_eq(q(tf, f"dissolvable.{rid}"), True, "the reroute reads as dissolvable")
+        assert_eq(q(tf, gp.at("dissolvable", id=rid)), True, "the reroute reads as dissolvable")
         # ★R1596 — `dissolvable` widened from a SHAPE test ("exactly one wire
         # in and one out") to LOSSLESSNESS. `Document::dissolve` is the general
         # form (the DCC's delete_reconnect), so what is worth asking is
         # no longer *can it* but *does it lose anything* -- and a Multiply
         # routes its output from input 0, so the wire past it is bridged and
         # nothing is cut.
-        assert_eq(q(tf, "dissolvable.2"), True, "a Multiply loses nothing either")
-        assert_eq(q(tf, "dissolve_severs.2"), "", "its cut list is empty")
+        assert_eq(q(tf, gp.at("dissolvable", id=2)), True, "a Multiply loses nothing either")
+        assert_eq(q(tf, gp.at("dissolve_severs", id=2)), "", "its cut list is empty")
         # A SOURCE is the lossy one: nothing flows into it, so its output has no
         # input to be routed from and the wire leaving it dies -- NAMED, where
         # `node_internal_relink` deletes it and returns void.
-        assert_eq(q(tf, "dissolvable.0"), False, "a source's dissolve is lossy")
-        assert q(tf, "dissolve_severs.0"), "and it names the wire it would cut"
+        assert_eq(q(tf, gp.at("dissolvable", id=0)), False, "a source's dissolve is lossy")
+        assert q(tf, gp.at("dissolve_severs", id=0)), "and it names the wire it would cut"
         # The enumeration follows the widened predicate: every node whose
         # dissolve costs nothing, which is now the reroute AND the pass-through
         # compute nodes -- and NOT the sources, whose outgoing wire would die.
@@ -86,10 +89,10 @@ def body() -> None:
         assert_eq(q(tf, "node_count"), 4, "the reroute node is removed")
         assert_eq(q(tf, "edge_count"), 3, "net -1 edge (removed 2, added 1 bridge)")
         assert str(rid) not in q(tf, "node_ids").split(","), "the reroute is de-enumerated"
-        assert_eq(q(tf, "node.0.title"), "Texture", "node0 survives the dissolve")
-        assert_eq(q(tf, "node.2.title"), "Multiply", "node2 survives the dissolve")
+        assert_eq(q(tf, gp.at("node.title", id=0)), "Texture", "node0 survives the dissolve")
+        assert_eq(q(tf, gp.at("node.title", id=2)), "Multiply", "node2 survives the dissolve")
         # The wire node0.out0 -> node2.in0 is reconnected (a fresh bridge edge id).
-        wires = {q(tf, f"edge.{e}") for e in q(tf, "edge_ids").split(",")}
+        wires = {q(tf, gp.at("edge", id=e)) for e in q(tf, "edge_ids").split(",")}
         assert "0:0->2:0" in wires, "node0 -> node2.in0 is bridged back"
 
         # ── (C) one undo restores the hop; redo dissolves again ──────
@@ -97,8 +100,8 @@ def body() -> None:
         assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo restores the hop")
         assert_eq(q(tf, "node_count"), 5, "the reroute is back")
         assert_eq(q(tf, "edge_count"), 4, "and its two edges")
-        assert_eq(q(tf, f"node.{rid}.title"), "Reroute", "the restored knot is intact")
-        assert_eq(q(tf, f"node.{rid}.input_types"), "Vector", "its typed port too")
+        assert_eq(q(tf, gp.at("node.title", id=rid)), "Reroute", "the restored knot is intact")
+        assert_eq(q(tf, gp.at("node.input_types", id=rid)), "Vector", "its typed port too")
         assert_eq(tf.invoke(f"{UNDO}/redo", None), True, "redo dissolves again")
         assert_eq(q(tf, "node_count"), 4, "back to baseline")
         assert_eq(q(tf, "edge_count"), 3, "edges back to baseline")
@@ -108,7 +111,7 @@ def body() -> None:
         assert_eq(q(tf, "node_count"), 5, "a reroute on edge 1 (node1 -> node2.in1)")
         assert_eq(dissolve(tf, rid2), True, "it dissolves too")
         assert_eq(q(tf, "node_count"), 4, "removed")
-        wires2 = {q(tf, f"edge.{e}") for e in q(tf, "edge_ids").split(",")}
+        wires2 = {q(tf, gp.at("edge", id=e)) for e in q(tf, "edge_ids").split(",")}
         assert "1:0->2:1" in wires2, "node1 -> node2.in1 is bridged back"
 
         # ── (E) ★ the gate is LOSSLESSNESS, not a shape ──────────────
@@ -116,12 +119,12 @@ def body() -> None:
         # dissolve refuses is a node that is not there. What used to be the
         # gate ("exactly one hop") is now a QUESTION the caller asks first, and
         # the answer names the cost.
-        assert_eq(q(tf, "node.2.inputs"), 2, "Multiply has two inputs")
+        assert_eq(q(tf, gp.at("node.inputs", id=2)), 2, "Multiply has two inputs")
         assert_eq(dissolve(tf, 99), False, "an unknown id has no dissolve at all")
         assert_eq(q(tf, "node_count"), 4, "and left the graph intact")
         # A source: lossy, and it says which wire dies -- then the operation is
         # run and exactly that wire is gone, so the prediction is CHECKED.
-        cut = q(tf, "dissolve_severs.0")
+        cut = q(tf, gp.at("dissolve_severs", id=0))
         assert cut and cut in q(tf, "edge_ids").split(","), f"the named wire exists: {cut}"
         assert_eq(dissolve(tf, 0), True, "a source dissolves -- at a cost it named")
         assert cut not in q(tf, "edge_ids").split(","), "and cut exactly that wire"

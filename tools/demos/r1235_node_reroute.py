@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -63,10 +64,12 @@ def redo(tf: RpcSubprocess) -> bool:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
+
         # ── (A) boot ─────────────────────────────────────────────────
         assert_eq(q(tf, "node_count"), 4, "4 seed nodes")
         assert_eq(q(tf, "edge_count"), 3, "3 seed edges")
-        assert_eq(q(tf, "edge.0"), "0:0->2:0", "edge 0 = node0.out0 -> node2.in0")
+        assert_eq(q(tf, gp.at("edge", id=0)), "0:0->2:0", "edge 0 = node0.out0 -> node2.in0")
 
         # ── (B) splice a reroute into edge 0 ─────────────────────────
         rid = add_reroute(tf, 0)
@@ -78,19 +81,19 @@ def body() -> None:
         assert "0" not in q(tf, "edge_ids").split(","), "edge 0 removed"
 
         # ── (C) the path routes node0 -> R -> node2, typed Vector ────
-        edges = {eid: q(tf, f"edge.{eid}") for eid in q(tf, "edge_ids").split(",")}
+        edges = {eid: q(tf, gp.at("edge", id=eid)) for eid in q(tf, "edge_ids").split(",")}
         wires = set(edges.values())
         assert f"0:0->{rid}:0" in wires, "node0 now feeds the reroute"
         assert f"{rid}:0->2:0" in wires, "the reroute feeds node2's original input"
-        assert_eq(q(tf, f"node.{rid}.title"), "Reroute", "titled Reroute")
-        assert_eq(q(tf, f"node.{rid}.inputs"), 1, "exactly one input port")
-        assert_eq(q(tf, f"node.{rid}.outputs"), 1, "exactly one output port")
-        assert_eq(q(tf, f"node.{rid}.input_types"), "Vector", "input adopts wire type")
-        assert_eq(q(tf, f"node.{rid}.output_types"), "Vector", "output adopts wire type")
+        assert_eq(q(tf, gp.at("node.title", id=rid)), "Reroute", "titled Reroute")
+        assert_eq(q(tf, gp.at("node.inputs", id=rid)), 1, "exactly one input port")
+        assert_eq(q(tf, gp.at("node.outputs", id=rid)), 1, "exactly one output port")
+        assert_eq(q(tf, gp.at("node.input_types", id=rid)), "Vector", "input adopts wire type")
+        assert_eq(q(tf, gp.at("node.output_types", id=rid)), "Vector", "output adopts wire type")
         # R1242 — the reroute is a first-class model identity (not a title), so an
         # AI can enumerate reroutes; a seed op node is not one.
-        assert_eq(q(tf, f"node.{rid}.is_reroute"), True, "the knot is a reroute")
-        assert_eq(q(tf, "node.2.is_reroute"), False, "Multiply is not a reroute")
+        assert_eq(q(tf, gp.at("node.is_reroute", id=rid)), True, "the knot is a reroute")
+        assert_eq(q(tf, gp.at("node.is_reroute", id=2)), False, "Multiply is not a reroute")
         assert_eq(q(tf, "reroute_ids"), str(rid), "reroute enumeration finds it")
 
         # ── (D) one undo reverts the whole splice; redo re-applies ───
@@ -98,7 +101,7 @@ def body() -> None:
         assert_eq(undo(tf), True, "undo the splice")
         assert_eq(q(tf, "node_count"), 4, "the reroute node is gone")
         assert_eq(q(tf, "edge_count"), 3, "back to 3 edges")
-        assert_eq(q(tf, "edge.0"), "0:0->2:0", "edge 0 restored verbatim")
+        assert_eq(q(tf, gp.at("edge", id=0)), "0:0->2:0", "edge 0 restored verbatim")
         assert_eq(redo(tf), True, "redo re-splices")
         assert_eq(q(tf, "node_count"), 5, "the reroute is back")
         assert_eq(undo(tf), True, "undo again to a clean baseline")
@@ -116,14 +119,14 @@ def body() -> None:
         )
         float_eid = next(
             int(e) for e in q(tf, "edge_ids").split(",")
-            if q(tf, f"edge.{e}").startswith(f"{scalar}:0->")
+            if q(tf, gp.at("edge", id=e)).startswith(f"{scalar}:0->")
         )
         frid = add_reroute(tf, float_eid)
         assert isinstance(frid, int), "the float wire splices"
-        assert_eq(q(tf, f"node.{frid}.title"), "Reroute", "the float knot is titled")
-        assert_eq(q(tf, f"node.{frid}.input_types"), "Float", "Float wire -> Float in")
-        assert_eq(q(tf, f"node.{frid}.output_types"), "Float", "Float wire -> Float out")
-        fwires = {q(tf, f"edge.{e}") for e in q(tf, "edge_ids").split(",")}
+        assert_eq(q(tf, gp.at("node.title", id=frid)), "Reroute", "the float knot is titled")
+        assert_eq(q(tf, gp.at("node.input_types", id=frid)), "Float", "Float wire -> Float in")
+        assert_eq(q(tf, gp.at("node.output_types", id=frid)), "Float", "Float wire -> Float out")
+        fwires = {q(tf, gp.at("edge", id=e)) for e in q(tf, "edge_ids").split(",")}
         assert f"{scalar}:0->{frid}:0" in fwires, "Scalar now feeds the float knot"
         assert f"{frid}:0->{lerp}:2" in fwires, "the float knot feeds Lerp's factor"
 

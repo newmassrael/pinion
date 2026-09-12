@@ -45,6 +45,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -77,6 +78,8 @@ def undo_label(tf: RpcSubprocess) -> Any:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
+
         # ── (A) boot ─────────────────────────────────────────────────
         assert_eq(q(tf, "node_count"), 4, "4 seed nodes")
         assert_eq(q(tf, "frame_count"), 0, "no frames at boot")
@@ -91,29 +94,29 @@ def body() -> None:
         assert_eq(fid, 4, "the frame mints the next NODE id")
         assert_eq(q(tf, "frame_count"), 1, "one frame now")
         assert_eq(q(tf, "frame_ids"), str(fid), "frame id enumerated")
-        assert_eq(q(tf, f"frame.{fid}.title"), "Comment 1", "auto title")
-        assert_eq(q(tf, f"frame.{fid}.contains"), "0,1", "the two framed nodes are inside")
+        assert_eq(q(tf, gp.at("frame.title", id=fid)), "Comment 1", "auto title")
+        assert_eq(q(tf, gp.at("frame.contains", id=fid)), "0,1", "the two framed nodes are inside")
         # The rect encloses node 0 (Texture @ graph 40,70) with a margin.
-        assert q(tf, f"frame.{fid}.x") <= 40, "left edge left of the framed nodes"
-        assert q(tf, f"frame.{fid}.y") <= 70, "top edge above the framed nodes"
-        assert q(tf, f"frame.{fid}.w") > 0 and q(tf, f"frame.{fid}.h") > 0, "positive extent"
+        assert q(tf, gp.at("frame.x", id=fid)) <= 40, "left edge left of the framed nodes"
+        assert q(tf, gp.at("frame.y", id=fid)) <= 70, "top edge above the framed nodes"
+        assert q(tf, gp.at("frame.w", id=fid)) > 0 and q(tf, gp.at("frame.h", id=fid)) > 0, "positive extent"
         # Framing did NOT change the node selection (a separate axis).
         assert_eq(q(tf, "selected_ids"), "0,1", "node selection untouched by framing")
 
         # ── (C) rename the frame; one undo reverts it ────────────────
-        tf.intervene(f"/external/frame.{fid}.title", "Inputs")
-        wait_until(lambda: True if q(tf, f"frame.{fid}.title") == "Inputs" else None,
+        tf.intervene(f"/external/{gp.at('frame.title', id=fid)}", "Inputs")
+        wait_until(lambda: True if q(tf, gp.at("frame.title", id=fid)) == "Inputs" else None,
                    desc="frame renamed to Inputs")
         assert_eq(undo_label(tf), "Rename frame", "rename is its own undo step")
         assert_eq(undo(tf), True, "undo the rename")
-        assert_eq(q(tf, f"frame.{fid}.title"), "Comment 1", "title reverted")
+        assert_eq(q(tf, gp.at("frame.title", id=fid)), "Comment 1", "title reverted")
 
         # ── (D) a second frame around ALL nodes; remove + undo ───────
         select(tf, [0, 1, 2, 3])
         fid2 = add_frame(tf)
         assert fid2 > fid, f"a second frame mints past the first: {fid} -> {fid2}"
         assert_eq(q(tf, "frame_count"), 2, "two frames")
-        assert_eq(q(tf, f"frame.{fid2}.contains"), "0,1,2,3", "the big frame holds all four")
+        assert_eq(q(tf, gp.at("frame.contains", id=fid2)), "0,1,2,3", "the big frame holds all four")
         assert_eq(tf.invoke("/external/remove_frame", fid2), True, "remove the big frame")
         assert_eq(q(tf, "frame_count"), 1, "back to one frame")
         assert_eq(q(tf, "node_count"), 4, "removing a frame keeps the nodes")
@@ -150,7 +153,7 @@ def body() -> None:
         # demo.
         type_err = False
         try:
-            tf.intervene(f"/external/frame.{fid}.x", "nope")
+            tf.intervene(f"/external/{gp.at('frame.x', id=fid)}", "nope")
         except RpcError:
             type_err = True
         assert type_err, "a non-Int rect value is rejected"
