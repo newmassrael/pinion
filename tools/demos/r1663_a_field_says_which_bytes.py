@@ -41,6 +41,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_router_press_moves,
     bytes_cell,
+    external_paths,
     filter_saved,
     list_row,
     run_demo,
@@ -242,8 +243,15 @@ def body() -> None:
                 f"{path} truthfully lights nothing",
             )
             CHECKS.append(f"derived {path}")
+        # ★★★★★ R2166 — the map declares `origin.<path>` parametrically, so what
+        # this asks about is an undeclared FIELD inside a declared path. The
+        # path itself is composed; only the field is the walk's own word, which
+        # is what the assertion is about.
+        undeclared_field = external_paths(app, f"/{MAP}/external").at(
+            "origin", path="l3.no_such_field"
+        )
         assert_eq(
-            q(app, MAP, "origin.l3.no_such_field"),
+            q(app, MAP, undeclared_field),
             None,
             "an undeclared path is a different answer from a derived one",
         )

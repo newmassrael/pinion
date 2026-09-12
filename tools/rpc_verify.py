@@ -7641,13 +7641,43 @@ class ExternalPaths:
         return out
 
 
+def schema_path_name(path: str) -> str:
+    """The name a walk calls one declared path by — its FIXED segments.
+
+    ★★★★★ R2173 — **R2166 derived this by deleting the placeholder TEXT, which
+    only works when the argument is last.** `value.<index>` came out `value`,
+    correctly; `item.<id>.checked` came out `item..checked` — a name with a
+    double dot that no caller would guess, produced silently rather than
+    refused. Found by using the reader on a second screen, which is where an
+    instrument shows its defects (R2162's lesson, again).
+
+    The segments that CARRY an argument are dropped whole, and the rest are
+    rejoined: `item.<id>.checked` is `item.checked`.
+    """
+    kept = [seg for seg in path.split(".") if not _SCHEMA_ARG.search(seg)]
+    return ".".join(kept)
+
+
 def external_paths(app: "RpcSubprocess", external: str = "/external") -> ExternalPaths:
-    """Read one External's declared path vocabulary, once, ready to compose."""
+    """Read one External's declared path vocabulary, once, ready to compose.
+
+    ⚠ A name two declared paths share is REFUSED rather than resolved. Silently
+    keeping the last would hand a walk one path while it meant the other, and
+    the walk would read the screen's answer as being about its own question.
+    """
     declared: dict[str, str] = {}
     for row in external_schema(app, external):
         path = row.get("path")
-        if isinstance(path, str):
-            declared[_SCHEMA_ARG.sub("", path).rstrip(".")] = path
+        if not isinstance(path, str):
+            continue
+        name = schema_path_name(path)
+        if name in declared and declared[name] != path:
+            raise AssertionError(
+                f"{external} declares {declared[name]!r} and {path!r}, which a "
+                f"walk would call by the same name {name!r}. One name, two "
+                "paths — say so rather than letting this reader keep the last."
+            )
+        declared[name] = path
     assert declared, f"{external}/$schema carried no `path` row this reader could use"
     return ExternalPaths(external=external, declared=declared)
 

@@ -48,8 +48,8 @@ chart.wick	0	1
 chart.xlabel	0	3
 chrome.header	0	1
 connect.endpoints	2	0
-detail.input_default	2	3
-detail.resolved_input	1	2
+detail.input_default	0	3
+detail.resolved_input	0	2
 dev.cell	1	2
 discovery.multicast	1	0
 echo.demo	0	0
@@ -64,10 +64,10 @@ hist.bar	3	3
 histogram.axis	0	1
 histogram.bar	0	1
 histogram.inspect	0	4
-item.bake	1	1
-item.dark	2	2
-item.ship	1	1
-item.toggle_window	2	2
+item.bake	0	1
+item.dark	0	2
+item.ship	0	1
+item.toggle_window	0	2
 kind.elem	0	1
 kp.column	0	0
 kp.detail	0	0
@@ -111,7 +111,7 @@ no.such	0	0
 nodegroups.frame	3	0
 nodegroups.node	6	0
 nodegroups.wire	1	0
-origin.l3	1	0
+origin.l3	0	0
 palette.role	0	1
 palette.swatch	0	1
 profile.legend	0	3

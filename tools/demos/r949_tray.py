@@ -46,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_query,
@@ -67,6 +68,11 @@ def menu_item(tf, item_id: str) -> bool:
 
 def body() -> None:
     with RpcSubprocess("hello-tray", boot_grace=1.5) as tf:
+        # ★★★★★ R2166 — `item.dark.checked` is not a painted address: it is the
+        # §7 `$schema` path this External declares as `item.<id>.checked`, and
+        # this walk had been re-typing the declaration.
+        gp = external_paths(tf, E)
+
         # ── (A) boot taxonomy ────────────────────────────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, PANEL) is not None, "tray panel present"
@@ -90,10 +96,10 @@ def body() -> None:
 
         # ── (C) Dark-mode check flips state + checkmark + republishes ─
         assert_eq(q(tf, "dark_mode"), False, "dark off at boot")
-        assert_eq(q(tf, "item.dark.checked"), False, "the check is clear")
+        assert_eq(q(tf, gp.at("item.checked", id="dark")), False, "the check is clear")
         assert_eq(menu_item(tf, "dark"), True, "the dark menu item activates")
         wait_query(tf, f"{E}/dark_mode", True, desc="the menu flipped app state")
-        assert_eq(q(tf, "item.dark.checked"), True, "the checkmark reflects it")
+        assert_eq(q(tf, gp.at("item.checked", id="dark")), True, "the checkmark reflects it")
         assert_eq(q(tf, "publish_count"), 3, "the activation re-published")
         assert_eq(q(tf, "published_in_sync"), True, "still in sync after the toggle")
         assert_eq(
@@ -104,10 +110,10 @@ def body() -> None:
 
         # ── (D) toggle-window relabels; activate is the icon click ───
         assert_eq(q(tf, "window_visible"), True, "window shown at boot")
-        assert_eq(q(tf, "item.toggle_window.label"), "Hide window", "label while shown")
+        assert_eq(q(tf, gp.at("item.label", id="toggle_window")), "Hide window", "label while shown")
         assert_eq(menu_item(tf, "toggle_window"), True, "toggle-window activates")
         wait_query(tf, f"{E}/window_visible", False, desc="window now hidden")
-        assert_eq(q(tf, "item.toggle_window.label"), "Show window", "label tracks the state")
+        assert_eq(q(tf, gp.at("item.label", id="toggle_window")), "Show window", "label tracks the state")
         # The icon (primary) click toggles the window too.
         assert_eq(tf.invoke(f"{E}/activate", None), True, "icon click")
         wait_query(tf, f"{E}/window_visible", True, desc="activate re-shows the window")
@@ -117,11 +123,11 @@ def body() -> None:
         wait_query(tf, f"{E}/build_running", True, desc="a build is running")
         assert_eq(q(tf, "status"), "NeedsAttention", "status escalates while baking")
         assert_eq(q(tf, "icon"), "emblem-synchronizing", "the icon shows the syncing state")
-        assert_eq(q(tf, "item.bake.label"), "Cancel bake", "the bake item relabels")
+        assert_eq(q(tf, gp.at("item.label", id="bake")), "Cancel bake", "the bake item relabels")
 
         # ── (F) disabled / unknown ids are rejected ──────────────────
         published_before = q(tf, "publish_count")
-        assert_eq(q(tf, "item.ship.activatable"), False, "ship is present but disabled")
+        assert_eq(q(tf, gp.at("item.activatable", id="ship")), False, "ship is present but disabled")
         assert_eq(menu_item(tf, "ship"), False, "a disabled id is rejected")
         assert_eq(menu_item(tf, "nope"), False, "an unknown id is rejected")
         assert_eq(q(tf, "publish_count"), published_before, "a rejected activation publishes nothing")

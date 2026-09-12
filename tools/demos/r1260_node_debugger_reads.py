@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
 )
 
@@ -55,9 +56,22 @@ def rgb(v: Any) -> tuple[int, int, int]:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        # ★★★★★ R2166 — the §7 `$schema` paths this screen declares
+        # (`node.<id>.resolved_input.<port>`, `detail.resolved_input.<port>`),
+        # composed rather than re-typed.
+        gp = external_paths(tf)
+
         # ── (A) boot: resolved_input reads the wired grey; no cycle ───
-        assert_eq(rgb(q(tf, "node.2.resolved_input.0")), (0x80, 0x80, 0x80), "Multiply.in0 <- Texture grey")
-        assert_eq(rgb(q(tf, "node.2.resolved_input.1")), (0x80, 0x80, 0x80), "Multiply.in1 <- Color grey")
+        assert_eq(
+            rgb(q(tf, gp.at("node.resolved_input", id=2, port=0))),
+            (0x80, 0x80, 0x80),
+            "Multiply.in0 <- Texture grey",
+        )
+        assert_eq(
+            rgb(q(tf, gp.at("node.resolved_input", id=2, port=1))),
+            (0x80, 0x80, 0x80),
+            "Multiply.in1 <- Color grey",
+        )
         assert_eq(q(tf, "eval.cycle_nodes"), "", "a DAG has no cycle nodes")
         assert_eq(q(tf, "eval.acyclic"), True, "seed graph is a DAG")
         assert_eq(rgb(q(tf, "node.2.value")), (64, 64, 64), "Multiply(grey, grey) = 64")
@@ -71,7 +85,8 @@ def body() -> None:
         assert_eq(rgb(q(tf, "node.2.value")), (128, 0, 0), "value follows from the resolved inputs")
         # detail.resolved_input mirrors the selected node.
         tf.intervene("/external/selected_ids", "2")
-        assert_eq(rgb(q(tf, "detail.resolved_input.0")), (255, 0, 0), "detail.resolved_input mirrors node 2")
+        mirrored = gp.at("detail.resolved_input", port=0)
+        assert_eq(rgb(q(tf, mirrored)), (255, 0, 0), f"{mirrored} mirrors node 2")
 
         # ── (C) a Float source broadcasts into a Vector input ────────
         scalar = inv(tf, "add_node", "Scalar")

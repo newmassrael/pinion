@@ -711,6 +711,21 @@ def test_external_paths_compose_the_declared_introspection_vocabulary() -> None:
     check(paths.at("any_modified") == "any_modified",
           "ExternalPaths: a path that takes no argument at all")
 
+    # ★★★★★ R2173 — the NAME a declared path is called by. R2166 derived it by
+    # deleting the placeholder TEXT, which only works when the argument is last:
+    # `item.<id>.checked` came out `item..checked`, a name with a double dot
+    # that no caller would guess, produced silently rather than refused. The
+    # segments that carry an argument are dropped WHOLE now.
+    check(rpc_verify.schema_path_name("value.<index>") == "value",
+          "schema_path_name: a trailing argument leaves the head")
+    check(rpc_verify.schema_path_name("item.<id>.checked") == "item.checked",
+          "schema_path_name: ★ an argument in the MIDDLE drops its segment whole")
+    check(rpc_verify.schema_path_name("node.<id>.resolved_input.<port>")
+          == "node.resolved_input",
+          "schema_path_name: two arguments, both dropped")
+    check(rpc_verify.schema_path_name("any_modified") == "any_modified",
+          "schema_path_name: a path with no argument is its own name")
+
     refusals = [
         ("a path the screen does not declare", lambda: paths.at("nope", index=1)),
         ("the WRONG argument name", lambda: paths.at("expanded", id="struct.Position")),

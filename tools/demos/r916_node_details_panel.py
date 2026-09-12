@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
 )
@@ -59,6 +60,8 @@ def has_tag(tf, tag) -> bool:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
+
         # ── (A) boot — panel present, nothing selected ──────────────
         assert_eq(gq(tf, "node_count"), 4, "4 nodes")
         assert has_tag(tf, DETAIL), "the Details panel is present"
@@ -86,8 +89,13 @@ def body() -> None:
         assert_eq(gq(tf, "detail.title"), gq(tf, "node.2.title"), "detail.title == node.2.title")
         assert_eq(gq(tf, "detail.x"), gq(tf, "node.2.x"), "detail.x == node.2.x")
         assert_eq(gq(tf, "detail.inputs"), gq(tf, "node.2.inputs"), "detail.inputs == node.2.inputs")
-        assert_eq(gq(tf, "detail.input_default.0"), gq(tf, "node.2.input_default.0"),
-                  "detail.input_default.0 == node.2.input_default.0")
+        # ★★★★★ R2166 — these are §7 `$schema` PATHS the screen declares
+        # (`detail.input_default.<port>` and `node.<id>.input_default.<port>`),
+        # not painted addresses. Asked for rather than re-typed.
+        detail_default = gp.at("detail.input_default", port=0)
+        node_default = gp.at("node.input_default", id=2, port=0)
+        assert_eq(gq(tf, detail_default), gq(tf, node_default),
+                  f"{detail_default} == {node_default}")
 
         # ── (D) edit via the panel — intervene detail.<field> ───────
         tf.intervene("/external/detail.title", "Albedo")
