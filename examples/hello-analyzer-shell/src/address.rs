@@ -692,8 +692,9 @@ pub const APPBAR_ROOT: &str = "shell.appbar";
 /// the bar's seats wrong.
 pub const APPBAR_TABS: &str = "shell.appbar.tabs";
 
-/// The prefix every application-bar TAB carries — deeper than [`APPBAR`],
-/// because a tab is addressed by the key its specification row declares.
+/// The prefix every application-bar TAB carries — deeper than the bar's own
+/// family, because a tab is addressed by the key its specification row
+/// declares.
 pub const APPBAR_TAB: &str = "shell.appbar.tab.";
 
 /// [`APPBAR_TAB`] with the population's placeholder, for a specification table
