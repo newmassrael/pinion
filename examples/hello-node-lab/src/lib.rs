@@ -62,6 +62,11 @@ pub mod address;
 mod deploy;
 mod graph;
 mod judge;
+/// ★★★★★ R2155 — the CONFIGURATION key vocabulary, which looks exactly like an
+/// address and is not one. Public for [`address`]'s reason: a key is composed
+/// into a form part's address, so a reader outside this crate needs the same
+/// declaration the inside does rather than re-typing it.
+pub mod key;
 mod merging;
 mod persist;
 mod scenario;
@@ -2998,7 +3003,7 @@ impl LabState {
             let Some(form) = shown_form(self, card) else {
                 continue;
             };
-            let Some(listen) = form.field("listen.endpoints") else {
+            let Some(listen) = form.field(key::LISTEN_ENDPOINTS) else {
                 continue;
             };
             let host = self.host_of(card);
@@ -3122,7 +3127,7 @@ impl LabState {
                     found.push((name.clone(), Finding::DialsOutside(outside)));
                 }
                 let listens = form
-                    .field("listen.endpoints")
+                    .field(key::LISTEN_ENDPOINTS)
                     .is_some_and(|f| !f.value().trim().is_empty());
                 // ★★★★★ R2084 — **the two cases where listening nowhere is
                 // worth SAYING**, and the walk that made this its final shape.
@@ -3175,7 +3180,7 @@ impl LabState {
                 // this graph; what belongs to the screen is only where to put
                 // the sentence.
                 if form
-                    .field("discovery.multicast.enabled")
+                    .field(key::DISCOVERY_MULTICAST_ENABLED)
                     .is_some_and(|f| f.value().trim() == "true")
                 {
                     found.push((name.clone(), Finding::DiscoveryOn));
@@ -3662,7 +3667,7 @@ fn seed_nodes(
         let form = form_for(node.id, role, None);
 
         let listen = form
-            .field("listen.endpoints")
+            .field(key::LISTEN_ENDPOINTS)
             .map(|f| f.value().into_owned())
             .unwrap_or_default();
         // ★ R1961 — the form's half only. The wire's half cannot be read yet:
@@ -4351,7 +4356,7 @@ fn seed_links(
     // longer be right by assumption.
     for (&card, form) in forms {
         let listening = form
-            .field("listen.endpoints")
+            .field(key::LISTEN_ENDPOINTS)
             .map(|f| f.value().trim().to_owned())
             .filter(|v| !v.is_empty());
         let (Some(listening), Some(signature)) = (listening, doc.signature(card.tree, card.node))
@@ -4497,7 +4502,7 @@ fn free_listen_port(state: &LabState) -> u32 {
         .forms
         .borrow()
         .values()
-        .filter_map(|form| form.field("listen.endpoints"))
+        .filter_map(|form| form.field(key::LISTEN_ENDPOINTS))
         .flat_map(|field| {
             field
                 .value()
@@ -4560,7 +4565,12 @@ fn form_for(id: &str, role: Role, fresh_at_port: Option<u32>) -> ConfigForm {
     // noticed them disagreeing. `row` is where the pair is made.
     let mut fields = vec![
         row("id", "id", Applies::Restart, opening_id(id)),
-        row("listen.endpoints", "address[]", Applies::Restart, &listen),
+        row(
+            key::LISTEN_ENDPOINTS,
+            "address[]",
+            Applies::Restart,
+            &listen,
+        ),
         // ★★★★★ R1716 — `connect.endpoints` is NOT here any more, and its
         // absence is the round's screen change. It used to open holding an
         // address written beside this line, and measured before the change,
@@ -4575,9 +4585,14 @@ fn form_for(id: &str, role: Role, fresh_at_port: Option<u32>) -> ConfigForm {
         // is not a leaf, so what this screen exported was refused by the thing
         // it configures. A router grants both, everything else reads only —
         // which is what the one row said, now said in the target's own shape.
-        row("admin.permissions.read", "bool", Applies::Restart, "true"),
         row(
-            "admin.permissions.write",
+            key::ADMIN_PERMISSIONS_READ,
+            "bool",
+            Applies::Restart,
+            "true",
+        ),
+        row(
+            key::ADMIN_PERMISSIONS_WRITE,
             "bool",
             Applies::Restart,
             if role == Role::Router {
@@ -4587,7 +4602,7 @@ fn form_for(id: &str, role: Role, fresh_at_port: Option<u32>) -> ConfigForm {
             },
         ),
         row(
-            "transport.link.tx.batch_size",
+            key::TRANSPORT_LINK_TX_BATCH_SIZE,
             "int",
             Applies::Restart,
             "65535",
@@ -4596,7 +4611,7 @@ fn form_for(id: &str, role: Role, fresh_at_port: Option<u32>) -> ConfigForm {
     // The two peers the reference draws with a warning dot have discovery on.
     if matches!(id, "P-01" | "P-02") {
         fields.push(row(
-            "discovery.multicast.enabled",
+            key::DISCOVERY_MULTICAST_ENABLED,
             "bool",
             Applies::Restart,
             "true",
@@ -4733,17 +4748,17 @@ fn opening_id(id: &str) -> String {
 /// would refuse.
 fn offered(key: &str) -> ConfigField {
     let (word, applies, opening) = match key {
-        "discovery.multicast.enabled"
+        key::DISCOVERY_MULTICAST_ENABLED
         | "timestamping.enabled"
-        | "transport.unicast.compression.enabled" => ("bool", Applies::Restart, "false"),
+        | key::TRANSPORT_UNICAST_COMPRESSION_ENABLED => ("bool", Applies::Restart, "false"),
         "namespace" => ("path", Applies::Restart, "demo"),
-        "routing.peer.mode" => ("mode", Applies::Restart, "peer_to_peer"),
+        key::ROUTING_PEER_MODE => ("mode", Applies::Restart, "peer_to_peer"),
         // ★★ R1716 — offered so a card the canvas draws no link out of can
         // still be told to dial something: the graph is what this tool draws,
         // not the boundary of what the configuration may reach. A card that
         // does have links holds the derived row, so the chip is not offered
         // there — `addable` takes it out for exactly the right reason.
-        "connect.endpoints" => ("address[]", Applies::Hot, ""),
+        key::CONNECT_ENDPOINTS => ("address[]", Applies::Hot, ""),
         _ => ("name[]", Applies::Restart, ""),
     };
     ConfigField::new(key.to_owned(), word, applies, opening)
@@ -4984,10 +4999,10 @@ fn card_rows(state: &LabState, node: NodeId) -> Vec<(String, String)> {
 /// them would report half a fact and look like the whole one.
 const fn digest_paths(key: &str) -> &'static [&'static str] {
     match key.as_bytes() {
-        b"listen" => &["listen.endpoints"],
+        b"listen" => &[key::LISTEN_ENDPOINTS],
         b"id" => &["id"],
-        b"control" => &["admin.permissions.read", "admin.permissions.write"],
-        b"discovery" => &["discovery.multicast.enabled"],
+        b"control" => &[key::ADMIN_PERMISSIONS_READ, key::ADMIN_PERMISSIONS_WRITE],
+        b"discovery" => &[key::DISCOVERY_MULTICAST_ENABLED],
         _ => &[],
     }
 }
@@ -9395,7 +9410,7 @@ fn host_row(state: &LabState, node: NodeId, stored: &ConfigForm) -> Option<Confi
 /// Named once because three things read it — the row that composes it, the
 /// loop that holds it back, and the gate that judges it — and a fourth spelling
 /// of a dotted path is how a screen starts editing a key nothing ships.
-const DIALLED_KEY: &str = "connect.endpoints";
+const DIALLED_KEY: &str = key::CONNECT_ENDPOINTS;
 
 /// R1778 — the owner-scoped marker that registers this screen's toast clock once.
 const TOAST_TICKER_KEY: &str = "hello-node-lab/toast-ticker";
@@ -19190,7 +19205,7 @@ fn sync_node(state: &Rc<LabState>, node: NodeId) {
 /// call has to name.
 fn sync_node_at(state: &Rc<LabState>, at: NodeAddress) {
     let listening = state.forms.borrow().get(&at).is_some_and(|form| {
-        form.field("listen.endpoints")
+        form.field(key::LISTEN_ENDPOINTS)
             .is_some_and(|f| !f.value().trim().is_empty())
     });
     if let Some(slot) = state
@@ -19248,7 +19263,7 @@ fn settle_transports_in(
         let listen = forms
             .get(&NodeAddress::new(here, node))
             .map_or(String::new(), |form| {
-                form.field("listen.endpoints")
+                form.field(key::LISTEN_ENDPOINTS)
                     .map_or(String::new(), |f| f.value().into_owned())
             });
         let dialled = dialled_endpoint(doc, here, node);
@@ -19273,7 +19288,7 @@ fn endpoints_in(forms: &BTreeMap<NodeAddress, ConfigForm>, at: NodeAddress) -> V
     forms
         .get(&at)
         .and_then(|form| {
-            form.field("listen.endpoints")
+            form.field(key::LISTEN_ENDPOINTS)
                 .map(|f| f.value().into_owned())
         })
         .map(|value| {
@@ -26870,7 +26885,7 @@ fn set_pin_transport(
     let lost = swapped.severed.len();
     drop(doc);
     if let Some(form) = state.forms.borrow_mut().get_mut(&state.address_of(node)) {
-        form.set("listen.endpoints", moved.join(FieldType::SEPARATOR))
+        form.set(key::LISTEN_ENDPOINTS, moved.join(FieldType::SEPARATOR))
             .ok();
     }
     // ★★★★★ R1975 — and the wires that already landed here move with it.

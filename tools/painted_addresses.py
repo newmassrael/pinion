@@ -100,6 +100,7 @@ from __future__ import annotations
 import argparse
 import ast
 import functools
+import json
 import re
 import sys
 from pathlib import Path
@@ -145,8 +146,29 @@ RUST_ROOTS: tuple[str, ...] = ("crates", "examples")
 #: keeps that honest is [`selftest`], which asserts the census sees more than one
 #: crate and that at least one `address.rs` exists to be excluded — a filter that
 #: matched nothing would be silently equivalent to no filter at all.
+#:
+#: ★★★★★ R2155 — **a SET, because a screen names more than one dotted
+#: vocabulary.** `key.rs` declares the configuration keys the node lab's form
+#: edits: `transport.link.tx.batch_size` has exactly the shape this file's
+#: needle reads, and is not an address at all. Its declaration is a declaring
+#: site on the same terms `address.rs` is, and charging it would mean that
+#: vocabulary can never reach zero however completely it is converted.
+#:
+#: ⚠ A NAME cannot be added here on its own authority. What makes an entry
+#: true is a gate inside the crate holding that file to be the only speller of
+#: its vocabulary — `r2049_a_role_address_is_typed_in_one_place` for the first,
+#: `r2155_a_config_key_is_typed_in_one_place` for the second. Without such a
+#: gate a name here is a blanket exemption for whatever the file contains,
+#: which is the shape this whole campaign exists to remove. It is a list of two
+#: rather than a derivation because the property is *designation*, not syntax:
+#: `const DIALLED_KEY: &str = "connect.endpoints"` was a `pub const` in a
+#: declaring-looking shape and was a genuine second spelling, so a rule reading
+#: the site rather than the file would have excused it.
 RUST_CENSUS_ROOT = "examples"
-RUST_DECLARING_FILE = "address.rs"
+RUST_DECLARING_FILES = ("address.rs", "key.rs")
+#: The first of [`RUST_DECLARING_FILES`], kept as its own name because the
+#: selftest asserts one exists to be excluded and the message names it.
+RUST_DECLARING_FILE = RUST_DECLARING_FILES[0]
 
 #: A Rust string literal, escapes handled, quotes included.
 #:
@@ -429,7 +451,7 @@ def rust_sources() -> tuple[Path, ...]:
     return tuple(
         path
         for path in sorted((ROOT / RUST_CENSUS_ROOT).glob("*/src/**/*.rs"))
-        if path.name != RUST_DECLARING_FILE
+        if path.name not in RUST_DECLARING_FILES
     )
 
 
@@ -769,6 +791,30 @@ def rust_text() -> str:
 #: crate's own test pins a family the ratchet does not count.
 PIN_ARTIFACTS = "examples/*/src/*.pin"
 
+#: ★★★★★ R2155 — the artifact that pins a family which is **not an address at
+#: all**, and whose absence here would charge a genuinely repaid vocabulary as
+#: a deleted check.
+#:
+#: A screen's dotted names come from two vocabularies of identical shape: the
+#: addresses of painted marks, and the CONFIGURATION keys of the document it
+#: edits (`transport.link.tx.batch_size`). The needle above reads shape, so it
+#: counted both. R2155 gave the second one its declaring module, and the
+#: families then reached zero spellers — correctly, because the keys stopped
+#: being re-typed.
+#:
+#: What holds their VALUE is this file: the target's own declared option
+#: surface, compiled into the screen by `include_str!`, and asserted key by key
+#: by `r2155_a_config_key_is_sourced`. That is a value pin of the same kind as
+#: a `.pin` or an emitted grammar — a committed artifact, compared against the
+#: declaration by a test — so it belongs beside them rather than as a family
+#: this tool reports nothing holds.
+#:
+#: ⚠ Read for its `paths` list only. A path here is a leaf of a configuration
+#: document, never a mark on a screen, and nothing else in this tool should
+#: treat the two as one: this is the one question — *is this family's value
+#: held by something committed?* — where they have the same answer.
+CONFIG_SURFACE_ARTIFACTS = "docs/analyzer-config-surface.json"
+
 #: ★★★★★ R2153 — the OTHER artifact that pins a value, and the one whose
 #: absence here charged a repaid family as a deleted check.
 #:
@@ -812,7 +858,30 @@ def pin_artifact_addresses() -> tuple[str, ...]:
             line = line.strip()
             if line and not line.startswith("#"):
                 out.append(line.replace("#*", ""))
+    out.extend(config_surface_paths())
     return tuple(out)
+
+
+@functools.lru_cache(maxsize=1)
+def config_surface_paths() -> tuple[str, ...]:
+    """Every leaf of the sourced configuration surface — see
+    [`CONFIG_SURFACE_ARTIFACTS`] for why a config key is answered by this
+    question and by no other one in this file.
+
+    ⚠ A missing or unreadable artifact answers EMPTY rather than raising, which
+    is the same choice the `.pin` reader above makes: this reader decides
+    whether a value is held, and a reader that crashed would stop the census
+    saying anything about the other 160 families over one file.
+    """
+    path = ROOT / CONFIG_SURFACE_ARTIFACTS
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ()
+    rows = doc.get("paths") or []
+    return tuple(
+        row["path"] for row in rows if isinstance(row, dict) and row.get("path")
+    )
 
 
 @functools.lru_cache(maxsize=1)
@@ -1416,7 +1485,28 @@ def selftest() -> int:
     crates_seen = {
         path.relative_to(ROOT / RUST_CENSUS_ROOT).parts[0] for path in rust_pop
     }
-    declaring = sorted((ROOT / RUST_CENSUS_ROOT).glob(f"*/src/**/{RUST_DECLARING_FILE}"))
+    # ★ R2155 — EVERY declaring name, not just the first. An exclusion added to
+    # the set and never present in the tree would be a filter matching nothing,
+    # which is the case this block exists to refuse, and checking only the first
+    # name would have let the second in silently.
+    declaring = sorted(
+        path
+        for name in RUST_DECLARING_FILES
+        for path in (ROOT / RUST_CENSUS_ROOT).glob(f"*/src/**/{name}")
+    )
+    unfound = [
+        name
+        for name in RUST_DECLARING_FILES
+        if not any(path.name == name for path in declaring)
+    ]
+    if unfound:
+        failed += 1
+        print(
+            f"FAIL: no {unfound} exists under {RUST_CENSUS_ROOT}/, so an "
+            "exclusion that keeps a declaring site from being charged for "
+            "declaring matches nothing and is not doing anything",
+            file=sys.stderr,
+        )
     if len(crates_seen) < 2:
         failed += 1
         print(

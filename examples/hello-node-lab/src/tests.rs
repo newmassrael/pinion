@@ -659,7 +659,7 @@ fn share_the_connect_row(state: &std::rc::Rc<LabState>, address: &str) -> Vec<St
     state.selection.set(Selection::one(node));
     let drawn: Vec<String> = super::shown_form(state, node)
         .and_then(|form| {
-            form.field("connect.endpoints")
+            form.field(crate::key::CONNECT_ENDPOINTS)
                 .map(|f| f.value().into_owned())
         })
         .map(|value| {
@@ -668,9 +668,11 @@ fn share_the_connect_row(state: &std::rc::Rc<LabState>, address: &str) -> Vec<St
                 .collect()
         })
         .expect("the canvas draws links out of the opening card");
-    super::author_row(state, node, "connect.endpoints").expect("the wires derive it");
-    super::amend(state, node, |form| form.set("connect.endpoints", address))
-        .expect("theirs to write now");
+    super::author_row(state, node, crate::key::CONNECT_ENDPOINTS).expect("the wires derive it");
+    super::amend(state, node, |form| {
+        form.set(crate::key::CONNECT_ENDPOINTS, address)
+    })
+    .expect("theirs to write now");
     drawn
 }
 
@@ -711,7 +713,7 @@ fn r1717_a_written_address_and_every_drawn_one_stand_in_one_row() {
             "the card written on is drawn to at least one peer: {drawn:?}"
         );
         let form = super::shown_form(&state, node).expect("a form");
-        let row = form.field("connect.endpoints").expect("held");
+        let row = form.field(crate::key::CONNECT_ENDPOINTS).expect("held");
         assert_eq!(
             row.written(),
             Some(outside),
@@ -821,10 +823,14 @@ fn r1717_an_address_outside_the_graph_warns_and_does_not_block() {
             "★★ it warns and does not block — a node may legitimately be told \
              to reach an already-running peer"
         );
-        super::amend(&state, node, |form| form.remove("connect.endpoints"))
-            .expect("their half goes");
+        super::amend(&state, node, |form| {
+            form.remove(crate::key::CONNECT_ENDPOINTS)
+        })
+        .expect("their half goes");
         let back = super::shown_form(&state, node).expect("a form");
-        let row = back.field("connect.endpoints").expect("★ the row STAYS");
+        let row = back
+            .field(crate::key::CONNECT_ENDPOINTS)
+            .expect("★ the row STAYS");
         assert_eq!(row.written(), None, "★ and their half is gone");
         assert_eq!(
             state.defects().len(),
@@ -1253,13 +1259,126 @@ fn r2049_a_role_address_is_typed_in_one_place() {
 /// shape this whole debt is about, one level up. What keeps it honest is not a
 /// longer list but [`every_module_is_read`], which walks the `mod`
 /// declarations in `lib.rs` and refuses one this does not carry.
-fn crate_sources() -> [(&'static str, &'static str); 11] {
+/// ★★★★★ R2155 — **every configuration key this screen names is one the
+/// TARGET declares.**
+///
+/// [`crate::key`] exists because a config key looks exactly like a painted
+/// address and is not one, and because thirty-five readers were re-typing one.
+/// Declaring them in a module removes the re-typing; it does not by itself
+/// make any of them *right*. This is the half that does: each const has to be
+/// a path [`settings::sourced_surface`] carries, so a wrong letter is a test
+/// failure here instead of a control that paints, accepts an edit, and writes
+/// it to a key the schema does not hold.
+///
+/// ⚠ The direction is deliberate. It asserts every declared key IS sourced,
+/// never that every sourced path is declared — the surface has 111 paths and
+/// this screen names fifteen of them, so the other direction would be false
+/// and would have to be weakened into something that checks nothing.
+///
+/// [`settings::sourced_surface`]: crate::settings::sourced_surface
+#[test]
+fn r2155_a_config_key_is_sourced() {
+    let sourced: Vec<&str> = crate::settings::sourced_paths()
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let strangers: Vec<&&str> = crate::key::ALL
+        .iter()
+        .filter(|declared| !sourced.contains(*declared))
+        .collect();
+    assert_eq!(
+        strangers,
+        Vec::<&&str>::new(),
+        "★★★★★ these key(s) are declared by this screen and the sourced \
+         surface does not carry them: a form row keyed there edits nothing, \
+         and the screen looks like it simply did not apply the change"
+    );
+    // ★ The set is not empty and the comparison is not vacuous. Without this
+    // the assertion above passes on an empty declaration, which is the shape
+    // that made a green gate mean "nothing was asked".
+    assert!(
+        crate::key::ALL.len() >= 15,
+        "★ the declaration holds {} key(s), which is not this screen's \
+         vocabulary — the module is broken rather than the screen small",
+        crate::key::ALL.len()
+    );
+    // ★★ And the composers, which are how a list row's parts are addressed
+    // without a longer const putting a key in the vocabulary that the target
+    // does not have.
+    assert_eq!(
+        crate::key::add_item(crate::key::LISTEN_ENDPOINTS),
+        crate::key::item(crate::key::LISTEN_ENDPOINTS, "add"),
+        "★ the add seat is the item composer's own answer, not a second rule"
+    );
+    assert!(
+        !sourced.contains(&crate::key::add_item(crate::key::LISTEN_ENDPOINTS).as_str()),
+        "★★ an item suffix is a position in the FORM, so the target must not \
+         declare it as a path — if it does, this screen is composing over a \
+         real key and the two vocabularies have collided"
+    );
+    assert_eq!(
+        crate::key::assign(crate::key::TRANSPORT_LINK_TX_BATCH_SIZE, "65536"),
+        crate::spec::VALIDATE_ARG,
+        "★★ the CLI argument pin carries the key inside a longer literal — the \
+         shape no speller count can see — so it is held to the declaration here"
+    );
+}
+
+/// ★★★★★ R2155 — **and a configuration key is typed in ONE place.**
+///
+/// [`r2049_a_role_address_is_typed_in_one_place`]'s shape, for the second
+/// vocabulary. Without this, converting the thirty-five sites this round found
+/// just clears the way for the thirty-sixth: the declaration would be where
+/// the keys *happen to be* rather than where they *come from*.
+///
+/// ⚠ The needles are read out of [`crate::key::ALL`] rather than written here,
+/// so a key added to the declaration is policed from the moment it exists. A
+/// hand-written needle list is the shape that goes stale silently, and this
+/// crate has already paid for one.
+///
+/// ⚠ `key.rs` is excused by NAME and nothing else is — including this file,
+/// which is in the population on the same terms as the rest. There is no
+/// exemption list: one was drafted and removed, because it could not fire.
+///
+/// ⚠⚠ **What this needle cannot see, stated rather than left to be discovered:
+/// a key EMBEDDED in a longer literal.** The needle is the quoted key, so
+/// `"transport.link.tx.batch_size=65536"` — the CLI argument pin, which a
+/// `const` table forces to be one literal — does not match it and never will.
+/// That site is real and is held by the value assertion in
+/// [`r2155_a_config_key_is_sourced`] instead. A gate that cannot see a shape
+/// has to say so, or its zero reads as *there are none*.
+#[test]
+fn r2155_a_config_key_is_typed_in_one_place() {
+    let sources = crate_sources();
+    let spellers: Vec<(&str, &str)> = sources
+        .iter()
+        .filter(|(name, _)| *name != "key.rs")
+        .flat_map(|(name, body)| {
+            crate::key::ALL.iter().filter_map(move |declared| {
+                // The QUOTED literal, so a key reached through the declaration
+                // (`key::LISTEN_ENDPOINTS`) is not counted as a spelling of it.
+                body.contains(&format!("\"{declared}\""))
+                    .then_some((*name, *declared))
+            })
+        })
+        .collect();
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ a configuration key is declared in `key.rs` and named \
+         everywhere else; these file(s) spell one themselves"
+    );
+}
+
+fn crate_sources() -> [(&'static str, &'static str); 13] {
     [
         ("address.rs", include_str!("address.rs")),
+        ("key.rs", include_str!("key.rs")),
         ("lib.rs", include_str!("lib.rs")),
         ("spec.rs", include_str!("spec.rs")),
         ("graph.rs", include_str!("graph.rs")),
         ("painted.rs", include_str!("painted.rs")),
+        ("settings.rs", include_str!("settings.rs")),
         ("tests.rs", include_str!("tests.rs")),
         ("judge.rs", include_str!("judge.rs")),
         ("deploy.rs", include_str!("deploy.rs")),
@@ -1303,9 +1422,14 @@ fn every_module_is_read() {
         declared.len()
     );
     let read: Vec<&str> = crate_sources().iter().map(|(name, _)| *name).collect();
+    // ★★★★★ R2155 — `settings` is no longer excused. It was named as a
+    // legitimate absence since R2053, and the exemption outlived its reason:
+    // `include_str!` reads a file whatever `cfg` its `mod` line carries, so
+    // nothing ever stopped it being read. What it cost is measurable — the
+    // file that owns the option surface, and one of the four that spelled a
+    // configuration key, sat outside every gate that counts spellers.
     let missing: Vec<&str> = declared
         .iter()
-        .filter(|name| **name != "settings")
         .filter(|name| !read.contains(&format!("{name}.rs").as_str()))
         .copied()
         .collect();
@@ -2473,8 +2597,10 @@ fn r2053_every_form_part_address_is_derived() {
         "★ the prefix is the address with an empty key, so the two cannot drift"
     );
     assert_eq!(
-        super::address::form_control_key(&super::address::form_control("listen.endpoints")),
-        Some("listen.endpoints"),
+        super::address::form_control_key(&super::address::form_control(
+            crate::key::LISTEN_ENDPOINTS,
+        )),
+        Some(crate::key::LISTEN_ENDPOINTS),
         "★★ and the address round-trips through its own inverse"
     );
     assert_eq!(
@@ -2928,7 +3054,7 @@ fn r1651_the_pin_a_node_shows_is_derived_from_the_form_it_holds() {
             .borrow_mut()
             .get_mut(&state.address_of(store))
             .expect("a form")
-            .set("listen.endpoints", "quic/0.0.0.0:7460")
+            .set(crate::key::LISTEN_ENDPOINTS, "quic/0.0.0.0:7460")
             .expect("held");
         super::sync_node(&state, store);
 
@@ -4083,7 +4209,7 @@ fn r1681_a_target_that_listens_twice_offers_a_seat_per_address() {
         );
 
         // Grow the list the way the inspector's `+` row does.
-        super::add_element(&state, "listen.endpoints");
+        super::add_element(&state, crate::key::LISTEN_ENDPOINTS);
         let endpoints = super::endpoints_of(&state, target);
         assert_eq!(
             endpoints.len(),
@@ -4148,12 +4274,12 @@ fn r2077_a_wire_is_left_dialling_an_address_its_card_took_away() {
             .node_of(spec::SELECTED_NODE)
             .expect("the opening node");
 
-        super::add_element(&state, "listen.endpoints");
+        super::add_element(&state, crate::key::LISTEN_ENDPOINTS);
         let two = super::endpoints_of(&state, target);
         assert_eq!(two.len(), 2, "the card now listens in two places: {two:?}");
 
         // Take the FIRST away — the address every wire landing here dials.
-        super::set_value(&state, target, "listen.endpoints", &two[1])
+        super::set_value(&state, target, crate::key::LISTEN_ENDPOINTS, &two[1])
             .expect("a card may be given a shorter listen list");
         let now = super::endpoints_of(&state, target);
         assert_eq!(now, vec![two[1].clone()], "the card kept only the second");
@@ -7306,7 +7432,7 @@ fn r1915_a_wire_on_a_member_is_cut_by_the_fold_and_named() {
             .borrow_mut()
             .get_mut(&state.address_of(listener))
             .expect("a fresh card has a form")
-            .set("listen.endpoints", "tcp/0.0.0.0:7470")
+            .set(crate::key::LISTEN_ENDPOINTS, "tcp/0.0.0.0:7470")
             .expect("held");
         super::sync_node(&state, listener);
 
@@ -7734,7 +7860,7 @@ fn r1961_a_chosen_transport_outlives_an_unrelated_edit() {
             .borrow_mut()
             .get_mut(&state.address_of(elsewhere))
             .expect("a form")
-            .set("listen.endpoints", "tcp/0.0.0.0:7449")
+            .set(crate::key::LISTEN_ENDPOINTS, "tcp/0.0.0.0:7449")
             .expect("held");
         super::sync_node(&state, elsewhere);
         assert_eq!(
@@ -7873,8 +7999,13 @@ fn r1975_editing_the_address_in_the_inspector_moves_the_wires_too() {
         let held = super::endpoints_of(&state, subject);
         assert_eq!(held.len(), 1, "★ the fixture: one address — {held:?}");
 
-        super::set_value(&state, subject, "listen.endpoints", "quic/0.0.0.0:7447")
-            .expect("a row a person may write");
+        super::set_value(
+            &state,
+            subject,
+            crate::key::LISTEN_ENDPOINTS,
+            "quic/0.0.0.0:7447",
+        )
+        .expect("a row a person may write");
         let landed = super::endpoint_at(&state, Socket::new(subject, 0));
         assert_eq!(
             landed.as_deref(),
@@ -7888,7 +8019,7 @@ fn r1975_editing_the_address_in_the_inspector_moves_the_wires_too() {
         super::set_value(
             &state,
             subject,
-            "listen.endpoints",
+            crate::key::LISTEN_ENDPOINTS,
             "quic/0.0.0.0:7447, tcp/0.0.0.0:7500",
         )
         .expect("a row a person may write");
@@ -7909,8 +8040,13 @@ fn r1975_editing_the_address_in_the_inspector_moves_the_wires_too() {
         // launch gate names — carrying it into a landing would make a wire
         // claim to dial a string nobody can reach.
         let held = super::endpoint_at(&state, Socket::new(subject, 0));
-        super::set_value(&state, subject, "listen.endpoints", "not-an-address, x")
-            .expect("a row a person may write");
+        super::set_value(
+            &state,
+            subject,
+            crate::key::LISTEN_ENDPOINTS,
+            "not-an-address, x",
+        )
+        .expect("a row a person may write");
         assert_eq!(
             super::endpoint_at(&state, Socket::new(subject, 0)),
             held,
@@ -8252,7 +8388,7 @@ fn r1961_the_opening_canvas_speaks_the_addresses_it_carries() {
                 .forms
                 .borrow()
                 .get(&state.address_of(node))
-                .and_then(|form| form.field("listen.endpoints"))
+                .and_then(|form| form.field(crate::key::LISTEN_ENDPOINTS))
                 .map_or(String::new(), |f| f.value().into_owned());
             let dialled = super::dialled_endpoint(&state.doc.borrow(), state.here(), node);
             let (listens_over, dials_over) = super::transports_spoken(&listen, dialled.as_deref());
@@ -8458,7 +8594,7 @@ fn r1961_a_card_learns_what_it_speaks_from_the_wire_it_draws() {
             .borrow_mut()
             .get_mut(&state.address_of(peer))
             .expect("a form")
-            .set("listen.endpoints", "quic/0.0.0.0:7451")
+            .set(crate::key::LISTEN_ENDPOINTS, "quic/0.0.0.0:7451")
             .expect("held");
         super::sync_node(&state, peer);
         assert_eq!(

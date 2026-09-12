@@ -762,7 +762,7 @@ pub const FIELDS: &[FieldSpec] = &[
         aside: None,
     },
     FieldSpec {
-        key: "listen.endpoints",
+        key: crate::key::LISTEN_ENDPOINTS,
         ty: "address[]",
         applies: "restart",
         value: "tcp/0.0.0.0:7447",
@@ -779,7 +779,7 @@ pub const FIELDS: &[FieldSpec] = &[
     // which this tree has no field shape for; that control is the widget-catalog
     // axis's, and it is recorded there rather than papered over here.
     FieldSpec {
-        key: "admin.permissions.read",
+        key: crate::key::ADMIN_PERMISSIONS_READ,
         ty: "bool",
         applies: "restart",
         value: "true",
@@ -787,7 +787,7 @@ pub const FIELDS: &[FieldSpec] = &[
         aside: None,
     },
     FieldSpec {
-        key: "admin.permissions.write",
+        key: crate::key::ADMIN_PERMISSIONS_WRITE,
         ty: "bool",
         applies: "restart",
         value: "true",
@@ -795,7 +795,7 @@ pub const FIELDS: &[FieldSpec] = &[
         aside: None,
     },
     FieldSpec {
-        key: "transport.link.tx.batch_size",
+        key: crate::key::TRANSPORT_LINK_TX_BATCH_SIZE,
         ty: "int",
         applies: "restart",
         value: "65535",
@@ -853,7 +853,7 @@ pub const ADDABLE: &[&str] = &[
     // ★★ R1716 — first because it is the one a person reaches for on a card
     // with no drawn links: the row is worked out from the wires when there are
     // any, and offered here when there are none.
-    "connect.endpoints",
+    crate::key::CONNECT_ENDPOINTS,
     // ★★★★★ R1842 — five of these seven changed spelling, and one was dropped
     // outright. The option surface is read from the target's own declaration
     // now, so a chip that names a key the target does not take is refusable
@@ -863,11 +863,11 @@ pub const ADDABLE: &[&str] = &[
     // and the sharpest of the six — it is not configuration in the first place,
     // it is a per-message traffic parameter, and the reference marks it as such
     // on its own rows.
-    "discovery.multicast.enabled",
+    crate::key::DISCOVERY_MULTICAST_ENABLED,
     "timestamping.enabled",
-    "transport.unicast.compression.enabled",
+    crate::key::TRANSPORT_UNICAST_COMPRESSION_ENABLED,
     "namespace",
-    "routing.peer.mode",
+    crate::key::ROUTING_PEER_MODE,
     "plugin_loading.search_dirs",
 ];
 
@@ -1184,7 +1184,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
     // the operation was unfinished.
     OperationSpec {
         name: "add a field by typing its key",
-        verb: Some(("add_key", "transport.unicast.lowlatency")),
+        verb: Some(("add_key", crate::key::TRANSPORT_UNICAST_LOWLATENCY)),
         gesture: true,
         witness: "form",
         needs: None,
@@ -1204,7 +1204,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
     // it in the same act.
     OperationSpec {
         name: "remove a field",
-        verb: Some(("remove_field", "admin.permissions.write")),
+        verb: Some(("remove_field", crate::key::ADMIN_PERMISSIONS_WRITE)),
         gesture: true,
         witness: "form",
         needs: None,
@@ -2088,7 +2088,7 @@ pub fn inspector_document() -> pinion_core::conformance::SpecDocument {
 /// One of the keys the palette offers, so the gate reaches it the way a session
 /// does — press the chip, and the row is there. Named here rather than spelled
 /// in the gate so the two cannot part.
-pub const ENUM_KEY: &str = "routing.peer.mode";
+pub const ENUM_KEY: &str = crate::key::ROUTING_PEER_MODE;
 
 /// ★★★★★ R1834 — **the reference has NO level of detail, and this records it as
 /// a fact rather than as an absence somebody remembers.**

@@ -81,6 +81,7 @@
 use std::sync::OnceLock;
 
 use crate::graph::Role;
+use crate::key;
 use pinion_core::widgets::config_form::{ConfigDefect, FieldType};
 use pinion_core::widgets::config_schema::{
     ConfigSchema, Reach, SchemaLeaf, StringCensus, SurfaceDrift,
@@ -211,10 +212,10 @@ fn refinements() -> Vec<(&'static str, FieldType)> {
         // rounds before R1690 said so.
         ("id", formatted(ident())),
         // The addresses the canvas draws links between.
-        ("listen.endpoints", list_of(formatted(address()))),
-        ("connect.endpoints", list_of(formatted(address()))),
+        (key::LISTEN_ENDPOINTS, list_of(formatted(address()))),
+        (key::CONNECT_ENDPOINTS, list_of(formatted(address()))),
         // A discovery address names where to shout, with no transport word.
-        ("discovery.multicast.address", formatted(endpoint())),
+        (key::DISCOVERY_MULTICAST_ADDRESS, formatted(endpoint())),
         // A key space this tool's rows hold with no wildcard in it.
         ("namespace", formatted(plain_path())),
         // ★ The role words come from `Role::MODES` rather than being spelled
@@ -222,36 +223,39 @@ fn refinements() -> Vec<(&'static str, FieldType)> {
         // are one set, and two spellings of one set is the defect this file
         // exists to remove.
         ("mode", choice(&Role::MODES)),
-        ("routing.peer.mode", choice(&["peer_to_peer", "linkstate"])),
+        (
+            key::ROUTING_PEER_MODE,
+            choice(&["peer_to_peer", "linkstate"]),
+        ),
         ("control.default_permission", choice(&["deny", "allow"])),
         // The transports the palette's own legend has — a word outside that
         // set is an address no pin on this screen has.
         (
-            "transport.link.protocols",
+            key::TRANSPORT_LINK_PROTOCOLS,
             list_of(choice(&["tcp", "tls", "quic", "udp", "ws"])),
         ),
         // Ranges. The source says `number` and stops there, so an out-of-range
         // value is a defect only where a bound is declared below.
         (
-            "transport.link.tx.batch_size",
+            key::TRANSPORT_LINK_TX_BATCH_SIZE,
             FieldType::Integer { min: 0, max: 65535 },
         ),
         (
-            "transport.link.rx.buffer_size",
+            key::TRANSPORT_LINK_RX_BUFFER_SIZE,
             FieldType::Integer { min: 0, max: 65535 },
         ),
         (
-            "discovery.multicast.ttl",
+            key::DISCOVERY_MULTICAST_TTL,
             FieldType::Integer { min: 1, max: 255 },
         ),
         (
-            "transport.unicast.max_links",
+            key::TRANSPORT_UNICAST_MAX_LINKS,
             FieldType::Integer { min: 1, max: 1024 },
         ),
         ("listen.timeout_ms", millis()),
         ("connect.timeout_ms", millis()),
         ("queries.timeout_ms", millis()),
-        ("routing.interests.timeout", millis()),
+        (key::ROUTING_INTERESTS_TIMEOUT, millis()),
         ("discovery.delay", millis()),
         ("discovery.timeout", millis()),
     ]
@@ -816,7 +820,10 @@ mod tests {
         // through the list — a meter that looked only at scalars would report
         // this screen's two most important strings as no string surface at all.
         assert!(
-            census.formats.iter().any(|p| p == "listen.endpoints"),
+            census
+                .formats
+                .iter()
+                .any(|p| p == crate::key::LISTEN_ENDPOINTS),
             "{:?}",
             census.formats,
         );
@@ -1015,7 +1022,7 @@ mod tests {
         // coarse word. Asserted on a leaf the source types `bool`, which is the
         // arm a reader is least likely to check by hand.
         assert_eq!(
-            shape_of("transport.unicast.lowlatency"),
+            shape_of(crate::key::TRANSPORT_UNICAST_LOWLATENCY),
             Some(FieldType::Boolean),
             "an unrefined leaf takes the shape the source's own type word means",
         );

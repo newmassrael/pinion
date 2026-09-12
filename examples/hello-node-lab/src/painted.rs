@@ -166,7 +166,7 @@ const STATES: &[SweptState] = &[
     }),
     ("with a list field grown to six elements", |state| {
         for _ in 0..5 {
-            super::add_element(state, "listen.endpoints");
+            super::add_element(state, crate::key::LISTEN_ENDPOINTS);
         }
     }),
     ("with another node selected", |state| {
@@ -327,8 +327,9 @@ const STATES: &[SweptState] = &[
     ("with an address written beside the wires", |state| {
         let dialler = state.node_of("P-02").expect("the opening graph has it");
         state.selection.set(Selection::one(dialler));
-        super::author_row(state, dialler, "connect.endpoints").expect("the wires derive it");
-        super::set_and_sync(state, "connect.endpoints", "tcp/10.0.0.21:7449");
+        super::author_row(state, dialler, crate::key::CONNECT_ENDPOINTS)
+            .expect("the wires derive it");
+        super::set_and_sync(state, crate::key::CONNECT_ENDPOINTS, "tcp/10.0.0.21:7449");
     }),
     // ★★★★★ R1774 — a palette-added card whose form is SHORT enough to fit its
     // digest, which is the other side of `card_rows`' three-row clamp.
@@ -2432,8 +2433,13 @@ fn r2084_an_endpoint_opens_the_pin_of_the_card_that_gets_one(
         .map(|(card, _)| card.clone())
         .expect("a freshly placed card of a role the canon seeds nothing listens nowhere");
     let node = state.node_of(&subject).expect("it is on the canvas");
-    super::set_value(state, node, "listen.endpoints", "tcp/0.0.0.0:7551")
-        .expect("a person may say where a card listens");
+    super::set_value(
+        state,
+        node,
+        crate::key::LISTEN_ENDPOINTS,
+        "tcp/0.0.0.0:7551",
+    )
+    .expect("a person may say where a card listens");
     let moved = super::pins_wire(state)["pins"]
         .as_array()
         .expect("a list")
@@ -5317,7 +5323,7 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     ("add a field by typing its key", |state, shot| {
         let _ = shot;
         press_tag(state, &painted(state), crate::address::INSPECTOR_ADDKEY);
-        type_into(state, "transport.unicast.lowlatency");
+        type_into(state, crate::key::TRANSPORT_UNICAST_LOWLATENCY);
         press_tag(state, &painted(state), crate::address::INSPECTOR_RENAME);
         assert!(
             state.editing.get().is_none(),
@@ -5344,7 +5350,7 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         press_tag(
             state,
             shot,
-            &super::address::form_part("item", "listen.endpoints.add"),
+            &super::address::form_part("item", &crate::key::add_item(crate::key::LISTEN_ENDPOINTS)),
         );
     }),
     // ★★ R1686 — the seat at the trailing edge of a row's key line. This row
@@ -5354,7 +5360,7 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         press_tag(
             state,
             shot,
-            &super::address::form_part("remove", "admin.permissions.write"),
+            &super::address::form_part("remove", crate::key::ADMIN_PERMISSIONS_WRITE),
         );
     }),
     // ★★★ R1716 — the same edge of the same row, on a row nobody wrote: the
@@ -7229,12 +7235,12 @@ fn r1684_a_click_resolves_to_the_byte_whose_caret_is_under_it() {
         let state = use_lab_state();
         // A row with something long enough in it that the bytes are spread
         // across the box rather than piled at its left edge.
-        super::set_and_sync(&state, "listen.endpoints", "tcp/0.0.0.0:7447");
+        super::set_and_sync(&state, crate::key::LISTEN_ENDPOINTS, "tcp/0.0.0.0:7447");
         let shot = painted(&state);
         let at = centre(
             *shot
                 .tags
-                .get(&super::address::form_control("listen.endpoints"))
+                .get(&super::address::form_control(crate::key::LISTEN_ENDPOINTS))
                 .expect("the row is painted"),
         );
         press_at(&state, at);
@@ -8244,8 +8250,10 @@ fn r1691_a_rows_control_announces_the_kind_its_shape_is() {
         let stepped = crate::settings::bounded_row().key;
         let step_up = super::address::form_part("step", &format!("{stepped}.up"));
         let step_down = super::address::form_part("step", &format!("{stepped}.down"));
-        let item_first = super::address::form_part("item", "listen.endpoints.0");
-        let item_add = super::address::form_part("item", "listen.endpoints.add");
+        let item_first =
+            super::address::form_part("item", &crate::key::item(crate::key::LISTEN_ENDPOINTS, "0"));
+        let item_add =
+            super::address::form_part("item", &crate::key::add_item(crate::key::LISTEN_ENDPOINTS));
         let want_part = [
             (step_up.as_str(), "button"),
             (step_down.as_str(), "button"),
