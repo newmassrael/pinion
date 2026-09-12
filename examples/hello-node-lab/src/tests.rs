@@ -1259,6 +1259,64 @@ fn r2049_a_role_address_is_typed_in_one_place() {
 /// shape this whole debt is about, one level up. What keeps it honest is not a
 /// longer list but [`every_module_is_read`], which walks the `mod`
 /// declarations in `lib.rs` and refuses one this does not carry.
+/// ★★★★★ R2159 — **a host frame's address is typed in ONE place, and this
+/// counts.**
+///
+/// R2158's finding, met a round later in another crate: this family had a
+/// COMPOSER (`address::frame`) and no prefix and no inverse, so every reader
+/// needing one of those two wrote it out. Measured at entry, **14 sites** —
+/// `lib.rs` stripping the prefix by hand and composing the address four times,
+/// `painted.rs` testing the prefix with `starts_with` four times and naming one
+/// frame by hand three more.
+///
+/// ⚠ The needle is assembled, for `r2049_a_role_address_is_typed_in_one_place`'s
+/// reason: this file is one of the sources it reads.
+#[test]
+fn r2159_a_frame_address_is_typed_in_one_place() {
+    const NEEDLE: &str = concat!("lab.", "frame.");
+    let sources = crate_sources();
+    // ⚠ NON-VACUITY FIRST: a count over sources that do not reach, or a needle
+    // matching nothing anywhere, passes and reads exactly like a converted
+    // family.
+    let declared = sources
+        .iter()
+        .find(|(name, _)| *name == "address.rs")
+        .map(|(_, body)| body.matches(NEEDLE).count())
+        .unwrap_or_default();
+    assert!(
+        declared > 0,
+        "★ the needle matches nothing in `address.rs`, so this gate counts a \
+         family that no longer exists under that name"
+    );
+    let spellers: Vec<(&str, usize)> = sources
+        .iter()
+        .map(|(name, body)| (*name, body.matches(NEEDLE).count()))
+        .filter(|(name, count)| *count > 0 && *name != "address.rs")
+        .collect();
+    assert_eq!(
+        spellers,
+        Vec::new(),
+        "★★★★★ a host frame's address is declared in `address.rs` and derived \
+         everywhere else; these file(s) spell it themselves"
+    );
+    // ★★ The composer, its prefix and its inverse driven against each other —
+    // R2049's rule that an address and its parse are one pair.
+    assert_eq!(
+        super::address::FRAME_TEMPLATE,
+        format!("{}{{}}", super::address::FRAME)
+    );
+    for name in ["host-a", "host-b"] {
+        let tag = super::address::frame(name);
+        assert_eq!(super::address::frame_name(&tag), Some(name));
+        assert!(super::address::frame_is(&tag));
+    }
+    // ⚠ And the refusals. A card is not a frame, and the bare prefix names no
+    // frame — a reader handed `Some("")` would look for a mark with no name.
+    assert!(super::address::frame_name(&super::address::card("P-01")).is_none());
+    assert!(!super::address::frame_is(&super::address::card("P-01")));
+    assert_eq!(super::address::frame_name(super::address::FRAME), Some(""));
+}
+
 /// ★★★★★ R2156 — **every ROLE the screen publishes names a real row.**
 ///
 /// [`crate::key`] stopped the Rust half re-typing a configuration key; the

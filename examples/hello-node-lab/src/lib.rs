@@ -6434,7 +6434,7 @@ impl Hit {
         {
             return Self::Pin { node, side, at };
         }
-        if let Some(name) = tag.strip_prefix("lab.frame.")
+        if let Some(name) = address::frame_name(tag)
             && let Some((id, _)) = frames_of(state).into_iter().find(|(_, n)| n == name)
         {
             return Self::Frame(id);
@@ -11767,8 +11767,8 @@ fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
         // exactly as it did when the caption was drawn beside it.
         let cap = caption::Caption::new(frame_caption(&name, gist), run_style(10, ink.text_3))
             .padding(12, 3)
-            .silent(Silence::name_of(format!("lab.frame.{name}")));
-        let (title, _) = caption::inside(&format!("lab.frame.{name}"), box_rect, &cap);
+            .silent(Silence::name_of(address::frame(&name)));
+        let (title, _) = caption::inside(&address::frame(&name), box_rect, &cap);
         let apart = focused
             .as_ref()
             .is_some_and(|answer| answer.relatedness(id).is_unrelated());
@@ -11791,7 +11791,7 @@ fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
             _ => ink.outline_2,
         };
         children.push(box_holding(
-            &format!("lab.frame.{name}"),
+            &address::frame(&name),
             box_rect,
             if apart { unrelated_ink(fill) } else { fill },
             Some(if apart { unrelated_ink(edge) } else { edge }),
@@ -25891,7 +25891,7 @@ fn canvas_access(state: &LabState) -> Vec<AccessNode> {
             .find(|f| f.name == name)
             .map_or("", |f| f.gist);
         nodes.push(
-            AccessNode::new(format!("lab.frame.{name}"), AriaRole::Group)
+            AccessNode::new(address::frame(&name), AriaRole::Group)
                 // R1692 — the tab's own words, with the kind in front. The
                 // caption declares itself this node's name, so what a reader
                 // hears has to CONTAIN what a reader sees.

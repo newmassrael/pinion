@@ -1151,13 +1151,13 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         .iter()
         .filter(|f| super::frames_of(state).iter().any(|(_, n)| n == f.name))
     {
-        want.push(format!("lab.frame.{}", frame.name));
+        want.push(super::address::frame(frame.name));
         // ★ R1813 — `.caption`, not `.name`: the frame's title is the frame's
         // own caption child now, and the suffix is what says so to
         // `caption::Survey`. The framework names it rather than this file.
         want.push(format!(
-            "lab.frame.{}{}",
-            frame.name,
+            "{}{}",
+            super::address::frame(frame.name),
             pinion_widget_paint::caption::CAPTION_SUFFIX
         ));
     }
@@ -1507,7 +1507,7 @@ fn owning_pane(tag: &str) -> Option<Rect> {
         return Some(inspector_rect());
     }
     if tag.starts_with(super::address::CARD)
-        || tag.starts_with("lab.frame.")
+        || super::address::frame_is(tag)
         || tag.starts_with(super::address::LINK)
         || tag.starts_with(super::address::GATE)
         || tag.starts_with(super::address::HINT)
@@ -1555,7 +1555,7 @@ fn declared_reader_of(tag: &str) -> Option<&'static str> {
 /// cannot.
 fn is_graph_content(tag: &str) -> bool {
     tag.starts_with(super::address::CARD)
-        || tag.starts_with("lab.frame.")
+        || super::address::frame_is(tag)
         || tag.starts_with(super::address::LINK)
         || tag.starts_with(super::address::PIN)
         || tag.starts_with(super::address::GATE)
@@ -3685,7 +3685,7 @@ fn r1653_the_painted_screen_invented_nothing() {
             (super::address::GATE, None),
             (super::address::CARD, None),
             (super::address::PIN, None),
-            ("lab.frame.", None),
+            (super::address::FRAME, None),
             (form_stem.as_str(), None),
             (super::address::INSPECTOR_SEAT, None),
             (super::address::TOOLBAR_SEAT, None),
@@ -4278,7 +4278,7 @@ fn r1653_a_pan_past_the_edge_stops_painting_the_graph() {
             .tags
             .iter()
             .filter(|(tag, _)| {
-                tag.starts_with(super::address::CARD) || tag.starts_with("lab.frame.")
+                tag.starts_with(super::address::CARD) || super::address::frame_is(tag)
             })
             .map(|(tag, rect)| (tag, *rect))
             .collect();
@@ -5288,11 +5288,20 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
             state,
             shot,
             &super::address::card("P-03"),
-            "lab.frame.host-b",
+            &super::address::frame("host-b"),
         );
     }),
     ("move a frame and its members", |state, shot| {
-        drag_tag(state, shot, "lab.frame.host-b.caption", (30, 0));
+        drag_tag(
+            state,
+            shot,
+            &format!(
+                "{}{}",
+                super::address::frame("host-b"),
+                pinion_widget_paint::caption::CAPTION_SUFFIX
+            ),
+            (30, 0),
+        );
     }),
     // ★★ R1682 — the node's own life. Each picks the card with the pointer
     // first, because the seats act on the SELECTED card and a driver that set
@@ -5924,7 +5933,7 @@ const HINT_GESTURES: &[HintDriver] = &[
                 state,
                 shot,
                 &super::address::card("P-03"),
-                "lab.frame.host-b",
+                &super::address::frame("host-b"),
             );
         },
     ),

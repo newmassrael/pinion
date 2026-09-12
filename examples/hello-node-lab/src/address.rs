@@ -203,6 +203,18 @@ pub const CARD_TEMPLATE: &str = "lab.node.{}";
 /// The address a **host frame** is painted under, as a template.
 pub const FRAME_TEMPLATE: &str = "lab.frame.{}";
 
+/// ★★★★★ R2159 — [`FRAME_TEMPLATE`]'s prefix, and the reason it is here is
+/// R2158's finding meeting the same shape a round later in another crate: this
+/// family had a COMPOSER ([`frame`]) and no prefix and no inverse, so every
+/// reader that needed one of those two wrote it out. Measured at entry, five
+/// sites — `lib.rs` stripping the prefix by hand and `painted.rs` testing it
+/// with `starts_with` four times.
+///
+/// ⇒ a composer answers *what is this frame's address*. It cannot answer *is
+/// this tag a frame* or *which frame is it*, and those are the questions the
+/// readers had.
+pub const FRAME: &str = "lab.frame.";
+
 /// ★★★★★ R2117 — [`CARD_TEMPLATE`]'s prefix, with the separator every reader
 /// either composes onto or strips off.
 ///
@@ -324,6 +336,27 @@ pub fn card_part_of(tag: &str) -> Option<(&str, &'static str)> {
 #[must_use]
 pub fn frame(name: &str) -> String {
     FRAME_TEMPLATE.replace("{}", name)
+}
+
+/// The frame an address names, or `None` when the tag is not one.
+///
+/// ★★ [`frame`]'s inverse, here rather than at the router — R2049's rule. A
+/// parse written against a separately-typed prefix fails the SILENT way round:
+/// the press lands on nothing and the screen simply does not respond.
+///
+/// ⚠ Answers the whole tail, which for a frame's own tag is its name and for a
+/// frame's caption is `<name>.caption`. A caller wanting the frame ITSELF must
+/// say so — [`frame_is`] — because a tail carrying a separator is a part of the
+/// frame rather than the frame.
+#[must_use]
+pub fn frame_name(tag: &str) -> Option<&str> {
+    tag.strip_prefix(FRAME)
+}
+
+/// Whether `tag` is painted under a host frame at all.
+#[must_use]
+pub fn frame_is(tag: &str) -> bool {
+    tag.starts_with(FRAME)
 }
 
 pub const ROLE_ROW: &str = "lab.palette.role.";

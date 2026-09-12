@@ -14119,7 +14119,13 @@ fn carrying_a_card_over_a_host_says_it_would_be_taken(state: &std::rc::Rc<ShellS
         .tags
         .iter()
         .filter_map(|(tag, rect)| {
-            let name = tag.strip_prefix("lab.frame.")?;
+            // ★ R2159 — the GUEST's declaration, named across the binary
+            // boundary. This host mounts the node lab and reads its addresses;
+            // spelling the prefix here made the shell a second speller for a
+            // family the lab owns, and a wrong letter on either side is the
+            // silent kind — the sweep would find no host frames and report the
+            // opening graph as drawing none.
+            let name = hello_node_lab::address::frame_name(tag)?;
             (!name.contains('.')).then(|| (name.to_owned(), *rect))
         })
         .collect();

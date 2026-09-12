@@ -76,7 +76,20 @@ pub fn fold<'a>(tags: impl IntoIterator<Item = &'a str>) -> BTreeSet<String> {
 #[must_use]
 pub fn render(seen: &BTreeSet<String>) -> String {
     let mut out = String::from(
-        "# Every address this screen paints, folded by `repeating_site`.\n\
+        "# Every address this screen painted IN THE STATES ITS SWEEP DRIVES,\n\
+         # folded by `repeating_site`.\n\
+         #\n\
+         # R2159 — that qualifier is not pedantry and it replaces a claim this\n\
+         # header made for six rounds: \"every address this screen paints\".\n\
+         # The set is the union over the sweep's own STATES x SIZES, so a mark\n\
+         # the sweep never reaches is absent from a file that said it held\n\
+         # everything. A family's ABSENCE here therefore means one of two\n\
+         # things and the file cannot tell you which: the screen does not paint\n\
+         # it, or the sweep does not go where it is painted. That matters\n\
+         # because the address campaign's rule is PIN BEFORE CONVERTING, and a\n\
+         # reader taking absence for the first reading would convert a family\n\
+         # whose value nothing holds.\n\
+         #\n\
          # Rewritten by setting PINION_REGEN_ADDRESS_PIN and running this\n\
          # screen's address-pin test; do not hand-edit.\n",
     );
