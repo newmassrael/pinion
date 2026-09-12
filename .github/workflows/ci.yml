@@ -101,6 +101,22 @@ jobs:
         run: cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items
       - name: workspace tests
         run: cargo test --workspace
+      - name: painted address census selftest
+        # ★★★★★ R2157 — the census this address debt is JUDGED by had no home in
+        # CI at all. Its closing criterion is read off `--check`, and `--check`
+        # ran only in `pre-push` — a gate a `--no-verify` walks past and a gate
+        # that does not exist for anyone who has not installed the hooks. The
+        # rule this project states for every other gate applies to the one that
+        # measures the campaign: local covers what a round touched, CI is the
+        # backstop.
+        #
+        # ⚠ Added here BEFORE the per-crate Rust copy of the config-key check
+        # was removed from `hello-node-lab`, and in that order deliberately —
+        # the census-proofs step below records why. Reading source, so it costs
+        # no build.
+        run: python3 tools/painted_addresses.py --selftest
+      - name: painted address census
+        run: python3 tools/painted_addresses.py --check
       - name: analysis-tool census proofs
         # ★★★★★ R1804 — placed HERE, immediately after `cargo test --workspace`,
         # and the position is the whole point. This gate runs

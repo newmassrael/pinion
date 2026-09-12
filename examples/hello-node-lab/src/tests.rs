@@ -1386,73 +1386,33 @@ fn r2155_a_config_key_is_sourced() {
     );
 }
 
-/// ★★★★★ R2155 — **and a configuration key is typed in ONE place.**
-///
-/// [`r2049_a_role_address_is_typed_in_one_place`]'s shape, for the second
-/// vocabulary. Without this, converting the thirty-five sites this round found
-/// just clears the way for the thirty-sixth: the declaration would be where
-/// the keys *happen to be* rather than where they *come from*.
-///
-/// ⚠⚠ **R2156 moved the needle from [`crate::key::ALL`] to the SURFACE, and
-/// that found ten more sites.** Reading the needles out of the declaration can
-/// only ever police keys somebody has already declared — a sourced key nobody
-/// had moved in was invisible to this gate, which is the failure mode of every
-/// list that describes the work already done. The needles are the target's own
-/// dotted paths now, so the gate's reach is the whole vocabulary and a key
-/// still spelled anywhere is a key this crate is told to declare.
-///
-/// ⚠ **Dotted paths only, and that is measured rather than tidy.** Seven
-/// sourced paths are single words — `id`, `mode`, `namespace`, `metadata`,
-/// `plugins`, `downsampling`, `low_pass_filter` — and those are ordinary
-/// English that eighteen unrelated examples in this tree spell for their own
-/// reasons. A needle over them would report a defect wherever the word occurs,
-/// which is a gate that cries constantly and is therefore switched off.
-///
-/// ⚠ `key.rs` is excused by NAME and nothing else is — including this file,
-/// which is in the population on the same terms as the rest. There is no
-/// exemption list: one was drafted and removed, because it could not fire.
-///
-/// ⚠⚠ **What this needle cannot see, stated rather than left to be discovered:
-/// a key EMBEDDED in a longer literal.** The needle is the quoted key, so
-/// `"transport.link.tx.batch_size=65536"` — the CLI argument pin, which a
-/// `const` table forces to be one literal — does not match it and never will.
-/// That site is real and is held by the value assertion in
-/// [`r2155_a_config_key_is_sourced`] instead. A gate that cannot see a shape
-/// has to say so, or its zero reads as *there are none*.
-#[test]
-fn r2155_a_config_key_is_typed_in_one_place() {
-    let needles: Vec<&str> = crate::settings::sourced_paths()
-        .iter()
-        .map(String::as_str)
-        .filter(|path| path.contains('.'))
-        .collect();
-    assert!(
-        needles.len() >= 100,
-        "the surface offers {} dotted path(s) to look for, which is not this \
-         target's vocabulary — the needle is broken rather than the surface \
-         small",
-        needles.len(),
-    );
-    let sources = crate_sources();
-    let spellers: Vec<(&str, &str)> = sources
-        .iter()
-        .filter(|(name, _)| *name != "key.rs")
-        .flat_map(|(name, body)| {
-            needles.iter().filter_map(move |declared| {
-                // The QUOTED literal, so a key reached through the declaration
-                // (`key::LISTEN_ENDPOINTS`) is not counted as a spelling of it.
-                body.contains(&format!("\"{declared}\""))
-                    .then_some((*name, *declared))
-            })
-        })
-        .collect();
-    assert_eq!(
-        spellers,
-        Vec::new(),
-        "★★★★★ a configuration key is declared in `key.rs` and named \
-         everywhere else; these file(s) spell one themselves"
-    );
-}
+// ★★★★★ R2157 — **`r2155_a_config_key_is_typed_in_one_place` LIVED HERE and
+// now lives in `tools/painted_addresses.py`.** Stated rather than deleted
+// silently, because a reader looking for the check should find where it went
+// and not conclude there isn't one.
+//
+// It was a per-crate test for a WORKSPACE property. A second crate that
+// compiles the option surface in would have needed a second copy — which is
+// this campaign's own defect, one layer up: the copy is the thing that goes
+// stale, and `crate_sources()` is a hand-kept list the copy would depend on.
+// The census's population is DERIVED instead (a package is in it iff its own
+// sources reference the surface artifact), so a crate joins the day it can ask
+// and nobody has to remember.
+//
+// ⚠ It also could not see `main.rs`. `include_str!` cannot reach the binary's
+// entry point from the library, so the one file in this crate that is not in
+// `crate_sources()` was never checked by the very gate that claimed the crate.
+// The derived population globs `src/**/*.rs` and covers it.
+//
+// ⚠⚠ The move went CI-FIRST, the order `analysis-tool census proofs` recorded
+// in `ci.yml`: this check ran in `cargo test`, so removing it before the census
+// had a CI home would have left the claim guarded by a local hook alone. That
+// home is in the same commit, and `tools/test_hooks.sh` asserts both places run
+// the same command so the arrangement cannot quietly become one place again.
+//
+// What did NOT move is `r2155_a_config_key_is_sourced`: that asks whether every
+// key this screen DECLARES is one the target carries, which is a fact about
+// this crate's declaration and belongs in this crate's tests.
 
 fn crate_sources() -> [(&'static str, &'static str); 13] {
     [

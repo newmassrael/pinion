@@ -675,15 +675,16 @@ def check() -> int:
     # unseen is the one this line carries.
     keys = spelled_config_keys()
     print(
-        f"painted-addresses: {len(keys)} walk site(s) spell a sourced "
-        f"configuration key (a walk asks the screen which row plays the role "
-        f"it means; the answer here is zero, not a budget)"
+        f"painted-addresses: {len(keys)} site(s) spell a sourced configuration "
+        f"key, over {len(sources())} walk(s) and "
+        f"{len(config_key_consumers())} Rust source(s) that can ask "
+        f"(the answer here is zero, not a budget)"
     )
     if keys:
         bad = True
         print(
-            "painted-addresses: a walk spells a configuration key it could ask "
-            "for",
+            "painted-addresses: a reader spells a configuration key it could "
+            "ask for",
             file=sys.stderr,
         )
         for path, line, key in keys:
@@ -696,7 +697,8 @@ def check() -> int:
             "            hands over the row playing a role, and the screen is\n"
             "            what knows which key that is. If the role you need is\n"
             "            not published, add it to that screen's roster; do not\n"
-            "            spell the key.",
+            "            spell the key. In RUST, name the const the screen's\n"
+            "            own `key.rs` declares.",
             file=sys.stderr,
         )
         return 1
@@ -1130,7 +1132,75 @@ def spelled_config_keys() -> list[tuple[str, int, str]]:
             continue
         name = str(path.relative_to(ROOT))
         found.extend((name, line, key) for line, key in config_keys_in(text))
+    for path in config_key_consumers():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        name = str(path.relative_to(ROOT))
+        found.extend((name, line, key) for line, key in rust_config_keys_in(text))
     return sorted(found)
+
+
+@functools.lru_cache(maxsize=1)
+def config_key_consumers() -> tuple[Path, ...]:
+    """Every Rust source that could ASK the option surface instead of spelling it.
+
+    ★★★★★ R2157 — **the population is DERIVED from who compiles the surface in,
+    and that boundary is the whole correctness of this gate.**
+    [`spelled_config_keys`] used to cover the walks only; the Rust half was a
+    per-crate test inside `hello-node-lab`, which is the defect this campaign is
+    about one layer up — a second crate would need a second copy, and the copy
+    is what goes stale.
+    ⚠⚠ **But the needle must NOT be pointed at the whole tree, and this is
+    measured rather than assumed.** `pinion-core` and `pinion-widget-paint`
+    spell four of these paths **57 times** — `ConfigField::new("listen.endpoints",
+    …)` and friends, fixtures for a GENERIC config-form widget. Those crates have
+    no option surface, cannot depend on a demo's JSON, and are not re-typing
+    anything: they are inventing a plausible key, which is the correct thing for
+    a framework test to do. Flagging them would demand the framework depend on a
+    consumer, which is backwards.
+    ⇒ a package is in this population **iff its own sources reference the surface
+    artifact** — iff it can ask. That is derivable, it is one package today, and
+    it extends itself the day a second one compiles the surface in. Nothing here
+    is a list.
+    ⚠ Declaring files are excluded for [`RUST_DECLARING_FILES`]' reason: a
+    declaration is supposed to be full of these literals.
+    """
+    artifact = Path(CONFIG_SURFACE_ARTIFACTS).name
+    out: list[Path] = []
+    for package in sorted((ROOT / RUST_CENSUS_ROOT).glob("*/")):
+        sources_of = sorted(package.glob("src/**/*.rs"))
+        reaches = any(
+            artifact in path.read_text(encoding="utf-8", errors="replace")
+            for path in sources_of
+        )
+        if reaches:
+            out.extend(
+                path for path in sources_of if path.name not in RUST_DECLARING_FILES
+            )
+    return tuple(out)
+
+
+def rust_config_keys_in(source: str) -> list[tuple[int, str]]:
+    """`(line, key)` for every sourced configuration key one RUST source spells.
+
+    [`config_keys_in`]'s counterpart: the needle is the same set of dotted paths
+    and only the way a literal is recognised differs, because Rust is not parsed
+    here. A line whose first non-space is `//` is prose about a key rather than
+    a use of one, which is the same rule [`rust_roles`] applies.
+    """
+    needles = {path for path in config_surface_paths() if "." in path}
+    found: list[tuple[int, str]] = []
+    for number, line in enumerate(source.splitlines(), start=1):
+        if line.lstrip().startswith("//"):
+            continue
+        found.extend(
+            (number, literal[1:-1])
+            for literal in RUST_LITERAL.findall(line)
+            if literal[1:-1] in needles
+        )
+    return found
 
 
 def config_keys_in(source: str) -> list[tuple[int, str]]:
@@ -1630,6 +1700,67 @@ def selftest() -> int:
                 f"FAIL: a comment naming {dotted[0]!r} was counted: {mentioned}",
                 file=sys.stderr,
             )
+        # ★ R2157 — the RUST arm, which answers zero on this tree for the same
+        # reason and so proves nothing by running either.
+        rust_caught = [key for _line, key in rust_config_keys_in(
+            f'    row("{dotted[0]}", "bool"),\n'
+        )]
+        if rust_caught != [dotted[0]]:
+            failed += 1
+            print(
+                f"FAIL: a Rust reader spelling {dotted[0]!r} was not caught: "
+                f"{rust_caught}",
+                file=sys.stderr,
+            )
+        rust_comment = rust_config_keys_in(f'    // about "{dotted[0]}"\n')
+        if rust_comment:
+            failed += 1
+            print(
+                f"FAIL: a Rust comment naming {dotted[0]!r} was counted: "
+                f"{rust_comment}",
+                file=sys.stderr,
+            )
+
+    # ★★★★★ R2157 — **the population's BOUNDARY, asserted rather than trusted.**
+    # `pinion-core` spells four of these paths 57 times as fixtures for a generic
+    # config-form widget; it has no option surface and is right to invent a key.
+    # A later round that widens this needle to the whole tree would turn those 57
+    # into findings whose only "fix" is making the framework depend on a demo. So
+    # what is asserted is the rule that keeps them out: a package is in the
+    # population iff it can ASK.
+    consumers = config_key_consumers()
+    consuming = {
+        path.relative_to(ROOT / RUST_CENSUS_ROOT).parts[0] for path in consumers
+    }
+    artifact = Path(CONFIG_SURFACE_ARTIFACTS).name
+    if not consuming:
+        failed += 1
+        print(
+            "FAIL: no package compiles the option surface in, so the config-key "
+            "population is empty and its gate checks nothing",
+            file=sys.stderr,
+        )
+    for package in sorted((ROOT / RUST_CENSUS_ROOT).glob("*/")):
+        reaches = any(
+            artifact in path.read_text(encoding="utf-8", errors="replace")
+            for path in package.glob("src/**/*.rs")
+        )
+        if reaches != (package.name in consuming):
+            failed += 1
+            print(
+                f"FAIL: {package.name} {'reaches' if reaches else 'cannot reach'}"
+                f" the option surface and is "
+                f"{'absent from' if reaches else 'inside'} the config-key "
+                "population — the boundary is supposed to BE that question",
+                file=sys.stderr,
+            )
+    if any(path.name in RUST_DECLARING_FILES for path in consumers):
+        failed += 1
+        print(
+            "FAIL: a declaring file is inside the config-key population, so the "
+            "declaration is charged for declaring",
+            file=sys.stderr,
+        )
 
     rust_pop = rust_sources()
     crates_seen = {

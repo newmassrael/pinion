@@ -1944,6 +1944,45 @@ esac
 ok "and the push gate's rustdoc is SCOPED to the pushed crates" \
    "$hook_doc_scoped" "scoped"
 
+# ★★★★★ R2157 — the PAINTED ADDRESS CENSUS, which had one home and now has two.
+#
+# This is the instrument the address campaign is measured by: its `--check` is
+# where the debt's closing criterion is read from, and until this round it ran
+# in `pre-push` and nowhere else. A local-only gate is one a `--no-verify` walks
+# past and one that does not exist at all for a checkout whose hooks are not
+# installed — and this project's own rule is that local gates cover the crates a
+# round touched while CI is the backstop.
+#
+# Asserted rather than remembered for the reason the clippy block above states:
+# "I moved it" is an act performed once, and nothing re-performs it. Both
+# presences first, because an equality over two absent things passes.
+#
+# Reads the two files; runs nothing.
+# ⚠ The two sides SPELL the invocation differently — the hook quotes an absolute
+# path built from `$repo_root` and puts the flag outside the quotes, CI runs a
+# repo-relative path — so each is normalised to `<script> <flag>` before they are
+# compared. Normalising is not the same as not checking: what has to agree is the
+# script and the flag, and that is exactly what survives.
+hook_census="$(sed -n 's|^if ! python3 "$repo_root/\(tools/painted_addresses\.py\)" \(--check\) >&2; then$|\1 \2|p' \
+    "$repo_root/.githooks/pre-push" | head -1)"
+ci_census="$(sed -n 's|^ *run: python3 \(tools/painted_addresses\.py\) \(--check\)$|\1 \2|p' \
+    "$repo_root/.github/workflows/ci.yml" | head -1)"
+hook_census_self="$(sed -n 's|^if ! python3 "$repo_root/\(tools/painted_addresses\.py\)" \(--selftest\) >&2; then$|\1 \2|p' \
+    "$repo_root/.githooks/pre-push" | head -1)"
+ci_census_self="$(sed -n 's|^ *run: python3 \(tools/painted_addresses\.py\) \(--selftest\)$|\1 \2|p' \
+    "$repo_root/.github/workflows/ci.yml" | head -1)"
+ok "the push gate runs the address census at all" "${hook_census:+present}" "present"
+ok "CI runs the address census at all" "${ci_census:+present}" "present"
+ok "and both run the SAME census command" "$hook_census" "$ci_census"
+# ⚠ The selftest is asserted SEPARATELY and not as a nicety: `--check` reads a
+# committed budget and answers from it, so a census whose needle had stopped
+# matching would report zero and pass. The selftest is what says the needle
+# still finds what it is aimed at — R2157 emptied it on purpose to prove that.
+ok "the push gate runs the census selftest before trusting it" \
+   "${hook_census_self:+present}" "present"
+ok "CI runs the census selftest before trusting it" \
+   "${ci_census_self:+present}" "present"
+
 # ★★★★★ R2067 — and the SCOPE covers `examples/`, which it did not.
 #
 # The selection was read out of `crates/<name>/…` alone, so a push touching only
