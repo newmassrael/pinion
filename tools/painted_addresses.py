@@ -768,6 +768,17 @@ def check() -> int:
         + " (an UNDECLARED name is not a conversion until something declares "
         "it; BOTH is a name two vocabularies claim, which is a finding)"
     )
+    # ★★★★★ R2168 — and HOW MANY OF THE RUST READERS ARE ACTUALLY RETYPED. The
+    # debt's own name says `retyped`; this census counts spellings, and the two
+    # differ exactly where it matters. See [`rust_reader_duplication`].
+    retyped, single = rust_reader_duplication()
+    print(
+        f"painted-addresses: of the {retyped + single} Rust reader(s), "
+        f"{retyped} spell an address some other place also spells — the RETYPING "
+        f"this debt is named for — and {single} are the only place their address "
+        "is written anywhere, which no conversion can remove because there is "
+        "nothing above them to call"
+    )
     contested = sorted(
         stem
         for stem in set(now) | set(rust_now)
@@ -1244,6 +1255,120 @@ def schema_pins(stem: str) -> bool:
     """
     head, _, rest = stem.partition(".")
     return bool(rest) and head in schema_heads()
+
+
+@functools.lru_cache(maxsize=1)
+def address_spellings() -> dict[str, int]:
+    """Every whole address literal in this tree -> how many places spell it.
+
+    ★★★★★ R2168 — **this debt is named `a paint address is RETYPED at every
+    reader`, and the census counts SPELLINGS.** The two differ exactly where it
+    matters: an address written in ONE place is not retyped, and several of the
+    ones in the reducible queue are literally the declaration this campaign
+    asks readers to call — `fn cell_tag(r, c)` in `hello-deviation-grid` has
+    three consumers and a test pinning its value, and its one `format!` is
+    counted as a site owing conversion.
+
+    ⚠ Counted across BOTH corpora, deliberately. A Rust reader and a walk that
+    spell the same address are two places, so the pair is a retyping across the
+    language wall even though each side writes it once. Counting per package
+    would have called the shell's reading of the lab's address a single
+    spelling, which it is not.
+
+    ⚠⚠ The wide Rust corpus, declaring files INCLUDED: a declaration in
+    `address.rs` plus a reader elsewhere is two spellings, and the reader is the
+    one that is retyping. Excluding the declaring file would hide that.
+    """
+    seen: dict[str, int] = {}
+    for root in RUST_ROOTS:
+        for path in sorted((ROOT / root).rglob("*.rs")):
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            lines = text.splitlines()
+            for match in RUST_LITERAL.finditer(text):
+                literal = match.group(0)[1:-1]
+                if not ADDRESS.match(literal):
+                    continue
+                line = text.count("\n", 0, match.start()) + 1
+                if lines[line - 1].lstrip().startswith("//"):
+                    continue
+                seen[literal] = seen.get(literal, 0) + 1
+    for path in sources():
+        for _line, literal in _walk_literals(path):
+            seen[literal] = seen.get(literal, 0) + 1
+    return seen
+
+
+def _walk_literals(path: Path) -> list[tuple[int, str]]:
+    """`(line, whole address)` for every address literal a walk spells.
+
+    [`sites`] answers the same population as family STEMS; this keeps the whole
+    address, which is the unit [`address_spellings`] counts in.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except SyntaxError:
+        return []
+    skip = _skipped(tree)
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        pieces: list[str] = []
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if id(node) in skip:
+                continue
+            pieces = [node.value]
+        elif isinstance(node, ast.JoinedStr):
+            pieces = [
+                part.value
+                for part in node.values
+                if isinstance(part, ast.Constant) and isinstance(part.value, str)
+            ]
+        for piece in pieces:
+            if ADDRESS.match(piece):
+                found.append((node.lineno, piece))
+    return found
+
+
+def rust_reader_duplication() -> tuple[int, int]:
+    """`(retyped, single)` over the Rust READERS the reducible queue counts.
+
+    `retyped` is a reader whose address some other place also spells — the
+    defect this debt is named for. `single` is a reader that is the ONLY place
+    its address is written anywhere, which is not a retyping and cannot be made
+    to disappear by converting it: there is nothing above it to call.
+
+    ⚠⚠ REPORTED, NOT SHED. R2160's rule stands — a census that drops its hard
+    part measures comfort instead of remainder — so the queue keeps counting
+    these while this says how many they are. What they change is what CLOSING
+    could mean: the only way to make a single spelling vanish is to move the
+    line into a file named `address.rs`, and a criterion a file rename can
+    satisfy is measuring the file name rather than the property.
+    """
+    spellings = address_spellings()
+    retyped = single = 0
+    for path in rust_sources():
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        lines = text.splitlines()
+        roles = {line: role for line, _stem, role in rust_site_roles(path, text)}
+        for match in RUST_LITERAL.finditer(text):
+            literal = match.group(0)[1:-1]
+            if not ADDRESS.match(literal):
+                continue
+            line = text.count("\n", 0, match.start()) + 1
+            if lines[line - 1].lstrip().startswith("//"):
+                continue
+            if roles.get(line) != "reader":
+                continue
+            if spellings.get(literal, 0) > 1:
+                retyped += 1
+            else:
+                single += 1
+    return retyped, single
 
 
 def site_vocabulary(stem: str) -> str:
@@ -1950,6 +2075,36 @@ def selftest() -> int:
             "claim is a finding, not a tie to break.",
             file=sys.stderr,
         )
+    # ★★★★★ R2168 — the RETYPED / SINGLE split, held to the count it splits.
+    # Derived, so it cannot drift from the reader total the queue is built on:
+    # a bug that lost or invented sites would show up as arithmetic rather than
+    # as a number nobody re-derives.
+    retyped_n, single_n = rust_reader_duplication()
+    reader_total, _assert_total = rust_role_totals()
+    if retyped_n + single_n != reader_total:
+        failed += 1
+        print(
+            f"FAIL: the duplication split counts {retyped_n + single_n} Rust "
+            f"reader(s) and the role tally counts {reader_total} — one "
+            "population, two answers",
+            file=sys.stderr,
+        )
+    if not retyped_n or not single_n:
+        failed += 1
+        print(
+            f"FAIL: the split answered {retyped_n} retyped / {single_n} single "
+            "— one of the buckets is empty, so it is not discriminating",
+            file=sys.stderr,
+        )
+    if len(address_spellings()) < 100:
+        failed += 1
+        print(
+            f"FAIL: only {len(address_spellings())} distinct address literal(s) "
+            "were read — this is not the corpus, and every site would look "
+            "like a single spelling",
+            file=sys.stderr,
+        )
+
     vocab_cases: list[tuple[str, str, str]] = [
         ("an emitted grammar's family is paint", "chart.candle", "paint"),
         ("a screen pin's family is paint", "lab.frame", "paint"),
@@ -2536,6 +2691,7 @@ def selftest() -> int:
         5  # R2147/R2166: four classifier words and the artifact corpus floor
         + 1  # R2166: the parametric-declaration corpus floor
         + 1  # R2167: no family is claimed by BOTH vocabularies
+        + 3  # R2168: the retyped/single split's three derived checks
         + 4  # R2164: the role rule's four derived cross-checks
         + 10  # the ad-hoc assertions above, pre-existing and left alone
     )

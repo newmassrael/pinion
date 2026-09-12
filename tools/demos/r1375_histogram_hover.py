@@ -44,6 +44,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     abs_rects_of,
+    chart_addresses,
     run_demo,
     wait_until,
 )
@@ -107,17 +108,20 @@ def find_node(node, tag: str):
     return None
 
 
-def header_text(tf: RpcSubprocess) -> str | None:
-    node = find_node(tf.snapshot(source="paint", viewport=VIEWPORT), "histogram.inspect.header")
+# ⚠ Every helper below takes the composer as an ARGUMENT. A helper holding an
+# address inside itself is simply the next site spelling it (R2162), and this
+# screen paints TWO charts, so the composer also carries WHICH one is meant.
+def header_text(tf: RpcSubprocess, h) -> str | None:
+    node = find_node(tf.snapshot(source="paint", viewport=VIEWPORT), h.callout("header"))
     return None if node is None else node.get("content")
 
 
-def wait_histogram(tf: RpcSubprocess) -> dict[str, tuple[int, int, int, int]]:
+def wait_histogram(tf: RpcSubprocess, h) -> dict[str, tuple[int, int, int, int]]:
     """Poll the paint snapshot until the histogram panel's bars have painted."""
 
     def ready() -> Any:
         r = rects(tf)
-        return r if f"histogram.bar.{HIST_BINS - 1}" in r else None
+        return r if h.at("bar", index=HIST_BINS - 1) in r else None
 
     return wait_until(ready, desc="the histogram panel paints its bars")
 
@@ -129,7 +133,7 @@ def set_scrub(tf: RpcSubprocess, value: float) -> None:
 
 
 def ring_after_scrub(
-    tf: RpcSubprocess, value: float
+    tf: RpcSubprocess, h, value: float
 ) -> tuple[int, int, int, int]:
     """Drive the scrub and return the highlight ring's rect once it settles at
     the requested fraction (the paint re-view lands the moved ring)."""
@@ -137,7 +141,7 @@ def ring_after_scrub(
 
     def settled() -> Any:
         r = rects(tf)
-        return r.get("histogram.inspect.highlight")
+        return r.get(h.callout("highlight"))
 
     return wait_until(settled, desc=f"the highlight ring settles at scrub {value}")
 
@@ -147,47 +151,53 @@ def body() -> None:
         _wait_available(tf)
         # Drive fresh frames so the rolling window has a distribution to bin,
         # then let the histogram's measured-rect seam settle.
+        # ★★★★★ R2165 — TWO charts are painted here, so each composer names the
+        # one it means. `chart_addresses` with no `prefix=` would refuse rather
+        # than guess, which is the `(prefix,) = …` unpacking with a message on it.
+        hist = chart_addresses(tf, viewport=VIEWPORT, prefix="histogram")
+        line = chart_addresses(tf, viewport=VIEWPORT, prefix="chart")
+
         base = int(tf.frame_timings()["frame_count"])
         for i in range(6):
             _drive_frame_beyond(tf, base + i, f"driven frame {i + 1}")
-        r = wait_histogram(tf)
+        r = wait_histogram(tf, hist)
 
         # ── (A) the field the scrub inspects: one bar per bin + axes ─────────
         for k in range(HIST_BINS):
-            assert f"histogram.bar.{k}" in r, f"bar {k} present"
-        assert "histogram.axis.x" in r, "the histogram has its own x-axis"
-        assert "histogram.axis.y" in r, "and its own y-axis"
+            assert hist.at("bar", index=k) in r, f"bar {k} present"
+        assert hist.at("axis_x") in r, "the histogram has its own x-axis"
+        assert hist.at("axis_y") in r, "and its own y-axis"
 
         # ── (B) the boot scrub (0.5) paints the full overlay ─────────────────
         set_scrub(tf, 0.5)
-        r = wait_histogram(tf)
+        r = wait_histogram(tf, hist)
         for tag in (
-            "histogram.inspect.highlight",
-            "histogram.inspect.tooltip",
-            "histogram.inspect.header",
-            "histogram.inspect.value",
+            hist.callout("highlight"),
+            hist.callout("tooltip"),
+            hist.callout("header"),
+            hist.callout("value"),
         ):
             assert tag in r, f"the scrub paints {tag}"
         # The timeline (line chart) is NOT scrubbed here, so it emits no overlay.
-        assert "chart.inspect.tooltip" not in r, "only the histogram is scrubbed"
+        assert line.callout("tooltip") not in r, "only the histogram is scrubbed"
 
         # ── (C) the highlight ring FRAMES a real bar (geom SSOT) ─────────────
-        ring = r["histogram.inspect.highlight"]
-        bar_rects = [r[f"histogram.bar.{k}"] for k in range(HIST_BINS)]
+        ring = r[hist.callout("highlight")]
+        bar_rects = [r[hist.at("bar", index=k)] for k in range(HIST_BINS)]
         assert ring in bar_rects, (
             f"the ring frames exactly one bar's rect; ring={ring} bars={bar_rects}"
         )
 
         # ── (D) driving the scrub MOVES the ring right ───────────────────────
-        low_ring = ring_after_scrub(tf, 0.15)
-        low_header = header_text(tf)
+        low_ring = ring_after_scrub(tf, hist, 0.15)
+        low_header = header_text(tf, hist)
         assert low_header is not None, "a low-fraction scrub names a bin"
         assert find_node(
-            tf.snapshot(source="paint", viewport=VIEWPORT), "histogram.inspect.value"
+            tf.snapshot(source="paint", viewport=VIEWPORT), hist.callout("value")
         ) is not None, "a low-fraction scrub carries a value row"
 
-        high_ring = ring_after_scrub(tf, 0.85)
-        high_header = header_text(tf)
+        high_ring = ring_after_scrub(tf, hist, 0.85)
+        high_header = header_text(tf, hist)
         assert high_header is not None, "a high-fraction scrub names a bin"
         assert high_ring[0] > low_ring[0], (
             f"the ring tracks the scrub rightward: x {low_ring[0]} -> {high_ring[0]}"
@@ -196,23 +206,23 @@ def body() -> None:
         assert high_ring != low_ring, "a high vs low scrub frames a different bar"
 
         # ── (E) the leftmost slot is bin 0, header "0" (its 0ms lower edge) ──
-        ring_after_scrub(tf, 0.0)
-        assert header_text(tf) == "0", (
-            f"fraction 0.0 focuses bin 0 (lower edge 0ms), got {header_text(tf)!r}"
+        ring_after_scrub(tf, hist, 0.0)
+        assert header_text(tf, hist) == "0", (
+            f"fraction 0.0 focuses bin 0 (lower edge 0ms), got {header_text(tf, hist)!r}"
         )
 
         # ── (F) near the right edge the tooltip flips LEFT and stays in-window ─
-        ring_after_scrub(tf, 1.0)
+        ring_after_scrub(tf, hist, 1.0)
         r_edge = rects(tf)
-        tip = r_edge["histogram.inspect.tooltip"]
+        tip = r_edge[hist.callout("tooltip")]
         window_right = VIEWPORT[0]
         assert tip[0] + tip[2] <= window_right, (
             f"the flipped tooltip stays within the window: "
             f"{tip[0]}+{tip[2]} <= {window_right}"
         )
         # The ring at the right edge frames the rightmost drawn bar family.
-        edge_ring = r_edge["histogram.inspect.highlight"]
-        assert edge_ring in [r_edge[f"histogram.bar.{k}"] for k in range(HIST_BINS)], (
+        edge_ring = r_edge[hist.callout("highlight")]
+        assert edge_ring in [r_edge[hist.at("bar", index=k)] for k in range(HIST_BINS)], (
             "the right-edge ring still frames a real bar"
         )
         # It actually FLIPPED (not merely in-bounds): the tooltip box sits to the
@@ -221,8 +231,8 @@ def body() -> None:
             f"the tooltip flipped left of its bar: tip.x {tip[0]} < bar.x {edge_ring[0]}"
         )
         # …and it still names the rightmost bin with a value row.
-        assert "histogram.inspect.header" in r_edge, "the right-edge scrub still labels"
-        assert "histogram.inspect.value" in r_edge, "and still shows a value"
+        assert hist.callout("header") in r_edge, "the right-edge scrub still labels"
+        assert hist.callout("value") in r_edge, "and still shows a value"
 
 
 if __name__ == "__main__":

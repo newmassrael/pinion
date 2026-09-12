@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    chart_addresses,
     find_by_tag,
     run_demo,
 )
@@ -60,74 +61,76 @@ def _cmd_types(node: dict) -> list[str]:
 
 def body() -> None:
     with RpcSubprocess("hello-scatter") as d:
+        # ★★★★★ R2165 — prefix and overlay part from the frame, as one pair.
+        c = chart_addresses(d, viewport=VIEWPORT)
         snap = d.snapshot(source="paint", viewport=VIEWPORT)
-        assert find_by_tag(snap, "chart") is not None, "scatter container present"
+        assert find_by_tag(snap, c.prefix) is not None, "scatter container present"
 
         # ── (A) one filled circle per point + a legend per series ────────────
         for i, (name, count) in enumerate(SERIES):
             for j in range(count):
-                p = _node(snap, f"chart.point.{i}.{j}")
+                p = _node(snap, c.at("point", index=i, at=j))
                 assert_eq(p["type"], "Path", f"point {i}.{j} is a path")
                 assert p["style"]["fill"] is not None, f"point {i}.{j} is filled"
                 assert p["style"]["stroke"] is None, f"point {i}.{j} is not stroked"
             # No phantom point past the series' count.
-            assert find_by_tag(snap, f"chart.point.{i}.{count}") is None, (
+            assert find_by_tag(snap, c.at("point", index=i, at=count)) is None, (
                 f"series {i} has exactly {count} points"
             )
-            swatch = _node(snap, f"chart.legend.{i}.swatch")
+            swatch = _node(snap, c.at("legend_swatch", index=i))
             assert_eq(swatch["type"], "Box", f"legend {i} swatch is a box")
             assert_eq(
-                _node(snap, f"chart.legend.{i}.label").get("content"),
+                _node(snap, c.at("legend_label", index=i)).get("content"),
                 name,
                 f"legend {i} names the series",
             )
 
         # ── (B) a point is a CLOSED cubic-Bézier circle ──────────────────────
-        types = _cmd_types(_node(snap, "chart.point.0.0"))
+        types = _cmd_types(_node(snap, c.at("point", index=0, at=0)))
         assert types[0] == "MoveTo", "a point starts with MoveTo"
         assert types[-1] == "Close", "a point is a closed circle"
         assert types.count("CurveTo") == 4, "the circle is four cubic Bézier arcs"
 
         # ── (C) numeric x AND y axes => both gridline families ───────────────
-        assert find_by_tag(snap, "chart.axis.x") is not None, "x-axis line"
-        assert find_by_tag(snap, "chart.axis.y") is not None, "y-axis line"
-        assert find_by_tag(snap, "chart.grid.x.0") is not None, "numeric x-gridlines"
-        assert find_by_tag(snap, "chart.grid.y.0") is not None, "y-gridlines"
+        assert find_by_tag(snap, c.at("axis_x")) is not None, "x-axis line"
+        assert find_by_tag(snap, c.at("axis_y")) is not None, "y-axis line"
+        assert find_by_tag(snap, c.at("grid_x", index=0)) is not None, "numeric x-gridlines"
+        assert find_by_tag(snap, c.at("grid_y", index=0)) is not None, "y-gridlines"
 
         # ── (D) the boot scrub (0.5) paints the full overlay ─────────────────
         for tag in (
-            "chart.inspect.crosshair",
-            "chart.inspect.tooltip",
-            "chart.inspect.header",
-            "chart.inspect.ring.0",
-            "chart.inspect.ring.1",
-            "chart.inspect.value.0",
-            "chart.inspect.value.1",
+            c.callout("crosshair"),
+            c.callout("tooltip"),
+            c.callout("header"),
+            c.callout("ring", index=0),
+            c.callout("ring", index=1),
+            c.callout("value_at", index=0),
+            c.callout("value_at", index=1),
         ):
             assert find_by_tag(snap, tag) is not None, f"the scrub paints {tag}"
-        ring = _node(snap, "chart.inspect.ring.0")
+        ring = _node(snap, c.callout("ring", index=0))
         assert ring["style"]["stroke"] is not None, "the ring is stroked"
         assert ring["style"]["fill"] is None, "the ring frames, it does not cover"
         assert _cmd_types(ring)[-1] == "Close", "the ring is a closed circle"
-        header = _node(snap, "chart.inspect.header").get("content")
+        header = _node(snap, c.callout("header")).get("content")
         assert header is not None and header.startswith("x = "), (
             f"the header leads with the focus x, got {header!r}"
         )
-        v0 = _node(snap, "chart.inspect.value.0").get("content")
+        v0 = _node(snap, c.callout("value_at", index=0)).get("content")
         assert v0 is not None and "rising" in v0, f"value 0 names its series, got {v0!r}"
 
         # ── (E) driving the scrub moves the focus ────────────────────────────
         d.intervene("/external/value", 0.05)
         assert abs(d.query("/external/value") - 0.05) < 0.02, "scrub set to 0.05"
         low = d.snapshot(source="paint", viewport=VIEWPORT)
-        low_x = _node(low, "chart.inspect.crosshair")["rect"]["x"]
-        low_header = _node(low, "chart.inspect.header").get("content")
+        low_x = _node(low, c.callout("crosshair"))["rect"]["x"]
+        low_header = _node(low, c.callout("header")).get("content")
 
         d.intervene("/external/value", 0.95)
         assert abs(d.query("/external/value") - 0.95) < 0.02, "scrub set to 0.95"
         high = d.snapshot(source="paint", viewport=VIEWPORT)
-        high_x = _node(high, "chart.inspect.crosshair")["rect"]["x"]
-        high_header = _node(high, "chart.inspect.header").get("content")
+        high_x = _node(high, c.callout("crosshair"))["rect"]["x"]
+        high_header = _node(high, c.callout("header")).get("content")
 
         assert low_x < high_x, (
             f"the crosshair moves right as the scrub advances: {low_x} -> {high_x}"
