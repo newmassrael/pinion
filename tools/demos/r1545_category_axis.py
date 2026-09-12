@@ -61,6 +61,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     access_node_by_tag,
     assert_eq,
+    chart_addresses,
     find_by_tag,
     run_demo,
 )
@@ -110,34 +111,46 @@ def snapshot(tf: RpcSubprocess) -> dict:
     return res
 
 
-def bar_indices(snap: dict) -> list[int]:
+def bar_indices(at, snap: dict) -> list[int]:
     """Which category indices the bar chart drew, by tag."""
-    return [i for i in range(len(MONTHS)) if find_by_tag(snap, f"bars.bar.{i}") is not None]
+    return [
+        i
+        for i in range(len(MONTHS))
+        if find_by_tag(snap, at.at("bar", index=i)) is not None
+    ]
 
 
-def bar_rect(snap: dict, i: int) -> dict:
-    n = find_by_tag(snap, f"bars.bar.{i}")
+def bar_rect(at, snap: dict, i: int) -> dict:
+    n = find_by_tag(snap, at.at("bar", index=i))
     assert n is not None, f"bar {i} is in the paint tree"
     return n["rect"]
 
 
-def label_rect(snap: dict, i: int) -> dict:
-    n = find_by_tag(snap, f"bars.xlabel.{i}")
+def label_node(at, snap: dict, i: int) -> dict:
+    """The bar chart's i-th category label.
+
+    ★★★★★ R2177 — `label_rect` and `label_text` were the same three lines with
+    the address spelled into each; the address is what this round removes and
+    what is left is one lookup with two readers.
+    """
+    n = find_by_tag(snap, at.at("xlabel", index=i))
     assert n is not None, f"x label {i} is in the paint tree"
-    return n["rect"]
+    return n
 
 
-def label_text(snap: dict, i: int) -> str:
-    n = find_by_tag(snap, f"bars.xlabel.{i}")
-    assert n is not None, f"x label {i} is in the paint tree"
-    return n["content"]
+def label_rect(at, snap: dict, i: int) -> dict:
+    return label_node(at, snap, i)["rect"]
 
 
-def trend_labels(snap: dict) -> list[str]:
+def label_text(at, snap: dict, i: int) -> str:
+    return label_node(at, snap, i)["content"]
+
+
+def trend_labels(at, snap: dict) -> list[str]:
     """The LINE chart's x tick labels — a numeric-x chart on the same axis."""
     out: list[str] = []
     k = 0
-    while (n := find_by_tag(snap, f"trend.label.x.{k}")) is not None:
+    while (n := find_by_tag(snap, at.at("label_x", index=k))) is not None:
         out.append(n["content"])
         k += 1
     return out
@@ -168,15 +181,22 @@ def body() -> None:
         for _ in range(3):
             tf.tick(0.016)
 
+        # ★★★★★ R2177 — TWO charts on this screen and the point of the demo is
+        # that they share an axis, so composing under the wrong one would make
+        # exactly the mistake it exists to catch. Each is asked of the frame by
+        # name, and a prefix the frame does not report is refused.
+        bars = chart_addresses(tf, viewport=VIEWPORT, prefix="bars")
+        trend = chart_addresses(tf, viewport=VIEWPORT, prefix="trend")
+
         # ── (A) premise: the un-windowed axis ─────────────────────────
         snap = snapshot(tf)
         assert_eq(
-            bar_indices(snap),
+            bar_indices(bars, snap),
             list(range(12)),
             "every category is drawn when nothing is windowed",
         )
         assert_eq(
-            [label_text(snap, i) for i in range(12)],
+            [label_text(bars, snap, i) for i in range(12)],
             MONTHS,
             "and each slot is labelled by the name the AXIS carries for it",
         )
@@ -190,7 +210,7 @@ def body() -> None:
         # Predicted from outside the binding: 12 bands across the plot area.
         want_band = band_width(12)
         for i in (0, 5, 11):
-            r = bar_rect(snap, i)
+            r = bar_rect(bars, snap, i)
             centre = float(r["x"]) + float(r["w"]) / 2.0
             want_centre = BAR_RECT_X + MARGIN_LEFT + (i + 0.5) * want_band
             assert abs(centre - want_centre) <= 1.5, (
@@ -201,11 +221,11 @@ def body() -> None:
             )
         # The LABEL box is the band itself — the same call, not a second copy.
         for i in (0, 5, 11):
-            lr = label_rect(snap, i)
+            lr = label_rect(bars, snap, i)
             assert abs(float(lr["w"]) - want_band) <= 1.5, (
                 f"label {i} spans the whole band: got {lr['w']}"
             )
-            br = bar_rect(snap, i)
+            br = bar_rect(bars, snap, i)
             bar_centre = float(br["x"]) + float(br["w"]) / 2.0
             lab_centre = float(lr["x"]) + float(lr["w"]) / 2.0
             assert abs(bar_centre - lab_centre) <= 1.5, (
@@ -213,22 +233,22 @@ def body() -> None:
             )
         # Adjacent bands TILE: band k's right edge is band k+1's left edge.
         for i in range(11):
-            gap = float(label_rect(snap, i + 1)["x"]) - (
-                float(label_rect(snap, i)["x"]) + float(label_rect(snap, i)["w"])
+            gap = float(label_rect(bars, snap, i + 1)["x"]) - (
+                float(label_rect(bars, snap, i)["x"]) + float(label_rect(bars, snap, i)["w"])
             )
             assert abs(gap) <= 1.5, f"bands {i}/{i + 1} tile the axis (gap {gap})"
 
         # ── (C) one window narrows BOTH charts ───────────────────────
         assert_eq(set_range(tf, "Apr", "Jun"), "", "a resolvable range applies")
         snap = snapshot(tf)
-        assert_eq(bar_indices(snap), [3, 4, 5], "only the windowed bars are drawn")
+        assert_eq(bar_indices(bars, snap), [3, 4, 5], "only the windowed bars are drawn")
         assert_eq(
-            [label_text(snap, i) for i in (3, 4, 5)],
+            [label_text(bars, snap, i) for i in (3, 4, 5)],
             ["Apr", "May", "Jun"],
             "labelled by the axis, at their ORIGINAL category indices",
         )
         assert_eq(
-            trend_labels(snap),
+            trend_labels(trend, snap),
             ["Apr", "May", "Jun"],
             "and the LINE chart — a numeric-x chart on the categorical axis — "
             "labels the same months and no others, which is the whole claim: "
@@ -245,7 +265,7 @@ def body() -> None:
 
         # ── (D) a window WIDENS what it keeps ────────────────────────
         want_band3 = band_width(3)
-        r = bar_rect(snap, 4)
+        r = bar_rect(bars, snap, 4)
         assert abs(float(r["w"]) - want_band3 * (1 - BAR_GAP_FRAC)) <= 1.5, (
             f"the kept bars widened to the new band: got {r['w']}, "
             f"want {want_band3 * (1 - BAR_GAP_FRAC)}"
@@ -273,7 +293,7 @@ def body() -> None:
         assert_eq(tf.query(ERROR_PATH), answer, "and the field carries the same text")
         snap = snapshot(tf)
         assert_eq(
-            bar_indices(snap),
+            bar_indices(bars, snap),
             list(range(12)),
             "the axis stays whole rather than silently keeping the old window",
         )
@@ -287,7 +307,7 @@ def body() -> None:
         # this surface is not one that always complains.
         assert_eq(set_range(tf, "Feb", "May"), "", "a good name resolves silently")
         assert_eq(tf.query(ERROR_PATH), "", "and clears the report")
-        assert_eq(bar_indices(snapshot(tf)), [1, 2, 3, 4], "onto its own slots")
+        assert_eq(bar_indices(bars, snapshot(tf)), [1, 2, 3, 4], "onto its own slots")
 
         # ── (F) panning moves whole categories, and writes NAMES back ─
         assert tf.invoke(PAN_ACTION, 2) is True, "the window can move right"
@@ -301,7 +321,7 @@ def body() -> None:
             "round-trip that proves the index and name forms agree",
         )
         assert_eq(tf.query(TO_PATH), "Jul", "on both ends")
-        assert_eq(bar_indices(snapshot(tf)), [3, 4, 5, 6], "the bars followed")
+        assert_eq(bar_indices(bars, snapshot(tf)), [3, 4, 5, 6], "the bars followed")
         assert tf.invoke(PAN_ACTION, 99) is True, "a pan past the end still moves"
         tf.tick(0.016)
         assert_eq(int(tf.query(HI_PATH)), 11, "clamped to the last category")
@@ -313,7 +333,7 @@ def body() -> None:
         tf.invoke(RESET_ACTION, None)
         tf.tick(0.016)
         assert_eq(int(tf.query(LO_PATH)), -1, "reset clears the window")
-        assert_eq(bar_indices(snapshot(tf)), list(range(12)), "and the bars return")
+        assert_eq(bar_indices(bars, snapshot(tf)), list(range(12)), "and the bars return")
         # The toolbar is the only focus stop, and the keys are gated on it —
         # an unfocused digit must NOT move the window, or the binding would be
         # swallowing keystrokes the rest of an app wants.
@@ -350,7 +370,7 @@ def body() -> None:
             'no category named "Smarch"',
             "the stale-view preset reaches the same resolution failure",
         )
-        assert_eq(bar_indices(snapshot(tf)), list(range(12)), "and shows everything")
+        assert_eq(bar_indices(bars, snapshot(tf)), list(range(12)), "and shows everything")
         tf.key(path=WINDOW_TAG, name="0")
         tf.tick(0.016)
         assert_eq(tf.query(ERROR_PATH), "", "0 clears the request")

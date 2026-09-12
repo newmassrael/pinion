@@ -73,6 +73,7 @@ from rpc_verify import (  # noqa: E402
     WORKSPACE_ROOT,
     assert_eq,
     assert_pixel_eq,
+    chart_addresses,
     find_by_tag,
     read_png_rgba8,
     run_demo,
@@ -116,14 +117,21 @@ def _status_text(snap) -> str:
     return found[0]
 
 
-def _body_extent(snap) -> tuple[int, int, int, int]:
+def _body_extent(at, snap) -> tuple[int, int, int, int]:
     """The painted chart BODY's bbox in window px: the union of the x-axis
     and the series — geometry `build_fill` derived from the size it was
     handed. The chart ROOT is fill-parent, so its rect tracks its slot even
     if the body inside were built at a stale size; only the body proves the
     measured size reached the builder."""
     l = t = r = b = None
-    for tag in ("chart.axis.x", "chart.series.0", "chart.series.1"):
+    # ★★★★★ R2177 — the body's parts come from the crate's own grammar under
+    # the prefix the frame reports, so this union is over addresses the chart
+    # composes rather than three this walk typed.
+    for tag in (
+        at.at("axis_x"),
+        at.at("series", index=0),
+        at.at("series", index=1),
+    ):
         node = find_by_tag(snap, tag)
         if node is None:
             continue
@@ -136,7 +144,7 @@ def _body_extent(snap) -> tuple[int, int, int, int]:
     return (l, t, r, b)
 
 
-def _assert_coherent_at(snap, label: str) -> tuple[int, int, int, int]:
+def _assert_coherent_at(at, snap, label: str) -> tuple[int, int, int, int]:
     """Every invariant that must hold at ANY window size. Returns the chart
     root's rect."""
     win = snap["rect"]
@@ -159,7 +167,7 @@ def _assert_coherent_at(snap, label: str) -> tuple[int, int, int, int]:
     assert_eq(said, (cw, ch), f"{label}: the seam settled (built size == measured root)")
 
     # The body was built for THIS slot: inside the root, and spanning it.
-    bl, bt, br, bb = _body_extent(snap)
+    bl, bt, br, bb = _body_extent(at, snap)
     assert bl >= cx and bt >= cy, f"{label}: body ({bl},{bt}) starts inside root ({cx},{cy})"
     assert br <= cx + cw + 1 and bb <= cy + ch + 1, (
         f"{label}: body right/bottom ({br},{bb}) stays inside the root "
@@ -170,7 +178,7 @@ def _assert_coherent_at(snap, label: str) -> tuple[int, int, int, int]:
 
     # Real data, not a placeholder: 24 buckets per series.
     for i in range(2):
-        s = _node(snap, f"chart.series.{i}")
+        s = _node(snap, at.at("series", index=i))
         assert_eq(len(s["commands"]), 24, f"{label}: series {i} = MoveTo + 23 LineTo")
     return (cx, cy, cw, ch)
 
@@ -196,20 +204,24 @@ def body() -> None:
 
             return wait_until(settled, desc=f"window settles at {w}x{h} after resize")
 
+        # ★★★★★ R2177 — the chart's parts are asked of the frame, so this
+        # walk's geometry claims are made in the vocabulary the chart composes.
+        at = chart_addresses(d, viewport=VIEWPORT)
+
         boot = snap_now()
-        _, _, boot_w, boot_h = _assert_coherent_at(boot, "boot")
+        _, _, boot_w, boot_h = _assert_coherent_at(at, boot, "boot")
 
         prev_w, prev_h = boot_w, boot_h
-        prev_body = _body_extent(boot)
+        prev_body = _body_extent(at, boot)
         for (w, h) in GROW_TO:
             snap = grow_to(w, h)
-            _, _, cw, ch = _assert_coherent_at(snap, f"{w}x{h}")
+            _, _, cw, ch = _assert_coherent_at(at, snap, f"{w}x{h}")
             # The claim: a bigger window means a bigger chart — root AND the
             # painted geometry inside it.
             assert cw > prev_w and ch > prev_h, (
                 f"the chart root grew with the window: {prev_w}x{prev_h} -> {cw}x{ch}"
             )
-            body_now = _body_extent(snap)
+            body_now = _body_extent(at, snap)
             assert (body_now[2] - body_now[0]) > (prev_body[2] - prev_body[0]), (
                 f"the PAINTED geometry grew too: body width "
                 f"{prev_body[2] - prev_body[0]} -> {body_now[2] - body_now[0]}. "

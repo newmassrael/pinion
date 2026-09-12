@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (
     RpcSubprocess,
     assert_eq,
+    chart_addresses,
     find_by_tag,
     run_demo,
     wait_snap,
@@ -62,15 +63,6 @@ def assert_near(actual, expected: float, label: str, tol: float = 0.03) -> None:
     print(f"  ok: {label} (~{expected})")
 
 
-def has_crosshair(snap) -> bool:
-    return find_by_tag(snap, "chart.inspect.crosshair") is not None
-
-
-def header(snap):
-    node = find_by_tag(snap, "chart.inspect.header")
-    return node.get("content") if node else None
-
-
 def readout(snap) -> str:
     node = find_by_tag(snap, "crosshair.readout")
     return node.get("content", "") if node else ""
@@ -78,6 +70,19 @@ def readout(snap) -> str:
 
 def body() -> None:
     with RpcSubprocess("hello-crosshair") as tf:
+        # ★★★★★ R2177 — the crosshair, the header and the per-series markers
+        # are ONE overlay, and its address has two coordinates: the prefix this
+        # chart took and the PART it paints its callout under. R2162 measured
+        # what binding them apart costs, so they arrive together.
+        at = chart_addresses(tf, viewport=WIN)
+
+        def has_crosshair(snap) -> bool:
+            return find_by_tag(snap, at.callout("crosshair")) is not None
+
+        def header(snap):
+            node = find_by_tag(snap, at.callout("header"))
+            return node.get("content") if node else None
+
         snap = wait_snap(
             tf,
             lambda s: find_by_tag(s, PLOT) is not None,
@@ -106,9 +111,10 @@ def body() -> None:
         assert_eq(tf.query(f"{EXT}/has_crosshair"), True, "crosshair is now live")
         assert has_crosshair(left), "the crosshair node is in the scene"
         assert header(left).startswith("x = 0"), f"left snaps to x=0, got {header(left)!r}"
-        assert find_by_tag(left, "chart.inspect.marker.0") is not None, "series 0 marker"
-        assert find_by_tag(left, "chart.inspect.marker.1") is not None, "series 1 marker"
-        assert find_by_tag(left, "chart.inspect.marker.2") is None, "only two series"
+        marker = lambda i: at.callout("marker", index=i)  # noqa: E731
+        assert find_by_tag(left, marker(0)) is not None, "series 0 marker"
+        assert find_by_tag(left, marker(1)) is not None, "series 1 marker"
+        assert find_by_tag(left, marker(2)) is None, "only two series"
         left_readout = readout(left)
         assert left_readout.startswith("x = 0"), f"readout names x, got {left_readout!r}"
         assert "requests" in left_readout, "readout names the requests series"

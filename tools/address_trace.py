@@ -189,11 +189,39 @@ def runs(lines: list[str]) -> list[str]:
     return [line for line, _ in itertools.groupby(lines)]
 
 
+def addresses(lines: list[str]) -> list[str]:
+    """The ADDRESS half of each line, collapsed by run.
+
+    ★★★★★ R2177 — a trace line is `<reader> <address>`, and the comparison is
+    over the pair. That is right: which door a walk came in at is part of what
+    it did. But it means **adding a named reader on the path of a lookup that
+    is otherwise unchanged reads as a change of meaning**, and this campaign's
+    conversions do exactly that — moving a composition out of an unwrapped
+    helper and onto a shared door is the repair.
+
+    Measured three rounds running: R2174's `r1591` went 0 -> 628 lookups,
+    R2176's `r1442` gained one `fill_template` line, and R2177's `r1395`
+    produced a 334-line diff whose `find_by_tag` multiset was **identical**
+    (5,236 rows both sides). Each time the round verified that by hand.
+
+    ⇒ this is the second half of the verdict, so the tool says which of the two
+    situations a reader is in instead of a round re-deriving it. The verdict
+    does NOT weaken: a pair-level difference still exits non-zero, because a new
+    reader CAN be a change of meaning and only a person can say.
+    """
+    return runs([line.partition(" ")[2] for line in lines])
+
+
 def compare(before: Path, after: Path) -> int:
     """Diff two traces; non-zero when they differ in MEANING.
 
     The verdict is on the collapsed sequences (see [`runs`]); a difference in
     how many times a poll spun is reported and is not a failure.
+
+    ★ R2177 — when the pairs differ, [`addresses`] is asked too and the answer
+    is printed. An unchanged address sequence under changed readers is what a
+    conversion onto a shared door looks like; it is still reported as a
+    difference, and the line says which kind it is.
     """
     raw_left = before.read_text(encoding="utf-8").splitlines()
     raw_right = after.read_text(encoding="utf-8").splitlines()
@@ -223,6 +251,22 @@ def compare(before: Path, after: Path) -> int:
         print(f"  {line}")
     if len(changed) > 80:
         print(f"  … {len(changed) - 80} more")
+    # ★★★★★ R2177 — the second half of the verdict. See [`addresses`].
+    left_addr, right_addr = addresses(raw_left), addresses(raw_right)
+    if left_addr == right_addr:
+        print(
+            f"address-trace: ★ but the ADDRESSES are unchanged — {len(left_addr)} "
+            "run(s), the same sequence on both sides. Only which reader asked "
+            "changed, which is what moving a composition onto a shared door "
+            "looks like. Still reported: a new reader CAN mean something, and "
+            "only a person can say."
+        )
+    else:
+        print(
+            f"address-trace: and the ADDRESSES differ too — {len(left_addr)} -> "
+            f"{len(right_addr)} run(s). This is not a reader moving; the walk "
+            "is asking the paint for something else."
+        )
     print(
         "address-trace: a faithful conversion changes NOTHING here. Every line "
         "above is a change of meaning, and a round that meant it should say so "
@@ -303,6 +347,17 @@ def selftest() -> int:
         one.write_text("find a.b\nfind c.d\nfind a.b\n", encoding="utf-8")
         two.write_text("find a.b\nfind c.d\n", encoding="utf-8")
         check(compare(one, two) == 1, "a lookup that returns later is its own run")
+        # ★★★★★ R2177 — the ADDRESS half of the verdict. A reader added on the
+        # path of an unchanged lookup is what a conversion onto a shared door
+        # looks like, and three rounds verified that by hand before this.
+        check(
+            addresses(["find a.b", "helper a.b", "find c.d"]) == ["a.b", "c.d"],
+            "a reader added beside a lookup leaves the address sequence alone",
+        )
+        check(
+            addresses(["find a.b", "find c.d"]) != addresses(["find a.b", "find e.f"]),
+            "★ and a different address still differs — the discriminating case",
+        )
     print(f"address_trace selftest: {ran - failed} of {ran} checks OK")
     return 1 if failed else 0
 

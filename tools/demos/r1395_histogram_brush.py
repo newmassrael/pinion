@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    chart_addresses,
     find_by_tag,
     run_demo,
     wait_until,
@@ -63,21 +64,17 @@ def paint(tf):
     return tf.snapshot(source="paint", viewport=VIEWPORT)
 
 
-def bar_alpha(snap, k: int) -> int:
-    """The fill alpha of histogram bin k (a `hist.bar.{k}` box)."""
-    node = find_by_tag(snap, f"hist.bar.{k}")
-    assert node is not None, f"hist bin {k} is present (drawn, not dropped)"
-    fill = (node.get("style") or {}).get("fill")
-    assert fill is not None, f"hist bin {k} carries a queryable fill"
-    return fill["a"]
+def fill_alpha(snap, tag: str, what: str) -> int:
+    """The fill alpha of the mark at `tag`, refusing when it is not drawn.
 
-
-def point_alpha(snap, j: int) -> int:
-    """The fill alpha of scatter point j (a `scatter.point.0.{j}` circle)."""
-    node = find_by_tag(snap, f"scatter.point.0.{j}")
-    assert node is not None, f"scatter point {j} is present (drawn, not dropped)"
+    ★★★★★ R2176.1 — one reader for both panels. `bar_alpha` and `point_alpha`
+    were the same six lines with the address spelled into each, and the address
+    is what this round removes; what is left is genuinely one question.
+    """
+    node = find_by_tag(snap, tag)
+    assert node is not None, f"{what} is present (drawn, not dropped)"
     fill = (node.get("style") or {}).get("fill")
-    assert fill is not None, f"scatter point {j} carries a queryable fill"
+    assert fill is not None, f"{what} carries a queryable fill"
     return fill["a"]
 
 
@@ -108,16 +105,38 @@ def set_brush(tf, low: float, high: float) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-histogram-brush", boot_grace=1.5) as tf:
+        # ★★★★★ R2176.1 — TWO charts on one surface, each asked of the FRAME.
+        # This walk spelled `hist.bar.{k}` and `scatter.point.0.{j}` out; both
+        # are `pinion-chart` grammar under a custom prefix, which is precisely
+        # what R2153 made askable and R2165 bound together. Naming the prefix
+        # here is not a spelling: `chart_addresses` refuses a prefix the frame
+        # does not report, so a wrong one stops the walk instead of composing
+        # an address nothing paints.
+        hist = chart_addresses(tf, viewport=VIEWPORT, prefix="hist")
+        scatter = chart_addresses(tf, viewport=VIEWPORT, prefix="scatter")
+
+        def bar_alpha(snap, k: int) -> int:
+            return fill_alpha(snap, hist.at("bar", index=k), f"hist bin {k}")
+
+        def point_alpha(snap, j: int) -> int:
+            return fill_alpha(
+                snap, scatter.at("point", index=0, at=j), f"scatter point {j}"
+            )
+
         # ── (A) boot — both panels full, no cross-filter ─────────────
         snap = paint(tf)
-        assert has(snap, "scatter"), "the scatter panel root"
-        assert has(snap, "hist"), "the histogram panel root"
+        assert has(snap, scatter.prefix), "the scatter panel root"
+        assert has(snap, hist.prefix), "the histogram panel root"
         assert has(snap, "hist_brush"), "the brush strip"
         assert has(snap, "hist_scrub"), "the scrub surface"
         # Distinct prefixes: neither panel keeps the chart default.
         assert not has(snap, "chart"), "no node keeps the default 'chart' prefix"
-        assert_eq(count_tags(snap, "hist.bar."), N_BINS, "12 histogram bins")
-        assert_eq(count_tags(snap, "scatter.point.0."), N_BINS, "12 scatter points")
+        assert_eq(count_tags(snap, hist.under("bar")), N_BINS, "12 histogram bins")
+        assert_eq(
+            count_tags(snap, scatter.under("point", index=0)),
+            N_BINS,
+            "12 scatter points",
+        )
         # Full window filters nothing: every bin and point is full.
         for k in range(N_BINS):
             assert_eq(bar_alpha(snap, k), 255, f"boot: bin {k} full")
@@ -129,9 +148,13 @@ def body() -> None:
         set_brush(tf, 0.25, 0.5)
         snap = paint(tf)
         # Muting DIMS, it does not DROP: every mark still emits a node.
-        assert_eq(count_tags(snap, "hist.bar."), N_BINS, "muting keeps every bin drawn")
         assert_eq(
-            count_tags(snap, "scatter.point.0."), N_BINS, "muting keeps every point drawn"
+            count_tags(snap, hist.under("bar")), N_BINS, "muting keeps every bin drawn"
+        )
+        assert_eq(
+            count_tags(snap, scatter.under("point", index=0)),
+            N_BINS,
+            "muting keeps every point drawn",
         )
         in_window = (3, 4, 5)
         out_window = (0, 1, 2, 6, 7, 8, 9, 10, 11)

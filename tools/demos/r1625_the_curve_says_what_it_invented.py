@@ -41,6 +41,7 @@ from rpc_verify import (  # noqa: E402
     access_node_by_tag,
     assert_eq,
     call,
+    chart_addresses,
     find_by_tag,
     run_demo,
     text_of_tag,
@@ -65,11 +66,17 @@ def caption(tf: RpcSubprocess) -> str:
 
 
 def run(tf: RpcSubprocess) -> None:
+    # ★★★★★ R2177 — the series address comes from the crate's own grammar,
+    # under the prefix the FRAME reports this chart took. Five sites here
+    # spelled `chart.series.<i>`, and a wrong letter in one reads as *the chart
+    # drew no series* rather than as a wrong address.
+    at = chart_addresses(tf, viewport=WIN)
+
     # ── 1. straight by default — the join that invents nothing ───────────
     said = caption(tf)
     assert said.startswith("linear"), f"boots straight: {said}"
     assert "no value drawn" in said, said
-    first = kinds(tf, "chart.series.0")
+    first = kinds(tf, at.at("series", index=0))
     assert_eq(first[0], "MoveTo", "a series starts with a move")
     assert "CurveTo" not in first, f"straight draws segments: {set(first)}"
     assert "LineTo" in first, f"and they are line segments: {set(first)}"
@@ -78,7 +85,7 @@ def run(tf: RpcSubprocess) -> None:
     # ── 2. the smooth chip curves the line, in CUBICS ────────────────────
     tf.click(path="smooth")
     tf.tick(0.016)
-    smooth = kinds(tf, "chart.series.0")
+    smooth = kinds(tf, at.at("series", index=0))
     assert "CurveTo" in smooth, f"the smooth chip curves the line: {set(smooth)}"
     assert "LineTo" not in smooth, (
         "and does it with cubic commands rather than a sampled polyline, which "
@@ -104,7 +111,7 @@ def run(tf: RpcSubprocess) -> None:
     # ── 4. the safe chip keeps the curve and drops the invention ─────────
     tf.click(path="safe")
     tf.tick(0.016)
-    safe = kinds(tf, "chart.series.0")
+    safe = kinds(tf, at.at("series", index=0))
     assert "CurveTo" in safe, f"still a curve: {set(safe)}"
     said = caption(tf)
     assert said.startswith("monotone"), said
@@ -132,12 +139,12 @@ def run(tf: RpcSubprocess) -> None:
 
     # ── 7. every series took the same interpolation ──────────────────────
     for i in range(SERIES):
-        assert "CurveTo" in kinds(tf, f"chart.series.{i}"), f"series {i} is curved"
+        assert "CurveTo" in kinds(tf, at.at("series", index=i)), f"series {i} is curved"
 
     # ── 8. and turning smoothing off restores the straight line ──────────
     tf.click(path="smooth")
     tf.tick(0.016)
-    back = kinds(tf, "chart.series.0")
+    back = kinds(tf, at.at("series", index=0))
     assert_eq(back, first, "the straight chart is the chart it was")
     assert "no value drawn" in caption(tf), caption(tf)
 

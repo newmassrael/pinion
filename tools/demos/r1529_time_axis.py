@@ -53,6 +53,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     access_node_by_tag,
     assert_eq,
+    chart_addresses,
     find_by_tag,
     run_demo,
 )
@@ -95,21 +96,27 @@ def text_of(snap, tag: str) -> str:
     return n["content"]
 
 
-def axis_labels(snap, axis: str) -> list[str]:
-    """Every `chart.label.{axis}.{k}`, in axis order."""
+def axis_labels(at, snap, axis: str) -> list[str]:
+    """Every tick label on `axis`, in axis order.
+
+    ★★★★★ R2177 — the address comes from the crate's emitted grammar, under the
+    prefix the frame reports. The grammar names one composer per axis
+    (`label_x`, `label_y`), which is what makes `axis` a choice between
+    declared names rather than a letter dropped into a string this walk built.
+    """
     out = []
     k = 0
-    while (n := find_by_tag(snap, f"chart.label.{axis}.{k}")) is not None:
+    while (n := find_by_tag(snap, at.at(f"label_{axis}", index=k))) is not None:
         out.append(n["content"])
         k += 1
     return out
 
 
-def gridline_xs(snap) -> list[float]:
+def gridline_xs(at, snap) -> list[float]:
     """The window-x of each vertical gridline, in axis order."""
     out = []
     k = 0
-    while (n := find_by_tag(snap, f"chart.grid.x.{k}")) is not None:
+    while (n := find_by_tag(snap, at.at("grid_x", index=k))) is not None:
         out.append(float(n["rect"]["x"]))
         k += 1
     return out
@@ -117,13 +124,18 @@ def gridline_xs(snap) -> list[float]:
 
 def body() -> None:
     with RpcSubprocess("hello-time-chart") as d:
+        # ★★★★★ R2177 — the labels, the gridlines and the scrub readout are
+        # `pinion-chart` grammar, asked of the frame under the prefix this
+        # chart took. Five sites here spelled one out.
+        at = chart_addresses(d, viewport=VIEWPORT)
+
         # ── Phase 1 — the time axis (the boot state) ─────────────────
         timed = d.snapshot(source="paint", viewport=VIEWPORT)
-        assert find_by_tag(timed, "chart") is not None, "chart container present"
+        assert find_by_tag(timed, at.prefix) is not None, "chart container present"
 
         # The axis is labelled in clock time. This — not the spacing — is
         # what a numeric axis cannot produce.
-        assert_eq(axis_labels(timed, "x"), CLOCK_LABELS, "x labels are clock times")
+        assert_eq(axis_labels(at, timed, "x"), CLOCK_LABELS, "x labels are clock times")
 
         # ★ The date is named exactly ONCE, on the tick that crosses into a
         # new day. `HH:MM` everywhere would give zero; a full stamp
@@ -131,19 +143,19 @@ def body() -> None:
         dated = [lab for lab in CLOCK_LABELS if lab.startswith("Mar")]
         assert_eq(len(dated), 1, "exactly one label carries the date")
         assert_eq(
-            axis_labels(timed, "x").index("Mar 03"),
+            axis_labels(at, timed, "x").index("Mar 03"),
             4,
             "and it sits at the midnight crossing, not at an end",
         )
 
         # Every gridline is labelled distinctly — nine lines, nine strings.
-        timed_x = axis_labels(timed, "x")
+        timed_x = axis_labels(at, timed, "x")
         assert_eq(len(timed_x), 9, "nine x gridlines are labelled")
         assert_eq(len(set(timed_x)), 9, f"each one distinctly: {timed_x}")
 
         # ...and they are evenly spaced, so the labels above describe a real
         # half-hourly ruler rather than a ragged one.
-        grid = gridline_xs(timed)
+        grid = gridline_xs(at, timed)
         assert_eq(len(grid), 9, "one gridline per label")
         gaps = [abs(b - a) for a, b in zip(grid, grid[1:])]
         assert_eq(len(gaps), 8, f"a gap between each pair: {gaps}")
@@ -156,7 +168,7 @@ def body() -> None:
 
         # ★ A readout is not a tick label: the scrub header is the full stamp,
         # because it has no neighbouring labels to read the day from.
-        header = text_of(timed, "chart.inspect.header")
+        header = text_of(timed, at.callout("header"))
         assert_eq(header, f"x = {SCRUB_STAMP}", "the scrub says which day")
         assert "23:50" in header, "and which minute"
         assert header.replace("x = ", "") not in timed_x, (
@@ -167,14 +179,14 @@ def body() -> None:
         assert cap.startswith("UTC time x-axis"), f"caption names the axis: {cap}"
         assert "9 gridlines, 9 distinct labels" in cap, f"and counts them: {cap}"
 
-        timed_y = axis_labels(timed, "y")
+        timed_y = axis_labels(at, timed, "y")
         assert len(timed_y) >= 2, f"the y-axis is labelled: {timed_y}"
 
         # ── Phase 2 — one click, and the same data on a numeric axis ─
         d.click(path=AXIS_TAG)
         numeric = d.snapshot(source="paint", viewport=VIEWPORT)
 
-        num_x = axis_labels(numeric, "x")
+        num_x = axis_labels(at, numeric, "x")
         assert_eq(len(num_x), 9, "the same nine gridline positions")
         assert_eq(len(set(num_x)), 1, f"labelled with ONE string: {num_x}")
         assert_eq(num_x[0], NUMERIC_LABEL, "an epoch ms compacted by magnitude")
@@ -185,11 +197,11 @@ def body() -> None:
 
         # ★ The y-axis did NOT move. `x_time()` names one axis, and a change
         # that timed both would pass every check above.
-        assert_eq(axis_labels(numeric, "y"), timed_y, "the y-axis is untouched")
+        assert_eq(axis_labels(at, numeric, "y"), timed_y, "the y-axis is untouched")
 
         # The gridlines are evenly spaced here too — which is exactly why
         # spacing alone could never have been the discriminator.
-        num_grid = gridline_xs(numeric)
+        num_grid = gridline_xs(at, numeric)
         assert_eq(len(num_grid), 9, "nine gridlines on the numeric axis as well")
         num_gaps = [abs(b - a) for a, b in zip(num_grid, num_grid[1:])]
         for i, g in enumerate(num_gaps):
@@ -200,7 +212,7 @@ def body() -> None:
 
         # Off a time axis the readout and the label coincide, which is why the
         # distinction did not exist before this round.
-        num_header = text_of(numeric, "chart.inspect.header")
+        num_header = text_of(numeric, at.callout("header"))
         assert_eq(num_header, f"x = {NUMERIC_LABEL}", "the readout is the label")
         assert num_header.replace("x = ", "") in num_x, (
             "and is indistinguishable from every tick on this axis"
@@ -213,14 +225,14 @@ def body() -> None:
         # ── Phase 3 — the toggle is a real, reversible control ───────
         d.click(path=AXIS_TAG)
         back = d.snapshot(source="paint", viewport=VIEWPORT)
-        assert_eq(axis_labels(back, "x"), CLOCK_LABELS, "clicking again returns to time")
+        assert_eq(axis_labels(at, back, "x"), CLOCK_LABELS, "clicking again returns to time")
         assert_eq(
-            text_of(back, "chart.inspect.header"),
+            text_of(back, at.callout("header")),
             f"x = {SCRUB_STAMP}",
             "and brings the full-stamp readout back",
         )
         assert_eq(text_of(back, "caption"), cap, "and reports the same axis")
-        assert_eq(axis_labels(back, "y"), timed_y, "with the y-axis still put")
+        assert_eq(axis_labels(at, back, "y"), timed_y, "with the y-axis still put")
 
         # The axis kind reaches assistive tech as a pressed toggle button,
         # not only as pixels.
