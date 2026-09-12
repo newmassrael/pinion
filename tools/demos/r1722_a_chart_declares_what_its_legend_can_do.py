@@ -87,6 +87,8 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     access_node_by_tag,
     assert_eq,
+    chart_address,
+    chart_addresses,
     find_by_tag,
     node_center,
     run_demo,
@@ -224,6 +226,15 @@ def body() -> None:
     the_dashboards_chart_seats_are_still_booked()
 
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        # ★★★★★ R2165 — FOUR charts on this board, each under its own prefix.
+        # A composer per card, each naming the chart it means, so the "(H) the
+        # tags are disjoint" assertion below is made in the vocabulary the
+        # frame answers in rather than in one this walk typed.
+        at = {
+            card: chart_addresses(tf, viewport=VIEWPORT, prefix=card)
+            for card in (THROUGHPUT, SHARE, PROFILE, SIZES)
+        }
+
         # ── (A) the board asks, and is told four different things ─────────
         snap = paint(tf)
         assert_eq(
@@ -259,7 +270,9 @@ def body() -> None:
         )
 
         # ── (H) the tags are disjoint because each chart derives its own ──
-        assert find_by_tag(snap, "chart.legend.0") is None, (
+        # ★ The DEFAULT prefix is the artifact's own, asked for rather than
+        # typed: what this asserts is that no chart on this board kept it.
+        assert find_by_tag(snap, chart_address("legend_at", index=0)) is None, (
             "(H) no chart kept the default prefix, so nothing collides"
         )
 
@@ -269,18 +282,23 @@ def body() -> None:
         assert_eq(value(tf, SHARE, 1), True, "(B) its neighbour is untouched")
         before_share = snap
         snap = paint(tf)
-        assert geometry(snap, "share.slice.0") is None, "(B) the hidden slice draws no sector"
+        assert geometry(snap, at[SHARE].at("slice", index=0)) is None, (
+            "(B) the hidden slice draws no sector"
+        )
         assert find_by_tag(snap, entry_tag(SHARE, 0)) is not None, (
             "(B) and keeps its entry, which is the toggle back on"
         )
 
         # ── (D) the donut RE-NORMALISES, which the line must not ──────────
-        assert geometry(before_share, "share.slice.1") != geometry(snap, "share.slice.1"), (
+        slice_1 = at[SHARE].at("slice", index=1)
+        assert geometry(before_share, slice_1) != geometry(snap, slice_1), (
             "(D) ★ the surviving slices take the hidden one's share"
         )
         # ── (E) and the survivors keep their own indices ──────────────────
-        assert geometry(snap, "share.slice.1") is not None, "(E) slice 1 is still slice 1"
-        assert geometry(snap, "share.slice.2") is not None, "(E) slice 2 is still slice 2"
+        assert geometry(snap, slice_1) is not None, "(E) slice 1 is still slice 1"
+        assert geometry(snap, at[SHARE].at("slice", index=2)) is not None, (
+            "(E) slice 2 is still slice 2"
+        )
 
         press_entry(tf, snap, SHARE, 0)
         assert_eq(value(tf, SHARE, 0), True, "(B) pressing again shows the slice")
@@ -291,10 +309,13 @@ def body() -> None:
         press_entry(tf, snap, THROUGHPUT, 0)
         assert_eq(value(tf, THROUGHPUT, 0), False, "(D) pressing a line legend entry hides it")
         snap = paint(tf)
-        assert geometry(snap, "throughput.series.0") is None, "(D) the hidden line draws nothing"
+        assert geometry(snap, at[THROUGHPUT].at("series", index=0)) is None, (
+            "(D) the hidden line draws nothing"
+        )
+        neighbour = at[THROUGHPUT].at("series", index=1)
         assert_eq(
-            geometry(snap, "throughput.series.1"),
-            geometry(before_line, "throughput.series.1"),
+            geometry(snap, neighbour),
+            geometry(before_line, neighbour),
             "(D) ★ and its neighbour did not move — the other hiding rule",
         )
         press_entry(tf, snap, THROUGHPUT, 0)
@@ -305,8 +326,12 @@ def body() -> None:
         press_entry(tf, snap, PROFILE, 1)
         assert_eq(value(tf, PROFILE, 1), False, "(B) ★ pressing a radar legend entry hides it")
         snap = paint(tf)
-        assert find_by_tag(snap, "profile.series.1") is None, "(B) the hidden ring is gone"
-        assert find_by_tag(snap, "profile.series.0") is not None, "(B) the other ring stays"
+        assert find_by_tag(snap, at[PROFILE].at("series", index=1)) is None, (
+            "(B) the hidden ring is gone"
+        )
+        assert find_by_tag(snap, at[PROFILE].at("series", index=0)) is not None, (
+            "(B) the other ring stays"
+        )
         press_entry(tf, snap, PROFILE, 1)
         assert_eq(value(tf, PROFILE, 1), True, "(B) restored")
 

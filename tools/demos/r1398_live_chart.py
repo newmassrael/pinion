@@ -40,6 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    chart_addresses,
     find_by_tag,
     run_demo,
     wait_snap,
@@ -84,10 +85,12 @@ def _tick_value(text: str):
         return None
 
 
-def max_y_tick(snap) -> float:
+# ⚠ The composer is an ARGUMENT in each helper below: one holding an address
+# inside itself is simply the next site spelling it (R2162).
+def max_y_tick(snap, c) -> float:
     best = 0.0
     for k in range(12):
-        node = find_by_tag(snap, f"chart.label.y.{k}")
+        node = find_by_tag(snap, c.at("label_y", index=k))
         if node is None:
             continue
         v = _tick_value(node.get("content"))
@@ -96,8 +99,8 @@ def max_y_tick(snap) -> float:
     return best
 
 
-def series_vertex_count(snap) -> int:
-    node = find_by_tag(snap, "chart.series.0")
+def series_vertex_count(snap, c) -> int:
+    node = find_by_tag(snap, c.at("series", index=0))
     if node is None:
         return 0
     return sum(1 for c in node.get("commands", []) if c["type"] in ("MoveTo", "LineTo"))
@@ -122,13 +125,15 @@ def advance_to(d, target: int):
 def body() -> None:
     with RpcSubprocess("hello-live-chart") as d:
         # ── (A) boot — empty ring, chart present, placeholder status ─────────
+        # ★★★★★ R2165 — the prefix and the overlay part from the frame, as one pair.
+        c = chart_addresses(d, viewport=VIEWPORT)
         snap = paint(d)
-        assert find_by_tag(snap, "chart") is not None, "the chart root is present at boot"
+        assert find_by_tag(snap, c.prefix) is not None, "the chart root is present at boot"
         assert find_by_tag(snap, TICK_TAG) is not None, "the Tick button is present"
         assert "No samples yet" in status_of(snap), f"boot placeholder, got {status_of(snap)!r}"
         assert count_of(snap) == 0, "no samples at boot"
-        assert find_by_tag(snap, "chart.axis.y") is not None, "the chart has axes even when empty"
-        assert series_vertex_count(snap) == 0, "no polyline until data arrives"
+        assert find_by_tag(snap, c.at("axis_y")) is not None, "the chart has axes even when empty"
+        assert series_vertex_count(snap, c) == 0, "no polyline until data arrives"
 
         # ── (B) Tick into the transient — 8 samples, window anchored at x=1 ───
         snap = advance_to(d, 8)
@@ -137,14 +142,14 @@ def body() -> None:
         assert lo == 1, f"the window is anchored at the first sample, got {lo}"
         assert hi == 13, f"the window is [1, 1+span], got {hi}"
         assert hi - lo == 12, f"the window width is the span (12), got {hi - lo}"
-        early_top = max_y_tick(snap)
+        early_top = max_y_tick(snap, c)
         assert early_top >= 500.0, f"the early window's y-axis reaches the transient, got {early_top}"
         assert any(
-            (find_by_tag(snap, f"chart.label.y.{k}") or {}).get("content", "").endswith("k")
+            (find_by_tag(snap, c.at("label_y", index=k)) or {}).get("content", "").endswith("k")
             for k in range(12)
         ), "the transient window carries a 'k' (kilo) tick label"
-        assert find_by_tag(snap, "chart.series.0") is not None, "the polyline is drawn"
-        assert series_vertex_count(snap) >= 6, "the early samples are plotted"
+        assert find_by_tag(snap, c.at("series", index=0)) is not None, "the polyline is drawn"
+        assert series_vertex_count(snap, c) >= 6, "the early samples are plotted"
 
         # ── (C) Tick until the window scrolls past the transient — 30 samples ─
         snap = advance_to(d, 30)
@@ -154,10 +159,10 @@ def body() -> None:
         assert lo == 18, f"the window scrolled to [last-span, last], got left={lo}"
         assert lo > 1, "the window's left edge ADVANCED (the strip scrolled)"
         assert hi - lo == 12, f"the window width is preserved while scrolling, got {hi - lo}"
-        late_top = max_y_tick(snap)
+        late_top = max_y_tick(snap, c)
         assert late_top < 200.0, f"the scrolled window auto-fits the y-axis to tens, got {late_top}"
         assert not any(
-            (find_by_tag(snap, f"chart.label.y.{k}") or {}).get("content", "").endswith("k")
+            (find_by_tag(snap, c.at("label_y", index=k)) or {}).get("content", "").endswith("k")
             for k in range(12)
         ), "no 'k' tick label survives once the transient scrolls off"
         assert early_top > late_top * 3.0, (
@@ -166,7 +171,7 @@ def body() -> None:
         )
         # The visible polyline is bounded to the window — the strip clips, it
         # does not accumulate all 30 samples.
-        visible = series_vertex_count(snap)
+        visible = series_vertex_count(snap, c)
         assert visible < 20, f"the visible polyline is bounded to the window, got {visible} vertices"
         assert visible >= 10, f"the window is still fully backed by samples, got {visible}"
 
@@ -178,7 +183,7 @@ def body() -> None:
         lo2, hi2 = window_of(snap)
         assert hi2 == 36 and lo2 == 24, f"the window kept scrolling to [24, 36], got [{lo2}, {hi2}]"
         assert hi2 - lo2 == 12, "the window width stays the span as it scrolls"
-        assert max_y_tick(snap) < 200.0, "the y-axis stays fitted to the steady state"
+        assert max_y_tick(snap, c) < 200.0, "the y-axis stays fitted to the steady state"
         assert count_of(snap) == 36, "the sample count kept growing"
         assert count_of(snap) > 30, "the total received kept growing past the window size"
 

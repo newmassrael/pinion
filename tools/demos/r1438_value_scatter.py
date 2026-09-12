@@ -44,6 +44,7 @@ from rpc_verify import (
     assert_action_refused,
     assert_out_of_range,
     assert_rpc_error,
+    chart_addresses,
     find_by_tag,
     run_demo,
     wait_until,
@@ -51,7 +52,10 @@ from rpc_verify import (
 
 EXT = "/external"
 VIEWPORT = (620, 420)
-STRIP = "chart.colorbar.strip"
+#: ★★★★★ R2172 — a `STRIP` const used to sit here, binding the colour bar's
+#: address to a walk-local name. Better than five spellings, but the name was
+#: this file's while the CRATE composes the address, so a rename there left it
+#: stale and silent. The composer is built in `body()` and passed down.
 
 
 def _walk(node, out):
@@ -86,15 +90,15 @@ def stop_hex(stop: dict) -> str:
     return "#{:02x}{:02x}{:02x}".format(c["r"], c["g"], c["b"])
 
 
-def strip_rect(ta: RpcSubprocess) -> dict:
-    node = find_by_tag(snap(ta), STRIP)
+def strip_rect(ta: RpcSubprocess, c) -> dict:
+    node = find_by_tag(snap(ta), c.at("colorbar_strip"))
     assert node is not None, "the colour bar strip is in the paint scene"
     return node["rect"]
 
 
-def strip_stops(ta: RpcSubprocess) -> list[dict]:
+def strip_stops(ta: RpcSubprocess, c) -> list[dict]:
     """The colour bar's gradient stops, straight out of the paint scene."""
-    node = find_by_tag(snap(ta), STRIP)
+    node = find_by_tag(snap(ta), c.at("colorbar_strip"))
     assert node is not None, "the colour bar strip is in the paint scene"
     gradient = node.get("style", {}).get("gradient")
     assert gradient is not None, "the strip carries a real gradient, not a flat fill"
@@ -111,6 +115,9 @@ def tags_with_prefix(ta: RpcSubprocess, prefix: str) -> list[str]:
 
 def body() -> None:
     with RpcSubprocess("hello-value-scatter", request_timeout=12.0) as ta:
+        # ★★★★★ R2165 — prefix and overlay part from the frame, as one pair.
+        c = chart_addresses(ta, viewport=VIEWPORT)
+
         # ── Phase 1 — the encoding and its asymmetric domain ──────────
         assert_eq(query(ta, "encoding"), "diverging", "boots on the diverging map")
         low = query(ta, "domain_low")
@@ -126,20 +133,22 @@ def body() -> None:
         assert abs(offset - 0.25) < 1e-9, f"the target sits a quarter along, got {offset}"
 
         # ── Phase 2 — the colour bar IS the legend now ────────────────
-        assert find_by_tag(snap(ta), STRIP) is not None, "a colour bar is painted"
-        bar = strip_rect(ta)
+        assert find_by_tag(snap(ta), c.at("colorbar_strip")) is not None, (
+            "a colour bar is painted"
+        )
+        bar = strip_rect(ta, c)
         assert bar["h"] > 0, f"the strip has height (it would be invisible at 0): {bar}"
         assert bar["w"] > 100, f"the strip spans the plot width: {bar}"
         assert_eq(
-            [t for t in tags_with_prefix(ta, "chart.legend.")],
+            [t for t in tags_with_prefix(ta, c.under("legend_root"))],
             [],
             "no categorical swatch row while colour encodes magnitude",
         )
-        ticks = tags_with_prefix(ta, "chart.colorbar.tick.")
+        ticks = tags_with_prefix(ta, c.under("colorbar_tick"))
         assert len(ticks) == 3, f"low + neutral + high ticks, got {ticks}"
 
         # ── Phase 3 — ★ the bar reports the ENCODING, not an even split ─
-        stops = strip_stops(ta)
+        stops = strip_stops(ta, c)
         assert_eq(len(stops), 3, "blue_orange has three stops")
         assert abs(stops[0]["offset"] - 0.0) < 1e-3, "ramp starts at the domain low"
         assert abs(stops[2]["offset"] - 1.0) < 1e-3, "ramp ends at the domain high"
@@ -203,7 +212,7 @@ def body() -> None:
         )
 
         # ── Phase 6 — the marks are painted, one per sample ───────────
-        marks = tags_with_prefix(ta, "chart.point.")
+        marks = tags_with_prefix(ta, c.under("point"))
         assert_eq(len(marks), 15, "three probes of five samples each")
 
         # ── Phase 7 — switch to sequential: the bar re-spaces ─────────
@@ -213,15 +222,15 @@ def body() -> None:
             desc="the encoding switched",
         )
         wait_until(
-            lambda: abs(strip_stops(ta)[1]["offset"] - 0.5) < 1e-3,
+            lambda: abs(strip_stops(ta, c)[1]["offset"] - 0.5) < 1e-3,
             desc="★ the sequential ramp spaces its stops EVENLY (0.5)",
         )
-        seq_stops = strip_stops(ta)
+        seq_stops = strip_stops(ta, c)
         assert abs(seq_stops[1]["offset"] - 0.25) > 1e-2, (
             "the neutral stop MOVED — the bar tracks the live encoding"
         )
         assert_eq(
-            len(tags_with_prefix(ta, "chart.colorbar.tick.")),
+            len(tags_with_prefix(ta, c.under("colorbar_tick"))),
             2,
             "a sequential bar has no neutral tick — nothing anchors a middle",
         )
@@ -236,13 +245,13 @@ def body() -> None:
             "and it no longer paints the target neutral"
         )
         assert_eq(
-            len(tags_with_prefix(ta, "chart.point.")), 15, "same samples, new colours"
+            len(tags_with_prefix(ta, c.under("point"))), 15, "same samples, new colours"
         )
 
         # ── Phase 8 — switch back; the paint follows both ways ────────
         set_encoding(ta, "diverging")
         wait_until(
-            lambda: abs(strip_stops(ta)[1]["offset"] - 0.25) < 1e-3,
+            lambda: abs(strip_stops(ta, c)[1]["offset"] - 0.25) < 1e-3,
             desc="the neutral stop returned to the target's fraction",
         )
         assert_eq(
@@ -286,7 +295,7 @@ def body() -> None:
         assert_eq(
             invoke(ta, "mark_color_at", "0,2"), neutral_hex, "recovered and correct"
         )
-        assert abs(strip_stops(ta)[1]["offset"] - 0.25) < 1e-3, "the bar survived too"
+        assert abs(strip_stops(ta, c)[1]["offset"] - 0.25) < 1e-3, "the bar survived too"
 
 
 if __name__ == "__main__":
