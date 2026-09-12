@@ -10575,32 +10575,11 @@ fn cell(tag: String, text: &str, rect: Rect, px: u32, fg: Color, overflow: TextO
     )
 }
 
-/// The stem every cell of table card `id` is addressed under.
-///
-/// ★ R1873 — a stem rather than a `format!` inside the builder, because the
-/// gate that judges this family has to name it too, and a family named twice is
-/// a family that drifts. The builder below and
-/// `painted::r1873_no_grid_run_of_a_table_card_sits_in_a_box_too_short_for_its_face`
-/// now share one definition, and a test asserts each builder still starts with
-/// its stem.
-fn cell_stem(id: &str) -> String {
-    format!("card.{id}.cell.")
-}
-
-/// The stem every column heading of table card `id` is addressed under.
-fn head_cell_stem(id: &str) -> String {
-    format!("card.{id}.head.")
-}
-
-/// The tag a table card's cell is addressed by.
-fn cell_tag(id: &str, row: usize, column: usize) -> String {
-    format!("{}{row}_{column}", cell_stem(id))
-}
-
-/// The tag a table card's column header is addressed by.
-fn head_cell_tag(id: &str, column: usize) -> String {
-    format!("{}{column}", head_cell_stem(id))
-}
+// ★ R2186 — a table card's cell and heading stems, and the tags built from them,
+// are declared in `address.rs` (`card_cell_stem`, `card_head_cell_stem`,
+// `card_cell`, `card_head_cell`). R1873 gave them one home here so the builder
+// and `painted::r1873_no_grid_run_of_a_table_card_sits_in_a_box_too_short_for_its_face`
+// could not drift; that reason moved with them.
 
 /// One run of a table card's grid: a column heading or a cell, in a box that is
 /// a band tall enough for the face it is set in, centred in the **seat** the
@@ -10699,7 +10678,7 @@ fn stream_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
                 .enumerate()
                 .map(|(c, (name, x, w))| {
                     grid_cell(
-                        head_cell_tag(id, c),
+                        address::card_head_cell(id, c),
                         name,
                         Rect::new(*x, 0, *w, HEAD_H),
                         FONT_TINY,
@@ -10709,7 +10688,7 @@ fn stream_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
                 })
                 .collect(),
         )
-        .with_tag(format!("card.{id}.head"))
+        .with_tag(address::card_head(id))
         .with_style(BoxStyle::filled(palette.raised))
         .with_layout(absolute(Rect::new(rect.x, rect.y, rect.w, HEAD_H))),
     )];
@@ -10751,7 +10730,7 @@ fn stream_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
                     TextOverflow::Ellipsis
                 };
                 grid_cell(
-                    cell_tag(id, n, c),
+                    address::card_cell(id, n, c),
                     value,
                     Rect::new(*x, 0, *w, ROW_H),
                     FONT_TINY,
@@ -10762,7 +10741,7 @@ fn stream_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
             .collect();
         out.push(Scene::Container(
             ContainerNode::new(cells)
-                .with_tag(format!("card.{id}.row.{n}"))
+                .with_tag(address::card_row(id, n))
                 .with_layout(absolute(seat)),
         ));
     }
@@ -10857,7 +10836,7 @@ fn decode_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
         }
         out.push(Scene::Container(
             ContainerNode::new(cells)
-                .with_tag(format!("card.{id}.tree.{n}"))
+                .with_tag(address::card_tree_row(id, n))
                 .with_style(if selected {
                     BoxStyle::filled(palette.high).with_corner_radius(4)
                 } else {
@@ -10916,7 +10895,7 @@ fn byte_pane(id: &str, pane: Rect, card: Rect, palette: Palette) -> Vec<Scene> {
                     FONT_TINY,
                     if lit { palette.on_accent } else { palette.ink },
                 )])
-                .with_tag(format!("card.{id}.byte.{index}"))
+                .with_tag(address::card_byte(id, index))
                 .with_style(if lit {
                     BoxStyle::filled(palette.accent).with_corner_radius(3)
                 } else {
@@ -10927,7 +10906,7 @@ fn byte_pane(id: &str, pane: Rect, card: Rect, palette: Palette) -> Vec<Scene> {
         }
         out.push(Scene::Container(
             ContainerNode::new(cells)
-                .with_tag(format!("card.{id}.bytes.{line}"))
+                .with_tag(address::card_bytes(id, line))
                 .with_layout(absolute(Rect::new(pane.x, seat.y, pane.w, seat.h))),
         ));
     }
@@ -10984,8 +10963,8 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
     // what the cell tags are built from.
     let cells = |ink: Color, cols: [&str; 3], warn: bool, row: Option<usize>| {
         let tag = |column: usize| match row {
-            None => head_cell_tag(id, column),
-            Some(r) => cell_tag(id, r, column),
+            None => address::card_head_cell(id, column),
+            Some(r) => address::card_cell(id, r, column),
         };
         // ★ R1873 — the strip the run sits in, named where it is used rather
         // than assumed: the heading strip and a data row are different seats
@@ -11034,7 +11013,7 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
             false,
             None,
         ))
-        .with_tag(format!("card.{id}.head"))
+        .with_tag(address::card_head(id))
         .with_style(BoxStyle::filled(palette.raised))
         .with_layout(absolute(Rect::new(rect.x, rect.y, rect.w, HEAD_H))),
     )];
@@ -11052,7 +11031,7 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
                 unresolved,
                 Some(n),
             ))
-            .with_tag(format!("card.{id}.map.{n}"))
+            .with_tag(address::card_map_row(id, n))
             .with_layout(absolute(seat)),
         ));
     }
@@ -11341,7 +11320,7 @@ fn latency_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
                     (value, FONT_TITLE, palette.ink),
                     Rect::new(0, 0, stat_w, STAT_H),
                 ))
-                .with_tag(format!("card.{id}.stat.{n}"))
+                .with_tag(address::card_stat(id, n))
                 .with_style(
                     BoxStyle::filled(palette.raised)
                         .with_corner_radius(8)
@@ -11409,11 +11388,11 @@ fn latency_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
                 // is `latency_nodes`, and until it existed the chart was silent
                 // while claiming to be covered.
                 BarChart::new(bars)
-                    .with_tag_prefix(format!("card.{id}.dist"))
+                    .with_tag_prefix(address::card_dist(id))
                     .build(Rect::new(0, 0, box_.w, box_.h), &style)
-                    .silenced(Silence::part_of(format!("card.{id}.bins"))),
+                    .silenced(Silence::part_of(address::card_bins(id))),
             ])
-            .with_tag(format!("card.{id}.bins"))
+            .with_tag(address::card_bins(id))
             .with_layout(absolute(box_)),
         ));
     }
@@ -11434,7 +11413,7 @@ fn latency_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
                 palette.muted,
                 TextOverflow::Ellipsis,
             )])
-            .with_tag(format!("card.{id}.caption"))
+            .with_tag(address::card_caption(id))
             .with_style(
                 BoxStyle::filled(palette.panel).with_border(Border::new(palette.outline, 1)),
             )
@@ -11457,7 +11436,7 @@ fn filter_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
             FONT_SMALL,
             palette.ink,
         )])
-        .with_tag(format!("card.{id}.query"))
+        .with_tag(address::card_query(id))
         .with_style(
             BoxStyle::filled(palette.raised)
                 .with_corner_radius(7)
@@ -11724,7 +11703,7 @@ fn filter_counts(
                 (what, FONT_TINY, palette.muted),
                 Rect::new(0, 0, stat_w, STAT_H),
             ))
-            .with_tag(format!("card.{id}.stat.{n}"))
+            .with_tag(address::card_stat(id, n))
             .with_style(
                 BoxStyle::filled(palette.raised)
                     .with_corner_radius(8)
@@ -11768,9 +11747,9 @@ fn filter_counts(
                         Rect::new(0, 0, area.w, card.y + card.h - spark_y),
                         &ChartStyle::default(),
                     )
-                    .silenced(Silence::part_of(format!("card.{id}.sparkline"))),
+                    .silenced(Silence::part_of(address::card_sparkline(id))),
             ])
-            .with_tag(format!("card.{id}.sparkline"))
+            .with_tag(address::card_sparkline(id))
             .with_layout(absolute(Rect::new(
                 area.x,
                 spark_y,
@@ -11957,7 +11936,7 @@ fn health_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
         // label — and a unit belongs to what is being measured rather than to
         // this particular reading of it.
         let built = tile_spec(tile, palette).with_trail(TREND_H).build_with(
-            &format!("card.{id}.stat.{n}"),
+            &address::card_stat(id, n),
             // Strip-local: the container below is what carries `rect`.
             Rect::new(u(n) * (tile_w + TILE_GAP), 0, tile_w, rect.h),
             |trail| {
@@ -11975,7 +11954,7 @@ fn health_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
                 // the trail's child expresses the nesting the scene already
                 // has, and still collides with nothing.
                 Sparkline::new(tile.trend.to_vec())
-                    .with_tag_prefix(format!("card.{id}.stat.{n}.trail.spark"))
+                    .with_tag_prefix(address::card_stat_spark(id, n))
                     .with_color(palette.accent)
                     // Trail-local, for the same reason as the tile above.
                     .build(Rect::new(0, 0, trail.w, trail.h), &style)
@@ -11985,7 +11964,7 @@ fn health_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
     }
     vec![Scene::Container(
         ContainerNode::new(out)
-            .with_tag(format!("card.{id}.tiles"))
+            .with_tag(address::card_tiles(id))
             .with_layout(absolute(rect)),
     )]
 }
@@ -12505,10 +12484,9 @@ fn health_nodes(card: &Card, body: Rect) -> Vec<AccessNode> {
         return Vec::new();
     };
     let mut nodes = Vec::new();
-    let mut group =
-        AccessNode::new(format!("card.{id}.tiles"), AriaRole::Group).with_name("Health");
+    let mut group = AccessNode::new(address::card_tiles(id), AriaRole::Group).with_name("Health");
     for (n, tile) in spec::HEALTH_TILES[..count as usize].iter().enumerate() {
-        let tag = format!("card.{id}.stat.{n}");
+        let tag = address::card_stat(id, n);
         group = group.with_child(tag.clone());
         // ★★★★★ R2002 — the name is the HEADING the tile paints, through the
         // one derivation both readers share. It was `tile.label` with the unit
@@ -12540,7 +12518,7 @@ fn placeholder_body(kind: &str, id: &str, rect: Rect, palette: Palette) -> Vec<S
             Rect::new(rect.x + 12, rect.y + 10, 40, 32),
             BoxStyle::filled(kind_color(kind)).with_corner_radius(6),
             palette.on_accent,
-            Some(format!("card.{id}.code")),
+            Some(address::card_code(id)),
         ),
         label(
             def.map_or("", |d| d.gist),
@@ -16085,9 +16063,9 @@ fn card_nodes(state: &Rc<ShellState>, card: &Card) -> Vec<AccessNode> {
     for node in &body {
         // The body's own containers are the card's children; everything under
         // them is reached through them.
-        if BODY_ROOTS
+        if address::CARD_BODY_ROOTS
             .iter()
-            .any(|suffix| node.tag == format!("card.{id}.{suffix}"))
+            .any(|root| node.tag == root(id))
         {
             region = region.with_child(node.tag.clone());
         }
@@ -16161,20 +16139,10 @@ fn valued_nodes(state: &Rc<ShellState>, valued: &Valued) -> Vec<AccessNode> {
     out
 }
 
-/// The tag suffixes a card body's own top-level containers use — the nodes that
-/// become the card region's children.
-const BODY_ROOTS: &[&str] = &[
-    "grid",
-    "tree",
-    "bytegrid",
-    "query",
-    "chips",
-    "counts",
-    "sparkline",
-    // ★ R1797 — the latency card's two: the tile strip and the distribution.
-    "tiles",
-    "bins",
-];
+// ★ R2186 — the card region's body roots are `address::CARD_BODY_ROOTS`: the
+// declared composers themselves, where this was nine suffix words beside the
+// painter's and the describer's spellings. R1797 added the latency card's two
+// (the tile strip and the distribution); they are `card_tiles` and `card_bins`.
 
 /// ★★★★★ R2022 — the header affordances a card offers a reader: the ones its
 /// strip had ROOM for, in the order it gives way (from the left, so what
@@ -16357,7 +16325,7 @@ fn table_nodes(
 ) -> Vec<AccessNode> {
     let grid_columns: Vec<GridColumn> = (0..columns)
         .map(|c| GridColumn {
-            tag: head_cell_tag(id, c),
+            tag: address::card_head_cell(id, c),
             sort: None,
         })
         .collect();
@@ -16365,14 +16333,14 @@ fn table_nodes(
         .iter()
         .enumerate()
         .map(|(r, values)| GridRow {
-            tag: format!("card.{id}.{}.{r}", row_suffix(id)),
+            tag: table_row_tag(id, r),
             selected: false,
             state: RadioState::Idle,
             cells: values
                 .iter()
                 .enumerate()
                 .map(|(c, value)| GridCell {
-                    tag: cell_tag(id, r, c),
+                    tag: address::card_cell(id, r, c),
                     name: value.clone(),
                     focused: false,
                     selected: None,
@@ -16381,22 +16349,27 @@ fn table_nodes(
         })
         .collect();
     grid_table_nodes_clamped(
-        &format!("card.{id}.grid"),
+        &address::card_grid(id),
         name,
         false,
-        &format!("card.{id}.head"),
+        &address::card_head(id),
         &grid_columns,
         &grid_rows,
         extent,
     )
 }
 
-/// The tag segment a table card's data rows are painted under.
-fn row_suffix(id: &str) -> &'static str {
+/// The tag a table card's data row `row` is addressed by: the key map's rows are
+/// painted under `map`, every other table's under `row`.
+///
+/// ★ R2186 — this returned the segment WORD and its caller spliced it into a
+/// hand-written address; it now chooses between the two declared composers, the
+/// same ones `stream_body` and `map_body` paint with.
+fn table_row_tag(id: &str, row: usize) -> String {
     if def_for_card(id).map(|def| def.kind) == Some("keymap") {
-        "map"
+        address::card_map_row(id, row)
     } else {
-        "row"
+        address::card_row(id, row)
     }
 }
 
@@ -16415,13 +16388,13 @@ fn row_suffix(id: &str) -> &'static str {
 /// eight*, which is a fact, rather than being walked through two rows nobody
 /// drew.
 fn decode_nodes(id: &str, body: Rect) -> Vec<AccessNode> {
-    let mut tree = AccessNode::new(format!("card.{id}.tree"), AriaRole::Tree)
+    let mut tree = AccessNode::new(address::card_tree(id), AriaRole::Tree)
         .with_name("Decoded layers")
         .with_size_of_set(u32::try_from(spec::DECODE_ROWS.len()).unwrap_or(u32::MAX));
     let mut nodes = Vec::new();
     for (n, _) in decode_seats(body).iter() {
         let (depth, key, value) = spec::DECODE_ROWS[n];
-        let tag = format!("card.{id}.tree.{n}");
+        let tag = address::card_tree_row(id, n);
         tree = tree.with_child(tag.clone());
         let (place, siblings) = sibling_place(n);
         let mut item = AccessNode::new(tag, AriaRole::TreeItem)
@@ -16479,7 +16452,7 @@ fn byte_nodes(id: &str, body: Rect) -> Vec<AccessNode> {
         return Vec::new();
     };
     let columns = byte_columns(pane_w);
-    let mut grid = AccessNode::new(format!("card.{id}.bytegrid"), AriaRole::Grid)
+    let mut grid = AccessNode::new(address::card_bytegrid(id), AriaRole::Grid)
         .with_name("Captured bytes")
         .with_row_count(u32::try_from(lines).unwrap_or(u32::MAX))
         .with_column_count(u32::try_from(per_line).unwrap_or(u32::MAX));
@@ -16487,7 +16460,7 @@ fn byte_nodes(id: &str, body: Rect) -> Vec<AccessNode> {
     let (from, to) = spec::DECODE_SELECTED_SPAN;
     for (line, _) in byte_line_seats(body).iter() {
         let bytes = &spec::DECODE_BYTES[line];
-        let row_tag = format!("card.{id}.bytes.{line}");
+        let row_tag = address::card_bytes(id, line);
         grid = grid.with_child(row_tag.clone());
         // The row is named by the offset it starts at, which is what the strip
         // paints in its left column and what a reader counts from.
@@ -16496,7 +16469,7 @@ fn byte_nodes(id: &str, body: Rect) -> Vec<AccessNode> {
             .with_row(line);
         for (column, byte) in bytes.iter().enumerate().take(columns) {
             let index = line * per_line + column;
-            let tag = format!("card.{id}.byte.{index}");
+            let tag = address::card_byte(id, index);
             row = row.with_child(tag.clone());
             nodes.push(
                 AccessNode::new(tag, AriaRole::GridCell)
@@ -16516,7 +16489,7 @@ fn byte_nodes(id: &str, body: Rect) -> Vec<AccessNode> {
 /// whose **relation** is the point of the card.
 fn filter_nodes(state: &ShellState, id: &str, body: Rect) -> Vec<AccessNode> {
     let mut nodes = vec![
-        AccessNode::new(format!("card.{id}.query"), AriaRole::TextInput)
+        AccessNode::new(address::card_query(id), AriaRole::TextInput)
             .with_name("Query")
             .with_value(AccessValue::Text(spec::FILTER_QUERY.to_owned())),
     ];
@@ -16534,10 +16507,10 @@ fn filter_nodes(state: &ShellState, id: &str, body: Rect) -> Vec<AccessNode> {
     );
     let (with_counts, with_trend) = filter_counts_shown(body);
     let mut counts =
-        AccessNode::new(format!("card.{id}.counts"), AriaRole::Group).with_name("Match counts");
+        AccessNode::new(address::card_counts(id), AriaRole::Group).with_name("Match counts");
     if with_counts {
         for (n, (value, what)) in spec::FILTER_STATS.iter().enumerate() {
-            let tag = format!("card.{id}.stat.{n}");
+            let tag = address::card_stat(id, n);
             counts = counts.with_child(tag.clone());
             // The word is the name and the number is the value: a reader told
             // only "12,418" has been told which of three numbers it is by
@@ -16552,7 +16525,7 @@ fn filter_nodes(state: &ShellState, id: &str, body: Rect) -> Vec<AccessNode> {
     }
     if with_trend {
         nodes.push(
-            AccessNode::new(format!("card.{id}.sparkline"), AriaRole::Group)
+            AccessNode::new(address::card_sparkline(id), AriaRole::Group)
                 .with_name("Matched over time")
                 .with_value(AccessValue::Text(series_reading(&MATCH_SERIES))),
         );
@@ -16588,11 +16561,11 @@ fn latency_nodes(id: &str, body: Rect) -> Vec<AccessNode> {
     };
     let mut nodes = Vec::new();
     let tiles = latency_stats(&quantiles);
-    let strip = format!("card.{id}.tiles");
+    let strip = address::card_tiles(id);
     let mut group = AccessNode::new(strip.clone(), AriaRole::Group).with_name("Round trip");
     if stat_strip_w(body.w, tiles.len()).is_some() {
         for (n, (key, value)) in tiles.iter().enumerate() {
-            let tag = format!("card.{id}.stat.{n}");
+            let tag = address::card_stat(id, n);
             group = group.with_child(tag.clone());
             nodes.push(
                 AccessNode::new(tag, AriaRole::Status)
@@ -16621,7 +16594,7 @@ fn latency_nodes(id: &str, body: Rect) -> Vec<AccessNode> {
     };
     if latency_plot_rect(body, tiles.len(), binned.bins()).is_some() {
         nodes.push(
-            AccessNode::new(format!("card.{id}.bins"), AriaRole::Group)
+            AccessNode::new(address::card_bins(id), AriaRole::Group)
                 .with_name("Round trip distribution")
                 .with_value(AccessValue::Text(format!(
                     "{} samples in {} buckets, {} — {}: {buckets}; {emphasised}",
@@ -16634,7 +16607,7 @@ fn latency_nodes(id: &str, body: Rect) -> Vec<AccessNode> {
     }
     if latency_caption_shown(body, tiles.len()) {
         nodes.push(
-            AccessNode::new(format!("card.{id}.caption"), AriaRole::Status)
+            AccessNode::new(address::card_caption(id), AriaRole::Status)
                 .with_name("About this chart")
                 .with_value(AccessValue::Text(spec::LATENCY_CAPTION.to_owned())),
         );

@@ -1048,3 +1048,186 @@ pub fn card_chip(id: &str, n: usize) -> String {
 pub fn card_chips(id: &str) -> String {
     format!("{}.chips", card(id))
 }
+
+// --- the card's body ------------------------------------------------------------
+//
+// ★★★★★ R2186 §5.2 — **what a card's BODY paints**, declared where the chrome
+// was (R2185).
+//
+// Measured at entry: `card.{}` kept 43 Rust readers after R2185, and every one
+// was in a body painter or its describing twin — `latency_body` /
+// `latency_nodes`, `filter_body` and `filter_counts` / `filter_nodes`,
+// `health_body` / `health_nodes`, `byte_pane` / `byte_nodes`, `decode_body` /
+// `decode_nodes`, the table bodies / `table_nodes` — each writing the same parts
+// twice, and the card region's own list of body roots writing them a third time
+// as suffix words.
+//
+// # Who owns what
+//
+// A stat tile's rows and trail are the CRATE's composition
+// (`pinion_widget_paint::stat_tile`); this module places the one a reader names —
+// the trail, under which the shell paints its sparkline — through
+// `stat_tile::trail_tag`. A table's grid, rows and cells are handed to
+// `pinion_a11y::grid` WHOLE, so they are this screen's; the cell and heading
+// stems moved here from `main.rs`, where R1873 had given them one home shared
+// with a paint test.
+
+/// The heading row of a table card.
+#[must_use]
+pub fn card_head(id: &str) -> String {
+    format!("{}.head", card(id))
+}
+
+/// The stem every column heading of a table card is addressed under.
+#[must_use]
+pub fn card_head_cell_stem(id: &str) -> String {
+    format!("{}.", card_head(id))
+}
+
+/// One column heading of a table card.
+#[must_use]
+pub fn card_head_cell(id: &str, column: impl std::fmt::Display) -> String {
+    format!("{}{column}", card_head_cell_stem(id))
+}
+
+/// The stem every cell of a table card is addressed under.
+#[must_use]
+pub fn card_cell_stem(id: &str) -> String {
+    format!("{}.cell.", card(id))
+}
+
+/// One cell of a table card.
+#[must_use]
+pub fn card_cell(id: &str, row: impl std::fmt::Display, column: impl std::fmt::Display) -> String {
+    format!("{}{row}_{column}", card_cell_stem(id))
+}
+
+/// A table card's grid, as a reader meets it.
+#[must_use]
+pub fn card_grid(id: &str) -> String {
+    format!("{}.grid", card(id))
+}
+
+/// One data row of a packet table.
+#[must_use]
+pub fn card_row(id: &str, row: impl std::fmt::Display) -> String {
+    format!("{}.row.{row}", card(id))
+}
+
+/// One data row of the key map.
+#[must_use]
+pub fn card_map_row(id: &str, row: impl std::fmt::Display) -> String {
+    format!("{}.map.{row}", card(id))
+}
+
+/// A card's strip of stat tiles.
+#[must_use]
+pub fn card_tiles(id: &str) -> String {
+    format!("{}.tiles", card(id))
+}
+
+/// One stat tile of a card.
+#[must_use]
+pub fn card_stat(id: &str, n: impl std::fmt::Display) -> String {
+    format!("{}.stat.{n}", card(id))
+}
+
+/// The prefix a tile's trailing sparkline is tagged under — inside the tile's
+/// trail, which is the crate's composition.
+#[must_use]
+pub fn card_stat_spark(id: &str, n: impl std::fmt::Display) -> String {
+    format!(
+        "{}.spark",
+        pinion_widget_paint::stat_tile::trail_tag(&card_stat(id, n))
+    )
+}
+
+/// The latency card's distribution chart, as the chart's tag prefix.
+#[must_use]
+pub fn card_dist(id: &str) -> String {
+    format!("{}.dist", card(id))
+}
+
+/// The box that holds that distribution.
+#[must_use]
+pub fn card_bins(id: &str) -> String {
+    format!("{}.bins", card(id))
+}
+
+/// The latency card's caption.
+#[must_use]
+pub fn card_caption(id: &str) -> String {
+    format!("{}.caption", card(id))
+}
+
+/// The filter card's query field.
+#[must_use]
+pub fn card_query(id: &str) -> String {
+    format!("{}.query", card(id))
+}
+
+/// The filter card's match counts.
+#[must_use]
+pub fn card_counts(id: &str) -> String {
+    format!("{}.counts", card(id))
+}
+
+/// The filter card's sparkline.
+#[must_use]
+pub fn card_sparkline(id: &str) -> String {
+    format!("{}.sparkline", card(id))
+}
+
+/// The decode card's layer tree.
+#[must_use]
+pub fn card_tree(id: &str) -> String {
+    format!("{}.tree", card(id))
+}
+
+/// One row of that tree.
+#[must_use]
+pub fn card_tree_row(id: &str, n: impl std::fmt::Display) -> String {
+    format!("{}.{n}", card_tree(id))
+}
+
+/// The decode card's byte grid.
+#[must_use]
+pub fn card_bytegrid(id: &str) -> String {
+    format!("{}.bytegrid", card(id))
+}
+
+/// One line of that grid.
+#[must_use]
+pub fn card_bytes(id: &str, line: impl std::fmt::Display) -> String {
+    format!("{}.bytes.{line}", card(id))
+}
+
+/// One byte of that grid.
+#[must_use]
+pub fn card_byte(id: &str, index: impl std::fmt::Display) -> String {
+    format!("{}.byte.{index}", card(id))
+}
+
+/// A placeholder card's code line.
+#[must_use]
+pub fn card_code(id: &str) -> String {
+    format!("{}.code", card(id))
+}
+
+/// The body roots a card region names as its children — each one a composer
+/// above, so this list cannot spell a part the painter does not.
+///
+/// ★ R2186 — this was `BODY_ROOTS` in `main.rs`, nine suffix WORDS compared
+/// against `format!("card.{id}.{suffix}")`: a third spelling of every root, beside
+/// the painter's and the describer's.
+pub const CARD_BODY_ROOTS: &[fn(&str) -> String] = &[
+    card_grid,
+    card_tree,
+    card_bytegrid,
+    card_query,
+    card_chips,
+    card_counts,
+    card_sparkline,
+    card_tiles,
+    card_bins,
+];

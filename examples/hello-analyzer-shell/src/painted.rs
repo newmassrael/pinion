@@ -2536,8 +2536,8 @@ fn r1851_no_alarm_run_sits_in_a_box_too_short_for_its_own_face() {
 /// [`shown_cards`] — the shell's own state — so a card that went missing from
 /// the paint is a failure elsewhere rather than a question this gate quietly
 /// narrowed. WHETHER A CARD IS A TABLE comes from the paint: it is one iff the
-/// frame holds a run under its [`head_cell_stem`](super::head_cell_stem) or its
-/// [`cell_stem`](super::cell_stem). So a third table card added later is judged
+/// frame holds a run under its [`head_cell_stem`](crate::address::card_head_cell_stem) or its
+/// [`cell_stem`](crate::address::card_cell_stem). So a third table card added later is judged
 /// the day it is painted, and no reader has to remember to add it.
 ///
 /// ⚠ The first draft of this comment credited both halves to the paint. It was
@@ -2577,7 +2577,11 @@ fn r1873_no_grid_run_of_a_table_card_sits_in_a_box_too_short_for_its_face() {
         let stems: Vec<(String, String)> = shown_cards(state)
             .iter()
             .flat_map(|id| {
-                [super::head_cell_stem(id), super::cell_stem(id)].map(|stem| (id.clone(), stem))
+                [
+                    crate::address::card_head_cell_stem(id),
+                    crate::address::card_cell_stem(id),
+                ]
+                .map(|stem| (id.clone(), stem))
             })
             .collect();
         for short in pinion_core::containment::short_boxes(scene) {
@@ -2647,10 +2651,10 @@ fn r1873_no_grid_run_of_a_table_card_sits_in_a_box_too_short_for_its_face() {
 #[test]
 fn r1873_the_grid_stems_are_the_ones_the_painter_builds_tags_from() {
     let id = "packet#0";
-    let cells = super::cell_stem(id);
-    let heads = super::head_cell_stem(id);
+    let cells = crate::address::card_cell_stem(id);
+    let heads = crate::address::card_head_cell_stem(id);
     for (row, column) in [(0, 0), (3, 2), (11, 7)] {
-        let tag = super::cell_tag(id, row, column);
+        let tag = crate::address::card_cell(id, row, column);
         assert!(
             tag.starts_with(&cells),
             "the cell builder makes {tag} which is not under {cells}",
@@ -2661,7 +2665,7 @@ fn r1873_the_grid_stems_are_the_ones_the_painter_builds_tags_from() {
         );
     }
     for column in [0, 2, 7] {
-        let tag = super::head_cell_tag(id, column);
+        let tag = crate::address::card_head_cell(id, column);
         assert!(
             tag.starts_with(&heads),
             "the heading builder makes {tag} which is not under {heads}",
@@ -2780,8 +2784,8 @@ fn r1873_a_table_cards_heading_and_its_cells_share_one_rhythm() {
             .iter()
             .flat_map(|id| {
                 [
-                    (id.clone(), super::head_cell_stem(id), true),
-                    (id.clone(), super::cell_stem(id), false),
+                    (id.clone(), crate::address::card_head_cell_stem(id), true),
+                    (id.clone(), crate::address::card_cell_stem(id), false),
                 ]
             })
             .collect();

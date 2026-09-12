@@ -436,7 +436,7 @@ impl StatTile {
             children.push(
                 Scene::Container(
                     ContainerNode::new(vec![scene])
-                        .with_tag(format!("{tag}.trail"))
+                        .with_tag(trail_tag(tag))
                         .with_layout(
                             LayoutStyle::new()
                                 .with_absolute_position(where_.x, where_.y)
@@ -545,6 +545,17 @@ impl Tile {
     }
 }
 
+/// ★★★★★ R2186 — **the trail's address** under a tile's tag.
+///
+/// Published because a caller names it: the trailing figure is the caller's to
+/// build and is tagged under the trail, and before this the one consumer wrote
+/// `{tile}.trail` for itself — a copy of this crate's composition across its
+/// boundary, which had to agree with the tile to the letter.
+#[must_use]
+pub fn trail_tag(tile_tag: &str) -> String {
+    format!("{tile_tag}.trail")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -589,6 +600,27 @@ mod tests {
                 .unwrap_or_else(|| panic!("no child tagged {tag} in {:?}", tags_of(scene))),
             other => panic!("not a container: {other:?}"),
         }
+    }
+
+    /// ★★★★★ R2186 — the trail's address is composed HERE; its value is pinned
+    /// by literal, and the tile this crate builds is held to the composer.
+    #[test]
+    fn r2186_a_trail_is_composed_here_and_pinned_by_value() {
+        assert_eq!(
+            super::trail_tag("card.health.stat.0"),
+            "card.health.stat.0.trail"
+        );
+        let tile = StatTile::new("throughput", "1.4 Gb/s")
+            .with_trail(24)
+            .build_with("card.health.stat.0", ROOM, |rect| {
+                Scene::Box(BoxNode::new(rect, BoxStyle::default()))
+            });
+        let tags = tags_of(tile.scene());
+        let want = super::trail_tag("card.health.stat.0");
+        assert!(
+            tags.contains(&want),
+            "the composer says `{want}` and the tile painted {tags:?}"
+        );
     }
 
     /// ★★★★★ The whole reason this is a crate rather than a third hand-rolled

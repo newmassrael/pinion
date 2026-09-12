@@ -30,7 +30,7 @@ card.keymap	5	0
 card.latency	4	15
 card.packet	16	11
 card.throughput	0	2
-card.{}	20	76
+card.{}	20	37
 cell_at.{}	0	1
 chart.area	6	3
 chart.axis	2	3
