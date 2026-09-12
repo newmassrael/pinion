@@ -40,6 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import painted_grammar  # noqa: E402
 import rpc_verify  # noqa: E402
 from rpc_verify import (  # noqa: E402
     Png,
@@ -633,6 +634,49 @@ def test_chart_grammar_refuses_rather_than_composing_a_guess() -> None:
             check(True, f"chart grammar: {label} is refused")
         else:
             check(False, f"chart grammar: {label} must be refused")
+
+
+def test_chart_addresses_binds_the_two_coordinates_together() -> None:
+    """★★★★★ R2165 — the prefix and the part are ONE chart's, or they compose
+    an address nothing paints.
+
+    Every converted chart walk had opened by binding them separately, and R2162
+    measured what that costs: a walk holding the timeline's prefix beside the
+    majority's part asks for `timeline.inspect.header`, finds nothing, and reads
+    the silence as *the chart paints no callout*.
+
+    ⚠ The addresses are spelled here on purpose, as the cases above are: this
+    file sits outside the census `painted_addresses.py` reads, so a value pin
+    costs the campaign nothing and buys it a check.
+    """
+    inspect = rpc_verify.ChartAddresses(prefix="chart", part="inspect")
+    check(inspect.at("series", index=0) == "chart.series.0",
+          "ChartAddresses: `at` composes under the bound prefix")
+    check(inspect.family("point") == "chart.point",
+          "ChartAddresses: `family` is the stem")
+    check(inspect.under("point") == "chart.point.",
+          "ChartAddresses: `under` is that stem plus the grammar's separator")
+    check(inspect.under("point") == inspect.family("point") + painted_grammar.SEPARATOR,
+          "ChartAddresses: and the separator is the grammar's, not a literal")
+    check(rpc_verify.address_family(inspect.under("point")) == inspect.family("point"),
+          "ChartAddresses: `under` and `address_family` are one fact, two ways")
+    check(inspect.callout("header") == "chart.inspect.header",
+          "ChartAddresses: `callout` composes under the bound PART")
+
+    playhead = rpc_verify.ChartAddresses(prefix="timeline", part="playhead")
+    check(playhead.callout("header") == "timeline.playhead.header",
+          "ChartAddresses: a chart on another part answers differently")
+
+    # ★★ `None` means the chart paints NO callout — the sparkline, measured on
+    # `hello-stat-tiles`, whose four charts all report it. Composing past that
+    # would put the word `None` into an address.
+    silent = rpc_verify.ChartAddresses(prefix="spark_0", part=None)
+    try:
+        composed = silent.callout("header")
+    except AssertionError:
+        check(True, "ChartAddresses: a chart that paints no callout refuses one")
+    else:
+        check(False, f"ChartAddresses: a None part must refuse -> {composed}")
 
 
 def test_request_matches_its_own_id() -> None:

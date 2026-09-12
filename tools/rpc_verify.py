@@ -5143,9 +5143,14 @@ def published_tags(published: Any, roster: str, *, key: str = "key", tag: str = 
     return {row[key]: row[tag] for row in rows}
 
 
-def address_family(prefix: str, *, separator: str = ".") -> str:
+def address_family(prefix: str, *, separator: str = painted_grammar.SEPARATOR) -> str:
     """The family STEM a published prefix names — the prefix with its trailing
     separator taken off.
+
+    ⚠ R2165 — the default is [`painted_grammar.SEPARATOR`], not a `"."` written
+    here. This function and `ChartAddresses.under` are the two directions of one
+    fact, and a tree where they disagreed would classify a family by one rule
+    and build its members by another.
 
     ★★★★★ R2106 — a walk classifying a painted tag by family compares
     `tag == stem or tag.startswith(stem + separator)`, which needs the stem; a
@@ -5361,6 +5366,100 @@ def chart_overlay_address(
             f"{sorted(members)}."
         )
     return _chart_format(members[name], name, prefix, dict(fields, part=part))
+
+
+@dataclass(frozen=True)
+class ChartAddresses:
+    """★★★★★ R2165 — one driven chart's composers, bound to what the FRAME says.
+
+    Every converted chart walk had been opening with the same four lines:
+
+        (prefix,) = d.chart_prefixes(viewport=VIEWPORT)
+        part = d.chart_overlay_parts(viewport=VIEWPORT)[prefix]
+        here = lambda name, **f: chart_address(name, prefix=prefix, **f)
+        callout = lambda name, **f: chart_overlay_address(
+            name, prefix=prefix, part=part, **f)
+
+    Two walks had written it by R2162 and thirty-odd more are owed one. It is
+    not boilerplate worth removing for tidiness — it is the exact pairing R2162
+    proved a walk can get wrong. The prefix and the part are TWO coordinates of
+    one address and they come from ONE chart; binding them apart is what lets a
+    walk hold the timeline's prefix beside the majority's part and compose
+    `timeline.inspect.header`, which names nothing and reads as *the chart
+    painted no callout*.
+
+    ⚠ [`callout`] REFUSES when the frame reports no part. `None` is a chart that
+    paints no callout at all — the sparkline — and composing past it would put
+    the word `None` in an address. The refusal is what makes the absence
+    readable.
+    """
+
+    prefix: str
+    part: Optional[str]
+
+    def at(self, name: str, **fields: Any) -> str:
+        """One address this chart paints — see [`chart_address`]."""
+        return chart_address(name, prefix=self.prefix, **fields)
+
+    def family(self, name: str, **fields: Any) -> str:
+        """The family stem, cut as far as `fields` reach — see [`chart_family`]."""
+        return chart_family(name, prefix=self.prefix, **fields)
+
+    def under(self, name: str, **fields: Any) -> str:
+        """The family PREFIX — the stem with the separator every member's own
+        segments are appended to.
+
+        ★★★★★ R2165 — what a walk counting or classifying a whole family needs,
+        and the half [`family`] does not give. `family("candle")` is
+        `chart.candle`; a walk asking *how many candles are painted* means
+        `chart.candle.`, and 51 sites across eleven walks spell that literal —
+        R2162's own conversion among them, as `f"{chart_family(...)}."`. The
+        separator is a fact of the grammar, so it comes from the grammar's
+        reader rather than from whichever caller remembered to append it.
+        """
+        return self.family(name, **fields) + painted_grammar.SEPARATOR
+
+    def callout(self, name: str, **fields: Any) -> str:
+        """One member of this chart's callout overlay, under ITS part."""
+        assert self.part is not None, (
+            f"the chart tagged {self.prefix!r} reports no overlay part, which "
+            "means it paints no callout at all -- asking for one composes an "
+            "address nothing carries, and a walk reads that as the chart "
+            "failing to paint what it never paints"
+        )
+        return chart_overlay_address(name, prefix=self.prefix, part=self.part, **fields)
+
+
+def chart_addresses(
+    tf,
+    *,
+    viewport: Optional[tuple[int, int]] = None,
+    prefix: Optional[str] = None,
+) -> ChartAddresses:
+    """The composers for ONE chart on the driven screen, asked of the frame.
+
+    With no `prefix`, the screen must carry exactly one chart — the common case,
+    and the refusal below is the `(prefix,) = …` unpacking with a message on it.
+    Name a `prefix` on a screen that paints several.
+
+    ⚠ Both coordinates come from ONE `scene/derivations` reading per question,
+    so they cannot be taken from different charts.
+    """
+    parts = tf.chart_overlay_parts(viewport=viewport)
+    if prefix is None:
+        assert len(parts) == 1, (
+            f"this screen paints {len(parts)} chart(s) -- {sorted(parts)} -- so "
+            "which one's addresses to compose is not something this reader may "
+            "guess; name it with prefix="
+        )
+        (prefix,) = parts
+    elif prefix not in parts:
+        raise AssertionError(
+            f"the frame reports no chart tagged {prefix!r}; it reports "
+            f"{sorted(parts)}. A walk composing under a prefix no chart took "
+            "builds addresses nothing paints."
+        )
+    return ChartAddresses(prefix=prefix, part=parts[prefix])
 
 
 def form_part_prefixes(tf, *, ext: str = "/external") -> dict:

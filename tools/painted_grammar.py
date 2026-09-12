@@ -68,6 +68,18 @@ ROOT = Path(__file__).resolve().parent.parent
 #: participant the day it is written, with no list here to remember to edit.
 ARTIFACTS = ("crates/*/src/painted_grammar.tsv", "examples/*/src/painted_grammar.tsv")
 
+#: What joins one segment of an address to the next.
+#:
+#: ★★★★★ R2165 — **a reader that wants EVERYTHING under a family needs the
+#: separator, and until now it supplied its own.** A composer hands back a stem
+#: (`chart.candle`); a walk counting that family's marks needs the PREFIX
+#: (`chart.candle.`), and 51 sites across eleven walks spell one as a literal.
+#: R2162's own conversion wrote `f"{chart_family(...)}."` — this campaign's
+#: newest code re-typing a fact of the grammar, which is the shape it exists to
+#: remove. It is stated once here and held to the artifact by [`selftest`],
+#: rather than defaulted at each function that happens to need it.
+SEPARATOR = "."
+
 #: The kinds a row can carry, and what each one means.
 #:
 #: `const`   a whole address, already rendered
@@ -140,9 +152,9 @@ def body(template: str) -> tuple[str, ...] | None:
     cut, and saying so is better than cutting it somewhere plausible.
     """
     head, marker, rest = template.partition("{prefix}")
-    if head or not marker or not rest.startswith("."):
+    if head or not marker or not rest.startswith(SEPARATOR):
         return None
-    return tuple(rest[1:].split("."))
+    return tuple(rest[len(SEPARATOR) :].split(SEPARATOR))
 
 
 def fixed_run(template: str) -> tuple[str, ...]:
@@ -259,6 +271,25 @@ def selftest() -> int:
         if word in heads:
             failed += 1
             print(f"FAIL: {why}: {word!r} came back as a family head", file=sys.stderr)
+
+    # ── the separator is the artifact's, not this file's opinion ────────────
+    joined = 0
+    for path in artifacts():
+        for kind, name, value in rows(path):
+            if kind not in ("grammar", "overlay"):
+                continue
+            joined += 1
+            if SEPARATOR not in value:
+                failed += 1
+                print(
+                    f"FAIL: the template {name!r} is {value!r}, which carries no "
+                    f"{SEPARATOR!r} — this reader's separator is not the "
+                    "artifact's, and every family prefix it composes is wrong",
+                    file=sys.stderr,
+                )
+    if not joined:
+        failed += 1
+        print("FAIL: no template was read — the separator check is vacuous", file=sys.stderr)
 
     # ── and the artifact set is not empty, or every check above is vacuous ───
     if not artifacts():

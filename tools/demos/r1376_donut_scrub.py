@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    chart_addresses,
     find_by_tag,
     run_demo,
 )
@@ -53,8 +54,10 @@ def _cmd_types(node: dict) -> list[str]:
     return [c["type"] for c in node["commands"]]
 
 
-def _ring_start(snap) -> tuple[float, float]:
-    ring = _node(snap, "chart.inspect.highlight")
+def _ring_start(snap, c) -> tuple[float, float]:
+    # ⚠ The composer is an ARGUMENT. A helper that held the overlay address
+    # inside itself would simply be the next site spelling it (R2162).
+    ring = _node(snap, c.callout("highlight"))
     first = ring["commands"][0]
     assert first["type"] == "MoveTo", "the ring starts with a MoveTo"
     return (first["point"]["x"], first["point"]["y"])
@@ -62,48 +65,49 @@ def _ring_start(snap) -> tuple[float, float]:
 
 def body() -> None:
     with RpcSubprocess("hello-donut") as d:
+        # ★★★★★ R2165 — the chart's own prefix AND the part it paints its
+        # callout under, taken from the frame as ONE pair. A donut paints under
+        # `inspect`; a walk that knew that rather than asking would be wrong the
+        # day this screen shows a timeline instead.
+        c = chart_addresses(d, viewport=VIEWPORT)
         snap = d.snapshot(source="paint", viewport=VIEWPORT)
-        assert find_by_tag(snap, "chart") is not None, "donut container present"
+        assert find_by_tag(snap, c.prefix) is not None, "donut container present"
 
         # ── (A) one filled sector + a legend per slice ───────────────────────
         for i, (label, _v) in enumerate(SLICES):
-            s = _node(snap, f"chart.slice.{i}")
+            s = _node(snap, c.at("slice", index=i))
             assert_eq(s["type"], "Path", f"slice {i} is a path")
             assert s["style"]["fill"] is not None, f"slice {i} is filled"
             assert s["style"]["stroke"] is None, f"slice {i} is not stroked"
-            swatch = _node(snap, f"chart.legend.{i}.swatch")
+            swatch = _node(snap, c.at("legend_swatch", index=i))
             assert_eq(swatch["type"], "Box", f"legend {i} swatch is a box")
             assert_eq(
-                _node(snap, f"chart.legend.{i}.label").get("content"),
+                _node(snap, c.at("legend_label", index=i)).get("content"),
                 label,
                 f"legend {i} names the slice",
             )
-        assert find_by_tag(snap, f"chart.slice.{len(SLICES)}") is None, "no phantom slice"
+        assert find_by_tag(snap, c.at("slice", index=len(SLICES))) is None, "no phantom slice"
 
         # ── (B) a sector is a CLOSED cubic-Bézier path (a real arc) ──────────
-        types = _cmd_types(_node(snap, "chart.slice.0"))
+        types = _cmd_types(_node(snap, c.at("slice", index=0)))
         assert types[0] == "MoveTo", "sector starts with MoveTo"
         assert types[-1] == "Close", "sector is closed"
         assert "CurveTo" in types, "the arc is drawn as cubic Béziers"
 
         # ── (C) the boot scrub (0.5) paints the full overlay ─────────────────
-        for tag in (
-            "chart.inspect.highlight",
-            "chart.inspect.tooltip",
-            "chart.inspect.header",
-            "chart.inspect.value",
-        ):
+        for member in ("highlight", "tooltip", "header", "value"):
+            tag = c.callout(member)
             assert find_by_tag(snap, tag) is not None, f"the scrub paints {tag}"
-        ring = _node(snap, "chart.inspect.highlight")
+        ring = _node(snap, c.callout("highlight"))
         assert ring["style"]["stroke"] is not None, "the highlight is a stroked ring"
         assert ring["style"]["fill"] is None, "the ring frames, it does not cover"
         # The ring shares a sector's rect (all sectors are in the one circle).
         slice_rects = {
             (
-                _node(snap, f"chart.slice.{i}")["rect"]["x"],
-                _node(snap, f"chart.slice.{i}")["rect"]["y"],
-                _node(snap, f"chart.slice.{i}")["rect"]["w"],
-                _node(snap, f"chart.slice.{i}")["rect"]["h"],
+                _node(snap, c.at("slice", index=i))["rect"]["x"],
+                _node(snap, c.at("slice", index=i))["rect"]["y"],
+                _node(snap, c.at("slice", index=i))["rect"]["w"],
+                _node(snap, c.at("slice", index=i))["rect"]["h"],
             )
             for i in range(len(SLICES))
         }
@@ -114,14 +118,14 @@ def body() -> None:
         d.intervene("/external/value", 0.1)
         assert abs(d.query("/external/value") - 0.1) < 0.02, "scrub set to 0.1"
         low = d.snapshot(source="paint", viewport=VIEWPORT)
-        assert_eq(_node(low, "chart.inspect.header").get("content"), "Media", "0.1 -> first slice")
-        low_start = _ring_start(low)
+        assert_eq(_node(low, c.callout("header")).get("content"), "Media", "0.1 -> first slice")
+        low_start = _ring_start(low, c)
 
         d.intervene("/external/value", 0.9)
         assert abs(d.query("/external/value") - 0.9) < 0.02, "scrub set to 0.9"
         high = d.snapshot(source="paint", viewport=VIEWPORT)
-        assert_eq(_node(high, "chart.inspect.header").get("content"), "Free", "0.9 -> last slice")
-        high_start = _ring_start(high)
+        assert_eq(_node(high, c.callout("header")).get("content"), "Free", "0.9 -> last slice")
+        high_start = _ring_start(high, c)
         assert low_start != high_start, (
             f"the ring frames a different slice as the scrub moves: {low_start} -> {high_start}"
         )
@@ -129,11 +133,11 @@ def body() -> None:
         # ── (E) the tooltip value carries the slice's percent share ──────────
         media_pct = round(128 / TOTAL * 100)  # 43
         free_pct = round(73 / TOTAL * 100)  # 24
-        media_val = _node(low, "chart.inspect.value").get("content")
+        media_val = _node(low, c.callout("value")).get("content")
         assert media_val is not None and f"{media_pct}%" in media_val, (
             f"Media shows its {media_pct}% share, got {media_val!r}"
         )
-        free_val = _node(high, "chart.inspect.value").get("content")
+        free_val = _node(high, c.callout("value")).get("content")
         assert free_val is not None and f"{free_pct}%" in free_val, (
             f"Free shows its {free_pct}% share, got {free_val!r}"
         )

@@ -68,6 +68,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     access_node_by_tag,
     assert_eq,
+    chart_addresses,
     find_by_tag,
     run_demo,
     walk_nodes,
@@ -147,7 +148,7 @@ def caption(snap: dict) -> str:
     return node(snap, CAPTION_TAG)["content"]
 
 
-def body_span(snap: dict, i: int) -> float:
+def body_span(snap: dict, c, i: int) -> float:
     """Session `i`'s body height read off its PATH, not its bounding box.
 
     A node's rect is padded by the stroke width, so a zero-height body still
@@ -156,17 +157,17 @@ def body_span(snap: dict, i: int) -> float:
     node's own frame (R1358), so this reads the derivation itself.
     """
     ys = [
-        float(c["point"]["y"])
-        for c in node(snap, f"chart.candle.{i}")["commands"]
-        if "point" in c
+        float(cmd["point"]["y"])
+        for cmd in node(snap, c.at("candle", index=i))["commands"]
+        if "point" in cmd
     ]
     assert len(ys) == 4, f"a body is four corners and a close: {ys}"
     return max(ys) - min(ys)
 
 
-def body_ink(snap: dict, i: int) -> tuple[int, tuple[int, int, int]]:
+def body_ink(snap: dict, c, i: int) -> tuple[int, tuple[int, int, int]]:
     """`(fill alpha, stroke rgb)` of session `i` — the two encoding channels."""
-    n = node(snap, f"chart.candle.{i}")
+    n = node(snap, c.at("candle", index=i))
     fill = n["style"]["fill"]
     stroke = n["style"]["stroke"]["color"]
     return int(fill["a"]), (int(stroke["r"]), int(stroke["g"]), int(stroke["b"]))
@@ -187,25 +188,30 @@ def body() -> None:
         for _ in range(3):
             tf.tick(0.016)
 
+        # ★★★★★ R2165 — the prefix and the overlay part as ONE pair from the
+        # frame, and `under(...)` for the family PREFIXES this walk counts by:
+        # the separator is a fact of the grammar, not one to re-type per site.
+        c = chart_addresses(tf, viewport=VIEWPORT)
+
         # ── (A) the schema, and the parts against each other ─────────
         snap = snapshot(tf)
         n = len(SESSIONS)
-        assert_eq(count_prefix(snap, "chart.candle."), n, "one body per session")
+        assert_eq(count_prefix(snap, c.under("candle")), n, "one body per session")
         assert_eq(
-            count_prefix(snap, "chart.wick."),
+            count_prefix(snap, c.under("wick_part")),
             n * 2,
             "two wicks per session — a datum with EXTENT whose interior is "
             "split by two landmarks that are NOT ordered against each other",
         )
         assert_eq(
-            count_prefix(snap, "chart.cap."),
+            count_prefix(snap, c.under("cap")),
             0,
             "the caps are opt-in, as the toolkit's capsVisible is",
         )
         for i in range(n):
-            b = rect(snap, f"chart.candle.{i}")
-            hi = rect(snap, f"chart.wick.{i}.hi")
-            lo = rect(snap, f"chart.wick.{i}.lo")
+            b = rect(snap, c.at("candle", index=i))
+            hi = rect(snap, c.at("wick_hi", index=i))
+            lo = rect(snap, c.at("wick_lo", index=i))
             assert abs(centre_x(b) - centre_x(hi)) <= 1.5, f"wick {i}.hi is centred"
             assert abs(centre_x(b) - centre_x(lo)) <= 1.5, f"wick {i}.lo is centred"
             assert float(hi["y"]) <= float(b["y"]) + 2, (
@@ -215,35 +221,35 @@ def body() -> None:
                 f"wick {i}.lo drops to the session low, below the body bottom"
             )
             assert float(hi["w"]) < float(b["w"]), f"wick {i}.hi is thinner than its body"
-        centres = [centre_x(rect(snap, f"chart.candle.{i}")) for i in range(n)]
+        centres = [centre_x(rect(snap, c.at("candle", index=i))) for i in range(n)]
         assert centres == sorted(centres), f"sessions ascend left to right: {centres}"
 
         # ── (B) PAST THE FLOOR: the doji has a name
         # ─────────────────────────
         assert_eq(
-            body_span(snap, DOJI),
+            body_span(snap, c, DOJI),
             0.0,
             "PAST THE FLOOR: Wednesday opened and closed at 106, so its body has NO "
             "height — that is the glyph, not a rounding error. The toolkit paints it "
             "with decreasingColor and no accessor can say otherwise",
         )
         for i in (0, 1, 2, 4, 5):
-            assert body_span(snap, i) > 1.0, (
-                f"session {i} has a real body ({body_span(snap, i)}px) — the "
+            assert body_span(snap, c, i) > 1.0, (
+                f"session {i} has a real body ({body_span(snap, c, i)}px) — the "
                 "doji is not 'every body is thin', it is the one session that "
                 "closed where it opened"
             )
-        assert find_by_tag(snap, f"chart.wick.{DOJI}.hi") is not None, (
+        assert find_by_tag(snap, c.at("wick_hi", index=DOJI)) is not None, (
             "...and it still draws its wicks, so a doji is a visible session "
             "rather than a hole in the series"
         )
-        assert find_by_tag(snap, f"chart.wick.{DOJI}.lo") is not None
+        assert find_by_tag(snap, c.at("wick_lo", index=DOJI)) is not None
         assert "a doji" in caption(snap), f"and it is NAMED: {caption(snap)}"
         assert "solid body" in caption(snap), caption(snap)
 
         # ── (C) PAST THE FLOOR: the direction is encoded twice
         # ──────────────
-        hued = [body_ink(snap, i) for i in range(n)]
+        hued = [body_ink(snap, c, i) for i in range(n)]
         assert_eq(
             [a for a, _ in hued],
             [FILL_ALPHA[d] for d in DIRECTIONS],
@@ -266,7 +272,7 @@ def body() -> None:
 
         toggle(tf, MONO_TAG)
         snap = snapshot(tf)
-        mono = [body_ink(snap, i) for i in range(n)]
+        mono = [body_ink(snap, c, i) for i in range(n)]
         assert_eq(
             len({h for _, h in mono}),
             1,
@@ -294,7 +300,7 @@ def body() -> None:
         # ── (D) PAST THE FLOOR: one datum, two readings of the x-axis
         # ───────
         assert_eq(
-            [node(snap, f"chart.xlabel.{i}")["content"] for i in range(n)],
+            [node(snap, c.at("xlabel", index=i))["content"] for i in range(n)],
             SLOT_NAMES,
             "PAST THE FLOOR: the slot names are DERIVED from the sessions' own "
             "instants. The toolkit's bar category axis takes a string list supplied "
@@ -307,7 +313,7 @@ def body() -> None:
             f"abut whatever real time separates them: {ordinal_gaps}"
         )
         assert_eq(
-            count_prefix(snap, "chart.grid.x."),
+            count_prefix(snap, c.under("grid_x")),
             0,
             "and an ordinal axis has no numeric x-gridlines: a slot boundary "
             "is not a value",
@@ -315,7 +321,7 @@ def body() -> None:
 
         pick_reading(tf, ELAPSED)
         snap = snapshot(tf)
-        e_centres = [centre_x(rect(snap, f"chart.candle.{i}")) for i in range(n)]
+        e_centres = [centre_x(rect(snap, c.at("candle", index=i))) for i in range(n)]
         elapsed_gaps = [e_centres[k + 1] - e_centres[k] for k in range(n - 1)]
         assert elapsed_gaps[AFTER_GAP - 1] > elapsed_gaps[0] * 2.5, (
             "PAST THE FLOOR: on the ELAPSED axis the SAME six sessions sit over real "
@@ -331,8 +337,8 @@ def body() -> None:
         # a mean. A mean over this fixture would be 1.4 days and the weekday
         # bodies would run into each other.
         for i in range(n - 1):
-            a = rect(snap, f"chart.candle.{i}")
-            b = rect(snap, f"chart.candle.{i + 1}")
+            a = rect(snap, c.at("candle", index=i))
+            b = rect(snap, c.at("candle", index=i + 1))
             assert float(a["x"]) + float(a["w"]) <= float(b["x"]) + 1, (
                 f"bodies {i} and {i + 1} do not overlap on the elapsed axis"
             )
@@ -340,15 +346,15 @@ def body() -> None:
         # ── (E) PAST THE FLOOR: the label cardinality follows the reading
         # ───
         assert_eq(
-            count_prefix(snap, "chart.xlabel."),
+            count_prefix(snap, c.under("xlabel")),
             0,
             "an elapsed axis has no per-slot labels",
         )
-        assert count_prefix(snap, "chart.label.x.") > 0, (
+        assert count_prefix(snap, c.under("label_x")) > 0, (
             "it has per-TICK ones instead — two tags because they answer two "
             "questions, rather than one tag that lies about what it counts"
         )
-        assert count_prefix(snap, "chart.grid.x.") > 0, (
+        assert count_prefix(snap, c.under("grid_x")) > 0, (
             "and the ticks carry gridlines, which the ordinal reading had none of"
         )
 
@@ -376,15 +382,15 @@ def body() -> None:
         toggle(tf, CAPS_TAG)
         snap = snapshot(tf)
         assert_eq(
-            count_prefix(snap, "chart.cap."),
+            count_prefix(snap, c.under("cap")),
             n * 2,
             "each session gains a cap at its high and its low",
         )
         for i in range(n):
-            b = rect(snap, f"chart.candle.{i}")
+            b = rect(snap, c.at("candle", index=i))
             for end in ("hi", "lo"):
-                cap = rect(snap, f"chart.cap.{i}.{end}")
-                wick = rect(snap, f"chart.wick.{i}.{end}")
+                cap = rect(snap, c.at("cap", index=i, part=end))
+                wick = rect(snap, c.at("wick_part", index=i, end=end))
                 assert abs(centre_x(b) - centre_x(cap)) <= 1.5, f"cap {i}.{end} centred"
                 assert float(cap["w"]) < float(b["w"]), (
                     f"cap {i}.{end} is subordinate to its body"
@@ -399,7 +405,7 @@ def body() -> None:
                 )
         toggle(tf, CAPS_TAG)
         snap = snapshot(tf)
-        assert_eq(count_prefix(snap, "chart.cap."), 0, "and they go away again")
+        assert_eq(count_prefix(snap, c.under("cap")), 0, "and they go away again")
 
         # ── (H) the derivation reaches assistive technology ──────────
         acc = tf.request("scene/access", {}).result or {}

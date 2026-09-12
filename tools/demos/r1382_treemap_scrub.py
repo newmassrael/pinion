@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    chart_addresses,
     find_by_tag,
     run_demo,
 )
@@ -70,33 +71,38 @@ def _rect(node: dict) -> tuple[int, int, int, int]:
     return (r["x"], r["y"], r["w"], r["h"])
 
 
-def _ring_rect(snap) -> tuple[int, int, int, int]:
-    return _rect(_node(snap, "chart.inspect.highlight"))
+# ⚠ The composer is an ARGUMENT: a helper that held the overlay address inside
+# itself would simply be the next site spelling it (R2162).
+def _ring_rect(snap, c) -> tuple[int, int, int, int]:
+    return _rect(_node(snap, c.callout("highlight")))
 
 
 def body() -> None:
     with RpcSubprocess("hello-treemap") as d:
+        # ★★★★★ R2165 — the prefix AND the part this chart paints its callout
+        # under, taken from the frame as ONE pair rather than assumed.
+        c = chart_addresses(d, viewport=VIEWPORT)
         snap = d.snapshot(source="paint", viewport=VIEWPORT)
-        assert find_by_tag(snap, "chart") is not None, "treemap container present"
+        assert find_by_tag(snap, c.prefix) is not None, "treemap container present"
 
         # ── (A) one filled box per tile; the tiles partition the frame ───────
         total_area = 0
         for i, _entry in enumerate(TILES):
-            t = _node(snap, f"chart.tile.{i}")
+            t = _node(snap, c.at("tile", index=i))
             assert_eq(t["type"], "Box", f"tile {i} is a box")
             assert t["style"]["fill"] is not None, f"tile {i} is filled"
             x, y, w, h = _rect(t)
             assert w > 0 and h > 0, f"tile {i} has a positive rect"
             total_area += w * h
-        assert find_by_tag(snap, f"chart.tile.{len(TILES)}") is None, "no phantom tile"
+        assert find_by_tag(snap, c.at("tile", index=len(TILES))) is None, "no phantom tile"
 
         chart_area = CHART[2] * CHART[3]
         assert total_area >= chart_area * 0.5, (
             f"the tiles fill most of the frame ({total_area} of {chart_area})"
         )
         # Area encodes value: the largest tile dominates the smallest.
-        big = _node(snap, "chart.tile.0")
-        small = _node(snap, "chart.tile.7")
+        big = _node(snap, c.at("tile", index=0))
+        small = _node(snap, c.at("tile", index=7))
         big_area = big["rect"]["w"] * big["rect"]["h"]
         small_area = small["rect"]["w"] * small["rect"]["h"]
         assert big_area > small_area, "tile area tracks value (Textures > Fonts)"
@@ -109,29 +115,25 @@ def body() -> None:
         # not asserted here.)
         for i, (label, _v) in enumerate(TILES[:3]):
             assert_eq(
-                _node(snap, f"chart.tile.{i}.label").get("content"),
+                _node(snap, c.at("tile_label", index=i)).get("content"),
                 label,
                 f"tile {i} is labelled {label!r} in place",
             )
 
         # ── (C) the boot scrub (0.5) paints the full overlay ─────────────────
-        for tag in (
-            "chart.inspect.highlight",
-            "chart.inspect.tooltip",
-            "chart.inspect.header",
-            "chart.inspect.value",
-        ):
+        for member in ("highlight", "tooltip", "header", "value"):
+            tag = c.callout(member)
             assert find_by_tag(snap, tag) is not None, f"the scrub paints {tag}"
-        ring = _node(snap, "chart.inspect.highlight")
+        ring = _node(snap, c.callout("highlight"))
         assert_eq(ring["type"], "Box", "the highlight is a box ring")
         assert ring["style"]["border"] is not None, "the ring is a bordered frame"
         # The ring frames EXACTLY the boot-focused tile (0.5 -> tile 4, Shaders).
         assert_eq(
-            _node(snap, "chart.inspect.header").get("content"),
+            _node(snap, c.callout("header")).get("content"),
             "Shaders",
             "0.5 focuses the middle-rank tile",
         )
-        assert _ring_rect(snap) == _rect(_node(snap, "chart.tile.4")), (
+        assert _ring_rect(snap, c) == _rect(_node(snap, c.at("tile", index=4))), (
             "the ring's rect equals the focused tile's own rect (geom SSOT)"
         )
 
@@ -140,21 +142,21 @@ def body() -> None:
         assert abs(d.query("/external/value") - 0.05) < 0.02, "scrub set to 0.05"
         low = d.snapshot(source="paint", viewport=VIEWPORT)
         assert_eq(
-            _node(low, "chart.inspect.header").get("content"),
+            _node(low, c.callout("header")).get("content"),
             "Textures",
             "0.05 -> the largest tile",
         )
-        low_ring = _ring_rect(low)
+        low_ring = _ring_rect(low, c)
 
         d.intervene("/external/value", 0.95)
         assert abs(d.query("/external/value") - 0.95) < 0.02, "scrub set to 0.95"
         high = d.snapshot(source="paint", viewport=VIEWPORT)
         assert_eq(
-            _node(high, "chart.inspect.header").get("content"),
+            _node(high, c.callout("header")).get("content"),
             "Fonts",
             "0.95 -> the smallest tile",
         )
-        high_ring = _ring_rect(high)
+        high_ring = _ring_rect(high, c)
         assert low_ring != high_ring, (
             f"the ring frames a different tile as the scrub moves: {low_ring} -> {high_ring}"
         )
@@ -162,11 +164,11 @@ def body() -> None:
         # ── (E) the tooltip value carries the tile's percent share ───────────
         textures_pct = round(240 / TOTAL * 100)  # 35
         fonts_pct = round(8 / TOTAL * 100)  # 1
-        textures_val = _node(low, "chart.inspect.value").get("content")
+        textures_val = _node(low, c.callout("value")).get("content")
         assert textures_val is not None and f"{textures_pct}%" in textures_val, (
             f"Textures shows its {textures_pct}% share, got {textures_val!r}"
         )
-        fonts_val = _node(high, "chart.inspect.value").get("content")
+        fonts_val = _node(high, c.callout("value")).get("content")
         assert fonts_val is not None and f"{fonts_pct}%" in fonts_val, (
             f"Fonts shows its {fonts_pct}% share, got {fonts_val!r}"
         )
