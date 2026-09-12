@@ -318,7 +318,7 @@ fn r1442_the_scene_tags_every_card_and_wire() {
     let scene = wire_scene(
         &[(10, 20), (60, 8), (120, 40)],
         Stroke::new(Color::rgb(0, 0, 0), 2),
-        "topology.wire.a-b".to_string(),
+        crate::address::wire("a", "b"),
     )
     .expect("a wire with points");
     let Scene::Path(path) = &scene else {
@@ -333,6 +333,55 @@ fn r1442_the_scene_tags_every_card_and_wire() {
     assert_eq!(path.rect.h, 32);
     assert_eq!(path.commands.len(), 3, "a move and two lines");
     assert!(wire_scene(&[], Stroke::new(Color::rgb(0, 0, 0), 2), "t".into()).is_none());
+}
+
+/// ★★★★★ R2176 — **the composers, against their values.**
+///
+/// 🟥🟥 Until this round `topology.wire` was the one family in twelve whose
+/// `assertion` pin pinned NOTHING. The test above hands `wire_scene` a literal
+/// of its own and asserts it comes back, which checks that the painter copies a
+/// tag through — while the composition it was standing in for lived at a call
+/// site in `view()`, compared with nothing. Renaming it would have failed no
+/// test. `card_scene` composes internally, which is why the two assertions
+/// above are real and that one was not.
+///
+/// ⇒ the rule moved into `address.rs`, so it can be asserted the way this tree
+/// pins its strongest one (`assert_eq!(cell_tag(3, 7), "dev.cell.3.7")`): the
+/// composer's OUTPUT against a literal, with nothing supplied by the test.
+///
+/// ★ The wire case is the one that matters. `gw-eu` contains a hyphen, so the
+/// joined key is not something a reader can take apart — which is exactly why
+/// the join has to have one home.
+#[test]
+fn r2176_every_composed_address_is_held_to_its_value() {
+    assert_eq!(crate::address::node("api"), "topology.node.api");
+    assert_eq!(crate::address::label("api"), "topology.label.api");
+    assert_eq!(crate::address::wire("a", "b"), "topology.wire.a-b");
+    assert_eq!(
+        crate::address::wire("gw-eu", "warehouse"),
+        "topology.wire.gw-eu-warehouse",
+        "★ the hyphenated name a walk reproduced by hand until this round"
+    );
+    assert_eq!(crate::address::VIEW, "topology");
+}
+
+/// ★★★★★ R2176 — **the published template and the composer are one rule.**
+///
+/// A walk fills `WIRE_TEMPLATE` because it cannot call [`crate::address::wire`],
+/// so the two are the same composition reached two ways. A template that is
+/// published and never compared is a second spelling wearing a declaration's
+/// clothes — which is the thing this campaign removes, so it is checked by
+/// filling it here exactly as a reader would.
+#[test]
+fn r2176_the_published_wire_template_composes_what_the_composer_does() {
+    let filled = crate::address::WIRE_TEMPLATE
+        .replace("{from}", "gw-eu")
+        .replace("{to}", "warehouse");
+    assert_eq!(filled, crate::address::wire("gw-eu", "warehouse"));
+    assert!(
+        crate::address::WIRE_TEMPLATE.starts_with(crate::address::WIRE_SEAT),
+        "a wire's template hangs off the seat its family is named by"
+    );
 }
 
 /// The graph and drawing a stable view is left holding at the end of the feed —

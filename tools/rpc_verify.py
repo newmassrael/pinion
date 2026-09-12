@@ -5231,16 +5231,11 @@ def _chart_format(template: str, name: str, prefix: Optional[str], fields: dict)
     grammar = chart_grammar()
     if prefix is None:
         prefix = grammar["const"]["DEFAULT_PREFIX"]
-    wanted = painted_grammar.fields(template) - {"prefix"}
-    given = set(fields)
-    if wanted != given:
-        raise AssertionError(
-            f"the chart grammar for {name!r} is {template!r}: it takes "
-            f"{sorted(wanted)} and was given {sorted(given)}. An address "
-            "composed past this would name nothing, and the walk would read "
-            "that as the chart not painting it."
-        )
-    return template.format(prefix=prefix, **fields)
+    # ★★★★★ R2176 — the wanted/given rule lives in `fill_template` now. This
+    # function's own business is the PREFIX default, which is the crate's; the
+    # check it used to spell here was the second copy of a rule a screen one
+    # tree over needed too. `name` stays in the message by way of the template.
+    return fill_template(template, prefix=prefix, **fields)
 
 
 def chart_address(name: str, *, prefix: Optional[str] = None, **fields: Any) -> str:
@@ -6738,6 +6733,39 @@ def seat_member(seat: str, tag: str) -> Optional[str]:
         return None
     rest = tag[len(seat) :]
     return rest if rest and "." not in rest else None
+
+
+def fill_template(template: str, **fields: Any) -> str:
+    """Fill a published address TEMPLATE, refusing a field mismatch.
+
+    ★★★★★ R2176 — a seat plus a key is not the only shape an address has. A
+    `hello-topology` wire is `topology.wire.<from>-<to>`: the key is two names
+    joined, and the JOIN is part of the composition. Publishing the seat alone
+    would have left the hyphen in the walk — half the rule, in the language with
+    no compiler — which is R2153's finding in its purest form. So the screen
+    publishes the whole template and this fills it.
+
+    ⚠ The refusal runs in both directions, and it is the point. A field the
+    template does not want is a walk addressing a family it does not mean; a
+    field it wants and did not get is an address with a hole in it. Either one
+    composes a plausible string that names nothing, and a walk reads that as
+    *the screen did not paint it* — this campaign's failure mode, one language
+    further out.
+
+    ⚠⚠ The placeholder rule is [`painted_grammar.fields`], the same reader the
+    emitted chart grammar uses; [`_chart_format`] delegates here rather than
+    keeping the second copy it had until this round.
+    """
+    wanted = painted_grammar.fields(template)
+    given = set(fields)
+    if wanted != given:
+        raise AssertionError(
+            f"the template {template!r} takes {sorted(wanted)} and was given "
+            f"{sorted(given)}. An address composed past this would name "
+            "nothing, and the walk would read that as the screen not painting "
+            "it."
+        )
+    return template.format(**fields)
 
 
 def lab_address(tf, family: str, part: str | None = None, *, ext: str = "/external"):

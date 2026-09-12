@@ -159,8 +159,8 @@ timeline.playhead	1	4
 timeline.tick	0	0
 todomvc.persistence	0	1
 topology.label	0	2
-topology.node	3	2
-topology.wire	1	3
+topology.node	0	2
+topology.wire	0	3
 trail.spark	0	1
 transport.link	0	1
 transport.unicast	0	0

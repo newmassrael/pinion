@@ -54,12 +54,13 @@ from rpc_verify import (  # noqa: E402
     assert_action_refused,
     assert_out_of_range,
     assert_rpc_error,
+    declared_address,
+    fill_template,
     find_by_tag,
     run_demo,
 )
 
 VIEWPORT = (880, 520)
-VIEW = "topology"
 
 # The seed mesh, and the scripted incident the view replays.
 SEED_SERVICES = ["gw-eu", "gw-us", "api", "auth", "search", "db", "warehouse"]
@@ -118,7 +119,13 @@ def body() -> None:
     with RpcSubprocess("hello-topology", boot_grace=1.5) as tf:
         # ── (A) a graph that arrived with no coordinates is placed ───
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert find_by_tag(snap, VIEW) is not None, "the view is on screen"
+        # ★★★★★ R2176 — every address below comes from the screen. This walk
+        # held a module-level `VIEW = "topology"` and typed the three families
+        # out; the const was a less-bad spelling, not a declaration (R2172's
+        # ruling on `AREA` / `STRIP`, third case).
+        view = declared_address(tf, "view")
+        node_seat = declared_address(tf, "node_seat")
+        assert find_by_tag(snap, view) is not None, "the view is on screen"
         assert_eq(q(tf, "services"), len(SEED_SERVICES), "the seed mesh")
         assert_eq(q(tf, "dependencies"), 9, "and its dependencies")
         assert_eq(q(tf, "mode"), "stable", "a view defaults to keeping its shape")
@@ -129,7 +136,7 @@ def body() -> None:
             "every service is named on the wire",
         )
         for name in SEED_SERVICES:
-            assert find_by_tag(snap, f"topology.node.{name}") is not None, (
+            assert find_by_tag(snap, f"{node_seat}{name}") is not None, (
                 f"{name} has a card"
             )
         # Data flows forward: a dependency's target is always further right.
@@ -158,7 +165,17 @@ def body() -> None:
         # A one-column hop has nothing to route around.
         assert_eq(len(wire(tf, "gw-eu", "api")), 2, "a short dependency is a line")
         # And the wire is in the scene under a tag naming both ends.
-        assert find_by_tag(snap, "topology.wire.gw-eu-warehouse") is not None
+        # ★ The JOIN is the screen's rule, not this walk's: a wire is addressed
+        # by both ends, and `gw-eu` already contains a hyphen, so a reader that
+        # chose the separator itself would be guessing at the one address here
+        # nobody can take apart. The template carries it.
+        wire_template = declared_address(tf, "wire_template")
+        assert (
+            find_by_tag(
+                snap, fill_template(wire_template, **{"from": "gw-eu", "to": "warehouse"})
+            )
+            is not None
+        )
 
         # ── (C) ★ the whole incident, keeping the viewer's drawing ───
         # Every step is a real change of shape; not one may reverse a pair the
@@ -197,8 +214,8 @@ def body() -> None:
         assert_eq(q(tf, "services"), len(SEED_SERVICES) + 1, "cache and gw-ap in, auth out")
         assert "auth" not in q(tf, "service_names"), "auth was retired"
         after = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert find_by_tag(after, "topology.node.cache") is not None, "cache appeared"
-        assert find_by_tag(after, "topology.node.auth") is None, "auth's card is gone"
+        assert find_by_tag(after, f"{node_seat}cache") is not None, "cache appeared"
+        assert find_by_tag(after, f"{node_seat}auth") is None, "auth's card is gone"
 
         # ── (D) ★ the counterfactual: fresh ordering DOES churn ──────
         # Same incident, same data, the other ordering. If this passed without

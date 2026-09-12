@@ -4499,6 +4499,7 @@ dependencies = [
  "pinion-graph",
  "pinion-shell",
  "serde",
+ "serde_json",
  "vello",
 ]
 

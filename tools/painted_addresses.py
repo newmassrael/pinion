@@ -713,6 +713,48 @@ def rust_sources() -> tuple[Path, ...]:
     )
 
 
+def public_declaring_modules() -> list[str]:
+    """Declaring modules a BINARY-only example publishes with `pub mod`.
+
+    ★★★★★ R2176 — **`pub` in a binary turns the compiler off as a gate, and
+    this campaign leans on it.** R2158 ruled that a composer with no production
+    consumer is not a declaration but something this campaign made that will
+    rot, and the thing that enforces the ruling is `dead_code`: R2171 wrote two
+    such composers in `hello-analyzer-shell` and the compiler refused them on
+    the spot. R2174 wrote one in `hello-node-groups` and shipped it, because
+    that round declared the module `pub mod address;` — and a `pub` item in a
+    crate with no library target is reachable-by-declaration, so the lint says
+    nothing. Flipping the one word made the compiler name `node_id` in a single
+    run.
+
+    A `lib.rs` crate is NOT reported: there `pub` is what the crate's own tests
+    and its binary reach the module through, and the lint has a real answer.
+    So the rule is exactly *a declaring module declared from `main.rs` in a
+    directory with no `lib.rs` must be private*, which is what the seven other
+    examples already do and what one round diverged from.
+
+    ⚠ This is a gate about the COMPILER, living in the census, because the
+    census is what excuses [`RUST_DECLARING_FILES`] from being charged. An
+    excused file whose contents nothing checks is a blanket exemption, which is
+    the shape this whole campaign exists to remove.
+    """
+    stems = {name.removesuffix(".rs") for name in RUST_DECLARING_FILES}
+    found: list[str] = []
+    for main in sorted((ROOT / RUST_CENSUS_ROOT).glob("*/src/main.rs")):
+        if (main.parent / "lib.rs").exists():
+            continue
+        try:
+            text = main.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line, body in enumerate(text.splitlines(), 1):
+            stripped = body.strip()
+            for stem in stems:
+                if stripped == f"pub mod {stem};":
+                    found.append(f"{main.relative_to(ROOT)}:{line} {stripped}")
+    return sorted(found)
+
+
 def rust_scan() -> dict[str, list[tuple[str, int]]]:
     """Every spelled Rust site in the population, indexed by family stem."""
     index: dict[str, list[tuple[str, int]]] = {}
@@ -3076,6 +3118,21 @@ def selftest() -> int:
             "every screen would be charged for the file that fixes the defect",
             file=sys.stderr,
         )
+    # ★★★★★ R2176 — and the excused file's OWN gate must still be switched on.
+    # See `public_declaring_modules`: `pub mod` in a binary example makes
+    # `dead_code` stop seeing the composers inside, which is what enforces
+    # R2158's ruling that a composer with no consumer is not a declaration.
+    # Measured at R2176: one of the two binary examples had diverged, and the
+    # flip named a dead function immediately.
+    exported = public_declaring_modules()
+    if exported:
+        failed += 1
+        print(
+            f"FAIL: a binary example declares its declaring module `pub`, where "
+            f"`dead_code` cannot see inside it: {exported} — write `mod "
+            "<name>;`, so the compiler refuses a composer nothing calls",
+            file=sys.stderr,
+        )
 
     # ★★★★★ R2103 — and the ORACLE, against this repository's real Rust.
     #
@@ -3245,6 +3302,7 @@ def selftest() -> int:
         + 3  # R2168: the retyped/single split's three derived checks
         + 4  # R2164: the role rule's four derived cross-checks
         + 3  # R2175: the queue's arithmetic arm and BLOCKED's two subset arms
+        + 1  # R2176: a binary example's declaring module must stay private
         + 10  # the ad-hoc assertions above, pre-existing and left alone
     )
     print(f"painted_addresses selftest: {total - failed} of {total} cases OK")

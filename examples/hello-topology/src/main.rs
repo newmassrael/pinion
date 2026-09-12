@@ -100,7 +100,11 @@ vello_renderer_impl!(HelloTopologyRenderer, HelloTopologyRendererError);
 
 const THEME_TAG: &str = "app";
 /// The view's registration tag — addressed over RPC as `/external/<field>`.
-const VIEW_TAG: &str = "topology";
+///
+/// ★ R2176 — DERIVED from the declaration rather than spelled a second time.
+/// The root tag and the prefix every mark hangs off are one value, and this
+/// file held its own copy of it.
+const VIEW_TAG: &str = crate::address::VIEW;
 /// Reactive-cache key for the shared model.
 const STATE_KEY: &str = "topology-state";
 
@@ -642,11 +646,27 @@ impl TopologyOracle {
     }
 }
 
+/// What this screen publishes about itself, for a reader that cannot call its
+/// declaration.
+///
+/// ★★★★★ R2176 — its own function rather than an arm inside `query`, for the
+/// reason the sibling screens have one: `spec` is a SURFACE that grows, and
+/// inlining it puts a growing thing inside a function already long. The
+/// addresses themselves live in [`address::declared`], which is where they are
+/// declared; this names the surface they are published on.
+fn spec_json() -> serde_json::Value {
+    serde_json::json!({ "declared_addresses": crate::address::declared() })
+}
+
 impl ExternalIntrospect for TopologyOracle {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(
             const {
                 &[
+                    // R2176 — what this screen publishes about itself, so a
+                    // reader that cannot call the declaration is HANDED an
+                    // address instead of typing one out.
+                    SchemaField::new("spec", "json"),
                     // Which ordering a relayout uses; the one writable path.
                     SchemaField::new("mode", "string"),
                     // The graph as it stands.
@@ -693,6 +713,7 @@ impl ExternalIntrospect for TopologyOracle {
         let measured = self.stats();
         let int = |v: usize| Ok(IntrospectValue::Int(i64::try_from(v).unwrap_or(i64::MAX)));
         match path {
+            "spec" => Ok(IntrospectValue::Json(spec_json())),
             "mode" => Ok(IntrospectValue::Text(self.mode().name().to_string())),
             "services" => int(state.topology.get().services.len()),
             "dependencies" => int(state.topology.get().links.len()),
@@ -1016,7 +1037,7 @@ fn card_scene(name: &str, at: (i32, i32), fill: Color, ink: Color, outline: Colo
                 rect,
                 BoxStyle::filled(fill).with_border(Border::new(outline, 1)),
             )
-            .with_tag(format!("topology.node.{name}"))
+            .with_tag(crate::address::node(name))
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(rect.x, rect.y)
@@ -1029,7 +1050,7 @@ fn card_scene(name: &str, at: (i32, i32), fill: Color, ink: Color, outline: Colo
                 Rect::default(),
                 TextStyle::new().with_size_px(LABEL_FONT_PX).with_fg(ink),
             )
-            .with_tag(format!("topology.label.{name}"))
+            .with_tag(crate::address::label(name))
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(rect.x + 12, rect.y + 10)
@@ -1094,11 +1115,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     // Wires first, so a card always paints over the line that reaches it.
     let wire = Stroke::new(theme.resolve(ColorRole::Outline), 2).with_cap(StrokeCap::Round);
     for (link, points) in topology.links.iter().zip(&drawing.wires) {
-        let tag = format!(
-            "topology.wire.{}-{}",
-            topology.name_of(link.from),
-            topology.name_of(link.to)
-        );
+        let tag = crate::address::wire(topology.name_of(link.from), topology.name_of(link.to));
         if let Some(scene) = wire_scene(points, wire, tag) {
             children.push(scene);
         }
@@ -1200,6 +1217,15 @@ impl WidgetView for TopologyView {
 fn main() {
     pinion_shell::run::<TopologyView>();
 }
+
+// ★★★★★ R2176 — the screen's own address declaration. Its header lives inside
+// the module for the reason recorded there.
+//
+// ⚠ PRIVATE, and that is load-bearing: a `pub` item in a crate with no library
+// target escapes `dead_code`, which is what enforces R2158's ruling that a
+// composer with no consumer is not a declaration. `--selftest` refuses `pub`
+// here.
+mod address;
 
 #[cfg(test)]
 mod tests;

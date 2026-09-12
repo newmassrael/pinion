@@ -3292,7 +3292,14 @@ fn main() {
 
 // ★★★★★ R2174 — the screen's own address declaration. Its header lives inside
 // the module for the reason recorded there.
-pub mod address;
+//
+// 🟥 R2176 — **private, and that is load-bearing.** R2174 wrote `pub mod` here
+// and a binary's `pub` item escapes `dead_code`, so this crate shipped a
+// composer nothing called — the exact thing R2158 ruled against and R2171 had
+// to delete two of, caught there because the shell writes `mod address;`. The
+// compiler is the gate on a dead composer; `pub` in a binary turns it off.
+// `tools/painted_addresses.py --selftest` refuses the divergence now.
+mod address;
 
 #[cfg(test)]
 mod painted;

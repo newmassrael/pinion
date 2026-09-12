@@ -28,6 +28,12 @@
 //! family* (to count or classify the marks under it) and *which member is this
 //! tag* (to recover an id from paint). The seats below answer the second; the
 //! screen publishes both halves so a walk can ask.
+//!
+//! ⚠ R2176 — **the third question is answered in the WALK, not here.** R2174
+//! wrote a Rust `node_id` for it with no Rust caller; the reader that genuinely
+//! wants "which node is this tag" is `r1591`, and its door is
+//! `rpc_verify.seat_member`, shared by every screen. See the note below the
+//! composers for how that dead function survived a whole round.
 
 /// The tag every mark of this screen hangs off.
 pub const VIEW: &str = "nodegroups";
@@ -95,16 +101,19 @@ pub fn through(id: impl std::fmt::Display, output: impl std::fmt::Display) -> St
     format!("{VIEW}.through.{id}.{output}")
 }
 
-/// The node a tag names, or `None` when the tag is not a node's box.
-///
-/// ★ The inverse R2158 found missing one screen over: a composer answers "what
-/// is this node's address" and cannot answer "which node is this tag", so every
-/// reader that wanted the second wrote `strip_prefix` by hand.
-#[must_use]
-pub fn node_id(tag: &str) -> Option<&str> {
-    let rest = tag.strip_prefix(NODE_SEAT)?;
-    (!rest.contains('.')).then_some(rest)
-}
+// 🟥🟥 R2176 — **`node_id` stood here and it was DEAD**, and the reason it
+// survived a round is worth more than the function was. R2174 wrote it as "the
+// inverse R2158 found missing", gave it no Rust caller, and declared this module
+// `pub mod` — and a `pub` item in a BINARY escapes `dead_code`, so the compiler
+// said nothing. `hello-analyzer-shell` writes `mod address;`, which is why the
+// same mistake there (R2171's `carry_part` / `carry_slot_part`) was refused on
+// the spot. The module is private now and the compiler named this function in
+// one run.
+//
+// ★ R2158's ruling, applied for the third time: a composer with no production
+// consumer is not a declaration, it is something this campaign made that will
+// rot. The inverse a reader here actually needs is the WALK's, and that one is
+// real and shared — `rpc_verify.seat_member`.
 
 /// Every address this screen declares, for a reader that cannot call the
 /// declaration — see the screen's `spec` query.
