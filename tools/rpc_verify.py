@@ -5234,7 +5234,7 @@ def chart_address(name: str, *, prefix: Optional[str] = None, **fields: Any) -> 
     return _chart_format(grammar[name], name, prefix, fields)
 
 
-def chart_family(name: str, *, prefix: Optional[str] = None) -> str:
+def chart_family(name: str, *, prefix: Optional[str] = None, **fields: Any) -> str:
     """★★★★★ R2153 — the family STEM one chart grammar names, from the grammar.
 
     [`chart_address`] builds ONE member; a walk that pins how many marks a
@@ -5245,11 +5245,29 @@ def chart_family(name: str, *, prefix: Optional[str] = None) -> str:
         chart_family("point", prefix="scatter")   -> "scatter.point"
         chart_family("series")                    -> "chart.series"
 
-    ⚠ It refuses a template whose first placeholder after `{prefix}` is not
-    where the stem ends — a grammar like `{prefix}.grid.minor.x.{index}` has a
-    three-word stem and returns it whole. What it will not do is guess: a
-    template with no argument at all is not a family, it is a single address,
-    and asking this for one is a walk that means [`chart_address`].
+    ★★★★★ R2154 — **and the cut can be taken LATER, by handing it the leading
+    coordinates.** A datum's marks nest: `{prefix}.outlier.{index}.{at}` is one
+    box's outliers inside every box's outliers, and a walk that counts *box 3's*
+    outliers means `chart.outlier.3` — the template formatted as far as the
+    fields reach, cut at the first one it was not given. The family stem is that
+    same rule with no fields at all, so this is one cut rather than two:
+
+        chart_family("outlier", index=3)          -> "chart.outlier.3"
+        chart_family("outlier")                   -> "chart.outlier"
+
+    ⚠ A field the cut never reaches is **refused**, not dropped. Asking for
+    `at=0` without `index` cuts at `{index}`, so `at` would be silently
+    discarded and the caller would count a group one level wider than the one
+    they named — a miscount that reads as the chart painting marks it did not.
+
+    ⚠ The cut is at the first segment that CARRIES a placeholder, not the first
+    that begins with one: `{prefix}.a11y.r{index}` has the stem `chart.a11y`,
+    and cutting on `startswith` returns `chart.a11y.r{index}` — braces and all,
+    a string naming nothing, which is this campaign's own failure mode. A
+    grammar like `{prefix}.grid.minor.x.{index}` has a three-word stem and
+    returns it whole. What this will not do is guess: a template with no
+    argument at all is not a family, it is a single address, and asking this
+    for one is a walk that means [`chart_address`].
     """
     grammar = chart_grammar()["grammar"]
     if name not in grammar:
@@ -5264,10 +5282,24 @@ def chart_family(name: str, *, prefix: Optional[str] = None) -> str:
         "its prefix -- this reader cannot cut a stem off it"
     )
     stem_parts: list[str] = []
+    reached: set[str] = set()
     for segment in rest[1:].split("."):
-        if segment.startswith("{"):
+        wanted = {
+            field
+            for _text, field, _spec, _conv in string.Formatter().parse(segment)
+            if field
+        }
+        if wanted - set(fields):
             break
-        stem_parts.append(segment)
+        stem_parts.append(segment.format(**fields) if wanted else segment)
+        reached |= wanted
+    unreached = sorted(set(fields) - reached)
+    assert not unreached, (
+        f"the grammar for {name!r} is {template!r}: the cut falls before "
+        f"{unreached}, so those would be dropped and the stem would name a "
+        "group WIDER than the one asked for -- which a walk reads as the "
+        "chart painting marks it did not paint"
+    )
     assert stem_parts, (
         f"the grammar for {name!r} is {template!r}: it has no fixed segment "
         "after the prefix, so it names no family stem"

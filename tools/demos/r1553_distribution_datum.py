@@ -68,6 +68,9 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     access_node_by_tag,
     assert_eq,
+    chart_address,
+    chart_family,
+    chart_grammar,
     find_by_tag,
     run_demo,
     walk_nodes,
@@ -146,35 +149,56 @@ def body() -> None:
         for _ in range(3):
             tf.tick(0.016)
 
+        # ★★★★★ R2154 — the prefix is ASKED FOR and every address below is
+        # composed from the crate's published grammar, so this walk spells
+        # none of the thirty-five it used to. The pin is the assertion on the
+        # NEXT line: it is deliberately the last spelling left, because a
+        # conversion that takes a family's final speller with it has deleted a
+        # check rather than repaid one.
+        (chart,) = tf.chart_prefixes(viewport=VIEWPORT)
+        assert chart == chart_grammar()["const"]["DEFAULT_PREFIX"], (
+            "hello-boxplot draws ONE chart and leaves it on the crate's own "
+            f"default prefix; the frame declares {chart!r}"
+        )
+
+        def addr(name: str, **fields: object) -> str:
+            """One address this chart paints, from the emitted grammar."""
+            return chart_address(name, prefix=chart, **fields)
+
+        def group(name: str, **fields: object) -> str:
+            """The stem a group of this chart's marks sits under, dotted so a
+            prefix test cannot reach into a longer family that shares it."""
+            return chart_family(name, prefix=chart, **fields) + "."
+
         # ── (A) one datum, the whole schema ──────────────────────────
         snap = snapshot(tf)
         n = len(ENDPOINTS)
-        assert_eq(count_prefix(snap, "chart.box."), n, "one box per distribution")
-        assert_eq(count_prefix(snap, "chart.median."), n, "one median per box")
+        assert_eq(count_prefix(snap, group("box_at")), n, "one box per distribution")
+        assert_eq(count_prefix(snap, group("median")), n, "one median per box")
         assert_eq(
-            count_prefix(snap, "chart.whisker."),
+            count_prefix(snap, group("whisker")),
             n * 2,
             "two whiskers per box — a datum with EXTENT, which every other "
             "chart in this crate cannot express",
         )
-        assert_eq(count_prefix(snap, "chart.cap."), n * 2, "and a cap on each")
+        assert_eq(count_prefix(snap, group("cap")), n * 2, "and a cap on each")
         assert_eq(
-            count_prefix(snap, "chart.outlier."),
+            count_prefix(snap, group("outlier")),
             6,
             "PAST THE FLOOR: six marks beyond the fence — /health's two cache hits, "
             "/login's 48 ms tail, /report's three far samples. box set has "
             "five slots and no per-outlier geometry at all",
         )
         assert_eq(
-            [node(snap, f"chart.xlabel.{i}")["content"] for i in range(n)],
+            [node(snap, addr("xlabel", index=i))["content"] for i in range(n)],
             ENDPOINTS,
             "each slot is labelled by the name the category axis carries",
         )
 
         # ── (B) the parts derive from ONE geometry ───────────────────
         for i in range(n):
-            box = rect(snap, f"chart.box.{i}")
-            med = rect(snap, f"chart.median.{i}")
+            box = rect(snap, addr("box_at", index=i))
+            med = rect(snap, addr("median", index=i))
             assert abs(centre_x(box) - centre_x(med)) <= 1.5, (
                 f"median {i} is centred on its own box"
             )
@@ -182,8 +206,8 @@ def body() -> None:
                 box["h"]
             ), f"median {i} lies INSIDE the box, not beside it"
             # The whiskers hang off the box edges and reach beyond them.
-            hi = rect(snap, f"chart.whisker.{i}.hi")
-            lo = rect(snap, f"chart.whisker.{i}.lo")
+            hi = rect(snap, addr("whisker", index=i, end="hi"))
+            lo = rect(snap, addr("whisker", index=i, end="lo"))
             assert abs(centre_x(box) - centre_x(hi)) <= 1.5, f"whisker {i}.hi centred"
             assert abs(centre_x(box) - centre_x(lo)) <= 1.5, f"whisker {i}.lo centred"
             assert float(hi["y"]) < float(box["y"]) + 2, (
@@ -194,8 +218,11 @@ def body() -> None:
             ) - 2, f"whisker {i}.lo drops below the box bottom"
             # The caps terminate the whiskers and are narrower than the box.
             for end in ("hi", "lo"):
-                cap = rect(snap, f"chart.cap.{i}.{end}")
-                whisk = rect(snap, f"chart.whisker.{i}.{end}")
+                # ⚠ The cap's coordinate is `part` and the whisker's is `end`,
+                # so the grammar refuses the two being swapped — a distinction
+                # a hand-typed address carries no trace of.
+                cap = rect(snap, addr("cap", index=i, part=end))
+                whisk = rect(snap, addr("whisker", index=i, end=end))
                 assert abs(centre_x(box) - centre_x(cap)) <= 1.5, f"cap {i}.{end} centred"
                 assert float(cap["w"]) < float(box["w"]), (
                     f"cap {i}.{end} is subordinate to its box"
@@ -207,7 +234,7 @@ def body() -> None:
                     f"cap {i}.{end} sits at the whisker's far end"
                 )
         # The boxes tile the category axis in order, left to right.
-        centres = [centre_x(rect(snap, f"chart.box.{i}")) for i in range(n)]
+        centres = [centre_x(rect(snap, addr("box_at", index=i))) for i in range(n)]
         assert centres == sorted(centres), f"boxes ascend with their slots: {centres}"
 
         # ── (A2) PAST THE FLOOR: the whisker STOPS at the fence
@@ -217,12 +244,12 @@ def body() -> None:
         # / `UpperExtreme` were set to, with no fence rule and nowhere to put what falls
         # outside one.
         report = 3
-        whisk_top = float(rect(snap, f"chart.whisker.{report}.hi")["y"])
+        whisk_top = float(rect(snap, addr("whisker", index=report, end="hi"))["y"])
         marks = sorted(
-            centre_y(rect(snap, f"chart.outlier.{report}.{j}")) for j in range(3)
+            centre_y(rect(snap, addr("outlier", index=report, at=j))) for j in range(3)
         )
         assert_eq(
-            count_prefix(snap, f"chart.outlier.{report}."),
+            count_prefix(snap, group("outlier", index=report)),
             3,
             "/report's three far samples are three marks",
         )
@@ -231,8 +258,8 @@ def body() -> None:
             f"(highest mark {marks[-1]}, whisker top {whisk_top})"
         )
         assert all(m < whisk_top for m in marks), f"none is inside the whisker: {marks}"
-        box_bottom = float(rect(snap, f"chart.box.{report}")["y"]) + float(
-            rect(snap, f"chart.box.{report}")["h"]
+        box_bottom = float(rect(snap, addr("box_at", index=report))["y"]) + float(
+            rect(snap, addr("box_at", index=report))["h"]
         )
         assert whisk_top < box_bottom, (
             "and the whisker itself still reaches past the box it hangs from"
@@ -240,7 +267,7 @@ def body() -> None:
 
         # ── (C) PAST THE FLOOR: the definition decides an outlier
         # ───────────
-        far_tag = f"chart.outlier.{SMALL_N}.0"
+        far_tag = addr("outlier", index=SMALL_N, at=0)
         assert_eq(
             find_by_tag(snap, far_tag),
             None,
@@ -251,7 +278,9 @@ def body() -> None:
         )
 
         others_before = {
-            i: count_prefix(snap, f"chart.outlier.{i}.") for i in range(n) if i != SMALL_N
+            i: count_prefix(snap, group("outlier", index=i))
+            for i in range(n)
+            if i != SMALL_N
         }
 
         pick_method(tf, 1)
@@ -267,7 +296,9 @@ def body() -> None:
         assert METHOD_NAMES[1] in caption(snap), "named, not implied"
         # Counterfactual: nothing else moved.
         others_after = {
-            i: count_prefix(snap, f"chart.outlier.{i}.") for i in range(n) if i != SMALL_N
+            i: count_prefix(snap, group("outlier", index=i))
+            for i in range(n)
+            if i != SMALL_N
         }
         assert_eq(
             others_after,
@@ -285,7 +316,7 @@ def body() -> None:
         )
         assert SEARCH_Q3[2] in caption(snap), f"third quartile: {caption(snap)}"
         assert_eq(
-            [count_prefix(snap, f"chart.outlier.{SMALL_N}.") for _ in (0,)],
+            [count_prefix(snap, group("outlier", index=SMALL_N)) for _ in (0,)],
             [SEARCH_OUTLIERS[2]],
             "so /search's outlier count follows the definition",
         )
@@ -313,8 +344,8 @@ def body() -> None:
         # ───────────────
         pick_method(tf, 0)
         snap = snapshot(tf)
-        plain_box = node(snap, "chart.box.0")
-        plain_med_w = float(rect(snap, "chart.median.0")["w"])
+        plain_box = node(snap, addr("box_at", index=0))
+        plain_med_w = float(rect(snap, addr("median", index=0))["w"])
         assert_eq(
             len(plain_box["commands"]),
             5,
@@ -323,7 +354,7 @@ def body() -> None:
 
         toggle(tf, NOTCH_TAG)
         snap = snapshot(tf)
-        notched_box = node(snap, "chart.box.0")
+        notched_box = node(snap, addr("box_at", index=0))
         assert_eq(
             len(notched_box["commands"]),
             11,
@@ -331,7 +362,7 @@ def body() -> None:
             "median +- 1.58*IQR/sqrt(n), which box set cannot express because "
             "it does not carry n",
         )
-        notched_med_w = float(rect(snap, "chart.median.0")["w"])
+        notched_med_w = float(rect(snap, addr("median", index=0))["w"])
         assert notched_med_w < plain_med_w * 0.7, (
             "and the median narrows to the waist "
             f"({notched_med_w} vs {plain_med_w})"
@@ -351,7 +382,7 @@ def body() -> None:
         # ── (F) PAST THE FLOOR: what the axis cannot place is reported
         # ──────
         snap = snapshot(tf)
-        assert find_by_tag(snap, f"chart.outlier.{ZEROED}.0") is not None, (
+        assert find_by_tag(snap, addr("outlier", index=ZEROED, at=0)) is not None, (
             "on a linear axis the two zero-timed cache hits are ordinary marks"
         )
         assert "Linear axis" in caption(snap), caption(snap)
@@ -363,11 +394,11 @@ def body() -> None:
         snap = snapshot(tf)
         for j in (0, 1):
             assert_eq(
-                find_by_tag(snap, f"chart.outlier.{ZEROED}.{j}"),
+                find_by_tag(snap, addr("outlier", index=ZEROED, at=j)),
                 None,
                 f"a zero has no pixel on a log axis, so mark {j} draws nothing",
             )
-        assert find_by_tag(snap, f"chart.box.{ZEROED}") is not None, (
+        assert find_by_tag(snap, addr("box_at", index=ZEROED)) is not None, (
             "and the box itself still draws — one landmark dropping does not "
             "drop the datum"
         )
@@ -377,12 +408,13 @@ def body() -> None:
         assert ENDPOINTS[ZEROED] in text, f"the report names the endpoint: {text}"
         # The log axis separates what the linear one flattened.
         gap = abs(
-            centre_y(rect(snap, "chart.median.0")) - centre_y(rect(snap, "chart.median.1"))
+            centre_y(rect(snap, addr("median", index=0)))
+            - centre_y(rect(snap, addr("median", index=1)))
         )
         assert gap > 60, (
             f"/health (~1 ms) and /login (~15 ms) are {gap}px apart on a log axis"
         )
-        assert count_prefix(snap, "chart.grid.minor.y.") > 0, (
+        assert count_prefix(snap, group("grid_minor_y")) > 0, (
             "and the log axis carries its per-decade subdivisions, without "
             "which evenly-spaced decade lines read as a linear axis"
         )
@@ -390,17 +422,24 @@ def body() -> None:
         toggle(tf, LOG_TAG)
         snap = snapshot(tf)
         linear_gap = abs(
-            centre_y(rect(snap, "chart.median.0")) - centre_y(rect(snap, "chart.median.1"))
+            centre_y(rect(snap, addr("median", index=0)))
+            - centre_y(rect(snap, addr("median", index=1)))
         )
         assert linear_gap < 10, (
             "back on linear they collapse into each other again "
             f"({linear_gap}px) — off-scale and flattening are both properties "
             "of the AXIS"
         )
+        # ⚠ Both axes are NAMED. The crate publishes a grammar per axis and none
+        # for "a minor gridline on either", so the walk that spelled the common
+        # `chart.grid.minor.` was asserting over a stem the crate never
+        # composes — it happened to hold, and would have stopped holding the
+        # day a third minor family appeared under it.
         assert_eq(
-            count_prefix(snap, "chart.grid.minor."),
+            count_prefix(snap, group("grid_minor_x"))
+            + count_prefix(snap, group("grid_minor_y")),
             0,
-            "and the minor gridlines go with it",
+            "and the minor gridlines go with it, on neither axis",
         )
 
         # ── (G) the derivation reaches assistive technology ──────────

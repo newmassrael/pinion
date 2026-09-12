@@ -497,6 +497,72 @@ def test_chart_grammar_composes_what_the_crate_paints() -> None:
           "chart_overlay_address: `value` is not `value_at`")
 
 
+def test_chart_family_cuts_the_template_where_the_fields_run_out() -> None:
+    """★★★★★ R2154 — the STEM half of the grammar, which had no test at all.
+
+    R2153 added [`chart_family`] with one caller and no case here, and the
+    untested half carried a defect of exactly the kind this campaign is about:
+    the cut was taken at the first segment that *begins* with a placeholder, so
+    `{prefix}.a11y.r{index}` came back as `chart.a11y.r{index}` — braces and
+    all, a string that classifies nothing and reports the chart as unpainted.
+    A helper nobody tests is a second unchecked copy of the composition, which
+    is the thing it was built to remove.
+
+    ⚠ The addresses are spelled here on purpose, for the reason the case above
+    states: this file is outside the census `painted_addresses.py` reads, so a
+    value pin costs the campaign nothing.
+    """
+    check(rpc_verify.chart_family("series") == "chart.series",
+          "chart_family: the stem of an indexed family")
+    check(rpc_verify.chart_family("point", prefix="scatter") == "scatter.point",
+          "chart_family: under the chart's own prefix")
+    check(rpc_verify.chart_family("grid_minor_y") == "chart.grid.minor.y",
+          "chart_family: a multi-word stem is returned whole")
+    # ⚠ The regression the missing test let through.
+    a11y = rpc_verify.chart_family("a11y_row")
+    check(a11y == "chart.a11y",
+          f"chart_family: the cut takes a segment that CARRIES a brace -> {a11y}")
+    check("{" not in a11y, f"chart_family: and no stem leaks a brace -> {a11y}")
+    # ★ The later cut: one datum's own marks, not every datum's.
+    check(rpc_verify.chart_family("outlier", index=3) == "chart.outlier.3",
+          "chart_family: cut after a coordinate it was handed")
+    check(rpc_verify.chart_family("outlier") == "chart.outlier",
+          "chart_family: and the family stem is that same cut with no fields")
+    check(rpc_verify.chart_family("outlier", index=3).startswith(
+              rpc_verify.chart_family("outlier") + "."),
+          "chart_family: the narrower group sits INSIDE the wider one")
+    check(rpc_verify.chart_address("outlier", index=3, at=0).startswith(
+              rpc_verify.chart_family("outlier", index=3) + "."),
+          "chart_family: and a member of it sits inside that")
+
+
+def test_chart_family_refuses_a_field_its_cut_never_reaches() -> None:
+    """★★★★★ And the refusals, which are what keeps a miscount from passing.
+
+    A dropped field does not raise anything by itself — it composes a SHORTER
+    stem, so the walk counts a group wider than the one it named and reports
+    marks the chart never painted. That is worse than a missing address, which
+    at least fails loudly, so each way to reach one is refused here.
+    """
+    cases = [
+        ("a family the crate does not paint",
+         lambda: rpc_verify.chart_family("seres")),
+        ("a coordinate the cut falls before",
+         lambda: rpc_verify.chart_family("outlier", at=0)),
+        ("a coordinate the template does not carry at all",
+         lambda: rpc_verify.chart_family("series", nope=1)),
+        ("a template that is all placeholder after its prefix",
+         lambda: rpc_verify.chart_family("indexed")),
+    ]
+    for label, call in cases:
+        try:
+            composed = call()
+        except AssertionError:
+            check(True, f"chart_family: {label} is refused")
+        else:
+            check(False, f"chart_family: {label} must be refused -> {composed}")
+
+
 def test_chart_grammar_refuses_rather_than_composing_a_guess() -> None:
     """★★★★★ And every refusal, because a fallback would restore the defect.
 
