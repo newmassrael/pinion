@@ -79,6 +79,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     access_node_by_tag,
     run_demo,
+    shell_address,
 )
 
 SHELL = "hello-analyzer-shell"
@@ -188,17 +189,21 @@ def section_b(app: RpcSubprocess) -> None:
 
     app.drag(from_at=grip, to_at=onto, steps=8, phase="begin")
     held = rects(app)
+    # ★★★★★ R2171 — the carried footprint's addresses come from the screen.
+    seat = shell_address(app, "carry", "seat")
+    join_tag = shell_address(app, "carry", "join")
+    slot_tag = shell_address(app, "carry", "slot")
     ok(
         "B: ★★★★★ the application marks the PLACE a release would join, before "
-        f"the release — {sorted(t for t in held if t.startswith('shell.carry.'))}",
-        "shell.carry.join" in held,
+        f"the release — {sorted(t for t in held if t.startswith(seat))}",
+        join_tag in held,
     )
     ok(
         "B: ★★ and it marks no cell, because a join takes no cell — a mark "
         "promising a placement that will not happen is worse than no mark",
-        "shell.carry.slot" not in held,
+        slot_tag not in held,
     )
-    join = held["shell.carry.join"]
+    join = held[join_tag]
     ok(
         "B: ★ the mark is on the host's header BAND — inside its card and only "
         f"the top of it, which is what the gesture is aimed at — join {join}, "

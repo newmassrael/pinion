@@ -6716,6 +6716,25 @@ def lab_address(tf, family: str, part: str | None = None, *, ext: str = "/extern
     return row if part is None else row[part]
 
 
+def shell_address(tf, family: str, part: str | None = None, *, ext: str = "/external"):
+    """An address the analyzer SHELL publishes for a reader that cannot call
+    its declaration — the peer of [`lab_address`], one screen over.
+
+    ★★★★★ R2171 — the node lab has published `declared_addresses` since R2128
+    and the shell never did, so every walk driving it spelled what the shell's
+    own `address.rs` already held. The carried footprint is what forced it:
+    thirteen sites across three walks compose `shell.carry.<key>` from keys the
+    screen ALREADY publishes in `spec["carry"]` — so a walk held half the
+    address and typed the other half, which is R2153's finding one screen over.
+
+    `family` is a key of the shell's `declared_addresses` row; `part` names one
+    member of it. A family or part the screen does not publish is a `KeyError`
+    naming it, which is the answer worth having.
+    """
+    row = screen_spec(tf, ext)["declared_addresses"][family]
+    return row if part is None else row[part]
+
+
 def lab_fault_panel(tf, *, ext: str = "/external") -> dict:
     """The node lab's fault panel as it publishes itself — its own box, its
     heading, the seat a row is addressed under, the parts a row paints, and the

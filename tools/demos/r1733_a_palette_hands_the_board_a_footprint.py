@@ -81,6 +81,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     run_demo,
+    shell_address,
     shell_palette_entry,
     shell_palette_part,
 )
@@ -193,10 +194,15 @@ def section_a(app: RpcSubprocess, spec: dict, kind: str) -> None:
         "A: nothing is carried before anything is picked up",
         q(app, "carrying") == "" and q(app, "drag") == "",
     )
+    # ★★★★★ R2171 — the SEAT comes from the screen too. The keys already did
+    # (`spec["carry"]`), so this walk held half an address and typed the other
+    # half — R2153's finding, one screen over.
+    seat = shell_address(app, "carry", "seat")
+    slot_seat = shell_address(app, "carry", "slot_seat")
     for part in spec["carry"]["canon"]:
         ok(
             f"A: and no {part['key']} is painted while nothing is carried",
-            f"shell.carry.{part['key']}" not in rects,
+            f"{seat}{part['key']}" not in rects,
         )
 
     # Pick the row up and hold it over the middle of the board.
@@ -210,18 +216,18 @@ def section_a(app: RpcSubprocess, spec: dict, kind: str) -> None:
     for part in spec["carry"]["canon"]:
         ok(
             f"A: ★ carrying a footprint paints the {part['key']} — {part['title']}",
-            f"shell.carry.{part['key']}" in held,
+            f"{seat}{part['key']}" in held,
         )
     for part in spec["slot"]["canon"]:
         ok(
             f"A: and the mark carries its {part['key']}",
-            f"shell.carry.slot.{part['key']}" in held,
+            f"{slot_seat}{part['key']}" in held,
         )
     owed = [entry["key"] for entry in spec["carry"]["owed"]]
     ok(
         "A: ★★ the parts this build has and the reference does not are recorded "
         f"rather than deleted — {owed}",
-        all(f"shell.carry.{key}" in held for key in owed),
+        all(f"{seat}{key}" in held for key in owed),
     )
     app.drag(from_at=target, to_at=target, phase="end")
     app.tick(16)
@@ -258,10 +264,13 @@ def section_b(app: RpcSubprocess, kind: str) -> None:
     ok("B: ★ and it is not column zero, so the pointer is what chose it", col != "0")
 
     held = abs_rects_of(app.snapshot(source="paint"))
-    ok("B: the mark is painted at that moment", "shell.carry.slot" in held)
+    ok(
+        "B: the mark is painted at that moment",
+        shell_address(app, "carry", "slot") in held,
+    )
     ok(
         "B: ★ and the mark SAYS which cell, rather than leaving it to be counted",
-        "shell.carry.slot.cell" in held,
+        shell_address(app, "carry", "slot_cell") in held,
     )
 
     app.drag(from_at=aim, to_at=aim, phase="end")
@@ -429,8 +438,14 @@ def section_f(app: RpcSubprocess, kind: str) -> None:
         held = q(app, "drag")
         ok(f"F: ★ a real press and a real move put a footprint in hand — {held!r}", held != "")
         painted = abs_rects_of(app.snapshot(source="paint"))
-        ok("F: and the board marks where it would land", "shell.carry.slot" in painted)
-        ok("F: and invites the release in words", "shell.carry.banner" in painted)
+        ok(
+            "F: and the board marks where it would land",
+            shell_address(app, "carry", "slot") in painted,
+        )
+        ok(
+            "F: and invites the release in words",
+            shell_address(app, "carry", "banner") in painted,
+        )
 
         hand.release()
         app.tick(16)

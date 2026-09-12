@@ -63,6 +63,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     run_demo,
+    shell_address,
     shell_palette_entry,
 )
 
@@ -250,7 +251,7 @@ def section_d(app: RpcSubprocess, home: Home) -> None:
     ok(
         "D: ★★ and the board is DRAWING that cell, so what a person sees and "
         "what the release reads are one value",
-        "shell.carry.slot" in rects(app),
+        shell_address(app, "carry", "slot") in rects(app),
     )
     app.drag(from_at=home_at, to_at=home_at, steps=1, phase="end")
     settle(app)

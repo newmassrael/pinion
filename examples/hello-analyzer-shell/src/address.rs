@@ -827,3 +827,47 @@ pub fn preset_item(n: usize) -> String {
 pub fn preset_item_index(tag: &str) -> Option<usize> {
     tag.strip_prefix(PRESET_ITEM)?.parse().ok()
 }
+
+// ── the carried footprint (R2171) ───────────────────────────────────────────
+//
+// ★★★★★ The largest family this screen had not declared: seven paint sites in
+// `main.rs`, three family prefixes in the pin generator, six assertions, and
+// THIRTEEN walk sites across three walks — all spelling `shell.carry.…` by
+// hand. A drag paints it, so the family is only on screen for the length of a
+// gesture, which is exactly when a wrong letter is hardest to notice: the mark
+// is *supposed* to be absent most of the time.
+
+/// The prefix every mark of the carried footprint hangs off.
+pub const CARRY: &str = "shell.carry.";
+
+/// The chip that follows the pointer while a widget is being carried.
+pub const CARRY_CHIP: &str = "shell.carry.chip";
+
+/// The board's grid, drawn only while something is being carried over it.
+pub const CARRY_GRID: &str = "shell.carry.grid";
+
+/// The preview of where the carried widget would land.
+pub const CARRY_SLOT: &str = "shell.carry.slot";
+
+/// [`CARRY_SLOT`] with the separator its own parts hang off.
+pub const CARRY_SLOT_SEAT: &str = "shell.carry.slot.";
+
+/// The grip glyph drawn on that preview.
+pub const CARRY_SLOT_GRIP: &str = "shell.carry.slot.grip";
+
+/// One cell of the preview's own footprint.
+pub const CARRY_SLOT_CELL: &str = "shell.carry.slot.cell";
+
+/// The mark drawn where a carried widget would JOIN one already placed.
+pub const CARRY_JOIN: &str = "shell.carry.join";
+
+/// The line that invites the release in words.
+pub const CARRY_BANNER: &str = "shell.carry.banner";
+
+// ⚠ No `carry_part(key)` / `carry_slot_part(key)` composers. They were written
+// and the compiler refused them as dead code, which is the right answer and the
+// one R2158 recorded: a composer with no production consumer is not a
+// declaration, it is a rotting thing this campaign creates. The keyed members
+// are composed by WALKS, from the keys `spec["carry"]` already publishes — so
+// what they needed was the PREFIX, and [`CARRY`] and [`CARRY_SLOT_SEAT`] are
+// published beside the members for exactly that.

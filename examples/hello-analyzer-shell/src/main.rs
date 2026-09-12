@@ -2785,7 +2785,7 @@ fn carried_label(text: &str, cx: u32, cy: u32, palette: Palette) -> Scene {
         // back out of the paint. The chip is this build's answer to a fact the
         // reference gets from the browser's own drag image, and the
         // specification records it as such rather than deleting it.
-        .with_tag("shell.carry.chip")
+        .with_tag(crate::address::CARRY_CHIP)
         .with_style(
             BoxStyle::filled(palette.raised)
                 .with_corner_radius(9)
@@ -10229,7 +10229,7 @@ fn grid_scene(rows: u32, palette: Palette, bright: bool) -> Vec<Scene> {
     // difference — two pixels, five marks over — on the wrapper's first run.
     vec![Scene::Container(
         ContainerNode::new(out)
-            .with_tag("shell.carry.grid")
+            .with_tag(crate::address::CARRY_GRID)
             .with_layout(absolute(Rect::new(
                 0,
                 0,
@@ -13314,6 +13314,34 @@ fn gestures_json() -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// ★★★★★ R2171 — the addresses this screen DECLARES, for a reader that cannot
+/// call the declaration.
+///
+/// The node lab has published this since R2128 (`declared_addresses_wire`); the
+/// shell had not, so every walk driving it spelled what `address.rs` already
+/// held. Lifted into its own function rather than inlined for the reason
+/// `palette_placement_json` was: this builder is at its line budget.
+///
+/// ⚠ The carried footprint is what forces it. Its keys are already published in
+/// `spec["carry"]`, so a walk was handed half an address and wrote the rest —
+/// R2153's finding one screen over, and the reason the PREFIX belongs here
+/// beside the members.
+fn declared_addresses_json() -> serde_json::Value {
+    serde_json::json!({
+        "carry": {
+            "seat": crate::address::CARRY,
+            "chip": crate::address::CARRY_CHIP,
+            "grid": crate::address::CARRY_GRID,
+            "slot": crate::address::CARRY_SLOT,
+            "slot_seat": crate::address::CARRY_SLOT_SEAT,
+            "slot_grip": crate::address::CARRY_SLOT_GRIP,
+            "slot_cell": crate::address::CARRY_SLOT_CELL,
+            "join": crate::address::CARRY_JOIN,
+            "banner": crate::address::CARRY_BANNER,
+        },
+    })
+}
+
 fn spec_json() -> serde_json::Value {
     serde_json::json!({
         "window": { "w": spec::WIN_W, "h": spec::WIN_H },
@@ -13337,6 +13365,13 @@ fn spec_json() -> serde_json::Value {
         // `floating_ids` was lifted at R1738: adding one slot took this
         // builder a line over its budget.
         "palette_placement": palette_placement_json(),
+        // ★★★★★ R2171 — THE SHELL PUBLISHES WHAT IT DECLARES, which the node
+        // lab has done since R2128 and this screen never did. A walk is Python
+        // and cannot call `address.rs`; the carried footprint's keys already
+        // come from `spec["carry"]`, so a walk held HALF the address and typed
+        // the other half — thirteen sites across three walks. Now it can ask
+        // for both halves from one document.
+        "declared_addresses": declared_addresses_json(),
         "source": spec::SOURCE,
         "transport": spec::TRANSPORT,
         "rate": spec::RATE,
@@ -14085,11 +14120,11 @@ fn carry_slot_scene(ghost: &Tile, palette: Palette) -> Scene {
                         .flat_map(|r| (0..2).map(move |c| dot(c * 6, r * 6, 3, tint)))
                         .collect(),
                 )
-                .with_tag("shell.carry.slot.grip")
+                .with_tag(crate::address::CARRY_SLOT_GRIP)
                 .with_layout(absolute(Rect::new(slot.w / 2 - 34, mid + 2, 9, 15))),
             ),
             cell(
-                "shell.carry.slot.cell".to_owned(),
+                crate::address::CARRY_SLOT_CELL.to_owned(),
                 &format!("({},{})", ghost.col, ghost.row),
                 Rect::new(slot.w / 2 - 18, mid, 60, 16),
                 FONT_BODY,
@@ -14097,7 +14132,7 @@ fn carry_slot_scene(ghost: &Tile, palette: Palette) -> Scene {
                 TextOverflow::Clip,
             ),
         ])
-        .with_tag("shell.carry.slot")
+        .with_tag(crate::address::CARRY_SLOT)
         .with_style(
             BoxStyle::filled(Color::rgba(tint.r, tint.g, tint.b, 0x24))
                 .with_corner_radius(10)
@@ -14149,7 +14184,7 @@ fn join_mark_scene(host: &Tile, palette: Palette) -> Scene {
     let band = header_rect(cell_rect(host));
     Scene::Container(
         ContainerNode::new(Vec::new())
-            .with_tag("shell.carry.join")
+            .with_tag(crate::address::CARRY_JOIN)
             .with_style(
                 BoxStyle::filled(Color::rgba(tint.r, tint.g, tint.b, 0x24))
                     .with_corner_radius(8)
@@ -14974,7 +15009,7 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
                 FONT_BODY,
                 palette.accent_fg,
             )])
-            .with_tag("shell.carry.banner")
+            .with_tag(crate::address::CARRY_BANNER)
             .with_style(
                 BoxStyle::filled(Color::rgba(0, 0, 0, 0))
                     .with_corner_radius(16)
