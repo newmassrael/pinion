@@ -300,9 +300,7 @@ def sites(path: Path) -> list[tuple[int, str]]:
     reader and not the other. Those three are now counted where their family
     really is unknown, by [`unanchored_reader_sites`].
     """
-    return sorted(
-        (line, ADDRESS.match(literal).group(1)) for line, literal in _walk_literals(path)
-    )
+    return sorted((line, family_of(literal)) for line, literal in _walk_literals(path))
 
 
 def scan() -> dict[str, list[tuple[str, int]]]:
@@ -537,9 +535,9 @@ def rust_site_literals(text: str) -> list[tuple[int, str, str]]:
     """
     found: list[tuple[int, str, str]] = []
     for offset, line, literal in rust_literals(text):
-        hit = ADDRESS.match(literal)
-        if hit and handed_to(text, offset) not in NON_ADDRESS_CALLS:
-            found.append((line, hit.group(1), literal))
+        stem = family_of(literal)
+        if stem and handed_to(text, offset) not in NON_ADDRESS_CALLS:
+            found.append((line, stem, literal))
     return sorted(found)
 
 
@@ -553,12 +551,12 @@ def non_address_literals(text: str) -> list[tuple[int, str, str]]:
     """
     found: list[tuple[int, str, str]] = []
     for offset, line, literal in rust_literals(text):
-        hit = ADDRESS.match(literal)
-        if not hit:
+        stem = family_of(literal)
+        if not stem:
             continue
         method = handed_to(text, offset)
         if method in NON_ADDRESS_CALLS:
-            found.append((line, hit.group(1), method))
+            found.append((line, stem, method))
     return sorted(found)
 
 
@@ -1285,12 +1283,15 @@ def check() -> int:
         if any(template_denotes(literal, address) for address in pinned_addresses())
     )
     walk_loose = sum(1 for corpus, _where, _literal in loose if corpus == "walk")
+    # ★★★★★ R2184 — narrowed to the HANDED prefix. A runtime value in the family
+    # segment is a template family now and is in the queue above.
     print(
         f"painted-addresses: and {len(loose)} reader site(s) the queue does NOT "
         f"count (walk {walk_loose} / rust {len(loose) - walk_loose}) spell an "
-        f"address whose family or head is a runtime value — {held} of them can "
-        "compose an address a `.pin` artifact holds, so the queue is a FLOOR "
-        "under the retyping, not a count of it"
+        f"address after a HANDED prefix, whose family no text names — {held} of "
+        "them can compose an address a `.pin` artifact holds, so the queue is a "
+        "floor under the retyping by at least that much; telling the rest from "
+        "file names needs each site's namespace"
     )
     # ★★★★★ R2147 — and WHETHER EACH FAMILY'S VALUE IS HELD AT ALL, which
     # neither line above can say. Converting a family's last speller removes
@@ -1657,6 +1658,16 @@ def rust_needles(text: str, stem: str) -> tuple[bool, bool]:
     fixtures: the whole reason the prose went wrong is that a count measured
     once against a moving corpus was written down as though it would hold.
     """
+    if "{}" in stem:
+        # ★★★★★ R2184 — a TEMPLATE family is spelled as a format template,
+        # `card.{id}.x`, so its `{}` is matched as a placeholder. By text alone
+        # this answered "spelled by no Rust source" for five of the twelve
+        # template families whose templates are there, and "yes" for the other
+        # seven only where `card.{}` happened to occur as literal text.
+        pattern = re.compile(stem_pattern(stem, r"\{[^{}]*\}"))
+        if not pattern.search(text):
+            return (False, False)
+        return (True, any(pattern.search(lit) for lit in RUST_LITERAL.findall(text)))
     if stem not in text:
         return (False, False)
     return (True, any(stem in lit for lit in RUST_LITERAL.findall(text)))
@@ -1992,9 +2003,7 @@ def address_literal_sites() -> tuple[tuple[str, str, str], ...]:
     for path in sources():
         where = str(path.relative_to(ROOT))
         for line, literal in _walk_literals(path):
-            hit = ADDRESS.match(literal)
-            if hit:
-                found.append((f"{where}:{line}", hit.group(1), literal))
+            found.append((f"{where}:{line}", family_of(literal), literal))
     return tuple(found)
 
 
@@ -2084,27 +2093,89 @@ _SEGMENT = re.compile(r"^(?:[A-Za-z0-9_#:-]|\{[^{}]*\})+$")
 _FAMILY_WORD = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
+def stem_pattern(stem: str, placeholder: str) -> str:
+    """A regular expression for `stem`'s segments, each `{}` of a template
+    family standing for `placeholder`.
+
+    ★★★★★ R2184 — ONE reading of a family stem, so the two questions asked of
+    it cannot disagree about where its segments are: does a pinned ADDRESS
+    hold it ([`covers`], where `{}` is one segment's characters) and does a
+    Rust SOURCE spell it ([`rust_needles`], where `{}` is a format
+    placeholder). For a concrete stem the pattern is its escaped text.
+    """
+    return r"\.".join(
+        placeholder
+        if segment == "{}"
+        else re.escape(segment).replace(r"\{\}", placeholder)
+        for segment in stem.split(".")
+    )
+
+
+def template_family(literal: str) -> str | None:
+    """The TEMPLATE FAMILY of a literal whose family segment is a runtime
+    value — `card.{id}.config` is `card.{}` — or `None`.
+
+    ★★★★★ R2184 — R2181 measured these and printed them beside the queue
+    rather than charging them, because `card.{id}.close` composes every card's
+    close and a family-keyed ratchet had no row for it. Charging such a site to
+    each family it can compose would count one retyping seven times, which is
+    the unit error R2179 removed. The unit this tree retypes is the template's
+    own vocabulary, and it is readable from the text exactly as a concrete
+    stem is: the family word, and the family segment with every placeholder
+    normalised to `{}` and an instance key dropped.
+
+    Proven before it entered the tree, by a dry run of this rule through every
+    derivation with all nineteen caches cleared: 12 families, the reducible
+    queue 160 -> 358, no existing budget row rising or falling, and the
+    unpinned derivation still `echo.demo` alone. `card.{}` is held by an
+    artifact, nine by a declared parametric schema head, and `float.{}` and
+    `torn.{}` by nothing — as `float.packet` and `torn.packet` already were.
+
+    ⚠ A literal whose HEAD is the placeholder is not one: its family is the
+    handed prefix's, which no text names — see [`unanchored_shape`].
+    """
+    if "{{" in literal or ADDRESS.match(literal):
+        return None
+    segments = literal.split(".")
+    if (
+        len(segments) < 3
+        or _FAMILY_WORD.match(segments[0]) is None
+        or _PLACEHOLDER.search(segments[1]) is None
+        or not all(_SEGMENT.match(segment) for segment in segments)
+    ):
+        return None
+    family = re.sub(r"#.*$", "", _PLACEHOLDER.sub("{}", segments[1]))
+    return f"{segments[0]}.{family}"
+
+
+def family_of(literal: str) -> str | None:
+    """The family `literal` is charged to: a concrete stem [`ADDRESS`] anchors,
+    a [`template_family`], or `None`.
+
+    ★★★★★ R2184 — the ONE place a literal becomes a family. Every needle reads
+    it, so a concrete stem and a template stem cannot be derived by two rules.
+    """
+    hit = ADDRESS.match(literal)
+    return hit.group(1) if hit else template_family(literal)
+
+
 def unanchored_shape(literal: str) -> bool:
-    """Whether `literal` has an address's SHAPE and a family its text cannot
-    name.
+    """Whether `literal` has an address's SHAPE and a family NO text names: a
+    placeholder as the whole HEAD — `{tag}.row.{slot}`, a prefix handed in.
 
     ★★★★★ R2181 — R2174 and R2180 each found a screen's addresses composed in
     places this census could not see, and R2180 wrote down that the reducible
-    queue is a floor under the retyping rather than a count of it, *by how much
-    unmeasured*. This is the reader that measures it. Two shapes:
+    queue is a floor under the retyping, *by how much unmeasured*. This was the
+    reader that measured it: 351 readers, against a queue of 61.
 
-    * a word, a placeholder in the FAMILY segment, then a key —
-      `card.{id}.config`, where the card's kind is a runtime value;
-    * a placeholder as the whole HEAD — `{tag}.row.{slot}`, a prefix handed in.
-
-    Measured before this round's two exact rules (the instance key in
-    [`ADDRESS`], the constant in [`rust_str_constants`] and
-    [`_module_constants`]): 351 readers, against a queue of 61.
-
-    ⚠ SHAPE, not meaning, and it over-counts in a known direction: a walk's
-    `frame.{fid}.x` is an introspection path and `{name}.png` a file. That is
-    why [`check`] also says how many can compose an address a `.pin` artifact
-    holds — the part that is certainly paint.
+    ★★★★★ R2184 — the other shape R2181 counted here, a runtime value in the
+    FAMILY segment (`card.{id}.config`), is a [`template_family`] now and the
+    ratchet charges it. What remains is the handed prefix, and it stays
+    printed rather than charged for a measured reason: the shape also holds
+    file names (`{name}.png` nine times in the walks, `{name}.rs` six times in
+    Rust tests), and keying it into the ratchet would write file names into
+    `docs/unpinned-families.tsv`. Telling the two apart needs each site's
+    NAMESPACE — the reader it is handed to — which this census does not have.
     """
     if ADDRESS.match(literal) or "{{" in literal:
         return False
@@ -2113,14 +2184,7 @@ def unanchored_shape(literal: str) -> bool:
         return False
     if not re.search(r"[a-z]", _PLACEHOLDER.sub("", literal)):
         return False
-    head = segments[0]
-    if _PLACEHOLDER.search(head):
-        return _PLACEHOLDER.fullmatch(head) is not None
-    return (
-        len(segments) >= 3
-        and _FAMILY_WORD.match(head) is not None
-        and _PLACEHOLDER.search(segments[1]) is not None
-    )
+    return _PLACEHOLDER.fullmatch(segments[0]) is not None
 
 
 @functools.lru_cache(maxsize=None)
@@ -2204,12 +2268,12 @@ def unanchored_reader_sites() -> tuple[tuple[str, str, str], ...]:
     same terms: every walk site is a reader, and a Rust site is one under
     [`site_role_at`].
 
-    ⚠⚠ REPORTED, NOT CHARGED. A site here may compose addresses in several
-    families (`card.{id}.close` is every card's close), and a ratchet keyed by
-    family has no row for it yet; charging each such site to the families it
-    can compose is the next instalment. Until then the number is printed every
-    run beside the queue it qualifies, so the queue cannot be read as a count
-    of what is left.
+    ⚠⚠ REPORTED, NOT CHARGED. R2181 printed both unanchored shapes here; since
+    R2184 the literal-headed one (`card.{id}.close`) is a [`template_family`]
+    and charged by the ratchet, one row per template rather than one per family
+    it can compose. What remains is the handed prefix, whose family no text
+    names and whose shape file names share — see [`unanchored_shape`]. It is
+    printed every run beside the queue it qualifies.
     """
     found: list[tuple[str, str, str]] = []
     for path in sources():
@@ -2241,7 +2305,7 @@ def _walk_literals(path: Path) -> list[tuple[int, str]]:
     return [
         (line, literal)
         for line, literal in python_literals(path.read_text(encoding="utf-8"))
-        if ADDRESS.match(literal)
+        if family_of(literal)
     ]
 
 
@@ -2483,8 +2547,16 @@ def covers(address: str, stem: str) -> bool:
     lose the check silently — the defect this whole derivation exists to
     surface — so the match is anchored at separators on both sides and
     `feed.header` does not answer for `feed.head`.
+
+    ★★★★★ R2184 — a TEMPLATE family is held the same way, its `{}` segment
+    matching one segment of the address: `card.{}` is held by
+    `card.alarms.feed`. Written through [`stem_pattern`], and proven against
+    the rule it replaced before it did: for every concrete stem in the budget
+    against every pinned address — 174 x 1,059, 184,266 pairs — the two
+    answered the same every time.
     """
-    return f".{stem}." in f".{address}."
+    pattern = r"(?:^|\.)" + stem_pattern(stem, r"[^.]+") + r"\."
+    return re.search(pattern, f"{address}.") is not None
 
 
 @functools.lru_cache(maxsize=1)
@@ -2932,8 +3004,14 @@ def selftest() -> int:
             [],
         ),
         (
-            "a runtime value in the family segment names no family",
+            "★★★★★ R2184 — a runtime value in the family segment is the TEMPLATE "
+            "family, one row for the vocabulary rather than one per card kind",
             'a = f"card.{cid}.grip"\n',
+            ["card.{}"],
+        ),
+        (
+            "★★ but a handed prefix still names no family",
+            'a = f"{card}.grip.x"\n',
             [],
         ),
     ]
@@ -3334,8 +3412,53 @@ def selftest() -> int:
     # sites are certainly paint. Fixtures, for the reason above; and the matcher
     # is held to `may_denote_same` wherever both apply, because they are two
     # implementations of one rule and only one of them had cases.
+    # ★★★★★ R2184 — the TEMPLATE family: which literals are one, what stem they
+    # take, and the two questions asked of a template stem.
+    family_cases: list[tuple[str, str, str | None]] = [
+        ("a runtime value in the family segment", "card.{id}.config", "card.{}"),
+        ("★ an instance key on it is dropped, as a concrete family's is",
+         "card.{kind}#{n}.close", "card.{}"),
+        ("a placeholder beside text in the family segment keeps the text",
+         "lab.form_{x}.row", "lab.form_{}"),
+        ("a concrete family stays concrete", "card.alarms#6.feed", "card.alarms"),
+        ("★★ a handed prefix is not one", "{tag}.row.{slot}", None),
+        ("a word and a placeholder is a prefix, as two words are", "state.{i}", None),
+        ("a sentence is not one", "the card.{id}.x", None),
+    ]
+    for label, literal, want in family_cases:
+        got = family_of(literal)
+        if got != want:
+            failed += 1
+            print(
+                f"FAIL: {label}: family_of({literal!r}) -> {got!r}, wanted {want!r}",
+                file=sys.stderr,
+            )
+    template_stem_cases: list[tuple[str, object, object]] = [
+        ("★ a template family is held by an address in any of its families",
+         covers("card.alarms.feed", "card.{}"), True),
+        ("and inside a longer address, as a concrete stem is",
+         covers("x.card.alarms.feed", "card.{}"), True),
+        ("but its word must be a whole segment",
+         covers("cardx.alarms.feed", "card.{}"), False),
+        ("text beside the placeholder must agree",
+         covers("lab.form_x.row", "lab.form_{}"), True),
+        ("and does not answer for other text",
+         covers("lab.formx.row", "lab.form_{}"), False),
+        ("★ a Rust format template spells its template family",
+         rust_needles('fn f(id: &str) { t(format!("card.{id}.x")); }', "card.{}"),
+         (True, True)),
+        ("and a comment spells it in the source only",
+         rust_needles("// see card.{id}.x\nfn f() {}", "card.{}"), (True, False)),
+        ("a concrete stem keeps its needle",
+         rust_needles('fn f() { t("card.alarms.x"); }', "card.alarms"), (True, True)),
+    ]
+    for label, got, want in template_stem_cases:
+        if got != want:
+            failed += 1
+            print(f"FAIL: {label}: got {got!r}, wanted {want!r}", file=sys.stderr)
     shape_cases: list[tuple[str, str, bool]] = [
-        ("a runtime value in the family segment", "card.{id}.config", True),
+        ("★★★★★ R2184 — a literal-headed template is a family now, not unanchored",
+         "card.{id}.config", False),
         ("a handed prefix at the head", "{tag}.row.{slot}", True),
         ("★ a handed prefix and one member is an address too", "{tag}.head", True),
         ("an anchored address is not unanchored", "lab.form.remove.{key}", False),
