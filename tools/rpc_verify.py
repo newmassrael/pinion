@@ -2702,6 +2702,51 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         assert isinstance(resp.result, dict), f"scene/marks: {resp.error}"
         return resp.result
 
+    def chart_prefixes(self, *, viewport: Optional[tuple[int, int]] = None) -> list[str]:
+        """★★★★★ R2153 — **the tag prefix of every chart on the frame, asked.**
+
+        This is the coordinate that made the chart grammar unusable. R2146 had
+        the crate emit the grammar of every address it paints
+        (`{prefix}.series.{index}` and twenty-five more) so a walk could format
+        one instead of spelling it — and that only ever worked for a chart left
+        on the default prefix, because `with_tag_prefix` is a per-chart choice
+        and nothing on the frame reported it. A walk holding half an address
+        writes the whole thing out.
+
+        Measured at R2153, that is not a corner: 46 of the address census's
+        owed families are **26 grammars wearing 13 prefixes**, 484 of 918
+        spelled sites. `chart.series`, `line.series` and `throughput.series`
+        read as three jobs and are one.
+
+            for prefix in tf.chart_prefixes():
+                tf.find(chart_address("series", prefix=prefix, index=0))
+
+        ⚠ It REFUSES an empty answer, for [`published_tags`]'s reason: a walk
+        that silently got no prefixes would compose nothing, pass vacuously,
+        and report the screen as fine. A frame with no chart is not a frame
+        this helper should be asked about.
+        """
+        params: dict[str, Any] = {"kind": "chosen"}
+        if viewport is not None:
+            params["viewport"] = {"w": viewport[0], "h": viewport[1]}
+        resp = self.request("scene/derivations", params)
+        assert resp is not None, "scene/derivations answered nothing"
+        assert isinstance(resp.result, dict), f"scene/derivations: {resp.error}"
+        found: list[str] = []
+        for node in resp.result.get("nodes", []):
+            for entry in node.get("derivations") or []:
+                if entry.get("name") == "tag_prefix":
+                    found.append(node["tag"])
+                    break
+        assert found, (
+            "no node on this frame declares a chart `tag_prefix`. A walk that "
+            "went on would compose no address at all and read the silence as "
+            "the chart not painting -- which is the defect this reader exists "
+            f"to remove. Nodes that published: "
+            f"{[n.get('tag') for n in resp.result.get('nodes', [])]}"
+        )
+        return found
+
     def mark_names(
         self,
         tag: str,
@@ -5187,6 +5232,49 @@ def chart_address(name: str, *, prefix: Optional[str] = None, **fields: Any) -> 
             "is not handed is one it would have to spell."
         )
     return _chart_format(grammar[name], name, prefix, fields)
+
+
+def chart_family(name: str, *, prefix: Optional[str] = None) -> str:
+    """★★★★★ R2153 — the family STEM one chart grammar names, from the grammar.
+
+    [`chart_address`] builds ONE member; a walk that pins how many marks a
+    family has needs the stem to classify by (`scatter.point`), which is the
+    template cut at its first argument. Both are readings of the same published
+    template, so neither is spelled:
+
+        chart_family("point", prefix="scatter")   -> "scatter.point"
+        chart_family("series")                    -> "chart.series"
+
+    ⚠ It refuses a template whose first placeholder after `{prefix}` is not
+    where the stem ends — a grammar like `{prefix}.grid.minor.x.{index}` has a
+    three-word stem and returns it whole. What it will not do is guess: a
+    template with no argument at all is not a family, it is a single address,
+    and asking this for one is a walk that means [`chart_address`].
+    """
+    grammar = chart_grammar()["grammar"]
+    if name not in grammar:
+        raise AssertionError(
+            f"`pinion-chart` paints no family called {name!r}. It paints "
+            f"{sorted(grammar)}."
+        )
+    template = grammar[name]
+    head, _, rest = template.partition("{prefix}")
+    assert head == "" and rest.startswith("."), (
+        f"the grammar for {name!r} is {template!r}, which does not begin with "
+        "its prefix -- this reader cannot cut a stem off it"
+    )
+    stem_parts: list[str] = []
+    for segment in rest[1:].split("."):
+        if segment.startswith("{"):
+            break
+        stem_parts.append(segment)
+    assert stem_parts, (
+        f"the grammar for {name!r} is {template!r}: it has no fixed segment "
+        "after the prefix, so it names no family stem"
+    )
+    if prefix is None:
+        prefix = chart_grammar()["const"]["DEFAULT_PREFIX"]
+    return ".".join([prefix, *stem_parts])
 
 
 def chart_overlay_address(

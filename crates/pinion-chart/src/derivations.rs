@@ -83,6 +83,24 @@ pub(crate) mod name {
     /// R1633 — how many pixels the tightest surviving pair of labels still
     /// overlaps by, when the fit could not succeed.
     pub const LABEL_CROWDING: &str = "label_crowding";
+    /// ★★★★★ R2153 — **the prefix every address under this chart is composed
+    /// with**, which is the coordinate a reader could not obtain.
+    ///
+    /// `src/address.rs` publishes the grammar of every family this crate
+    /// paints — `{prefix}.series.{index}` and twenty-five more — and R2146
+    /// emitted it so a walk could format one instead of spelling it. Measured
+    /// at R2153 that only ever worked for a chart left on the default prefix:
+    /// `with_tag_prefix` is a per-chart choice, nothing on the frame reported
+    /// it, and a reader holding half an address writes the whole thing out.
+    /// The census counts the result as separate families, so `chart.series`,
+    /// `line.series` and `throughput.series` read as three jobs and are one.
+    ///
+    /// It is [`Chosen`](pinion_core::derivation::DerivationKind::Chosen)
+    /// because that is exactly what it is — a setting the caller picked, whose
+    /// value is a stable name, which is the case [`chosen_name`] was written
+    /// for. It is published by every chart kind because it is stated in
+    /// [`chart_root`], the one constructor all of them route through.
+    pub const TAG_PREFIX: &str = "tag_prefix";
 }
 
 /// The units a [`Evidence::Real`] is measured in.
@@ -174,14 +192,35 @@ pub(crate) fn omitted_counts(
 /// reports and the picture hides nothing", while
 /// [`Silent`](pinion_core::derivation::DerivationLookup::Silent) says "this
 /// composition does not answer".
+///
+/// ★★★★★ R2153 — **and it states its own [`TAG_PREFIX`](name::TAG_PREFIX)
+/// here**, which is what makes a chart's addresses composable by a reader that
+/// was not told the prefix. Stated in this constructor rather than in each
+/// chart kind for the reason the constructor exists at all: a chart kind added
+/// later gets it without anybody remembering, and there is no census of kinds
+/// to go stale.
+///
+/// ⚠ The tag IS the prefix — every mark under this root is `{tag}.…` — so this
+/// looks like it restates the node's own name. It does not restate it to a
+/// READER: `derivations_for_tag` takes the tag as input, so a reader can only
+/// read a prefix it could already spell. Published as a derivation, the pair
+/// arrives through [`Scene::derivation_publishers`], which answers *which
+/// charts are here* — the question that was unaskable.
+///
+/// [`Scene::derivation_publishers`]: pinion_core::Scene::derivation_publishers
 pub(crate) fn chart_root(
     children: Vec<Scene>,
     tag: String,
     derivations: DerivationSet,
 ) -> ContainerNode {
+    let stated = derivations.stating(Derivation::new(
+        DerivationKind::Chosen,
+        name::TAG_PREFIX,
+        Evidence::Name(tag.clone().into()),
+    ));
     ContainerNode::new(children)
         .with_tag(tag)
-        .with_derivations(derivations)
+        .with_derivations(stated)
 }
 
 /// The [`Chosen`](DerivationKind::Chosen) derivation naming a setting whose
@@ -889,6 +928,72 @@ mod chart_tests {
         assert_eq!(
             scene.derivations_for_tag("chart.nobody"),
             DerivationLookup::NoSuchTag
+        );
+    }
+
+    /// ★★★★★ R2153 — **the prefix a chart was given is published, and a reader
+    /// that was never told it can find it.**
+    ///
+    /// Asserted on [`chart_root`] itself rather than once per chart kind, and
+    /// that is the whole reason the constructor exists: every kind routes
+    /// through it, so the property holds for a kind added later without any
+    /// list to keep. A per-kind census is the shape this crate's own doc calls
+    /// out as going stale silently.
+    #[test]
+    fn r2153_the_shared_root_states_the_prefix_it_was_given() {
+        use crate::derivations::{chart_root, name};
+        let root = chart_root(
+            vec![],
+            "throughput".to_owned(),
+            DerivationSet::over("sample"),
+        );
+        let stated: Vec<(&str, String)> = root
+            .derivations
+            .as_deref()
+            .expect("the root publishes")
+            .entries()
+            .iter()
+            .map(|d| (d.name(), d.evidence().to_string()))
+            .collect();
+        assert_eq!(
+            stated,
+            vec![(name::TAG_PREFIX, "throughput".to_owned())],
+            "a chart states the prefix it was constructed with",
+        );
+        assert_eq!(root.tag.as_deref(), Some("throughput"), "and it IS the tag");
+    }
+
+    /// ★★★★★ R2153 — **and end to end: a chart given a prefix is discoverable
+    /// from the frame by a reader holding no prefix at all.**
+    ///
+    /// This is the arrangement the address campaign needed and did not have.
+    /// The grammar of every address is published (R2146) and takes `{prefix}`;
+    /// until this round the prefix was obtainable only by already knowing it,
+    /// so a reader spelled the whole address. Here nothing is spelled: the
+    /// frame is asked which charts it carries, and the answer composes.
+    #[test]
+    fn r2153_a_custom_prefix_reaches_a_reader_through_the_frame() {
+        use crate::derivations::name;
+        let style = ChartStyle::default();
+        let scene = LineChart::new(plateau())
+            .with_tag_prefix("throughput")
+            .build(RECT, &style);
+
+        let publishers = scene.derivation_publishers();
+        let prefixes: Vec<&str> = publishers
+            .iter()
+            .filter(|(_, set)| set.entries().iter().any(|d| d.name() == name::TAG_PREFIX))
+            .map(|(tag, _)| *tag)
+            .collect();
+        assert_eq!(prefixes, vec!["throughput"], "asked, not spelled");
+
+        // ★ And the address composed from grammar + discovered prefix is a
+        // mark the chart actually painted. Without this the pair could agree
+        // with each other and with nothing on the frame.
+        let composed = crate::address::series(prefixes[0], 0);
+        assert!(
+            scene.find_with_tag(&composed).is_some(),
+            "the composed address {composed} names no painted mark",
         );
     }
 }

@@ -769,6 +769,30 @@ def rust_text() -> str:
 #: crate's own test pins a family the ratchet does not count.
 PIN_ARTIFACTS = "examples/*/src/*.pin"
 
+#: ★★★★★ R2153 — the OTHER artifact that pins a value, and the one whose
+#: absence here charged a repaid family as a deleted check.
+#:
+#: A crate that composes addresses emits its grammar as a committed artifact,
+#: regenerated from the same literal the composers are declared with and
+#: compared byte for byte by that crate's own test (R2146). That is a value pin
+#: of the same strength as a screen's `.pin`, with one difference that matters
+#: here: its rows are TEMPLATES, `{prefix}.area.{index}`, so the family it pins
+#: is `area` under **every** prefix rather than under one.
+#:
+#: ⚠ Before R2153 this was invisible to [`pin_sources`], and the effect was
+#: precisely backwards. `chart.area` read as pinned — by the crate's own tests,
+#: which use the default prefix — while `line.area`, the SAME grammar in the
+#: same artifact, read as pinned by nothing. So converting a chart on a custom
+#: prefix was reported as deleting a check, and the report was wrong.
+#:
+#: ⚠⚠ Widening a pin test is the dangerous direction (see [`covers`]), so the
+#: claim is stated rather than assumed: what the artifact holds is the GRAMMAR,
+#: which is what a converted reader now composes with. What it does not hold is
+#: which prefix a given chart took — and that is published on the frame since
+#: R2153 and pinned by the reading walk's own assertion. Two checked halves,
+#: where before there was one literal.
+GRAMMAR_ARTIFACTS = "crates/*/src/painted_grammar.tsv"
+
 
 @functools.lru_cache(maxsize=1)
 def pin_artifact_addresses() -> tuple[str, ...]:
@@ -789,6 +813,109 @@ def pin_artifact_addresses() -> tuple[str, ...]:
             if line and not line.startswith("#"):
                 out.append(line.replace("#*", ""))
     return tuple(out)
+
+
+@functools.lru_cache(maxsize=1)
+def grammar_parts() -> tuple[str, ...]:
+    """Every family a committed grammar artifact pins, as its fixed segments.
+
+    A template is `{prefix}.<fixed>.<fixed>.{arg}…`; what it pins is the fixed
+    run between the prefix and the first argument — `area`, `focus.series`,
+    `grid.minor.x`. A template with no fixed segment after the prefix pins no
+    family and is skipped rather than folded into one.
+    """
+    out: list[str] = []
+    for path in sorted(ROOT.glob(GRAMMAR_ARTIFACTS)):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or line.count("\t") < 2:
+                continue
+            _kind, _name, value = line.split("\t", 2)
+            head, marker, rest = value.partition("{prefix}")
+            if head or not marker or not rest.startswith("."):
+                continue
+            fixed: list[str] = []
+            for segment in rest[1:].split("."):
+                if segment.startswith("{"):
+                    break
+                fixed.append(segment)
+            if fixed:
+                out.append(".".join(fixed))
+    return tuple(sorted(set(out)))
+
+
+#: How a chart is given a prefix, and how a `const` holding one is written.
+GRAMMAR_PREFIX_CALL = re.compile(r"\.with_tag_prefix\(\s*([A-Za-z_][A-Za-z0-9_]*|\"[^\"]*\")")
+GRAMMAR_PREFIX_CONST = re.compile(
+    r"const\s+([A-Z][A-Z0-9_]*)\s*:\s*&(?:'static\s+)?str\s*=\s*\"([^\"]*)\"", re.MULTILINE
+)
+
+
+@functools.lru_cache(maxsize=1)
+def grammar_prefixes() -> tuple[str, ...]:
+    """Every prefix a chart in this tree is actually given.
+
+    ⚠⚠ This exists because [`grammar_parts`] alone is the UNSAFE direction.
+    The parts a chart grammar declares are ordinary words — `bar`, `label`,
+    `point`, `axis`, `rule`, `slice` — so a screen family called `panel.label`
+    would be claimed as pinned by an artifact that has never heard of it, and
+    the whole reason [`covers`] is anchored on both sides is that calling a
+    family pinned when it is not loses a check silently. Measured at R2153 no
+    family in this tree collides today; every one of these words invites one.
+
+    So a grammar pin needs BOTH halves: the part must be a declared grammar and
+    the prefix must be one a chart was actually constructed with. Both are read
+    from the source rather than listed — a chart given a new prefix joins the
+    day it is written.
+
+    A prefix passed as a `const` is resolved from that file's own consts, which
+    is how four of this tree's charts spell it. One that cannot be resolved
+    (built at run time, or named in another module) is simply not in the set,
+    and the family reads as unpinned — the safe direction, and the one that
+    asks a person to look.
+    """
+    found: set[str] = set()
+    default = None
+    for path in sorted(ROOT.glob(GRAMMAR_ARTIFACTS)):
+        try:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.startswith("const\tDEFAULT_PREFIX\t"):
+                    default = line.split("\t", 2)[2].strip()
+        except OSError:
+            continue
+    if default:
+        found.add(default)
+    for root in RUST_ROOTS:
+        for path in sorted((ROOT / root).rglob("*.rs")):
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if "with_tag_prefix" not in text:
+                continue
+            consts = dict(GRAMMAR_PREFIX_CONST.findall(text))
+            for raw in GRAMMAR_PREFIX_CALL.findall(text):
+                if raw.startswith('"'):
+                    found.add(raw.strip('"'))
+                elif raw in consts:
+                    found.add(consts[raw])
+    return tuple(sorted(found))
+
+
+def grammar_pins(stem: str) -> bool:
+    """Whether a committed grammar artifact holds `stem`'s family.
+
+    The stem is `<prefix>.<part>`. Both halves must answer: the part must be a
+    family some crate declares a grammar for, and the prefix must be one a
+    chart in this tree is actually given — see [`grammar_prefixes`] for why the
+    second half is not optional.
+    """
+    prefix, _, part = stem.partition(".")
+    return bool(part) and part in grammar_parts() and prefix in grammar_prefixes()
 
 
 def covers(address: str, stem: str) -> bool:
@@ -841,7 +968,7 @@ def pin_sources(families: Iterable[str]) -> dict[str, str]:
     asserted = asserted_families()
     out: dict[str, str] = {}
     for stem in families:
-        if any(covers(address, stem) for address in addresses):
+        if any(covers(address, stem) for address in addresses) or grammar_pins(stem):
             out[stem] = "artifact"
         elif asserted.get(stem):
             out[stem] = "assertion"
@@ -1154,6 +1281,52 @@ def selftest() -> int:
                 f"{covers(address, stem)}, wanted {want}",
                 file=sys.stderr,
             )
+
+    # ★★★★★ R2153 — the GRAMMAR pin, and above all the half that says NO.
+    #
+    # A crate's emitted grammar pins a family under every prefix, which is what
+    # `chart.area` had and `line.area` — the same grammar, same artifact — did
+    # not, so converting a custom-prefixed chart was reported as deleting a
+    # check. Widening a pin test is the dangerous direction, so the second case
+    # is the one to keep: the parts a chart declares are ordinary words, and a
+    # screen family called `panel.label` must NOT be claimed by an artifact
+    # that has never heard of it.
+    grammar_cases: list[tuple[str, str, bool]] = [
+        ("a declared grammar pins its family under the default prefix", "chart.area", True),
+        (
+            "★ and under a prefix a chart in this tree is actually given — the\n"
+            "       case whose absence charged a repaid family as a deleted check",
+            "line.area",
+            True,
+        ),
+        (
+            "★★ but NOT under a prefix no chart uses: the parts are ordinary\n"
+            "       words, and this is the direction that loses a check silently",
+            "panel.label",
+            False,
+        ),
+        ("a part no grammar declares is not pinned by one", "chart.nosuchpart", False),
+        ("a bare stem with no part is not pinned", "chart", False),
+    ]
+    for label, stem, want in grammar_cases:
+        if grammar_pins(stem) is not want:
+            failed += 1
+            print(
+                f"FAIL: {label}: grammar_pins({stem!r}) -> {grammar_pins(stem)}, "
+                f"wanted {want}",
+                file=sys.stderr,
+            )
+    # And neither half may be empty, or both cases above pass vacuously.
+    if not grammar_parts():
+        failed += 1
+        print("FAIL: no grammar artifact was read — every grammar pin is vacuous", file=sys.stderr)
+    if len(grammar_prefixes()) < 2:
+        failed += 1
+        print(
+            f"FAIL: {len(grammar_prefixes())} chart prefix/es found in the source — "
+            "the guard that makes a grammar pin safe is not reading anything",
+            file=sys.stderr,
+        )
 
     # ★ And the classifier is not a constant. A `pin_sources` that answered one
     # word for everything would make the gate below either always green or

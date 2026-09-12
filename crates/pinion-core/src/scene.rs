@@ -1202,6 +1202,52 @@ impl Scene {
         }
     }
 
+    /// ★★★★★ (R2153 §5.12 §2 #7) **Every node that PUBLISHES derivations**, as
+    /// `(tag, set)` in walk order — the question
+    /// [`derivations_for_tag`](Self::derivations_for_tag) cannot be asked.
+    ///
+    /// # Why the pair is not enough
+    ///
+    /// `derivations_for_tag` takes the tag as its input, so it can only be
+    /// asked about a node the caller can already name. That is fine for *what
+    /// did this chart decide*, and it is circular for **which charts are
+    /// here** — the answer a reader needs before it can name anything.
+    ///
+    /// Measured at R2153, that circularity is what keeps a whole campaign
+    /// open. `pinion-chart` publishes the grammar of every address it paints
+    /// (`{prefix}.series.{index}` …) and the `{prefix}` is chosen per chart by
+    /// [`with_tag_prefix`]. A reader holding the grammar still cannot compose
+    /// one address, because nothing on the frame says which prefixes exist —
+    /// so every reader spells the whole thing instead, and 46 of the census's
+    /// owed families turned out to be **26 grammars wearing 13 prefixes**, 484
+    /// of 918 spelled sites.
+    ///
+    /// ⇒ the missing structure was not a place to write the address down. It
+    /// was the ability to ASK.
+    ///
+    /// # Only containers can answer
+    ///
+    /// The derivation channel lives on [`ContainerNode`] alone (a leaf's
+    /// production step is its parent composition's statement), so this walks
+    /// containers and reports the ones carrying a set. A container that
+    /// publishes and has **no tag** is skipped rather than reported with an
+    /// empty name: an answer a caller cannot address again is not an answer.
+    ///
+    /// [`with_tag_prefix`]: https://docs.rs/pinion-chart
+    #[must_use]
+    pub fn derivation_publishers(&self) -> Vec<(&str, &DerivationSet)> {
+        let mut out: Vec<(&str, &DerivationSet)> = Vec::new();
+        self.for_each_node(&mut |visit| {
+            if let Scene::Container(node) = visit.node
+                && let Some(set) = node.derivations.as_deref()
+                && let Some(tag) = node.tag.as_deref()
+            {
+                out.push((tag, set));
+            }
+        });
+        out
+    }
+
     #[must_use]
     pub fn find_external_with_tag(&self, target: &str) -> Option<&ExternalNode> {
         match self {

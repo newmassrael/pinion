@@ -8715,10 +8715,17 @@ where
     use pinion_core::derivation::DerivationKind;
 
     let params = require_params(params)?;
-    let tag = params
-        .get("tag")
-        .and_then(Value::as_str)
-        .ok_or_else(|| RpcError::invalid_params("params.tag missing or not a string"))?;
+    // ★★★★★ R2153 — `tag` is OPTIONAL now, and its absence is a different
+    // question rather than a laxer form of the same one: *which nodes publish
+    // at all*. See `handle_scene_derivations`' own doc for why that could not
+    // be asked before and what it was costing.
+    let tag = match params.get("tag") {
+        None | Some(Value::Null) => None,
+        Some(raw) => Some(
+            raw.as_str()
+                .ok_or_else(|| RpcError::invalid_params("params.tag is not a string"))?,
+        ),
+    };
     let filter = match params.get("kind") {
         None | Some(Value::Null) => None,
         Some(raw) => {
@@ -8744,6 +8751,14 @@ where
 
     let basis = resolve_scene_basis(scene, paint_producer, last_paint_scene, params, "paint")?;
     let target = basis.scene();
+
+    let Some(tag) = tag else {
+        // The enumeration. Every node that PUBLISHES, each in the same shape a
+        // single-tag answer carries, so a reader parses one form either way.
+        let nodes = crate::derivations::published_outcomes(target, filter);
+        return serde_json::to_value(serde_json::json!({ "nodes": nodes }))
+            .map_err(RpcError::internal_error);
+    };
 
     // A node that EXISTS and cannot describe a production step answers instead
     // (`published: false` plus the channel saying why), so this refusal means

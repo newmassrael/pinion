@@ -45,6 +45,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    chart_address,
+    chart_family,
+    chart_grammar,
     find_by_tag,
     run_demo,
     wait_until,
@@ -60,7 +63,7 @@ def paint(tf):
 
 
 def stroke_alpha(snap, tag: str) -> int:
-    """The alpha of a stroked path (`line.series.*` / `line.focus.series.*`)."""
+    """The alpha of a stroked path (a series or a focus overdraw)."""
     node = find_by_tag(snap, tag)
     assert node is not None, f"{tag} is present"
     stroke = (node.get("style") or {}).get("stroke")
@@ -68,12 +71,13 @@ def stroke_alpha(snap, tag: str) -> int:
     return stroke["color"]["a"]
 
 
-def point_alpha(snap, i: int, j: int) -> int:
+def point_alpha(snap, scatter: str, i: int, j: int) -> int:
     """The alpha of scatter series i's point j — 255 full, lower when muted."""
-    node = find_by_tag(snap, f"scatter.point.{i}.{j}")
-    assert node is not None, f"scatter point {i}.{j} is present (drawn, not dropped)"
+    tag = chart_address("point", prefix=scatter, index=i, at=j)
+    node = find_by_tag(snap, tag)
+    assert node is not None, f"{tag} is present (drawn, not dropped)"
     fill = (node.get("style") or {}).get("fill")
-    assert fill is not None, f"scatter point {i}.{j} carries a queryable fill"
+    assert fill is not None, f"{tag} carries a queryable fill"
     return fill["a"]
 
 
@@ -81,9 +85,11 @@ def has(snap, tag: str) -> bool:
     return find_by_tag(snap, tag) is not None
 
 
-def scatter_point_count(snap) -> int:
+def scatter_point_count(snap, scatter: str) -> int:
+    stem = chart_family("point", prefix=scatter) + "."
+
     def walk(node) -> int:
-        n = 1 if (node.get("tag") or "").startswith("scatter.point.") else 0
+        n = 1 if (node.get("tag") or "").startswith(stem) else 0
         for ch in node.get("children") or []:
             n += walk(ch)
         return n
@@ -104,23 +110,42 @@ def set_brush(tf, low: float, high: float) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-linked-brush", boot_grace=1.5) as tf:
+        # ★★★★★ R2153 — the two prefixes are ASKED FOR, not spelled. Every
+        # address below is composed from the crate's published grammar and one
+        # of these, so a walk that used to carry sixteen hand-typed addresses
+        # now carries none. The pair is pinned once, here, and that assertion
+        # is deliberately the LAST spelling left: it is this family's value pin
+        # (the debt's own rule — a conversion that takes the final speller with
+        # it has deleted a check, not repaid one).
+        line, scatter = sorted(tf.chart_prefixes(viewport=VIEWPORT))
+        assert (line, scatter) == ("line", "scatter"), (
+            "hello-linked-brush re-prefixes its two panels so their tags never "
+            f"collide; the frame declares {(line, scatter)}"
+        )
+        series_0 = chart_address("series", prefix=line, index=0)
+        area_0 = chart_address("area", prefix=line, index=0)
+        focus_series_0 = chart_address("focus_series", prefix=line, index=0)
+        focus_area_0 = chart_address("focus_area", prefix=line, index=0)
+
         # ── (A) boot — both panels full, no cross-filter ─────────────
         snap = paint(tf)
-        assert has(snap, "line"), "the line panel root"
-        assert has(snap, "scatter"), "the scatter panel root"
+        assert has(snap, line), "the line panel root"
+        assert has(snap, scatter), "the scatter panel root"
         assert has(snap, "linked_brush"), "the brush strip"
         assert has(snap, "linked_scrub"), "the scrub surface"
         # Distinct prefixes: neither panel keeps the chart default.
-        assert not has(snap, "chart"), "no node keeps the default 'chart' prefix"
-        assert has(snap, "line.series.0"), "the line polyline is drawn"
-        assert has(snap, "line.area.0"), "the filled area is drawn"
-        assert_eq(scatter_point_count(snap), 23, "23 scatter points (12 + 11)")
+        assert not has(snap, chart_grammar()["const"]["DEFAULT_PREFIX"]), (
+            "no node keeps the chart crate's default prefix"
+        )
+        assert has(snap, series_0), "the line polyline is drawn"
+        assert has(snap, area_0), "the filled area is drawn"
+        assert_eq(scatter_point_count(snap, scatter), 23, "23 scatter points (12 + 11)")
         # Full window filters nothing: the line is full and has no focus overdraw.
-        assert_eq(stroke_alpha(snap, "line.series.0"), 255, "boot: line at full colour")
-        assert not has(snap, "line.focus.series.0"), "boot: no line focus overdraw"
-        assert not has(snap, "line.focus.area.0"), "boot: no line focus area"
+        assert_eq(stroke_alpha(snap, series_0), 255, "boot: line at full colour")
+        assert not has(snap, focus_series_0), "boot: no line focus overdraw"
+        assert not has(snap, focus_area_0), "boot: no line focus area"
         for i, j in [(0, 0), (0, 6), (0, 11), (1, 0), (1, 10)]:
-            assert_eq(point_alpha(snap, i, j), 255, f"boot: scatter {i}.{j} full")
+            assert_eq(point_alpha(snap, scatter, i, j), 255, f"boot: scatter {i}.{j} full")
         assert abs(tf.query(f"{BRUSH}/low") - 0.0) < 0.02, "boot brush low = 0"
         assert abs(tf.query(f"{BRUSH}/high") - 1.0) < 0.02, "boot brush high = 1"
 
@@ -129,46 +154,52 @@ def body() -> None:
         snap = paint(tf)
         # LINE: the whole polyline dims to a context ghost, a focus segment at
         # full colour is overdrawn (the R1394 capability).
-        assert_eq(stroke_alpha(snap, "line.series.0"), MUTED, "line dims to context")
-        assert has(snap, "line.focus.series.0"), "line grows a focus segment"
-        assert_eq(stroke_alpha(snap, "line.focus.series.0"), 255, "focus at full colour")
-        assert has(snap, "line.focus.area.0"), "the focus area is overdrawn too"
+        assert_eq(stroke_alpha(snap, series_0), MUTED, "line dims to context")
+        assert has(snap, focus_series_0), "line grows a focus segment"
+        assert_eq(stroke_alpha(snap, focus_series_0), 255, "focus at full colour")
+        assert has(snap, focus_area_0), "the focus area is overdrawn too"
         # SCATTER: points outside [3.3, 6.6] mute; muting DIMS, never DROPS.
-        assert_eq(scatter_point_count(snap), 23, "muting keeps every scatter point drawn")
+        assert_eq(
+            scatter_point_count(snap, scatter), 23, "muting keeps every scatter point drawn"
+        )
         # sensor A (x = 0..11): x in {4,5,6} are IN.
         for j in (4, 5, 6):
-            assert_eq(point_alpha(snap, 0, j), 255, f"sensor A {j} (in window) full")
+            assert_eq(point_alpha(snap, scatter, 0, j), 255, f"sensor A {j} (in window) full")
         for j in (0, 1, 2, 3, 7, 8, 9, 10, 11):
-            assert point_alpha(snap, 0, j) < 255, f"sensor A {j} (out of window) muted"
+            assert point_alpha(snap, scatter, 0, j) < 255, f"sensor A {j} (out of window) muted"
         # sensor B (x = j + 0.5): x in {3.5,4.5,5.5,6.5} are IN.
         for j in (3, 4, 5, 6):
-            assert_eq(point_alpha(snap, 1, j), 255, f"sensor B {j} (in window) full")
+            assert_eq(point_alpha(snap, scatter, 1, j), 255, f"sensor B {j} (in window) full")
         for j in (0, 1, 2, 7, 8, 9, 10):
-            assert point_alpha(snap, 1, j) < 255, f"sensor B {j} (out of window) muted"
+            assert point_alpha(snap, scatter, 1, j) < 255, f"sensor B {j} (out of window) muted"
         # The cross-TYPE claim, stated directly: one window, a muted line AND a
         # muted scatter point, both strictly dimmer than their in-window peers.
-        assert stroke_alpha(snap, "line.series.0") < 255, "line context is dimmed"
-        assert point_alpha(snap, 0, 0) < point_alpha(snap, 0, 5), "scatter in-window brighter"
+        assert stroke_alpha(snap, series_0) < 255, "line context is dimmed"
+        assert point_alpha(snap, scatter, 0, 0) < point_alpha(snap, scatter, 0, 5), (
+            "scatter in-window brighter"
+        )
 
         # ── (C) brush the upper third (x in [6.6, 9.9]) — filter SHIFTS ─
         set_brush(tf, 0.6, 0.9)
         snap = paint(tf)
-        assert has(snap, "line.focus.series.0"), "the focus segment moved, not vanished"
-        assert_eq(stroke_alpha(snap, "line.series.0"), MUTED, "line still a context ghost")
+        assert has(snap, focus_series_0), "the focus segment moved, not vanished"
+        assert_eq(stroke_alpha(snap, series_0), MUTED, "line still a context ghost")
         # sensor A: x in {7,8,9} now IN — the previously-muted high points go full.
         for j in (7, 8, 9):
-            assert_eq(point_alpha(snap, 0, j), 255, f"sensor A {j} now in window (full)")
+            assert_eq(point_alpha(snap, scatter, 0, j), 255, f"sensor A {j} now in window (full)")
         for j in (4, 5, 6):
-            assert point_alpha(snap, 0, j) < 255, f"sensor A {j} now out of window (muted)"
-        assert point_alpha(snap, 0, 8) > point_alpha(snap, 0, 5), "the filter shifted up"
+            assert point_alpha(snap, scatter, 0, j) < 255, f"sensor A {j} now out of window (muted)"
+        assert point_alpha(snap, scatter, 0, 8) > point_alpha(snap, scatter, 0, 5), (
+            "the filter shifted up"
+        )
 
         # ── (D) reset to the full span — both panels full again ──────
         set_brush(tf, 0.0, 1.0)
         snap = paint(tf)
-        assert_eq(stroke_alpha(snap, "line.series.0"), 255, "reset: line full again")
-        assert not has(snap, "line.focus.series.0"), "reset: no focus overdraw"
+        assert_eq(stroke_alpha(snap, series_0), 255, "reset: line full again")
+        assert not has(snap, focus_series_0), "reset: no focus overdraw"
         for i, j in [(0, 0), (0, 11), (1, 0), (1, 10)]:
-            assert_eq(point_alpha(snap, i, j), 255, f"reset: scatter {i}.{j} full")
+            assert_eq(point_alpha(snap, scatter, i, j), 255, f"reset: scatter {i}.{j} full")
 
 
 if __name__ == "__main__":

@@ -274,6 +274,48 @@ pub fn derivations_outcome(
     Some(outcome)
 }
 
+/// ★★★★★ (R2153 §5.12 §2 #7) **Every node that publishes**, in walk order —
+/// what `scene/derivations` answers when it is given no `tag`.
+///
+/// # The question this is, and why it is not the other one
+///
+/// [`derivations_outcome`] takes the tag as its input. It answers *what did
+/// this composition decide*, and it can only be asked about a node the caller
+/// can already name. **Which nodes decide anything** is a different question
+/// and was unaskable — which sounds academic and was not: `pinion-chart`
+/// publishes the grammar of every address it paints and the prefix those
+/// grammars take is chosen per chart, so a reader could hold the whole grammar
+/// and still not compose one address. Measured at R2153, 484 of the address
+/// census's 918 spelled sites are that gap.
+///
+/// Every element is the same [`DerivationsOutcome`] a single-tag call returns,
+/// so a reader parses one shape either way, and only nodes that actually
+/// publish appear — a silent node is not an answer to *who publishes*.
+#[must_use]
+pub fn published_outcomes(
+    scene: &Scene,
+    filter: Option<DerivationKind>,
+) -> Vec<DerivationsOutcome> {
+    scene
+        .derivation_publishers()
+        .into_iter()
+        .map(|(tag, set)| DerivationsOutcome {
+            tag: tag.to_owned(),
+            kind: pinion_core::scene::SceneNodeKind::Container
+                .name()
+                .to_owned(),
+            channel: pinion_core::scene::SceneNodeKind::Container
+                .derives_channel()
+                .wire_name()
+                .to_owned(),
+            published: true,
+            domain: Some(set.domain().to_owned()),
+            derivations: Some(entry_list(set, filter)),
+            filter: filter.map(|k| k.wire_name().to_owned()),
+        })
+        .collect()
+}
+
 /// The entries, in declaration order, narrowed by `filter` when given.
 fn entry_list(set: &DerivationSet, filter: Option<DerivationKind>) -> Vec<DerivationWire> {
     set.entries()

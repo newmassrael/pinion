@@ -5926,11 +5926,17 @@ fn r1629_scene_derivations_separates_silent_from_no_channel_from_no_tag() {
     assert_eq!(err.code, -32602);
 }
 
+/// ⚠ R2153 moved ONE of these out of the refusal set, deliberately: a call
+/// with no `tag` is the enumeration now (see the test below), not a malformed
+/// single-tag call. A **non-string** tag is still a refusal, and it is added
+/// here in the same edit — otherwise the change would have deleted a check
+/// rather than repointed it, which is this campaign's own recorded failure
+/// mode.
 #[test]
-fn r1629_scene_derivations_refuses_a_missing_tag_and_a_non_string_kind() {
+fn r1629_scene_derivations_refuses_a_non_string_tag_and_a_non_string_kind() {
     let mut scene = box_scene(0, 0, 10, 10);
     for req in [
-        r#"{"jsonrpc":"2.0","method":"scene/derivations","params":{"from":"state"},"id":726}"#,
+        r#"{"jsonrpc":"2.0","method":"scene/derivations","params":{"tag":7,"from":"state"},"id":726}"#,
         r#"{"jsonrpc":"2.0","method":"scene/derivations","params":{"tag":"x","kind":7,"from":"state"},"id":727}"#,
         r#"{"jsonrpc":"2.0","method":"scene/derivations","params":{"tag":"x","from":"sideways"},"id":728}"#,
     ] {
@@ -5938,6 +5944,90 @@ fn r1629_scene_derivations_refuses_a_missing_tag_and_a_non_string_kind() {
         let err = resp.error.expect("expected a refusal");
         assert_eq!(err.code, -32602, "req: {req}");
     }
+}
+
+/// ★★★★★ R2153 §5.12 §2 #7 — **the frame can be asked WHICH nodes publish**,
+/// which is the question `scene/derivations` could not take.
+///
+/// The method's parameter was its subject: you named a tag and learned what
+/// that composition decided. *Which compositions are there* had no form, and
+/// the cost was measured rather than guessed — `pinion-chart` emits the
+/// grammar of every address it paints, the `{prefix}` those grammars take is a
+/// per-chart choice, and nothing on the frame reported it. So a reader holding
+/// the entire published grammar still could not compose one address of a chart
+/// that had been given a prefix, and wrote the string out instead. 484 of the
+/// address census's 918 spelled sites are that gap.
+///
+/// A silent node does not appear: *who publishes* is not answered by a node
+/// that does not.
+#[test]
+fn r2153_scene_derivations_enumerates_every_publisher_when_given_no_tag() {
+    use pinion_core::derivation::{Derivation, DerivationKind, DerivationSet, Evidence};
+    use pinion_core::scene::{ContainerNode, Rect};
+
+    let publisher = |tag: &'static str, value: &'static str| {
+        let mut node = ContainerNode::new(vec![]);
+        node.rect = Rect::new(0, 0, 4, 4);
+        node.tag = Some(tag.into());
+        Scene::Container(node.with_derivations(DerivationSet::over("sample").stating(
+            Derivation::new(
+                DerivationKind::Chosen,
+                "tag_prefix",
+                Evidence::Name(value.into()),
+            ),
+        )))
+    };
+    // Two publishers and one silent container, so the answer is a filter and
+    // not simply "every container".
+    let mut quiet = ContainerNode::new(vec![]);
+    quiet.rect = Rect::new(0, 0, 4, 4);
+    quiet.tag = Some("quiet".into());
+    let mut root = ContainerNode::new(vec![
+        publisher("scatter", "scatter"),
+        publisher("line", "line"),
+        Scene::Container(quiet),
+    ]);
+    root.rect = Rect::new(0, 0, 40, 40);
+    let mut scene = Scene::Container(root);
+
+    let req =
+        r#"{"jsonrpc":"2.0","method":"scene/derivations","params":{"from":"state"},"id":790}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    let result = resp
+        .result
+        .expect("no tag is the enumeration, not a refusal");
+    let nodes = result["nodes"].as_array().expect("nodes is a list");
+    let tags: Vec<&str> = nodes.iter().map(|n| n["tag"].as_str().unwrap()).collect();
+    assert_eq!(
+        tags,
+        vec!["scatter", "line"],
+        "every publisher, in walk order, and the silent container is not one",
+    );
+    // ★ And each element is the SAME shape a single-tag call returns, so a
+    // reader parses one form either way.
+    assert!(nodes.iter().all(|n| n["published"] == true));
+    let names: Vec<&str> = nodes[0]["derivations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["tag_prefix"], "the entries come with it");
+
+    // The `kind` narrower still applies, so a caller can ask for one kind
+    // across the whole frame.
+    let req = r#"{"jsonrpc":"2.0","method":"scene/derivations","params":{"kind":"invented","from":"state"},"id":791}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    let result = resp.result.expect("a narrowed enumeration still answers");
+    let nodes = result["nodes"].as_array().unwrap();
+    assert_eq!(nodes.len(), 2, "the publishers are still named");
+    assert!(
+        nodes
+            .iter()
+            .all(|n| n["derivations"].as_array().unwrap().is_empty()),
+        "and none of them invented anything, which is a different fact from \
+         not publishing",
+    );
 }
 
 #[test]
