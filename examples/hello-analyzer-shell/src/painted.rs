@@ -7652,8 +7652,8 @@ fn r1838_the_mounted_labs_diagram_survives_maximise_and_detach() {
 /// right. `debt-one-outline-role-does-two-jobs-and-clears-neither` said so,
 /// and said the number had to be measured before the vocabulary was split.
 ///
-/// This is that measurement, and it refutes the premise: over the six painted
-/// screens of this application the role draws **97 boundaries and 2 dividers**.
+/// This is that measurement, and it refutes the premise: over every painted
+/// screen of this application the role draws box edges and almost no dividers.
 /// One job, and the declared floor is right for it.
 ///
 /// # Why the census reads the FRAME and not the source
@@ -7669,11 +7669,21 @@ fn r1838_the_mounted_labs_diagram_survives_maximise_and_detach() {
 ///
 /// The framework's canonical palettes clear the floor since R1839. This
 /// application replaces them with the reference tool's own tokens, and those
-/// are further short than the framework's ever were — asserted below so the
-/// number is a gated fact rather than an impression. Raising them would be a
-/// deliberate divergence from a behaviour reference this project is under
-/// standing instruction to reproduce, which is a decision rather than a fix:
+/// are short of it — asserted below so the number is a gated fact rather than
+/// an impression. Raising them would be a deliberate divergence from a
+/// behaviour reference this project is under standing instruction to
+/// reproduce, which is a decision rather than a fix:
 /// `debt-the-reference-palette-fails-the-boundary-floor` carries it.
+///
+/// ★★★★★ R2152 — **and this gate PRINTS the two ratios now**, which is not
+/// cosmetic. It asserted `ratio < 3.0` and nothing else, so re-running it
+/// re-confirmed the *bound* and reported nothing about the *quantity*: R2019
+/// moved both values (1.18 -> 1.45 light, 1.41 -> 1.70 dark) by adopting the
+/// authored palette documents, the assertion stayed green through it, and the
+/// debt above went on citing the pre-R2019 numbers for 313 rounds — including
+/// through an R2151 round whose stated method was *re-measure by running this
+/// gate*. ⇒ **an inequality is not a measurement, and a gate that publishes no
+/// number cannot be re-measured by being run.**
 #[test]
 fn r1839_the_outline_role_draws_boundaries_on_every_screen() {
     let owner = Owner::new();
@@ -7685,6 +7695,7 @@ fn r1839_the_outline_role_draws_boundaries_on_every_screen() {
         let state = use_shell_state_off_disk();
         let (light, dark) = super::reference_palettes();
         let outline = dark.resolve(ColorRole::Outline);
+        let surface = dark.resolve(ColorRole::Surface);
 
         let mut all = StrokeCensus::default();
         let mut screens = 0;
@@ -7701,7 +7712,7 @@ fn r1839_the_outline_role_draws_boundaries_on_every_screen() {
                 continue;
             }
             let (_, scene) = painted_at((WIN_W, WIN_H));
-            all.absorb(&stroke_census(&scene, outline));
+            all.absorb(&stroke_census(&scene, outline, surface));
             screens += 1;
         }
         assert!(
@@ -7723,8 +7734,9 @@ fn r1839_the_outline_role_draws_boundaries_on_every_screen() {
 
         // ★★ And this application's own palette, measured rather than assumed.
         // Both short of the boundary floor the framework now clears — see the
-        // header for why that is carried and not repaired here.
-        for (name, theme) in [("light", light), ("dark", dark)] {
+        // header for why that is carried and not repaired here, and why the
+        // ratios are PRINTED beside the bound they are asserted against.
+        for (name, theme) in [("light", &light), ("dark", &dark)] {
             let ratio = contrast_ratio(
                 theme.resolve(ColorRole::Outline),
                 theme.resolve(ColorRole::Surface),
@@ -7736,7 +7748,183 @@ fn r1839_the_outline_role_draws_boundaries_on_every_screen() {
                  and the debt it points at are what say so",
                 Floor::Boundary.ratio(),
             );
+            println!(
+                "[r1839] {name} outline/surface {ratio:.2} against a {:.1} floor",
+                Floor::Boundary.ratio(),
+            );
         }
+        println!(
+            "[r1839] {screens} screen(s): {} box edge(s) ({} identifying, {} \
+             redundant), {} divider(s)",
+            all.boundaries(),
+            all.identifying(),
+            all.redundant(),
+            all.dividers(),
+        );
+    });
+}
+
+/// ★★★★★ R2152 §5.40 §5.50 — **how many controls of this application a reader
+/// is not guaranteed to find**, which is the question WCAG 1.4.11 actually
+/// puts and which nothing in this tree could ask.
+///
+/// # The premise this round was sent to test, and what measuring it found
+///
+/// `debt-the-reference-palette-fails-the-boundary-floor` has been open since
+/// R1839 on one sentence: *this colour is under the 3:1 non-text floor and it
+/// draws 97 boundaries*. Both halves were checked here and both were wrong in a
+/// way that mattered:
+///
+/// * **The number was stale.** R2019 replaced the screen's hand-transcribed
+///   palette with the authored documents, and `outline/surface` moved from 1.18
+///   / 1.41 to **1.45 / 1.70**. The gate above stayed green through it because
+///   an inequality reports no quantity, and the debt cited the old pair for 313
+///   rounds — through a round whose whole method was to re-run that gate.
+/// * **The population was the wrong one.** 1.4.11 does not hold *box edges* to
+///   3:1, it holds *visual information required to identify user interface
+///   components*. Of the box edges this colour draws, the ones on boxes their
+///   own fill already separates owe nothing at all — measured here, seven node
+///   cards whose type colour reads 3.94 to 5.58 against the canvas.
+///
+/// So *how many marks are under the floor* was never the question. **How many
+/// controls are identified by nothing else** is, and it is the intersection of
+/// two facts this repository kept in two crates that had never met: the frame
+/// says which marks are required to identify
+/// (`pinion_core::legibility::StrokeKind::Identifying`), the accessibility tree
+/// says which boxes are components
+/// (`AriaRole::is_user_interface_component`), and `components_identified_only_by`
+/// is the join.
+///
+/// # Why this is a PINNED SET and not a count driven to zero
+///
+/// The same rule `legibility::shortfalls` carries: the values are authored
+/// outside this repository (R2019 — the screen reads two emitted documents and
+/// deleting the copy was that round's whole point), so a gate demanding an
+/// empty set would be demanding the right to change somebody else's colours.
+/// What this asserts is that the set does not GROW and that its membership is
+/// named, so a new control joining it is red and a raised value empties it.
+///
+/// ⚠ The floor is a floor on the count, not on the names, for one measured
+/// reason: the announced roles differ per destination and a screen gaining a
+/// control legitimately adds a member. What must not happen quietly is the
+/// number going UP.
+#[test]
+fn r2152_the_controls_identified_only_by_a_sub_floor_mark_are_named() {
+    use pinion_a11y::{WidgetA11y, components_identified_only_by};
+    use pinion_core::legibility::{Floor, StrokeCensus, shortfalls, stroke_census};
+    use pinion_core::theme::ColorRole;
+
+    // Measured at R2152 over the eight painted screens: six text boxes, two
+    // combo boxes, two check boxes, a spin button, five options and
+    // seventeen buttons. A ceiling, not an equality — this is a list to pin,
+    // and the assertion is that it does not GROW while the palette is what it
+    // is.
+    //
+    // ★ Not one member is a `ProgressBar` or a `TabPanel`, which is the pair
+    // `AriaRole::is_user_interface_component` names as the residue where ARIA's
+    // category is wider than WCAG's sense of *control*. So the residue is
+    // measured at zero here rather than argued about: every one of these is a
+    // thing a person operates.
+    const MEASURED: usize = 33;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state_off_disk();
+        let (_, dark) = super::reference_palettes();
+        let outline = dark.resolve(ColorRole::Outline);
+        let surface = dark.resolve(ColorRole::Surface);
+
+        // ★ The premise, asserted before anything is counted against it: the
+        // mark this is a census of is BELOW the floor. If the palette is ever
+        // raised, this whole test is about nothing and says so rather than
+        // reporting an empty set as though it had proved something.
+        //
+        // ⚠ Read from `shortfalls` — the pairings the DECLARED table says this
+        // palette does not clear — rather than by computing a ratio from two
+        // roles named here. A hand-picked pair is a second statement of what
+        // `PAIRINGS` already declares, and one that a mistyped role would
+        // satisfy vacuously: `contrast_ratio(outline, outline)` reads 1.0 and
+        // would keep this clause green for ever while measuring nothing.
+        let short: BTreeMap<String, f32> = shortfalls(&dark).into_iter().collect();
+        let ratio = *short.get("outline/surface").unwrap_or_else(|| {
+            panic!(
+                "`outline/surface` is not among the pairings this palette \
+                 falls short of, so nothing below is a finding \u{2014} retire \
+                 this gate together with the debt it measures. Short: {short:?}"
+            )
+        });
+        assert!(
+            ratio < Floor::Boundary.ratio(),
+            "a pairing reported short must read under its floor: {ratio:.2}",
+        );
+
+        let mut all = StrokeCensus::default();
+        let mut findings: BTreeMap<String, String> = BTreeMap::new();
+        let mut screens = 0;
+        let roster = spec::destinations();
+        let keys: Vec<String> = roster
+            .all()
+            .iter()
+            .map(|d| d.key.as_ref().to_owned())
+            .collect();
+        for destination in keys {
+            if state.go(&destination).is_err() {
+                continue;
+            }
+            let (_, scene) = painted_at((WIN_W, WIN_H));
+            let census = stroke_census(&scene, outline, surface);
+            // ★★ The tree is read INSIDE the loop, per destination. Read once
+            // outside it, it answers for whichever section happens to be open
+            // and every other screen's controls resolve to no role at all —
+            // which reports zero findings for a reason that has nothing to do
+            // with the palette.
+            let announced = super::AnalyzerShellView::access_node(&ScreenState::default(), None);
+            for found in components_identified_only_by(&announced, &census) {
+                findings.insert(found.tag.clone(), found.role.aria_name().to_owned());
+            }
+            all.absorb(&census);
+            screens += 1;
+        }
+        assert!(
+            screens >= 6,
+            "every open destination was censused, not a sample: {screens}"
+        );
+        // Neither half of the join may be vacuous, or an empty finding set
+        // would be evidence of nothing.
+        assert!(
+            all.identifying() > 0,
+            "no mark on any screen is identified by this colour alone, so the \
+             join has nothing to intersect",
+        );
+
+        let named: Vec<String> = findings
+            .iter()
+            .map(|(tag, role)| format!("{tag} ({role})"))
+            .collect();
+        assert!(
+            !named.is_empty(),
+            "★ not one announced control is identified by a sub-floor mark \
+             alone \u{2014} which would mean the population 1.4.11 asks about \
+             is EMPTY here and the debt is about the wrong thing. {} \
+             identifying mark(s) were censused, so this is a join failure \
+             rather than good news.",
+            all.identifying(),
+        );
+        assert!(
+            named.len() <= MEASURED,
+            "★★★★★ {} control(s) are identified by nothing but a mark reading \
+             {ratio:.2} against a {:.1} floor, up from the {MEASURED} measured \
+             at R2152. A control joined the set: {named:?}",
+            named.len(),
+            Floor::Boundary.ratio(),
+        );
+        println!(
+            "[r2152] {} of {} identifying mark(s) are announced controls, at \
+             {ratio:.2} against a {:.1} floor: {named:?}",
+            named.len(),
+            all.identifying(),
+            Floor::Boundary.ratio(),
+        );
     });
 }
 

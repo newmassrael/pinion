@@ -420,6 +420,18 @@
       ]
     },
     {
+      "name": "debt-a-standing-vocabulary-with-no-word-for-a-decision",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "person",
+      "closed_because": "rule:analyzer-debt-repayment-loop",
+      "rank": "ordinary",
+      "why": [
+        "links analyzer-debt-repayment-loop"
+      ]
+    },
+    {
       "name": "debt-a-three-dimensional-surface-waits-on-phase-c",
       "substituted": false,
       "blocked_by": "phase-c",

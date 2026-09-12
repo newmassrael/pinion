@@ -57,6 +57,25 @@
 //! floor stands, and the VALUE moves to clear it. ⇒ **a shortfall carried for
 //! a reason is only carried honestly while the reason is measured.**
 //!
+//! ★★★★★ R2152 — **and the count that settled it was taken with the wrong
+//! predicate.** R1839's own sentence for what it counted was *WCAG 1.4.11 holds
+//! a component boundary to 3:1 and asks nothing of a decorative divider*, and
+//! 1.4.11 says no such thing: what it holds to 3:1 is *visual information
+//! **required to identify** user interface components and states*. A box edge
+//! on a box the reader already finds by its fill is not required to identify
+//! anything, and the `border` slot cannot tell that box from a text field whose
+//! hairline is all there is. See [`StrokeKind`] for the third position the
+//! vocabulary was missing.
+//!
+//! ⚠ The correction does **not** overturn R1839's conclusion, and saying so is
+//! the point: re-measured at R2152 the role still does one job — 66
+//! `Identifying` and 7 `Redundant` box edges against 3 dividers, where R1839
+//! read 97 and 2 over a tool that then had six screens and now has eight. A
+//! right answer reached through a wrong predicate stays wrong as a *method*,
+//! because the next question it is asked is the one it gets wrong: *does this
+//! palette clear what it owes* has a different population from *is this role a
+//! boundary role*, and only the second was ever asked.
+//!
 //! # Why a table and not a function on the role
 //!
 //! Ink-over-ground is a **relation**, not a map. `OnSurface` is ink on
@@ -228,11 +247,19 @@ pub const PAIRINGS: &[Pairing] = &[
     // [[debt-a-painted-pairing-outside-this-table-is-checked-by-nothing]].
     text(ColorRole::Success, ColorRole::Surface),
     text(ColorRole::Info, ColorRole::Surface),
-    // The one boundary pairing, and one is the right number: measured at
-    // R1839 over six painted screens, `outline` draws 97 component boundaries
-    // and 2 dividers, so a single `Floor::Boundary` is right for 98% of what
-    // it paints. See the module docs for the count that replaced the
-    // assumption, and `stroke_census` for how it is taken.
+    // The one boundary pairing, and one is the right number: re-measured at
+    // R2152 over the analysis tool's eight painted screens, `outline` draws 73
+    // box edges and 3 dividers, so a single `Floor::Boundary` is right for 96%
+    // of what it paints. (R1839 read 99 marks over six screens where R2152
+    // reads 76 over eight; the population moved over 313 rounds and nothing
+    // re-took the count.)
+    //
+    // ⚠ 73 is the count that decides the VOCABULARY question — is this role a
+    // boundary role at all. It is NOT the count that decides whether a palette
+    // clears what it owes: 66 of the 73 are `StrokeKind::Identifying` and 7 are
+    // `Redundant`, and only the first carry the floor. A pairing is the wrong
+    // grain to ask the second question at, because a pairing has no marks; ask
+    // `stroke_census`.
     boundary(ColorRole::Outline, ColorRole::Surface),
 ];
 
@@ -404,11 +431,6 @@ pub fn shortfalls(theme: &Theme) -> Vec<(String, f32)> {
 /// ★★★★★ R1839 — **what a mark painted in a role's colour is DOING**, which
 /// is the question a floor cannot be chosen without answering.
 ///
-/// WCAG 1.4.11 holds a *component boundary* to 3:1 and asks nothing of a
-/// *decorative divider*. So "does `outline` clear its floor" is not one
-/// question until it is known which of the two a given mark is — and the same
-/// colour does both jobs wherever a design system has only one outline role.
-///
 /// # Why this is derived from the frame and not from the source
 ///
 /// The obvious census is `grep ColorRole::Outline`, and it answers the wrong
@@ -417,24 +439,83 @@ pub fn shortfalls(theme: &Theme) -> Vec<(String, f32)> {
 /// times, several times differently. A mention is not a use. What the standard
 /// is about is the mark on the frame, so the mark on the frame is what this
 /// counts.
+///
+/// # ★★★★★ R2152 — the third position, and why two were not enough
+///
+/// R1839 wrote here that *WCAG 1.4.11 holds a component boundary to 3:1 and
+/// asks nothing of a decorative divider*, and split this enum on that sentence.
+/// The sentence is a misreading, and it is the kind that cannot be caught by
+/// reading the code: **1.4.11 has no category called "component boundary".**
+/// Its predicate is
+///
+/// > Visual information **required to identify** user interface components and
+/// > states.
+///
+/// *Required to identify* is a property of the mark's SETTING, not of the slot
+/// it was declared in. A text field whose only mark is a hairline owes the
+/// ratio because removing the hairline removes the field; the same hairline
+/// around a card the reader already finds by its own fill owes nothing, because
+/// what identifies that card is the fill and the fill is what the standard then
+/// holds to 3:1. One box edge, two verdicts, and the `border` slot cannot tell
+/// them apart.
+///
+/// So the classifier asks what the standard asks: **is there anything else?**
+/// [`Identifying`](Self::Identifying) is a box edge with nothing else to lose;
+/// [`Redundant`](Self::Redundant) is a box edge on a box its own fill already
+/// separates. Only the first carries [`Floor::Boundary`].
+///
+/// ⚠ The population this splits is not a rounding difference. Measured at
+/// R2152 over the analysis tool's eight painted screens: of 73 marks the old
+/// classifier called `Boundary`, **66 are `Identifying` and 7 are
+/// `Redundant`** — the seven being node cards whose type colour reads 3.94 to
+/// 5.58 against the canvas, which owed the floor under the old reading and owe
+/// nothing under the standard's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum StrokeKind {
-    /// The colour is a [`Border`](crate::style::Border) on a box — it strokes
-    /// the edge of something, which is what WCAG 1.4.11 calls a boundary.
-    Boundary,
+    /// A box edge that is the **only** visual difference between the box and
+    /// what is behind it: remove it and there is nothing there. WCAG 1.4.11's
+    /// *visual information required to identify*, and the one kind that owes
+    /// [`Floor::Boundary`].
+    Identifying,
+    /// A box edge on a box whose own fill already clears [`Floor::Boundary`]
+    /// against its backdrop. The edge is painted and the standard asks nothing
+    /// of it — the fill is what identifies the box, and the fill is what then
+    /// carries the ratio.
+    Redundant,
     /// The colour fills a box or strokes a path: a rule, a hairline, a grid
-    /// line, a tick. Not the edge of a component.
+    /// line, a tick. Not the edge of anything.
     Divider,
 }
 
 impl StrokeKind {
+    /// Every arm, so a consumer that must cover the vocabulary names its
+    /// members rather than searching for what is missing.
+    pub const ALL: [Self; 3] = [Self::Identifying, Self::Redundant, Self::Divider];
+
     /// The floor this kind of mark is held to, or `None` where the standard
     /// asks nothing.
     #[must_use]
     pub const fn floor(self) -> Option<Floor> {
         match self {
-            Self::Boundary => Some(Floor::Boundary),
-            Self::Divider => None,
+            Self::Identifying => Some(Floor::Boundary),
+            Self::Redundant | Self::Divider => None,
+        }
+    }
+
+    /// Whether this mark is a box edge at all — the question the `border` slot
+    /// answers, which is the question R1839 mistook for the standard's.
+    #[must_use]
+    pub const fn is_box_edge(self) -> bool {
+        matches!(self, Self::Identifying | Self::Redundant)
+    }
+
+    /// Stable name, for a report line.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Identifying => "identifying",
+            Self::Redundant => "redundant",
+            Self::Divider => "divider",
         }
     }
 }
@@ -446,21 +527,46 @@ impl StrokeKind {
 /// count that silently dropped them would understate the population.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StrokeCensus {
-    /// Tagged boundary marks, by tag.
-    pub boundary: BTreeSet<String>,
+    /// Tagged box edges the box has nothing else to be found by, by tag.
+    pub identifying: BTreeSet<String>,
+    /// Tagged box edges on boxes their own fill already separates, by tag.
+    pub redundant: BTreeSet<String>,
     /// Tagged divider marks, by tag.
     pub divider: BTreeSet<String>,
-    /// Boundary marks carrying no tag of their own.
-    pub boundary_untagged: usize,
+    /// Identifying edges carrying no tag of their own.
+    pub identifying_untagged: usize,
+    /// Redundant edges carrying no tag of their own.
+    pub redundant_untagged: usize,
     /// Divider marks carrying no tag of their own.
     pub divider_untagged: usize,
 }
 
 impl StrokeCensus {
-    /// How many boundary marks there are in all.
+    /// **How many marks owe [`Floor::Boundary`]** — the count the standard's
+    /// predicate selects, and the one a palette decision has to be made
+    /// against.
+    #[must_use]
+    pub fn identifying(&self) -> usize {
+        self.identifying.len() + self.identifying_untagged
+    }
+
+    /// How many box edges are painted on boxes that are found without them.
+    #[must_use]
+    pub fn redundant(&self) -> usize {
+        self.redundant.len() + self.redundant_untagged
+    }
+
+    /// How many box edges there are in all, owing the floor or not.
+    ///
+    /// This is what [`StrokeKind::Boundary`]'s count meant before R2152 split
+    /// it, and it is still the right question for *is this role a boundary
+    /// role at all* — which is what the vocabulary decision in [`PAIRINGS`]
+    /// turns on. It is the wrong question for *what does this palette owe*.
+    ///
+    /// [`StrokeKind::Boundary`]: StrokeKind
     #[must_use]
     pub fn boundaries(&self) -> usize {
-        self.boundary.len() + self.boundary_untagged
+        self.identifying() + self.redundant()
     }
 
     /// How many divider marks there are in all.
@@ -472,42 +578,72 @@ impl StrokeCensus {
     /// Fold another scene's census into this one, so a sweep over several
     /// screens answers about the application rather than about a frame.
     pub fn absorb(&mut self, other: &Self) {
-        self.boundary.extend(other.boundary.iter().cloned());
+        self.identifying.extend(other.identifying.iter().cloned());
+        self.redundant.extend(other.redundant.iter().cloned());
         self.divider.extend(other.divider.iter().cloned());
-        self.boundary_untagged += other.boundary_untagged;
+        self.identifying_untagged += other.identifying_untagged;
+        self.redundant_untagged += other.redundant_untagged;
         self.divider_untagged += other.divider_untagged;
     }
 }
 
-/// Census one painted scene for marks drawn in `colour`.
+/// Census one painted scene for marks drawn in `colour`, over `ground`.
 ///
-/// ★ The rule is one line and it is the whole judgment: a colour in the
-/// `border` slot strokes the edge of a box, and a colour anywhere else does
-/// not. It is derivable, which is the point — a hand classification of 145
+/// ★ Two derivable rules, and together they are the whole judgment: a colour in
+/// the `border` slot strokes the edge of a box and a colour anywhere else does
+/// not; and a box edge is *required to identify* its box exactly when the box's
+/// own fill does not clear [`Floor::Boundary`] against what is behind it. Both
+/// are read off the frame, which is the point — a hand classification of 145
 /// sites would be one person's unreviewed reading, and this repository has a
 /// standing debt about exactly that.
 ///
-/// ⚠ Its stated limit: a box FILLED with the colour and one pixel tall is a
-/// rule, and a box filled with it and forty pixels tall is a block — both count
-/// as `Divider` here. That is deliberate rather than missed. Neither is the
-/// edge of a component, so neither is what 1.4.11 is about, and inventing a
-/// height threshold would put a number in the classifier that no standard
-/// supports.
+/// `ground` is what is behind the whole scene: the census resolves each box's
+/// backdrop as its nearest enclosing filled ancestor, and `ground` is the
+/// answer for a box that has none. A caller passes the surface its window is
+/// cleared to.
+///
+/// # What a translucent fill is compared as
+///
+/// Composited over its backdrop first, per [`contrast`](crate::contrast)'s
+/// stated contract — that module ignores alpha and says so, and tells a caller
+/// holding a translucent layer to composite it against its own backdrop and
+/// pass the result. A half-transparent tint is nearer its backdrop than its
+/// nominal colour is, so comparing the nominal colour would report a
+/// distinction the reader cannot see and file the mark as `Redundant`.
+///
+/// ⚠ Its stated limits, both deliberate:
+///
+/// * A box FILLED with the colour and one pixel tall is a rule, and a box
+///   filled with it and forty pixels tall is a block — both count as `Divider`.
+///   Neither is the edge of a component, so neither is what 1.4.11 is about,
+///   and inventing a height threshold would put a number in the classifier
+///   that no standard supports.
+/// * The backdrop is the nearest filled **ancestor**, not whatever pixel
+///   happens to be under the box. A box absolutely positioned over a sibling's
+///   fill is compared against the container behind them both. Reading the true
+///   backdrop needs a rasteriser, and this census runs on the scene.
 #[must_use]
-pub fn stroke_census(scene: &crate::Scene, colour: crate::style::Color) -> StrokeCensus {
+pub fn stroke_census(
+    scene: &crate::Scene,
+    colour: crate::style::Color,
+    ground: crate::style::Color,
+) -> StrokeCensus {
     use crate::Scene;
     let mut out = StrokeCensus::default();
     scene.for_each_node(&mut |visit| {
         let tag = visit.node.tag();
-        let mut note = |kind: StrokeKind| match (kind, tag) {
-            (StrokeKind::Boundary, Some(t)) => {
-                out.boundary.insert(t.to_owned());
+        let mut note = |kind: StrokeKind| {
+            let (tagged, untagged) = match kind {
+                StrokeKind::Identifying => (&mut out.identifying, &mut out.identifying_untagged),
+                StrokeKind::Redundant => (&mut out.redundant, &mut out.redundant_untagged),
+                StrokeKind::Divider => (&mut out.divider, &mut out.divider_untagged),
+            };
+            match tag {
+                Some(t) => {
+                    tagged.insert(t.to_owned());
+                }
+                None => *untagged += 1,
             }
-            (StrokeKind::Boundary, None) => out.boundary_untagged += 1,
-            (StrokeKind::Divider, Some(t)) => {
-                out.divider.insert(t.to_owned());
-            }
-            (StrokeKind::Divider, None) => out.divider_untagged += 1,
         };
         let box_style = match visit.node {
             Scene::Box(painted) => Some(&painted.style),
@@ -525,7 +661,12 @@ pub fn stroke_census(scene: &crate::Scene, colour: crate::style::Color) -> Strok
         };
         if let Some(style) = box_style {
             if style.border.is_some_and(|b| b.color == colour) {
-                note(StrokeKind::Boundary);
+                let backdrop = backdrop_of(visit.ancestors, ground);
+                note(if separates(style.fill, backdrop) {
+                    StrokeKind::Redundant
+                } else {
+                    StrokeKind::Identifying
+                });
             }
             if style.fill == colour {
                 note(StrokeKind::Divider);
@@ -533,6 +674,44 @@ pub fn stroke_census(scene: &crate::Scene, colour: crate::style::Color) -> Strok
         }
     });
     out
+}
+
+/// What is behind a node: its nearest enclosing filled ancestor, or `ground`.
+///
+/// Innermost first, because the nearest opaque fill is what the reader sees —
+/// an outer container's colour is covered by any inner one that paints.
+fn backdrop_of(ancestors: &[&crate::Scene], ground: crate::style::Color) -> crate::style::Color {
+    use crate::Scene;
+    ancestors
+        .iter()
+        .rev()
+        .find_map(|node| {
+            let fill = match node {
+                Scene::Box(painted) => painted.style.fill,
+                Scene::Container(painted) => painted.style.fill,
+                _ => return None,
+            };
+            (fill.a == u8::MAX).then_some(fill)
+        })
+        .unwrap_or(ground)
+}
+
+/// Whether `fill` on its own separates a box from `backdrop` well enough that
+/// a reader finds the box without its edge — [`Floor::Boundary`], which is the
+/// ratio 1.4.11 asks of whatever the identifying information turns out to be.
+fn separates(fill: crate::style::Color, backdrop: crate::style::Color) -> bool {
+    if fill.a == 0 {
+        // Nothing was painted, so nothing can separate: the edge is all there
+        // is. Short-circuited rather than left to the composite below, which
+        // would reach the same verdict through a ratio of exactly 1.0.
+        return false;
+    }
+    let composited = if fill.a == u8::MAX {
+        fill
+    } else {
+        backdrop.lerp(fill, f32::from(fill.a) / 255.0)
+    };
+    contrast_ratio(composited, backdrop) >= Floor::Boundary.ratio()
 }
 
 #[cfg(test)]
@@ -844,6 +1023,148 @@ mod tests {
         let names: BTreeSet<&str> = Floor::ALL.iter().map(|f| f.name()).collect();
         assert_eq!(names.len(), Floor::ALL.len());
         assert!(Floor::Text.ratio() > Floor::Boundary.ratio());
+    }
+
+    /// A scene of one box with an `outline` border and the fill it was given,
+    /// inside a container filled with `backdrop`. The shape every case below
+    /// varies one thing in.
+    fn one_bordered_box(
+        fill: crate::style::Color,
+        backdrop: crate::style::Color,
+        edge: crate::style::Color,
+    ) -> crate::Scene {
+        use crate::scene::{BoxNode, ContainerNode, Rect};
+        use crate::style::{Border, BoxStyle};
+
+        let inner = BoxNode::new(
+            Rect::new(0, 0, 40, 20),
+            BoxStyle {
+                fill,
+                border: Some(Border::new(edge, 1)),
+                ..BoxStyle::default()
+            },
+        )
+        .with_tag("inner");
+        let mut outer = ContainerNode::new(vec![crate::Scene::Box(inner)]);
+        outer.rect = Rect::new(0, 0, 80, 40);
+        outer.style = BoxStyle {
+            fill: backdrop,
+            ..BoxStyle::default()
+        };
+        outer.tag = Some("outer".into());
+        crate::Scene::Container(outer)
+    }
+
+    /// ★★★★★ R2152 — **the same border, on two boxes, gets two verdicts**, and
+    /// nothing about the border is what decides.
+    ///
+    /// This is the whole of the correction in one assertion. Before R2152 both
+    /// of these were `Boundary` and both owed `Floor::Boundary`, because the
+    /// classifier read the slot the colour sat in. WCAG 1.4.11 reads the
+    /// setting: the first box is *only* its edge, the second is found by its
+    /// own fill and the edge is decoration.
+    #[test]
+    fn r2152_an_edge_owes_the_floor_only_where_nothing_else_identifies_the_box() {
+        use crate::style::Color;
+        const GROUND: Color = Color::rgb(0xF6, 0xF7, 0xF9);
+        const EDGE: Color = Color::rgb(0xC9, 0xD0, 0xD8);
+        // A field: white on the near-white page, 1.07 apart — invisible without
+        // its hairline.
+        let invisible = one_bordered_box(Color::rgb(0xFF, 0xFF, 0xFF), GROUND, EDGE);
+        let census = stroke_census(&invisible, EDGE, GROUND);
+        assert_eq!(census.identifying(), 1, "the edge is all there is");
+        assert_eq!(census.redundant(), 0);
+
+        // A node card: its type colour reads 4.38 against the same page, so the
+        // reader finds it before the edge is drawn.
+        let found = one_bordered_box(Color::rgb(0x1F, 0x8A, 0x4C), GROUND, EDGE);
+        let census = stroke_census(&found, EDGE, GROUND);
+        assert_eq!(census.identifying(), 0, "the fill identifies it");
+        assert_eq!(census.redundant(), 1);
+
+        // And both are still box edges, which is the question the vocabulary
+        // decision in `PAIRINGS` turns on and the one R1839 answered.
+        assert_eq!(census.boundaries(), 1);
+        assert_eq!(census.dividers(), 0);
+    }
+
+    /// ★★★★★ R2152 — **a translucent tint is compared as the reader sees it.**
+    ///
+    /// The `contrast` module ignores alpha and says so, and tells a caller
+    /// holding a translucent layer to composite it first. A fill that clears
+    /// the floor at full opacity and is painted at a tenth of it does not
+    /// separate anything, and reading the nominal colour would file the mark
+    /// `Redundant` — the direction that loses the finding.
+    #[test]
+    fn r2152_a_translucent_fill_is_composited_before_it_is_judged() {
+        use crate::style::Color;
+        const GROUND: Color = Color::rgb(0xF6, 0xF7, 0xF9);
+        const EDGE: Color = Color::rgb(0xC9, 0xD0, 0xD8);
+        let opaque = Color::rgb(0x1F, 0x8A, 0x4C);
+        assert_eq!(
+            stroke_census(&one_bordered_box(opaque, GROUND, EDGE), EDGE, GROUND).redundant(),
+            1,
+            "at full opacity this fill separates",
+        );
+        let faint = opaque.with_alpha(0x1A);
+        assert_eq!(
+            stroke_census(&one_bordered_box(faint, GROUND, EDGE), EDGE, GROUND).identifying(),
+            1,
+            "and at a tenth of it, it does not",
+        );
+        // A fill nothing was painted with is not a distinction either.
+        let none = opaque.with_alpha(0);
+        assert_eq!(
+            stroke_census(&one_bordered_box(none, GROUND, EDGE), EDGE, GROUND).identifying(),
+            1,
+        );
+    }
+
+    /// ★★★★★ R2152 — **the backdrop is the nearest filled ancestor, not the
+    /// window's ground**, so a card inside a card is judged against the card.
+    ///
+    /// A box that clears the floor against the page and not against the panel
+    /// it is actually sitting in is the case a scene-wide ground would get
+    /// wrong, and it is the common case: this vocabulary has four container
+    /// tiers precisely so panels nest.
+    #[test]
+    fn r2152_a_box_is_judged_against_what_is_actually_behind_it() {
+        use crate::style::Color;
+        const PAGE: Color = Color::rgb(0x00, 0x00, 0x00);
+        const PANEL: Color = Color::rgb(0x1F, 0x8A, 0x4C);
+        const EDGE: Color = Color::rgb(0xC9, 0xD0, 0xD8);
+        // The inner fill clears 3.0 against the black page (4.38) and reads
+        // 1.00 against the panel it is nested in.
+        let scene = one_bordered_box(PANEL, PANEL, EDGE);
+        let census = stroke_census(&scene, EDGE, PAGE);
+        assert_eq!(
+            census.identifying(),
+            1,
+            "judged against the panel, not against the window's ground",
+        );
+    }
+
+    /// The floor is carried by exactly one arm, and `ALL` covers the enum — so
+    /// a fourth position cannot be added without deciding what it owes.
+    #[test]
+    fn r2152_only_an_identifying_edge_owes_a_floor() {
+        let owing: Vec<StrokeKind> = StrokeKind::ALL
+            .into_iter()
+            .filter(|kind| kind.floor().is_some())
+            .collect();
+        assert_eq!(owing, vec![StrokeKind::Identifying]);
+        assert_eq!(
+            StrokeKind::Identifying.floor(),
+            Some(Floor::Boundary),
+            "and it is the non-text floor it owes",
+        );
+        let edges: Vec<StrokeKind> = StrokeKind::ALL
+            .into_iter()
+            .filter(|kind| kind.is_box_edge())
+            .collect();
+        assert_eq!(edges, vec![StrokeKind::Identifying, StrokeKind::Redundant]);
+        let names: BTreeSet<&str> = StrokeKind::ALL.iter().map(|k| k.name()).collect();
+        assert_eq!(names.len(), StrokeKind::ALL.len(), "distinct names");
     }
 
     #[test]

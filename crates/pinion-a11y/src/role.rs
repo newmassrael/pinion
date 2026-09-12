@@ -786,6 +786,98 @@ impl AriaRole {
         }
     }
 
+    /// ★★★★★ R2152 §5.40 — **whether a node of this role is a WCAG *user
+    /// interface component***, which is the population every non-text contrast
+    /// requirement is scoped to and which this vocabulary could not name.
+    ///
+    /// WCAG 2.x SC 1.4.11 holds to `3:1` the *visual information required to
+    /// identify **user interface components** and states*, and defines the term
+    /// as *a part of the content that is perceived by users as a single control
+    /// for a distinct function*. Both halves of that predicate matter and only
+    /// one of them is derivable from a colour: **which marks are required to
+    /// identify** is a property of the painted frame
+    /// ([`pinion_core::legibility::StrokeKind`]), and **what is a component** is
+    /// a property of the role — declared right here, in the tree a screen
+    /// already publishes, and until R2152 unaskable. So a screen could be
+    /// measured for *how many boxes have a faint edge* and never for *how many
+    /// controls a reader cannot find*, which is the question the standard puts.
+    ///
+    /// The line drawn is WAI-ARIA 1.2's own category boundary: the **widget
+    /// roles** and **composite widget roles** are components; document
+    /// structure, landmark, live region and window roles are not. Taking the
+    /// specification's partition rather than inventing one is what makes this
+    /// citable — and it is the only version of the line that a reader can check
+    /// against a document instead of against an opinion.
+    ///
+    /// ⚠ **Two residues, stated rather than hidden.** [`ProgressBar`] and
+    /// [`TabPanel`] are ARIA widget roles that are not *controls* in WCAG's
+    /// narrower sense — nothing is operated on either — so counting them can
+    /// overstate. They are kept inside the line because ARIA is where the line
+    /// comes from, and a consumer that must not overstate reports its answer as
+    /// a NAMED SET rather than a total, which is what makes an argument about
+    /// two members possible at all. [`Dialog`] falls outside as a window role,
+    /// which is the same partition read the other way.
+    ///
+    /// An exhaustive match, so a forty-third role cannot inherit an answer
+    /// nobody chose.
+    ///
+    /// [`ProgressBar`]: Self::ProgressBar
+    /// [`TabPanel`]: Self::TabPanel
+    /// [`Dialog`]: Self::Dialog
+    #[must_use]
+    pub const fn is_user_interface_component(self) -> bool {
+        match self {
+            // Widget roles.
+            Self::Button
+            | Self::Switch
+            | Self::CheckBox
+            | Self::RadioButton
+            | Self::Slider
+            | Self::ListBoxOption
+            | Self::TextInput
+            | Self::TreeItem
+            | Self::Tab
+            | Self::TabPanel
+            | Self::MenuItem
+            | Self::MenuItemCheckbox
+            | Self::ProgressBar
+            | Self::Link
+            | Self::SpinButton
+            | Self::GridCell
+            // Composite widget roles.
+            | Self::RadioGroup
+            | Self::Listbox
+            | Self::ComboBox
+            | Self::EditableComboBox
+            | Self::Tree
+            | Self::TabList
+            | Self::MenuBar
+            | Self::Menu
+            | Self::Grid
+            | Self::TreeGrid => true,
+            // Document structure roles.
+            Self::List
+            | Self::ListItem
+            | Self::Toolbar
+            | Self::Tooltip
+            | Self::Table
+            | Self::Cell
+            | Self::ColumnHeader
+            | Self::RowHeader
+            | Self::Row
+            | Self::Group
+            | Self::Heading
+            | Self::Generic
+            // Landmark roles.
+            | Self::Navigation
+            | Self::Region
+            // Live region roles.
+            | Self::Status
+            // Window roles.
+            | Self::Dialog => false,
+        }
+    }
+
     /// R1693 §5.40 — WAI-ARIA 1.2 **Required Owned Elements**: the roles a node
     /// of this role must own at least one of, or `&[]` when it owns nothing in
     /// particular.

@@ -55,6 +55,7 @@ pub mod focus;
 pub mod grid;
 pub mod grouped;
 pub mod heading;
+pub mod identify;
 pub mod list;
 pub mod listbox;
 pub mod menu;
@@ -96,6 +97,7 @@ pub use grouped::{
     grouped_focus_target, grouped_grid_access_nodes, grouped_tree_access_nodes,
 };
 pub use heading::attach_block_headings;
+pub use identify::{Unfindable, components_identified_only_by};
 pub use list::attach_block_lists;
 pub use listbox::{ListOption, listbox_option_nodes};
 pub use menu::{MenuItemCell, SubmenuCell, menu_item_nodes};
