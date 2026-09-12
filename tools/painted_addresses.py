@@ -749,6 +749,17 @@ def check() -> int:
             file=sys.stderr,
         )
         return 1
+    # ★★★★★ R2160 — how much of the queue above is BLOCKED. Printed every run
+    # beside the queue it qualifies, because a remainder and the part of it
+    # nobody may touch are two different facts and the first alone reads as a
+    # plan. See `blocked_families` for why this is not subtracted.
+    blocked = blocked_families(index, rust_index)
+    blocked_sites = sum(walk + rust for _stem, walk, rust in blocked)
+    print(
+        f"painted-addresses: {blocked_sites} of those site(s) are BLOCKED, in "
+        f"{len(blocked)} family/ies nothing pins — `--owed` names them, and a "
+        "conversion that emptied one would be refused as a deleted check"
+    )
     joined = sorted(set(gone_checks) - read_unpinned())
     if joined:
         print(
@@ -789,18 +800,72 @@ def owed() -> int:
     if not stems:
         print("painted-addresses: nothing spelled anywhere")
         return 0
-    print(f"{'walk':>6}  {'rust':>6}  {'files':>5}  family")
+    pins = pin_sources(stems)
+    print(f"{'walk':>6}  {'rust':>6}  {'files':>5}  {'pin':<9}  family")
     for stem in stems:
         walk, rust = index.get(stem, []), rust_index.get(stem, [])
         files = len({path for path, _ in walk} | {path for path, _ in rust})
-        print(f"{len(walk):>6}  {len(rust):>6}  {files:>5}  {stem}")
+        # ★★★★★ R2160 — the PIN column, and it is a work order's most important
+        # one. A family nothing pins cannot be converted: taking its last
+        # speller leaves its address compared with nothing, which `--check`
+        # refuses as a deleted check. A round picking the top row of this table
+        # used to get no warning at all.
+        held = pins.get(stem) or "BLOCKED"
+        print(f"{len(walk):>6}  {len(rust):>6}  {files:>5}  {held:<9}  {stem}")
     walk_total = sum(len(f) for f in index.values())
     rust_total = sum(len(f) for f in rust_index.values())
     print(
         f"{walk_total:>6}  {rust_total:>6}         total across "
         f"{len(stems)} family/ies"
     )
+    blocked = blocked_families(index, rust_index)
+    sites = sum(walk + rust for _stem, walk, rust in blocked)
+    print(
+        f"painted-addresses: {len(blocked)} of those family/ies are BLOCKED — "
+        f"{sites} site(s) whose value nothing holds, so converting one deletes "
+        "a check rather than repaying a debt. Pin them first, or decide they "
+        "are not work."
+    )
     return 0
+
+
+def blocked_families(
+    index: dict[str, list[tuple[str, int]]] | None = None,
+    rust_index: dict[str, list[tuple[str, int]]] | None = None,
+) -> list[tuple[str, int, int]]:
+    """`(family, walk, rust)` for every family that HAS readers and NO pin.
+
+    ★★★★★ R2160 — **the queue was two populations reported as one.** The
+    campaign's closing criterion is *reducible = 0*, and [`check`] prints that
+    queue as a single number. Measured at R2160, **81 of its 460 sites** sit in
+    families nothing pins: an artifact does not carry them, no assertion holds
+    them, and [`deleted_checks`] would refuse the conversion that emptied them.
+    So a round taking the top row of [`owed`] could pick work it is not allowed
+    to finish, and three rounds running discovered that one family at a time by
+    reaching it.
+    ⚠ BLOCKED is not the same as *not work*. It says one thing only: a pin has
+    to exist before the readers can go. For some families that is a test
+    somebody has not written; for others the screen paints the mark in a state
+    nothing drives; and for at least two — `lab.advanced` and `lab.scenario`,
+    measured at R2159 and R2160 — the shipped document gives the feature
+    nothing to draw at all, so no state reaches them and the pin cannot be made
+    without a decision about what the demo shows. Those three are different
+    problems wearing one word, and telling them apart needs the screen driven.
+    ⚠⚠ It is deliberately NOT subtracted from the reducible queue. The queue is
+    what the debt's closing criterion reads, and quietly shrinking it by the
+    part that is hard would be the census measuring the campaign's comfort
+    rather than its remainder — R2155's finding, which this is the second
+    instance of.
+    """
+    index = scan() if index is None else index
+    rust_index = rust_scan() if rust_index is None else rust_index
+    stems = sorted(set(index) | set(rust_index))
+    pins = pin_sources(stems)
+    return [
+        (stem, len(index.get(stem, [])), len(rust_index.get(stem, [])))
+        for stem in stems
+        if not pins[stem] and (index.get(stem) or rust_index.get(stem))
+    ]
 
 
 def rust_needles(text: str, stem: str) -> tuple[bool, bool]:
@@ -1767,6 +1832,49 @@ def selftest() -> int:
                 f"{rust_comment}",
                 file=sys.stderr,
             )
+
+    # ★★★★★ R2160 — **BLOCKED is a claim about pins, and it must not drift into
+    # a claim about anything else.** Both directions are asserted: a family this
+    # calls blocked must really have readers and really have no pin, and a
+    # family with a pin must never be called blocked. Without the second arm a
+    # bug that returned everything would read as "the campaign is impossible"
+    # and be believed, because nobody re-derives a number that large.
+    blocked = blocked_families()
+    pins_now = pin_sources([stem for stem, _w, _r in blocked])
+    for stem, walk_sites, rust_sites in blocked:
+        if pins_now[stem]:
+            failed += 1
+            print(
+                f"FAIL: {stem} is reported BLOCKED and is pinned by "
+                f"{pins_now[stem]!r}",
+                file=sys.stderr,
+            )
+            break
+        if not (walk_sites or rust_sites):
+            failed += 1
+            print(
+                f"FAIL: {stem} is reported BLOCKED and has no reader at all — "
+                "a converted family is not blocked, it is done",
+                file=sys.stderr,
+            )
+            break
+    # ⚠ The other arm, over the whole population rather than the answer: every
+    # family with readers and no pin must BE in the list.
+    walk_now, rust_now = census(), rust_census()
+    every = sorted(set(walk_now) | set(rust_now))
+    should = {
+        stem
+        for stem, source in pin_sources(every).items()
+        if not source and (walk_now.get(stem, 0) or rust_now.get(stem, 0))
+    }
+    missed = sorted(should - {stem for stem, _w, _r in blocked})
+    if missed:
+        failed += 1
+        print(
+            f"FAIL: {missed} have readers and no pin and are not reported "
+            "BLOCKED — a round would pick them as ordinary work",
+            file=sys.stderr,
+        )
 
     # ★★★★★ R2158 — **the test-only module rule, which moves sites in the
     # direction that can HIDE work.** R2144's warning is on the record: a
