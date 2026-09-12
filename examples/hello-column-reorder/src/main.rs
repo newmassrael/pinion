@@ -281,8 +281,13 @@ fn mode_code(mode: SectionResizeMode) -> char {
 }
 
 /// The section paint / hit tag for visual position `i` (`"colhdr#0"` …).
+///
+/// ★ R2180 — this binding's header strip, COMPOSED by the crate that paints it.
+/// It used to spell `{HDR_TAG}#{visual}` itself, a second copy of
+/// `pinion_widget_paint::column_header`'s rule that had to agree with the paint
+/// to the letter for a press or an announcement to reach the section.
 fn section_tag(visual: usize) -> String {
-    format!("{HDR_TAG}#{visual}")
+    pinion_widget_paint::column_header::section_tag(HDR_TAG, visual)
 }
 
 /// The header strip external: the header view. R1451 — it owns the whole

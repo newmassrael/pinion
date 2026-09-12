@@ -4223,7 +4223,7 @@ impl Hit {
             // screen ([[debt-paint-and-gesture-read-two-facts]]).
             if kind_of(&id) == "alarms" {
                 let body = body_rect(inside, editing);
-                for (n, at) in alarm_head_rects(body) {
+                for (n, at) in alarm_head_rects(&id, body) {
                     if contains(at, lx, ly) {
                         return Self::AlarmColumn(id, n);
                     }
@@ -12156,13 +12156,19 @@ fn alarm_columns(width: u32) -> Option<Vec<FeedColumn<'static>>> {
 /// twice ([[debt-paint-and-gesture-read-two-facts]]), and a header is exactly
 /// where it bites: a heading drawn at one x and hit-tested at another is a
 /// control that looks pressable and is not.
-fn alarm_head_rects(body: Rect) -> Vec<(usize, Rect)> {
+fn alarm_head_rects(card_id: &str, body: Rect) -> Vec<(usize, Rect)> {
     // A body too narrow for the columns paints no header, so there is nothing
     // there to press — the gesture and the paint agree about that too.
     let Some(columns) = alarm_columns(body.w) else {
         return Vec::new();
     };
-    let feed = alarm_feed("card.alarms.feed", body, &columns, 0);
+    // ★ R2180 — built under the address the painter uses. This passed
+    // `"card.alarms.feed"`, which nothing paints: the feed is painted under its
+    // card's id (`card.alarms#6.feed`). Only placements are read here, so the
+    // wrong name changed no rectangle — it was a false address in the source,
+    // and the census counted it as a reader.
+    let tag = address::alarm_feed(card_id);
+    let feed = alarm_feed(&tag, body, &columns, 0);
     feed.placements()
         .into_iter()
         .map(|place| {
@@ -12197,7 +12203,7 @@ fn alarms_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
         return Vec::new();
     };
     let order = alarm_order(state);
-    let tag = format!("card.{id}.feed");
+    let tag = address::alarm_feed(id);
     let feed = alarm_feed(&tag, rect, &columns, order.len()).with_sort(state.alarm_sort.get());
     let window = feed.window(state.alarm_scroll.offset_y());
     vec![feed.build(
@@ -12255,7 +12261,7 @@ fn alarms_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
                 let (x, w) = cell(k);
                 parts.push(Scene::Container(
                     ContainerNode::new(vec![label(&text, Rect::new(0, 0, w, line), FONT_TINY, fg)])
-                        .with_tag(format!("{tag}.row.{slot}.cell.{k}"))
+                        .with_tag(address::alarm_cell(&tag, slot, k))
                         .with_layout(absolute(Rect::new(x, top, w, line))),
                 ));
             }
@@ -12267,7 +12273,7 @@ fn alarms_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
                     // row is not a router target. The dotted spelling is what this
                     // screen's body-row families are named in, so the gates that
                     // walk every card's rows walk this card's too.
-                    .with_tag(format!("{tag}.row.{slot}"))
+                    .with_tag(address::alarm_row(&tag, slot))
                     .with_layout(absolute(Rect::new(0, 0, row.w, row.h))),
             )
         },
@@ -12286,13 +12292,16 @@ fn alarms_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Ve
 fn alarms_wire(state: &ShellState) -> serde_json::Value {
     let order = alarm_order(state);
     let columns = alarm_columns(alarm_body_width(state)).unwrap_or_default();
-    let feed = alarm_feed(
-        "card.alarms.feed",
-        alarm_body_rect(state),
-        &columns,
-        order.len(),
-    )
-    .with_sort(state.alarm_sort.get());
+    // ★ R2180 — built under the address the painter uses. This passed
+    // `"card.alarms.feed"`, which nothing paints (the feed is painted under its
+    // card's id). Only the window is read here, so the wrong name changed no
+    // value on the wire; it was a false address in the source. With no alarms
+    // card on the board nothing is painted and there is no address to use, so
+    // the tag is empty — it reaches only window arithmetic over the empty rect
+    // `alarm_body_rect` answers for an absent card.
+    let tag = spec::card_of("alarms").map_or_else(String::new, |id| address::alarm_feed(&id));
+    let feed = alarm_feed(&tag, alarm_body_rect(state), &columns, order.len())
+        .with_sort(state.alarm_sort.get());
     let window = feed.window(state.alarm_scroll.offset_y());
     serde_json::json!({
         "vocabulary": spec::SEVERITY.levels(),
@@ -12364,7 +12373,7 @@ fn alarms_nodes(state: &ShellState, card: &Card, rect: Rect) -> Vec<AccessNode> 
         return Vec::new();
     };
     let order = alarm_order(state);
-    let tag = format!("card.{id}.feed");
+    let tag = address::alarm_feed(id);
     let sort = state.alarm_sort.get();
     let feed = alarm_feed(&tag, rect, &columns, order.len()).with_sort(sort);
     let window = feed.window(state.alarm_scroll.offset_y());
@@ -12404,7 +12413,13 @@ fn alarms_nodes(state: &ShellState, card: &Card, rect: Rect) -> Vec<AccessNode> 
         ))
         .with_row_count(u(order.len()) + 1)
         .with_column_count(u(columns.len()));
-    let head_tag = format!("{tag}.head");
+    // ★★★★★ R2180 — every address below is COMPOSED by the code that paints
+    // it: the heading row and the headings by `header_feed`, the rows and cells
+    // by this crate's `address`. This builder used to spell all four itself,
+    // and the heading was a copy of a crate's composition across a crate
+    // boundary — one wrong letter and a reader is told about a heading nothing
+    // draws, with no gate able to see it because the literal began `{tag}`.
+    let head_tag = pinion_widget_paint::header_feed::head_tag(&tag);
     table = table.with_child(head_tag.clone());
     // The heading strip IS a row — WAI-ARIA's rule, not a stylistic choice: a
     // `columnheader` is a member of a `row`, and a heading attached anywhere
@@ -12416,7 +12431,7 @@ fn alarms_nodes(state: &ShellState, card: &Card, rect: Rect) -> Vec<AccessNode> 
     // scanning a feed most needs and the one a coloured arrow alone withholds.
     let mut heads = Vec::new();
     for (n, column) in columns.iter().enumerate() {
-        let col_tag = format!("{tag}.head.col#{n}");
+        let col_tag = pinion_widget_paint::header_feed::column_tag(&tag, n);
         head = head.with_child(col_tag.clone());
         let node = AccessNode::new(col_tag, AriaRole::ColumnHeader)
             .with_name(column.label)
@@ -12434,7 +12449,7 @@ fn alarms_nodes(state: &ShellState, card: &Card, rect: Rect) -> Vec<AccessNode> 
         };
         let alarm = &spec::ALARMS[n];
         let level = spec::SEVERITY.name(ranks[n]).unwrap_or("");
-        let row_tag = format!("{tag}.row.{slot}");
+        let row_tag = address::alarm_row(&tag, slot);
         table = table.with_child(row_tag.clone());
         let mut row = AccessNode::new(row_tag.clone(), AriaRole::Row)
             .with_name(format!("{level} at {}", alarm.clock()))
@@ -12454,7 +12469,7 @@ fn alarms_nodes(state: &ShellState, card: &Card, rect: Rect) -> Vec<AccessNode> 
             .into_iter()
             .enumerate()
         {
-            let cell_tag = format!("{row_tag}.cell.{k}");
+            let cell_tag = address::alarm_cell(&tag, slot, k);
             row = row.with_child(cell_tag.clone());
             cells.push(
                 AccessNode::new(cell_tag, AriaRole::Cell)

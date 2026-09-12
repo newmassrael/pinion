@@ -871,3 +871,58 @@ pub const CARRY_BANNER: &str = "shell.carry.banner";
 // are composed by WALKS, from the keys `spec["carry"]` already publishes — so
 // what they needed was the PREFIX, and [`CARRY`] and [`CARRY_SLOT_SEAT`] are
 // published beside the members for exactly that.
+
+// --- the alarm feed ----------------------------------------------------------
+//
+// ★★★★★ R2180 §5.2 §5.16 — **the alarm card's feed, composed in FOUR places and
+// counted in one.**
+//
+// Measured at entry. The painter composed the feed and its rows and cells
+// (`alarms_body`); the accessibility builder composed all of them again
+// (`alarms_nodes`), and with them the HEADING address that
+// `pinion_widget_paint::header_feed` paints — a copy of a crate's composition
+// across a crate boundary, which must agree with the paint to the letter or a
+// reader is told about a heading nothing draws; the specification composed all
+// of them a third time (`alarm_members`); and two geometry-only builders passed
+// `"card.alarms.feed"`, a name nothing paints — the feed is painted under its
+// card's id, `card.alarms#6.feed`.
+//
+// The census counted only the specification's copies, because every other one
+// begins `card.{id}` or `{tag}` and its needle reads no address in a literal
+// that does not open with one (R2174's blind spot, now in its third screen).
+//
+// # Who owns what
+//
+// The heading row, the headings and their parts are the CRATE's composition —
+// `header_feed::{head_tag, body_tag, column_tag, column_label_tag,
+// column_sort_tag}` — and this module does not restate them. What the crate's
+// own documentation leaves to the caller is the ROW, so the rows and their
+// cells are declared here, together with where the feed sits inside a card.
+
+/// The alarm feed of the card `card_id`, relative to `card.` — the form a
+/// specification population member takes.
+#[must_use]
+pub fn alarm_feed_under(card_id: &str) -> String {
+    format!("{card_id}.feed")
+}
+
+/// The alarm feed painted inside the card `card_id`.
+#[must_use]
+pub fn alarm_feed(card_id: &str) -> String {
+    format!("card.{}", alarm_feed_under(card_id))
+}
+
+/// One built row of the feed addressed `feed`, by its place in the window.
+///
+/// ★ `.row.{slot}` and not `#{slot}`: `#` is the router's composite-subindex
+/// convention, and a feed row is not a router target — see the painter.
+#[must_use]
+pub fn alarm_row(feed: &str, slot: usize) -> String {
+    format!("{feed}.row.{slot}")
+}
+
+/// One word of that row, in the column the heading above it names.
+#[must_use]
+pub fn alarm_cell(feed: &str, slot: usize, column: usize) -> String {
+    format!("{}.cell.{column}", alarm_row(feed, slot))
+}

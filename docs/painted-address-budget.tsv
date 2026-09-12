@@ -20,7 +20,7 @@ admin.permissions	0	0
 array_modified.struct	0	1
 bars.bar	0	5
 bars.xlabel	0	0
-card.alarms	2	4
+card.alarms	2	2
 card.throughput	0	2
 chart.area	0	3
 chart.axis	2	3
@@ -55,8 +55,8 @@ discovery.multicast	1	0
 echo.demo	0	0
 expanded.cat	0	2
 expanded.struct	0	0
-feed.head	0	3
-feed.row	0	3
+feed.head	0	0
+feed.row	0	1
 hello_modal_handoff.hover	0	5
 hello_modal_refocus.hover	0	6
 hello_window_refocus.hover	0	2

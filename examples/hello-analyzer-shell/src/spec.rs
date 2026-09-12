@@ -3382,58 +3382,57 @@ fn health_tile_parts(parts: &[&str]) -> Vec<String> {
 /// without adding it here is a non-exhaustive match rather than a run-time
 /// surprise.
 fn alarm_members(family: Population) -> Vec<String> {
+    use pinion_widget_paint::header_feed;
+
     let cols = ALARM_COLUMNS.len();
-    let named =
-        |parts: Vec<String>| alarm_parts(&parts.iter().map(String::as_str).collect::<Vec<_>>());
+    // ★★★★★ R2180 — every member is COMPOSED by the code that paints it: the
+    // heading row and its headings by `pinion_widget_paint::header_feed`, the
+    // rows and cells by this crate's `address`. This used to spell all eight
+    // shapes itself, relative to the card, which made this table the fourth
+    // place the feed's addresses were written and the only one the census could
+    // see. A placement that has no alarms card still yields no members, which is
+    // what the unplaced arm of the old helper did.
+    let within = |make: &dyn Fn(&str) -> Vec<String>| {
+        card_of("alarms").map_or_else(Vec::new, |id| make(&crate::address::alarm_feed_under(&id)))
+    };
     match family {
-        Population::AlarmFeed => alarm_parts(&["feed"]),
-        Population::AlarmHead => alarm_parts(&["feed.head"]),
-        Population::AlarmBody => alarm_parts(&["feed.body"]),
-        Population::AlarmColumns => {
-            named((0..cols).map(|n| format!("feed.head.col#{n}")).collect())
-        }
-        Population::AlarmColumnLabels => named(
+        Population::AlarmFeed => within(&|feed| vec![feed.to_owned()]),
+        Population::AlarmHead => within(&|feed| vec![header_feed::head_tag(feed)]),
+        Population::AlarmBody => within(&|feed| vec![header_feed::body_tag(feed)]),
+        Population::AlarmColumns => within(&|feed| {
             (0..cols)
-                .map(|n| format!("feed.head.col_label#{n}"))
-                .collect(),
-        ),
+                .map(|n| header_feed::column_tag(feed, n))
+                .collect()
+        }),
+        Population::AlarmColumnLabels => within(&|feed| {
+            (0..cols)
+                .map(|n| header_feed::column_label_tag(feed, n))
+                .collect()
+        }),
         Population::AlarmSortIndicator => {
             let (col, _) = ALARM_OPENING_SORT;
             // A column this table does not have paints no arrow, so the family
             // is empty rather than naming a region the screen would then owe an
             // explanation for.
-            named(
+            within(&|feed| {
                 (col < cols)
-                    .then(|| format!("feed.head.col_sort#{col}"))
+                    .then(|| header_feed::column_sort_tag(feed, col))
                     .into_iter()
-                    .collect(),
-            )
+                    .collect()
+            })
         }
-        Population::AlarmRows => named(
+        Population::AlarmRows => within(&|feed| {
             (0..ALARM_ROWS_SHOWN)
-                .map(|n| format!("feed.row.{n}"))
-                .collect(),
-        ),
-        Population::AlarmCells => named(
+                .map(|n| crate::address::alarm_row(feed, n))
+                .collect()
+        }),
+        Population::AlarmCells => within(&|feed| {
             (0..ALARM_ROWS_SHOWN)
-                .flat_map(|n| (0..cols).map(move |k| format!("feed.row.{n}.cell.{k}")))
-                .collect(),
-        ),
+                .flat_map(|n| (0..cols).map(move |k| crate::address::alarm_cell(feed, n, k)))
+                .collect()
+        }),
         other => unreachable!("{other:?} is not one of the alarm card's families"),
     }
-}
-
-/// `{card}.{part}` for every named part of the placed alarms card.
-///
-/// The alarm card's peer of [`health_tile_parts`], and separate from it for the
-/// same reason that function is not a general helper: the SHAPE differs. A
-/// health tile's parts hang off a per-tile index; the feed's hang off the
-/// assembly root, and one function taking both would need a parameter saying
-/// which shape it was building.
-fn alarm_parts(parts: &[&str]) -> Vec<String> {
-    card_of("alarms").map_or_else(Vec::new, |id| {
-        parts.iter().map(|part| format!("{id}.{part}")).collect()
-    })
 }
 
 /// `{card}.cell.{row}_{column}` for every cell of a placed table card.

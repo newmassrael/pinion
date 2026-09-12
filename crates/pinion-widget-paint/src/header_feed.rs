@@ -78,6 +78,61 @@ use pinion_core::widgets::virtual_list::{VisibleWindow, compute_visible_range};
 use crate::column_header::{ColumnHeaderStyle, HeaderSection, view_header_cell};
 use crate::virtual_list::view_virtual_list;
 
+/// ★★★★★ R2180 §5.2 §5.16 — the feed's heading ROW, `<tag_prefix>.head`.
+///
+/// # Why the feed's addresses are published
+///
+/// [`HeaderFeed::build`] composed `<tag_prefix>.head`, `<tag_prefix>.head.col`
+/// and `<tag_prefix>.body` inline, and the heading under them came from
+/// [`column_header`](crate::column_header). The build documents three of those
+/// regions as the CALLER's to announce — the feed, the heading row and each
+/// heading — so every caller that announces them has to name them, and a
+/// caller outside this crate cannot see a `format!`. The only consumer measured
+/// at R2180, the analysis shell, therefore spelled all of them a second time in
+/// its accessibility builder and a third time in its region specification;
+/// neither copy was compared with the paint, and a wrong letter would have
+/// announced a heading nothing draws.
+///
+/// ⇒ the feed's own shapes are composed HERE and nowhere else, and the heading
+/// is composed through [`column_header::section_tag`](crate::column_header::section_tag)
+/// rather than restating its `#` join. What this documentation leaves to the
+/// caller — the ROW and what is in it — is not declared here, because the
+/// caller composes it.
+#[must_use]
+pub fn head_tag(tag_prefix: &str) -> String {
+    format!("{tag_prefix}.head")
+}
+
+/// The feed's body, `<tag_prefix>.body` — the frame the rows scroll inside.
+#[must_use]
+pub fn body_tag(tag_prefix: &str) -> String {
+    format!("{tag_prefix}.body")
+}
+
+/// The prefix every heading section is painted under, `<tag_prefix>.head.col`.
+fn columns_prefix(tag_prefix: &str) -> String {
+    format!("{}.col", head_tag(tag_prefix))
+}
+
+/// One heading, `<tag_prefix>.head.col#<column>` — the node a caller announces
+/// as a column heading, with its sort direction.
+#[must_use]
+pub fn column_tag(tag_prefix: &str, column: usize) -> String {
+    crate::column_header::section_tag(&columns_prefix(tag_prefix), column)
+}
+
+/// That heading's label leaf, `<tag_prefix>.head.col_label#<column>`.
+#[must_use]
+pub fn column_label_tag(tag_prefix: &str, column: usize) -> String {
+    crate::column_header::label_tag(&columns_prefix(tag_prefix), column)
+}
+
+/// That heading's sort-arrow slot, `<tag_prefix>.head.col_sort#<column>`.
+#[must_use]
+pub fn column_sort_tag(tag_prefix: &str, column: usize) -> String {
+    crate::column_header::sort_tag(&columns_prefix(tag_prefix), column)
+}
+
 /// One column of a feed's header.
 #[derive(Debug, Clone, Copy)]
 pub struct FeedColumn<'a> {
@@ -418,26 +473,22 @@ impl<'a> HeaderFeed<'a> {
         mut build_row: impl FnMut(usize, Rect, &[SectionPlacement]) -> Scene,
     ) -> Scene {
         let placements = self.placements();
-        let head_tag = format!("{}.head", self.tag_prefix);
+        let columns = columns_prefix(self.tag_prefix);
         let cells: Vec<Scene> = placements
             .iter()
             .zip(self.sections())
             .map(|(placement, section)| {
-                view_header_cell(
-                    &format!("{head_tag}.col"),
-                    placement,
-                    &section,
-                    &self.style.header,
-                    theme,
-                )
+                view_header_cell(&columns, placement, &section, &self.style.header, theme)
             })
             .collect();
         let head = Scene::Container(
-            ContainerNode::new(cells).with_tag(head_tag).with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(0, 0)
-                    .with_size(Size::px(self.rect.w, self.style.header.height)),
-            ),
+            ContainerNode::new(cells)
+                .with_tag(head_tag(self.tag_prefix))
+                .with_layout(
+                    LayoutStyle::new()
+                        .with_absolute_position(0, 0)
+                        .with_size(Size::px(self.rect.w, self.style.header.height)),
+                ),
         );
 
         let body_rect = self.body_viewport();
@@ -453,7 +504,7 @@ impl<'a> HeaderFeed<'a> {
         .silenced(self.frame_silence("the clip the rows scroll inside"));
         let body = Scene::Container(
             ContainerNode::new(vec![rows])
-                .with_tag(format!("{}.body", self.tag_prefix))
+                .with_tag(body_tag(self.tag_prefix))
                 .with_layout(
                     LayoutStyle::new()
                         .with_absolute_position(0, self.style.header.height)
@@ -795,5 +846,39 @@ mod tests {
             }
         });
         out
+    }
+
+    /// ★★★★★ R2180 — the feed's composers, held to their VALUES and to the
+    /// paint.
+    ///
+    /// A caller announces the feed, its heading row and each heading, and since
+    /// R2180 it names them by calling these rather than by spelling them. So a
+    /// renamed composer would move every caller with it and nothing would
+    /// refuse; this is the refusal, each output against a literal. The second
+    /// half is what keeps the composers honest about the paint: a column that
+    /// sorts must carry all three heading parts in the scene `build` returns.
+    #[test]
+    fn r2180_every_feed_address_is_composed_here_and_pinned_by_value() {
+        assert_eq!(super::head_tag("feed"), "feed.head");
+        assert_eq!(super::body_tag("feed"), "feed.body");
+        assert_eq!(super::column_tag("feed", 1), "feed.head.col#1");
+        assert_eq!(super::column_label_tag("feed", 1), "feed.head.col_label#1");
+        assert_eq!(super::column_sort_tag("feed", 1), "feed.head.col_sort#1");
+
+        let f = feed(Rect::new(0, 0, 340, 298), 10).with_sort(Some((1, true)));
+        let scroll = Rc::new(ScrollState::new());
+        let scene = f.build(&scroll, &Theme::default(), |_, _, _| {
+            Scene::Container(ContainerNode::new(Vec::new()))
+        });
+        let tags = walk(&scene);
+        for want in [
+            super::head_tag("feed"),
+            super::body_tag("feed"),
+            super::column_tag("feed", 1),
+            super::column_label_tag("feed", 1),
+            super::column_sort_tag("feed", 1),
+        ] {
+            assert!(tags.contains(&want), "{want} is not painted: {tags:?}");
+        }
     }
 }

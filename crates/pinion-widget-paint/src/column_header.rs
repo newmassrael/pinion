@@ -203,6 +203,58 @@ fn label_style(section: &HeaderSection, style: &ColumnHeaderStyle, theme: &Theme
         .with_overflow(TextOverflow::Clip)
 }
 
+/// ★★★★★ R2180 §5.2 §5.16 — the address of one header SECTION,
+/// `<tag_prefix>#<visual>`: the tag a router's `'#'` split reaches the composite
+/// external through, and the name a column heading is announced under.
+///
+/// # Why these three composers exist
+///
+/// The shapes this module paints were composed inline, and a caller that had to
+/// NAME a section it did not paint composed them again. Measured at R2180 with
+/// `git grep -n '#{visual}\|#{n}' -- crates examples`:
+///
+/// * this file wrote `<tag_prefix>#<visual>` twice — once as the cell's own tag
+///   and once as the peer the label's silence points at;
+/// * `hello-column-reorder` carried its own `section_tag`, spelling the same
+///   join, for its router and its accessibility strip;
+/// * the analysis shell's accessibility builder spelled the heading of a
+///   [`header_feed`](crate::header_feed) —
+///   `{feed}.head.col#{n}` — which is this rule reached through a second
+///   module, across a crate boundary.
+///
+/// Each copy had to agree with the paint to the letter, and a mismatch does not
+/// fail: a press lands on nothing and a reader is told about a heading nothing
+/// draws. A caller outside this crate cannot see the paint's `format!`, so the
+/// rule is published here and every one of them calls it.
+///
+/// ⚠ The `#` is the router's composite-subindex convention
+/// (`pinion_core::composite_tag`), which declares per-widget SSOTs rather than
+/// a general joiner — so this is that SSOT for a column header, beside the
+/// widget, in the form [`tree_view::composite_row_tag`](crate::tree_view::composite_row_tag)
+/// already takes.
+#[must_use]
+pub fn section_tag(tag_prefix: &str, visual: usize) -> String {
+    format!("{tag_prefix}#{visual}")
+}
+
+/// The address of a section's label leaf, `<tag_prefix>_label#<visual>`.
+///
+/// See [`section_tag`] for why this is declared rather than composed at the
+/// call site.
+#[must_use]
+pub fn label_tag(tag_prefix: &str, visual: usize) -> String {
+    format!("{tag_prefix}_label#{visual}")
+}
+
+/// The address of a section's sort-arrow slot, `<tag_prefix>_sort#<visual>`.
+///
+/// Painted only on the section the rows are ordered by; see [`section_tag`]
+/// for why this is declared rather than composed at the call site.
+#[must_use]
+pub fn sort_tag(tag_prefix: &str, visual: usize) -> String {
+    format!("{tag_prefix}_sort#{visual}")
+}
+
 /// R1506 §5.36 — the label leaf of one header section, tagged
 /// `<tag_prefix>_label#<visual>`.
 ///
@@ -262,7 +314,7 @@ pub fn header_label_node(
             Rect::default(),
             label_style(section, style, theme),
         )
-        .with_tag(format!("{tag_prefix}_label#{visual}"))
+        .with_tag(label_tag(tag_prefix, visual))
         .with_layout(
             LayoutStyle::new()
                 .with_absolute_position(style.label_inset, style.label_y)
@@ -270,7 +322,7 @@ pub fn header_label_node(
                 .with_pointer_transparent(true),
         ),
     )
-    .silenced(Silence::name_of(format!("{tag_prefix}#{visual}")))
+    .silenced(Silence::name_of(section_tag(tag_prefix, visual)))
 }
 
 /// R1506 §5.16 — one header section cell, tagged `<tag_prefix>#<visual>` so a
@@ -328,7 +380,7 @@ pub fn view_header_cell(
         // true here rather than a dropped fact.
         let box_h = pinion_core::containment::line_box(style.text_px);
         children.push(crate::indicator::slot(
-            format!("{tag_prefix}_sort#{visual}"),
+            sort_tag(tag_prefix, visual),
             mark,
             Rect::new(
                 sect_w.saturating_sub(style.glyph_w),
@@ -342,7 +394,7 @@ pub fn view_header_cell(
     }
     Scene::Container(
         ContainerNode::new(children)
-            .with_tag(format!("{tag_prefix}#{visual}"))
+            .with_tag(section_tag(tag_prefix, visual))
             .with_style(BoxStyle::filled(fill))
             .with_layout(
                 LayoutStyle::new()
@@ -607,6 +659,47 @@ mod tests {
                 "sort={sort:?}: a header cell typesets its label and nothing \
                  else — a second run is a mark asking a font for a glyph",
             );
+        }
+    }
+
+    /// ★★★★★ R2180 — the three section composers, held to their VALUES and to
+    /// the paint.
+    ///
+    /// A caller outside this crate names a section by calling these, so a
+    /// renamed composer would move every caller together and nothing would
+    /// refuse — R2137.3 measured exactly that. This is the refusal: each output
+    /// against a literal, with nothing supplied by the test, which is the
+    /// strongest pin shape R2176 found in this tree. The second half holds the
+    /// composers to what the cell actually PAINTS, so they cannot become a
+    /// second shape beside the one drawn.
+    #[test]
+    fn r2180_every_section_address_is_composed_here_and_pinned_by_value() {
+        assert_eq!(section_tag("colhdr", 2), "colhdr#2");
+        assert_eq!(label_tag("colhdr", 2), "colhdr_label#2");
+        assert_eq!(sort_tag("colhdr", 2), "colhdr_sort#2");
+
+        let theme = Theme::light();
+        let style = ColumnHeaderStyle::new();
+        let at = placement(150);
+        let cell = view_header_cell(
+            "colhdr",
+            &at,
+            &section(TextAlign::Center, Some(true)),
+            &style,
+            &theme,
+        );
+        let mut tags = Vec::new();
+        cell.for_each_node(&mut |visit| {
+            if let Some(tag) = visit.node.tag() {
+                tags.push(tag.to_owned());
+            }
+        });
+        for want in [
+            section_tag("colhdr", at.visual),
+            label_tag("colhdr", at.visual),
+            sort_tag("colhdr", at.visual),
+        ] {
+            assert!(tags.contains(&want), "{want} is not painted: {tags:?}");
         }
     }
 }
