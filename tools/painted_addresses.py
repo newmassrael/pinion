@@ -707,10 +707,51 @@ def const_items(text: str) -> dict[str, set[int]]:
 #: because a size limit is a magic number. `card_scene(...) -> Scene` happens to
 #: tag a node and is an ordinary reader; `block_tag(i) -> &'static str` exists
 #: to make the address. What a function RETURNS says which it is.
+#:
+#: ★★★★★ R2190 — a string may come back WRAPPED. `selected_node_path(..) ->
+#: Option<String>` in `hello-node-editor` composes `node.<id>.<field>` for the
+#: Details panel's read and its write, and was billed as a reader; the
+#: two-segment rule measured next would bill `hello-packet-view`'s
+#: `word() -> Option<String>` the same way. Measured over the enclosing return
+#: type of every Rust reader, now and under that rule, before widening:
+#: `Option` and `Result` of a string are the only wrapped string returns that
+#: enclose one. ⚠ And the return type is NOT enough, which widening it exposed:
+#: `read_kind_at(..) -> Option<String>` in `hello-inspector` hands
+#: `format!("kind.{i}")` to `intro.query` and returns what it READ. A composer
+#: returns the address; a function that hands it to a call reads through it —
+#: [`declaring_lines`] asks [`call_argument`] which one a line is.
 FN_HEADER = re.compile(
     r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?(?:async\s+)?fn\s+([a-z_][A-Za-z0-9_]*)\s*[(<]"
 )
-FN_RETURNS_STRING = re.compile(r"->\s*(?:&(?:'[A-Za-z_]+\s+)?str|String)\s*\{")
+FN_RETURNS_STRING = re.compile(
+    r"->\s*(?:(?:Option|Result)<\s*)?(?:&(?:'[A-Za-z_]+\s+)?str|String)"
+    r"(?:\s*>|\s*,[^{]*>)?\s*\{"
+)
+
+#: The `format!(` or `format_args!(` a literal opens, optionally borrowed — what
+#: [`call_argument`] reads through, right to left from the literal.
+_MACRO_OPENING = re.compile(r"(?:&\s*)?\b(?:format|format_args)!\s*\(\s*$")
+
+
+def call_argument(text: str, start: int) -> str | None:
+    """The method the literal at `start` is handed to — directly, or as the
+    first argument of a `format!` that is itself handed to one.
+
+    ★★★★★ R2190 — [`handed_to`] reads `.query("a.b.c")` and answers `None` for
+    `.query(&format!("a.b.{i}"))`, because the token before that literal is the
+    macro's own `(`. That was enough for the owner-cache keys it was built for;
+    it is not enough to tell a composer from a function that reads through an
+    address, where the address is nearly always formatted. PURE, like
+    [`handed_to`], so every case is a fixture.
+    """
+    direct = handed_to(text, start)
+    if direct is not None:
+        return direct
+    window = max(0, start - 64)
+    opening = _MACRO_OPENING.search(text[window:start])
+    if opening is None:
+        return None
+    return handed_to(text, window + opening.start())
 
 
 def composer_items(text: str) -> dict[str, set[int]]:
@@ -773,12 +814,25 @@ def declaring_lines(text: str, is_used: Callable[[str], bool]) -> set[int]:
     ⚠ This does NOT excuse a const that other sites ALSO spell. The const is the
     declaration; the sites that spell it anyway are the readers, and they stay
     in the queue — which is the whole point of charging the right column.
+
+    ★★★★★ R2190 — a composer's line whose address is HANDED to a call is not
+    part of the declaration: that function reads through the address and
+    returns what it read ([`FN_RETURNS_STRING`] records the case that showed
+    it). A const cannot hand anything to a call, so only composers are asked.
     """
+    handed = {
+        line
+        for offset, line, literal in rust_literals(text)
+        if (family_of(literal) or unanchored_shape(literal))
+        and call_argument(text, offset) is not None
+    }
     lines: set[int] = set()
-    for items in (const_items(text), composer_items(text)):
-        for name, span in items.items():
-            if is_used(name):
-                lines |= span
+    for name, span in const_items(text).items():
+        if is_used(name):
+            lines |= span
+    for name, span in composer_items(text).items():
+        if is_used(name):
+            lines |= span - handed
     return lines
 
 
@@ -3269,7 +3323,17 @@ def selftest() -> int:
     # and a literal used inline. Tested on [`declaring_lines`] rather than
     # through `rust_roles`, because the "is it used" half needs a package and
     # the rule must be checkable without one.
-    used = {"HOVER_KEYS", "CARD_TAG", "SPAN", "cell_tag", "card_scene"}
+    used = {
+        "HOVER_KEYS",
+        "CARD_TAG",
+        "SPAN",
+        "cell_tag",
+        "card_scene",
+        "node_path",
+        "result_tag",
+        "read_kind",
+        "read_title",
+    }
     declaring_cases: list[tuple[str, str, set[int]]] = [
         (
             "a const bound to one address is a declaration",
@@ -3318,6 +3382,32 @@ def selftest() -> int:
             'fn unused_tag() -> String {\n    format!("dev.cell.0")\n}\n',
             set(),
         ),
+        # ★★★★★ R2190 — a WRAPPED string return, and the call clause that the
+        # widening made necessary.
+        (
+            "★★ a composer may return its string wrapped in an Option",
+            'fn node_path(id: u32) -> Option<String> {\n    Some(format!("node.{id}.x"))\n}\n',
+            {1, 2, 3},
+        ),
+        (
+            "★ or in a Result",
+            'fn result_tag(i: usize) -> Result<String, Error> {\n'
+            '    Ok(format!("dev.cell.{i}"))\n}\n',
+            {1, 2, 3},
+        ),
+        (
+            "★★ but a fn that HANDS its address to a call reads through it, "
+            "whatever it returns — that line is not the declaration",
+            'fn read_kind(intro: &I, i: usize) -> Option<String> {\n'
+            '    intro.query(&format!("kind.{i}.x")).ok()\n}\n',
+            {1, 3},
+        ),
+        (
+            "★ and so does a bare-string fn handing a literal straight to one",
+            'fn read_title(intro: &I) -> String {\n'
+            '    intro.query("lab.node.title").unwrap()\n}\n',
+            {1, 3},
+        ),
     ]
     for label, fixture, want in declaring_cases:
         got = declaring_lines(fixture, lambda name: name in used)
@@ -3326,6 +3416,25 @@ def selftest() -> int:
             print(
                 f"FAIL: {label}: declaring_lines -> {sorted(got)}, "
                 f"wanted {sorted(want)}",
+                file=sys.stderr,
+            )
+    # ★★★★★ R2190 — which call a literal is handed to, looking through the
+    # `format!` it is nearly always wrapped in.
+    call_argument_cases: list[tuple[str, str, str | None]] = [
+        ("a literal handed straight to a method", 'intro.query("a.b.c")', "query"),
+        ("★★ and one handed through a borrowed format!",
+         'intro.query(&format!("a.b.{i}"))', "query"),
+        ("through an unborrowed one", 'node.with_tag(format!("a.b.{i}"))', "with_tag"),
+        ("★ a format! that is RETURNED is handed to nothing",
+         'Some(format!("a.b.{i}"))', None),
+        ("a free function is not a method", 'tag(format!("a.b.{i}"))', None),
+    ]
+    for label, fixture, want in call_argument_cases:
+        got = call_argument(fixture, fixture.index('"'))
+        if got != want:
+            failed += 1
+            print(
+                f"FAIL: {label}: call_argument({fixture!r}) -> {got!r}, wanted {want!r}",
                 file=sys.stderr,
             )
 
