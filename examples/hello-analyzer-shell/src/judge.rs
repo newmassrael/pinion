@@ -74,7 +74,11 @@ use crate::address::{PALETTE_HEAD, PALETTE_SEAT, PALETTE_SECTION};
 use crate::{VIEW_TAG, spec};
 
 /// Where the layout bar's parts are addressed.
-const LAYOUT_BAR: &str = "shell.subbar.";
+///
+/// ★ R2158 — the declaration's, not this file's. It was declared here because
+/// the bar had a composer per seat and no prefix anywhere, so "everything under
+/// the sub bar" — the question this file asks — was unaskable through it.
+const LAYOUT_BAR: &str = crate::address::SUBBAR;
 /// Where a placed card is addressed.
 const BOARD: &str = "card.";
 

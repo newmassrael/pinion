@@ -81,7 +81,8 @@ pub const APP_BAR_H: u32 = 52;
 /// What the debt was right about is the SHAPE of the defect — a list nobody
 /// declared — and this table is where that belongs.
 pub struct ViewTabSpec {
-    /// The tab's key, and the suffix of its paint tag (`shell.appbar.tab.{key}`).
+    /// The tab's key, and the suffix its paint tag carries — see
+    /// [`crate::address::appbar_tab`] for the address it composes.
     pub key: &'static str,
     /// What a reader calls it.
     pub title: &'static str,
@@ -1079,7 +1080,7 @@ pub const FOCUS_RING: &[StopSpec] = &[
         },
     },
     StopSpec {
-        tag: "shell.appbar",
+        tag: crate::address::APPBAR_ROOT,
         holds: "the application bar's views, source, capture and search",
         at: Where::Chrome,
         // A bar of peers with no meaningful last one, so it wraps.
@@ -1107,7 +1108,7 @@ pub const FOCUS_RING: &[StopSpec] = &[
         ),
     },
     StopSpec {
-        tag: "shell.subbar",
+        tag: crate::address::SUBBAR_ROOT,
         holds: "the layout preset and the two board verbs",
         at: Where::At("dashboard"),
         interior: StopInterior::Roster(
@@ -3015,6 +3016,13 @@ pub enum Population {
     One,
     /// One per [`RAIL`] seat, keyed by its key.
     Rail,
+    /// One per [`VIEW_TABS`] tab, keyed by its key.
+    ///
+    /// ★ R2158 — the two tabs were two `One` rows spelling their addresses out,
+    /// which made this table a second list of the views beside [`VIEW_TABS`].
+    /// The tabs were a population all along; they were only two, which is how a
+    /// population passes for a pair of constants.
+    ViewTabs,
     /// One per [`CATALOGUE`] entry, keyed by its kind.
     Catalogue,
     /// One per [`SECTIONS`] heading, keyed by its key.
@@ -3209,6 +3217,7 @@ impl Population {
         match self {
             Population::One => vec![String::new()],
             Population::Rail => RAIL.iter().map(|seat| seat.key.to_owned()).collect(),
+            Population::ViewTabs => VIEW_TABS.iter().map(|tab| tab.key.to_owned()).collect(),
             Population::Catalogue => CATALOGUE.iter().map(|w| w.kind.to_owned()).collect(),
             Population::Sections => SECTIONS.iter().map(|(key, _)| (*key).to_owned()).collect(),
             Population::Cards => card_ids(),
@@ -3450,7 +3459,7 @@ pub const VOICES: &[VoiceSpec] = &[
     },
     // --- the application bar --------------------------------------------
     VoiceSpec {
-        tag: "shell.appbar",
+        tag: crate::address::APPBAR_ROOT,
         role: "toolbar",
         population: Population::One,
         at: Where::Chrome,
@@ -3458,7 +3467,8 @@ pub const VOICES: &[VoiceSpec] = &[
     // ⚠★★★★★ R2027 — **the tab STRIP is deliberately not a row here, and that
     // is a fact about this table rather than an omission.**
     //
-    // `shell.appbar.tabs` is announced as a `tablist` (R1699) and it is the ONE
+    // The tab strip (`address::APPBAR_TABS`) is announced as a `tablist`
+    // (R1699) and it is the ONE
     // role `docs/analyzer-voice-spec.json` says the reference declares. R2027
     // tried to add it and three gates said no in one run: this table is of
     // regions the screen PAINTS (`r1695`: *the specification gives this
@@ -3471,19 +3481,16 @@ pub const VOICES: &[VoiceSpec] = &[
     // where `r1973` asks it, which is correct, and it is why `r2027` asserts
     // the pairing over declared regions rather than over the reference's list.
     VoiceSpec {
-        tag: "shell.appbar.tab.dashboard",
+        // ★ R2158 — one row over the tab population, from the one place that
+        // declares the address. Two rows spelling `…tab.dashboard` and
+        // `…tab.design` made this table a second list of the views.
+        tag: crate::address::APPBAR_TAB_TEMPLATE,
         role: "tab",
-        population: Population::One,
+        population: Population::ViewTabs,
         at: Where::Chrome,
     },
     VoiceSpec {
-        tag: "shell.appbar.tab.design",
-        role: "tab",
-        population: Population::One,
-        at: Where::Chrome,
-    },
-    VoiceSpec {
-        tag: "shell.appbar.source",
+        tag: crate::address::APPBAR_SOURCE,
         role: "button",
         population: Population::One,
         at: Where::Chrome,
@@ -3491,13 +3498,13 @@ pub const VOICES: &[VoiceSpec] = &[
     // The rate readout changes while nobody touches it, which is what a live
     // region is for — and the only one of the bar's regions that is.
     VoiceSpec {
-        tag: "shell.appbar.capture",
+        tag: crate::address::APPBAR_CAPTURE,
         role: "status",
         population: Population::One,
         at: Where::Chrome,
     },
     VoiceSpec {
-        tag: "shell.appbar.search",
+        tag: crate::address::APPBAR_SEARCH,
         role: "textbox",
         population: Population::One,
         at: Where::Chrome,
@@ -3534,25 +3541,25 @@ pub const VOICES: &[VoiceSpec] = &[
     // the substrate's "only the current page is built" guarantee does not cover
     // them — this column is what does, in both directions.
     VoiceSpec {
-        tag: "shell.subbar",
+        tag: crate::address::SUBBAR_ROOT,
         role: "toolbar",
         population: Population::One,
         at: Where::At("dashboard"),
     },
     VoiceSpec {
-        tag: "shell.subbar.preset",
+        tag: crate::address::SUBBAR_PRESET,
         role: "button",
         population: Population::One,
         at: Where::At("dashboard"),
     },
     VoiceSpec {
-        tag: "shell.subbar.edit",
+        tag: crate::address::SUBBAR_EDIT,
         role: "button",
         population: Population::One,
         at: Where::At("dashboard"),
     },
     VoiceSpec {
-        tag: "shell.subbar.add",
+        tag: crate::address::SUBBAR_ADD,
         role: "button",
         population: Population::One,
         at: Where::At("dashboard"),
@@ -3961,7 +3968,7 @@ pub const SILENCES: &[(&str, Population, &str, Where)] = &[
     // screen already says, which is exactly what a reader experiences as
     // repetition.
     (
-        "shell.subbar.count",
+        crate::address::SUBBAR_COUNT,
         Population::One,
         "part_of",
         Where::At("dashboard"),

@@ -715,17 +715,22 @@ fn shown_cards(state: &std::rc::Rc<ShellState>) -> Vec<String> {
 fn r1668_every_declared_element_of_the_screen_is_painted() {
     sweep(|state, shot, _, case| {
         let mut wanted: Vec<String> = vec![
-            "shell.appbar".into(),
-            "shell.appbar.source".into(),
-            "shell.appbar.capture".into(),
-            "shell.appbar.search".into(),
-            "shell.subbar".into(),
-            "shell.subbar.preset".into(),
-            "shell.subbar.edit".into(),
-            "shell.subbar.add".into(),
+            crate::address::APPBAR_ROOT.into(),
+            crate::address::SUBBAR_ROOT.into(),
             "shell.rail".into(),
             crate::address::PALETTE.into(),
         ];
+        // ★ R2158 — the bars' seats come from their rosters rather than being
+        // re-listed here. A list of six addresses beside a declaration of the
+        // same six is a sweep that checks its own copy: adding a seat to the
+        // bar and forgetting this line would leave the new seat unswept, and
+        // nothing would say so.
+        wanted.extend(
+            crate::address::APPBAR_SEATS
+                .iter()
+                .chain(crate::address::SUBBAR_SEATS)
+                .map(|(_, tag)| (*tag).to_owned()),
+        );
         // The rail's seats and the palette's rows come from the specification's
         // own tables rather than from that list.
         for seat in spec::RAIL {
@@ -1240,10 +1245,10 @@ fn r1671_the_screen_fills_the_window_it_was_given() {
         // screen failing to fill its window by exactly the band's height, which
         // is what its first run said.
         for pane in [
-            "shell.appbar",
+            crate::address::APPBAR_ROOT,
             "shell.rail",
             crate::address::PALETTE,
-            "shell.subbar",
+            crate::address::SUBBAR_ROOT,
             super::STATUS_BAND,
         ] {
             if let Some(r) = shot.rect(pane) {
@@ -1404,12 +1409,8 @@ fn r1668_every_painted_control_answers_for_itself() {
         for entry in spec::CATALOGUE {
             probes.push(crate::address::palette_entry(entry.kind));
         }
-        for tag in [
-            "shell.subbar.edit",
-            "shell.subbar.add",
-            "shell.subbar.preset",
-        ] {
-            probes.push(tag.to_owned());
+        for (_, tag) in crate::address::SUBBAR_SEATS {
+            probes.push((*tag).to_owned());
         }
         for tag in probes {
             let Some(rect) = shot.rect(&tag) else {
@@ -1832,24 +1833,24 @@ fn r1672_the_preset_menu_hangs_under_the_chip_that_opens_it() {
     sweep(|state, shot, _, case| {
         if !state.preset_open.get() {
             assert!(
-                shot.rect("shell.preset.menu").is_none(),
+                shot.rect(crate::address::PRESET_MENU).is_none(),
                 "{case}: the menu is closed and still painted",
             );
             return;
         }
         open_cases += 1;
         let chip = shot
-            .rect("shell.subbar.preset")
+            .rect(crate::address::subbar_seat("preset").expect("the sub bar has a preset seat"))
             .unwrap_or_else(|| panic!("{case}: the chip that opens the menu is painted"));
         let menu = shot
-            .rect("shell.preset.menu")
+            .rect(crate::address::PRESET_MENU)
             .unwrap_or_else(|| panic!("{case}: the open menu is painted"));
         // The panel's own top overlaps the chip by design — the menu's heading
         // band sits over the bottom of the control that opened it, which is how
         // it reads as belonging to it. What has to be BELOW the chip is the
         // first thing a person can press, or the menu covers its own trigger.
         let first = shot
-            .rect("shell.preset.item.0")
+            .rect(&crate::address::preset_item(0))
             .unwrap_or_else(|| panic!("{case}: the open menu paints its first row"));
         assert!(
             first.y >= chip.y + chip.h,
@@ -4245,7 +4246,11 @@ const OPERATION_GESTURES: &[OperationGesture] = &[
         // property of the SCREEN rather than a precondition of the table: the
         // affordance that opens the mode is the layout bar's own, so pressing
         // it here is how a person reaches the steppers at all.
-        press_tag(state, shot, "shell.subbar.edit");
+        press_tag(
+            state,
+            shot,
+            crate::address::subbar_seat("edit").expect("the sub bar has an edit seat"),
+        );
         let shot = painted();
         press_tag(state, &shot, "card.packet#0.widen");
     }),
@@ -7495,7 +7500,7 @@ fn lab_pins(scene: &Scene) -> BTreeMap<String, Rect> {
 /// view — so **every** window laid itself out at the primary's size. Measured
 /// here before the repair, painting this application into a 520x380 window:
 ///
-/// | primary | `shell.appbar.search` | marks outside the 520x380 window |
+/// | primary | the app bar's search seat | marks outside the 520x380 window |
 /// |---|---|---|
 /// | 1440x900 | x = 1140 | 294 |
 /// | 1920x1080 | x = 1620 | 304 |
@@ -9633,7 +9638,8 @@ fn short_box_application_report(
 
     // ★ The head, spelled by SITE rather than by three example rows. R1880's
     // entry is why: read off the per-destination line, the widest convention's
-    // three examples were all `shell.appbar/*`, and the obvious reading — that
+    // three examples were all under the application bar, and the obvious
+    // reading — that
     // the head IS the app bar — is one a site list refutes or confirms in a
     // glance where three rows can only suggest.
     if let Some((sig, rows)) = by_convention.first() {
@@ -11037,7 +11043,7 @@ fn r1882_no_run_of_a_cards_own_chrome_sits_in_a_box_too_short_for_its_face() {
 #[test]
 fn r1880_no_run_of_the_app_bar_sits_in_a_box_too_short_for_its_face() {
     /// The bar whose content this gate judges, as a run's path spells it.
-    const BAR: &str = "shell.appbar";
+    const BAR: &str = crate::address::APPBAR_ROOT;
 
     let owner = Owner::new();
     owner.run(|| {
@@ -11660,7 +11666,7 @@ fn r1911_the_claims_at(screens: &pinion_screen::ScreenRoster, key: &str, open: &
             );
             // The host is still the host.
             for chrome in [
-                "shell.appbar",
+                crate::address::APPBAR_ROOT,
                 "shell.rail",
                 &crate::address::rail_seat(key),
             ] {
@@ -11712,7 +11718,7 @@ fn r1911_the_claims_at(screens: &pinion_screen::ScreenRoster, key: &str, open: &
                      stems and the roster attributes it elsewhere",
                 );
             }
-            for chrome in ["shell.appbar", "shell.rail"] {
+            for chrome in [crate::address::APPBAR_ROOT, "shell.rail"] {
                 assert_eq!(
                     screens.section_at(chrome),
                     None,

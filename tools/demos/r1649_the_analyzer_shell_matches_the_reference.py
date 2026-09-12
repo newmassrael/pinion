@@ -72,6 +72,8 @@ from rpc_verify import (  # noqa: E402
     find_by_tag,
     resize_and_settle,
     run_demo,
+    shell_header_prefix,
+    shell_header_tag,
     shell_palette_entry,
     shell_palette_entry_address,
     shell_palette_entry_prefix,
@@ -695,7 +697,7 @@ def body() -> None:
         assert_eq(q(tf, "editing"), False, "F: the board is locked to start")
         assert_eq(q(tf, "steppers"), "narrow,widen,shorter,taller", "F: four size steps")
         assert "is not a size step" in refused(tf, "resize", "keymap#2,sideways"), "F: closed set"
-        click(tf, at(tf, "shell.subbar.edit"))
+        click(tf, at(tf, shell_header_tag(tf, "edit")))
         assert_eq(q(tf, "editing"), True, "F: pressing Edit Layout turns it on")
         was = inv(tf, "cell", "keymap#2")
         # The size it starts at comes from the application's own specification,
@@ -710,7 +712,7 @@ def body() -> None:
             f"{opening['cols']}x{opening['rows']}",
             "F: and back, over the wire, to the size the specification gives it",
         )
-        click(tf, at(tf, "shell.subbar.edit"))
+        click(tf, at(tf, shell_header_tag(tf, "edit")))
         assert_eq(q(tf, "editing"), False, "F: Done turns it off")
         assert_eq(inv(tf, "key", "e"), True, "F: and `e` is the same toggle")
         assert_eq(q(tf, "editing"), True, "F: one handler, two entry points")
@@ -778,10 +780,10 @@ def body() -> None:
             "I: the four layouts this application ships, in name order",
         )
         assert_eq(q(tf, "preset_open"), False, "I: the menu is closed")
-        click(tf, at(tf, "shell.subbar.preset"))
+        click(tf, at(tf, shell_header_tag(tf, "preset")))
         assert_eq(q(tf, "preset_open"), True, "I: pressing the preset chip opens it")
         saved = len(q(tf, "presets").split(","))
-        click(tf, at(tf, f"shell.preset.item.{saved}"))
+        click(tf, at(tf, f"{shell_header_prefix(tf, 'item')}{saved}"))
         assert_eq(
             q(tf, "presets"),
             "Latency,Layout 5,Overview,Topology focus,Traffic",
@@ -931,7 +933,12 @@ def body() -> None:
             and tag not in readouts
             and (
                 tag.startswith(
-                    ("shell.appbar.", "shell.subbar.", seat_tag, palette_prefix)
+                    (
+                        f"{shell_header_tag(tf, 'appbar')}.",
+                        shell_header_prefix(tf, "subbar"),
+                        seat_tag,
+                        palette_prefix,
+                    )
                 )
                 or any(tag.endswith(f".{word}") for word in words)
             )
@@ -1008,7 +1015,8 @@ def body() -> None:
         )
 
         # ── (L) the pointer and the keyboard are one set of handlers ─────
-        assert_eq(inv(tf, "point", at(tf, "shell.appbar.capture")), "shell.appbar.capture", "L: aim")
+        capture = shell_header_tag(tf, "capture")
+        assert_eq(inv(tf, "point", at(tf, capture)), capture, "L: aim")
         was = q(tf, "capturing")
         inv(tf, "send", "PointerDown")
         inv(tf, "send", "PointerUp")
@@ -1201,7 +1209,10 @@ def body() -> None:
         tf.intervene(f"{EXT}/nav", "dashboard")
         tf.tick_ms(16)
         assert_router_press_moves(
-            tf, "shell.subbar.edit", lambda: q(tf, "editing"), "N: the layout-edit toggle"
+            tf,
+            shell_header_tag(tf, "edit"),
+            lambda: q(tf, "editing"),
+            "N: the layout-edit toggle",
         )
         # ★ The negative control: the same verb, a point that is decoration,
         # nothing moves. Without it "the screen moved" could be an artefact of

@@ -5864,6 +5864,72 @@ def shell_palette_root(tf, *, ext: str = "/external") -> str:
     return screen_spec(tf, ext)["palette_addresses"]["tag"]
 
 
+def shell_header_tag(tf, word: str, *, ext: str = "/external") -> str:
+    """The address one seat of the analysis shell's HEADER is painted under.
+
+    ★★★★★ R2158 — the walks' half of the shell's two bars and the menu one of
+    them opens. Before this a walk pressing a bar chip re-typed the address:
+    measured at entry, 10 sites across two walks beside 47 in the crate.
+
+        click(tf, at(tf, shell_header_tag(tf, "edit")))
+
+    `word` is what the SCREEN declares the seat under — `source`, `capture`,
+    `search` on the application bar, `preset`, `edit`, `add` on the sub bar —
+    plus the four marks that are not seats: `appbar`, `subbar`, `tabs` and
+    `menu`. A word the header does not address is an `AssertionError` naming the
+    ones it does, never a composed guess.
+
+    ⚠ One door for both bars, and that is the walks' shape rather than the
+    screen's: a walk driving the header presses a chip on either bar in the same
+    breath, and two helpers would make it ask which bar a seat is on — a
+    question the screen already answered by declaring the seat.
+    """
+    published = screen_spec(tf, ext)["header_addresses"]
+    seats = {
+        row["word"]: row["tag"]
+        for key in ("appbar_seats", "subbar_seats")
+        for row in published[key]
+    }
+    seats |= {
+        "appbar": published["appbar"],
+        "subbar": published["subbar"],
+        "tabs": published["appbar_tabs"],
+        "menu": published["preset_menu"],
+        "count": published["subbar_count"],
+    }
+    if word not in seats:
+        raise AssertionError(
+            f"the analysis shell's header addresses no seat called {word!r}. "
+            f"It addresses {sorted(seats)}."
+        )
+    return seats[word]
+
+
+def shell_header_prefix(tf, part: str, *, ext: str = "/external") -> str:
+    """The prefix one PARAMETRIC family of the shell's header is painted under.
+
+    `part` is `tab` (a view tab, keyed by the tab's own key), `item` (a preset
+    menu row, keyed by index) or `subbar` (the sub bar's own family prefix, for
+    a walk asking what the bar painted).
+
+    ⚠ A prefix rather than a roster, because each of these expands over a
+    population the screen publishes elsewhere — [`shell_header_tag`] is for the
+    marks whose word is fixed.
+    """
+    published = screen_spec(tf, ext)["header_addresses"]
+    prefixes = {
+        "tab": published["appbar_tab"],
+        "item": published["preset_item"],
+        "subbar": published["subbar_seat"],
+    }
+    if part not in prefixes:
+        raise AssertionError(
+            f"the analysis shell's header has no parametric family called "
+            f"{part!r}. It has {sorted(prefixes)}."
+        )
+    return prefixes[part]
+
+
 def shell_palette_seats(spec: Any) -> dict:
     """Every FIXED seat of the palette panel, keyed by the word the screen
     declares it under — from a specification a caller has ALREADY read.

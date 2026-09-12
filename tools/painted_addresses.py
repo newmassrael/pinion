@@ -399,19 +399,66 @@ def test_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
+@functools.lru_cache(maxsize=1)
+def test_only_modules() -> frozenset[Path]:
+    """Every module file that its PARENT declares behind `#[cfg(test)]`.
+
+    ★★★★★ R2158 — **the classifier could not see a test module whose marker is
+    in another file, and 43 assertions were being counted as readers.**
+
+    [`test_spans`] finds `#[cfg(test)]` inside the text it is given, which is
+    right for an inline `mod tests {…}` and blind to the other arrangement this
+    workspace uses just as much: `#[cfg(test)] mod tests;` in the parent, with
+    the whole of `tests.rs` behind it. Measured at R2158, **20 module files** are
+    declared that way — every screen's `tests.rs` and six screens' `painted.rs`
+    — and every site in them was scored as a production reader.
+
+    ⚠⚠ That is not a rounding error in the campaign's number, it is a wrong
+    INSTRUCTION. This debt's closing criterion is *reducible = walk + Rust
+    readers = 0*, and the debt's own text says assertions are welcome and are
+    the only thing pinning a family's address VALUES. So the instrument was
+    telling the campaign to convert the very checks the debt says to keep — and
+    a round that obeyed would have reported repayment while deleting pins.
+
+    ⚠ Exact rather than heuristic, which is what makes it safe to move sites in
+    the direction that LOWERS the reader count: a file is here only because its
+    parent literally declares it `#[cfg(test)] mod <name>;`. R2144's warning was
+    about a rule that took everything after the first marker in a file and so
+    swept up production items; this sweeps up nothing it was not told about by
+    name.
+    """
+    found: set[Path] = set()
+    for root in (RUST_CENSUS_ROOT, "crates"):
+        for parent in sorted((ROOT / root).glob("*/src/**/*.rs")):
+            try:
+                text = parent.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for name in re.findall(
+                r"#\[cfg\(test\)\]\s*\n\s*mod\s+([a-z_0-9]+)\s*;", text
+            ):
+                found.add(parent.parent / f"{name}.rs")
+                found.add(parent.parent / name / "mod.rs")
+    return frozenset(found)
+
+
 def rust_roles(path: Path, text: str) -> tuple[int, int]:
     """`(reader, assertion)` counts for the spelled sites in one Rust file.
 
     A comment line is neither: it is prose about an address, which
     [`rust_sites_in`] already declines to treat as a literal.
+
+    ★ R2158 — a file the parent declares behind `#[cfg(test)]` is assertions
+    THROUGHOUT; see [`test_only_modules`] for what that was costing.
     """
+    whole_file_is_test = path in test_only_modules()
     spans = test_spans(text)
     lines = text.splitlines()
     reader = assertion = 0
     for line, _stem in rust_sites_in(text):
         if lines[line - 1].lstrip().startswith("//"):
             continue
-        if any(first <= line <= last for first, last in spans):
+        if whole_file_is_test or any(first <= line <= last for first, last in spans):
             assertion += 1
         else:
             reader += 1
@@ -1720,6 +1767,54 @@ def selftest() -> int:
                 f"{rust_comment}",
                 file=sys.stderr,
             )
+
+    # ★★★★★ R2158 — **the test-only module rule, which moves sites in the
+    # direction that can HIDE work.** R2144's warning is on the record: a
+    # classifier that calls a production reader an assertion understates the
+    # debt. This one is exact rather than heuristic, and these assertions are
+    # what says so — every file it claims must really be declared
+    # `#[cfg(test)] mod <name>;` by a sibling, and a file nobody declares that
+    # way must not be in the set.
+    modules = test_only_modules()
+    if not modules:
+        failed += 1
+        print(
+            "FAIL: no module file is declared behind `#[cfg(test)]` anywhere in "
+            "this tree, so the rule that reclassifies them is doing nothing",
+            file=sys.stderr,
+        )
+    declared_names: set[str] = set()
+    for parent in sorted((ROOT / RUST_CENSUS_ROOT).glob("*/src/**/*.rs")):
+        body = parent.read_text(encoding="utf-8", errors="replace")
+        for name in re.findall(r"#\[cfg\(test\)\]\s*\n\s*mod\s+([a-z_0-9]+)\s*;", body):
+            declared_names.add(str(parent.parent / f"{name}.rs"))
+    claimed = {str(path) for path in modules if str(path).endswith(".rs")}
+    overclaimed = sorted(
+        path
+        for path in claimed
+        if path.startswith(str(ROOT / RUST_CENSUS_ROOT))
+        and Path(path).is_file()
+        and path not in declared_names
+    )
+    if overclaimed:
+        failed += 1
+        print(
+            f"FAIL: {overclaimed} are treated as test-only and no sibling "
+            "declares them behind `#[cfg(test)]` — the rule is claiming files "
+            "it was not told about, which UNDERSTATES the reader debt",
+            file=sys.stderr,
+        )
+    # ⚠ And the other arm: a production module must not be swept up. `main.rs`
+    # is nobody's `#[cfg(test)] mod`, and if it ever lands here the rule has
+    # stopped reading declarations.
+    for stray in sorted((ROOT / RUST_CENSUS_ROOT).glob("*/src/main.rs")):
+        if stray in modules:
+            failed += 1
+            print(
+                f"FAIL: {stray.relative_to(ROOT)} is treated as test-only",
+                file=sys.stderr,
+            )
+            break
 
     # ★★★★★ R2157 — **the population's BOUNDARY, asserted rather than trusted.**
     # `pinion-core` spells four of these paths 57 times as fixtures for a generic

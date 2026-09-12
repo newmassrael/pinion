@@ -1695,7 +1695,7 @@ fn screen_roster() -> ScreenRoster {
     // chrome beside its region rather than in it. One stem could only have
     // named the third of this page that sits in the region.
     //
-    // ⚠ `shell.canvas` is deliberately not here and neither is `shell.appbar`
+    // ⚠ `shell.canvas` is deliberately not here and neither is the app bar
     // or `shell.rail`: those are painted at every destination, so they are the
     // host's chrome and not any section's marks. Claiming one would make this
     // section "still painted" everywhere, which is the overlap `painting`
@@ -1708,7 +1708,12 @@ fn screen_roster() -> ScreenRoster {
     // below exists to surface.
     .painting(
         "dashboard",
-        &["shell.subbar", address::PALETTE, "card", "match.spark"],
+        &[
+            address::SUBBAR_ROOT,
+            address::PALETTE,
+            "card",
+            "match.spark",
+        ],
     )
     .expect("`dashboard` is open, has no screen, and claims nothing a guest paints")
     .painting("settings", &[address::SETTINGS])
@@ -1721,7 +1726,7 @@ fn screen_roster() -> ScreenRoster {
     // would quietly pass a thinner check instead of turning up unclaimed.
     .painting_chrome(&[
         VIEW_TAG,
-        "shell.appbar",
+        address::APPBAR_ROOT,
         "shell.rail",
         "shell.canvas",
         "shell.status",
@@ -2147,7 +2152,7 @@ impl ShellState {
     /// undiscoverable from the keyboard.
     fn cursor_members(stop: &str) -> Vec<Member> {
         match stop {
-            "shell.appbar" => vec![
+            address::APPBAR_ROOT => vec![
                 // ★★★★★ The two view tabs are a composite of their own, so the
                 // bar reaches them as ONE member — WAI-ARIA's nesting, and the
                 // reason a member is a tag rather than a control. R1698 stopped
@@ -2165,7 +2170,7 @@ impl ShellState {
                     Member::maybe(address::rail_seat(seat.key), seat.reserved_for().is_none())
                 })
                 .collect(),
-            "shell.subbar" => SubChip::ALL
+            address::SUBBAR_ROOT => SubChip::ALL
                 .iter()
                 .map(|chip| Member::new(chip.tag()))
                 .collect(),
@@ -2401,7 +2406,7 @@ fn use_shell_state() -> Rc<ShellState> {
     //   answer to something you did.
     // * the sentence it said named the layout preset, which this application
     //   ALREADY says permanently and announces permanently, one strip up
-    //   (`shell.subbar.preset`, "Layout preset" / its name). The opening toast
+    //   (the sub bar's preset chip, "Layout preset" / its name). The opening toast
     //   was a second, expiring account of a fact that never expires.
     // * so what it bought was nothing, and what it cost was the whole of a
     //   reader's arrival.
@@ -3357,11 +3362,24 @@ impl BarChip {
     /// tag and the table cannot drift.
     fn tag(self) -> String {
         match self {
-            Self::Tab(n) => format!("shell.appbar.tab.{}", spec::VIEW_TABS[n].key),
-            Self::Source => "shell.appbar.source".to_owned(),
-            Self::Capture => "shell.appbar.capture".to_owned(),
-            Self::Search => "shell.appbar.search".to_owned(),
+            Self::Tab(n) => address::appbar_tab(spec::VIEW_TABS[n].key),
+            Self::Source => Self::seat("source"),
+            Self::Capture => Self::seat("capture"),
+            Self::Search => Self::seat("search"),
         }
+    }
+
+    /// One fixed seat's address, from the declaration.
+    ///
+    /// ★ R2158 — the word is what this enum knows and the address is what
+    /// `address.rs` knows, so the panic below can only fire if the two rosters
+    /// part. That is the failure this arrangement exists to make loud: before
+    /// it, the arms held the addresses and nothing anywhere could disagree with
+    /// them, which is not the same as their being right.
+    fn seat(word: &'static str) -> String {
+        address::appbar_seat(word)
+            .unwrap_or_else(|| panic!("the application bar declares no seat called {word:?}"))
+            .to_owned()
     }
 
     fn rect(self) -> Rect {
@@ -3385,12 +3403,25 @@ enum SubChip {
 impl SubChip {
     const ALL: [Self; 3] = [Self::Preset, Self::EditLayout, Self::AddWidget];
 
-    const fn tag(self) -> &'static str {
+    /// The word this seat is known by in the declaration's roster.
+    const fn word(self) -> &'static str {
         match self {
-            Self::Preset => "shell.subbar.preset",
-            Self::EditLayout => "shell.subbar.edit",
-            Self::AddWidget => "shell.subbar.add",
+            Self::Preset => "preset",
+            Self::EditLayout => "edit",
+            Self::AddWidget => "add",
         }
+    }
+
+    /// This seat's paint tag, from [`address::SUBBAR_SEATS`].
+    ///
+    /// ★ R2158 — the arm holds the WORD and the declaration holds the address.
+    /// No longer `const`, and that is the trade: a `const fn` cannot consult a
+    /// roster, so keeping it would have meant keeping the addresses here — a
+    /// second speller for the sake of a qualifier nothing needed.
+    fn tag(self) -> &'static str {
+        let word = self.word();
+        address::subbar_seat(word)
+            .unwrap_or_else(|| panic!("the sub bar declares no seat called {word:?}"))
     }
 
     /// In the sub bar's own space, whose origin is `(RAIL_W, APP_BAR_H)`.
@@ -3887,9 +3918,7 @@ impl Hit {
         {
             return Self::Theme(n);
         }
-        if let Some(n) = tag
-            .strip_prefix("shell.preset.item.")
-            .and_then(|n| n.parse::<usize>().ok())
+        if let Some(n) = address::preset_item_index(tag)
             && n <= state.presets.borrow().len()
         {
             return Self::PresetItem(n);
@@ -4288,7 +4317,7 @@ fn hit_word(hit: &Hit) -> String {
     match hit {
         Hit::Chip(chip) => chip.tag().to_string(),
         Hit::Sub(chip) => chip.tag().to_string(),
-        Hit::PresetItem(n) => format!("shell.preset.item.{n}"),
+        Hit::PresetItem(n) => address::preset_item(*n),
         Hit::Rail(name) => address::rail_seat(name),
         Hit::Option(key) => address::settings_option(key),
         Hit::KeyRow(key) => address::settings_key(key),
@@ -9013,11 +9042,11 @@ fn app_bar_scene(state: &ShellState, palette: Palette) -> Scene {
     keyboard_stop(
         Scene::Container(
             ContainerNode::new(children)
-                .with_tag("shell.appbar")
+                .with_tag(address::APPBAR_ROOT)
                 .with_style(BoxStyle::filled(palette.panel))
                 .with_layout(absolute(Rect::new(0, 0, win_w(), APP_BAR_H))),
         ),
-        "shell.appbar",
+        address::APPBAR_ROOT,
         &state.at(),
     )
 }
@@ -9098,12 +9127,12 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
         // ★★★★★ R1761 — ADDRESSABLE. The reference's layout bar states how many
         // widgets are placed beside the preset that placed them, and this build
         // painted it as loose ink: measured over the wire before this round,
-        // `shell.subbar.` held three parts where the reference draws four, and
+        // the sub bar held three parts where the reference draws four, and
         // the missing one was the only one that is not a control. A part a
         // reader can see and nothing can name is a part no specification
         // reaches.
         cell(
-            "shell.subbar.count".to_owned(),
+            address::SUBBAR_COUNT.to_owned(),
             &format!("{placed} widgets placed"),
             Rect::new(preset.x + preset.w + 14, preset.y + 8, 220, 16),
             FONT_BODY,
@@ -9116,7 +9145,7 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
         // being `part_of` is what stops a reader hearing the same number twice
         // and what keeps it out of the population of things a press must
         // reach, since it is not a control.
-        .silenced(Silence::part_of("shell.subbar")),
+        .silenced(Silence::part_of(address::SUBBAR_ROOT)),
         button(
             SubChip::EditLayout.rect(),
             SubChip::EditLayout.tag(),
@@ -9139,7 +9168,7 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
     keyboard_stop(
         Scene::Container(
             ContainerNode::new(children)
-                .with_tag("shell.subbar")
+                .with_tag(address::SUBBAR_ROOT)
                 .with_style(BoxStyle::filled(palette.canvas))
                 .with_layout(absolute(Rect::new(
                     RAIL_W,
@@ -9148,7 +9177,7 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
                     SUB_BAR_H,
                 ))),
         ),
-        "shell.subbar",
+        address::SUBBAR_ROOT,
         &state.at(),
     )
 }
@@ -9291,7 +9320,7 @@ fn preset_menu_scene(state: &ShellState, palette: Palette) -> Scene {
                 FONT_BODY,
                 if on { palette.accent_fg } else { palette.ink },
             )])
-            .with_tag(format!("shell.preset.item.{n}"))
+            .with_tag(address::preset_item(n))
             .with_style(
                 BoxStyle::filled(if on { palette.high } else { palette.raised })
                     .with_corner_radius(6),
@@ -9307,13 +9336,13 @@ fn preset_menu_scene(state: &ShellState, palette: Palette) -> Scene {
             FONT_BODY,
             palette.accent_fg,
         )])
-        .with_tag(format!("shell.preset.item.{}", names.len()))
+        .with_tag(address::preset_item(names.len()))
         .with_style(BoxStyle::filled(palette.raised).with_corner_radius(6))
         .with_layout(absolute(row_local(save))),
     ));
     Scene::Container(
         ContainerNode::new(children)
-            .with_tag("shell.preset.menu")
+            .with_tag(address::PRESET_MENU)
             .with_style(
                 BoxStyle::filled(palette.panel)
                     .with_corner_radius(10)
@@ -13356,6 +13385,16 @@ fn spec_json() -> serde_json::Value {
         // key is the shape this tree keeps paying for. `palette_addresses` was
         // named the same way, for the same reason.
         "settings_addresses": settings_addresses_json(),
+        // ★★★★★ R2158 — **the header chrome's addresses**, on the wire for the
+        // reason `palette_addresses` and `settings_addresses` are: a walk is
+        // Python and cannot call `address::appbar_*`, so before this every walk
+        // that pressed a bar chip re-typed the string — measured at entry, 10
+        // sites across two walks beside 47 in this crate.
+        //
+        // ⚠ `header_addresses`, not `appbar`: the two bars and the menu one of
+        // them opens are one thing to a reader driving the header, and three
+        // keys would make a walk ask three questions to press two chips.
+        "header_addresses": header_addresses_json(),
         "theme_row": { "title": spec::THEME_ROW.0, "gist": spec::THEME_ROW.1 },
         // ★★ R1696 — where the Tab key stops, in the order it stops there, and
         // WHAT each stop holds. The last column is the part a tag cannot carry:
@@ -13700,6 +13739,38 @@ fn settings_theme_choices_json() -> Vec<serde_json::Value> {
 /// ⚠ Eleven stems, published as prefixes CARRYING their separator — a walk
 /// appending to a stem that lacked one would compose an address with no
 /// separator in it at all, which is R2104's finding and R2110's rule.
+/// ★★★★★ R2158 — the shell's two bars and the preset menu, as a walk needs them.
+///
+/// The seats are published by WORD for [`settings_addresses_json`]'s reason: a
+/// walk names the seat the screen declares and is handed the address, so the
+/// address a walk reads and the address the paint used are one spelling by
+/// construction.
+///
+/// ⚠ The tabs are a PREFIX rather than a roster: their population is the view
+/// tab table, which this document already publishes, and a second list of them
+/// here is the drift the declaration exists to remove.
+fn header_addresses_json() -> serde_json::Value {
+    serde_json::json!({
+        "appbar": address::APPBAR_ROOT,
+        "appbar_seats": address::APPBAR_SEATS.iter().map(|(word, tag)| serde_json::json!({
+            "word": word, "tag": tag,
+        })).collect::<Vec<_>>(),
+        "appbar_tab": address::APPBAR_TAB,
+        "appbar_tabs": address::APPBAR_TABS,
+        "subbar": address::SUBBAR_ROOT,
+        // ⚠ The bar's own family prefix BESIDE its tag, for the reason the
+        // settings page publishes both: a walk asking *what did this bar paint*
+        // needs the form that carries the separator, and the tag does not.
+        "subbar_seat": address::SUBBAR,
+        "subbar_seats": address::SUBBAR_SEATS.iter().map(|(word, tag)| serde_json::json!({
+            "word": word, "tag": tag,
+        })).collect::<Vec<_>>(),
+        "subbar_count": address::SUBBAR_COUNT,
+        "preset_menu": address::PRESET_MENU,
+        "preset_item": address::PRESET_ITEM,
+    })
+}
+
 fn settings_addresses_json() -> serde_json::Value {
     serde_json::json!({
         "tag": address::SETTINGS,
@@ -15122,10 +15193,10 @@ impl WidgetA11y for AnalyzerShellView {
                 spec::reserved_count(),
                 state.source.get(),
             )))
-            .with_child("shell.appbar")
+            .with_child(address::APPBAR_ROOT)
             .with_child("shell.rail");
         if dashboard {
-            root = root.with_child("shell.subbar");
+            root = root.with_child(address::SUBBAR_ROOT);
         }
         root = root.with_child("shell.canvas");
         if dashboard {
@@ -15447,7 +15518,7 @@ fn app_bar_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     // client learns what the inner arrows reach without descending first. The
     // roving is the live one the bar holds, not a fresh copy, or the cursor the
     // wire reports and the cursor the arrows move would be two objects.
-    if let Some(inner) = state.inner_cursor_of("shell.appbar", APP_BAR_TABS) {
+    if let Some(inner) = state.inner_cursor_of(address::APPBAR_ROOT, APP_BAR_TABS) {
         tabs = tabs.with_navigation(&inner);
     }
     let mut nodes = Vec::new();
@@ -15466,7 +15537,7 @@ fn app_bar_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     nodes.insert(
         0,
         with_cursor_declared(
-            AccessNode::new("shell.appbar", AriaRole::Toolbar)
+            AccessNode::new(address::APPBAR_ROOT, AriaRole::Toolbar)
                 .with_name("Application bar")
                 .with_child(APP_BAR_TABS)
                 .with_child(BarChip::Source.tag())
@@ -15578,7 +15649,7 @@ const ACCOUNT_INITIALS: &str = "NE";
 /// The tag the two view tabs are announced under. Nothing paints it — the tabs
 /// are painted individually and the list is what a reader descends through — so
 /// it is anchored by the members it composes.
-const APP_BAR_TABS: &str = "shell.appbar.tabs";
+const APP_BAR_TABS: &str = address::APPBAR_TABS;
 
 /// The rail: seven destinations and the account seat, two of them **locked**.
 ///
@@ -15636,7 +15707,7 @@ fn rail_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
 fn sub_bar_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     vec![
         with_cursor_declared(
-            AccessNode::new("shell.subbar", AriaRole::Toolbar)
+            AccessNode::new(address::SUBBAR_ROOT, AriaRole::Toolbar)
                 .with_name("Layout bar")
                 // ★ R1761 — and how many widgets it is holding, which the bar
                 // paints beside the preset and had announced nowhere in this

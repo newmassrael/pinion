@@ -189,7 +189,7 @@ fn r1946_every_view_tab_the_bar_presses_is_one_the_specification_declares() {
     for (n, tab) in spec::VIEW_TABS.iter().enumerate() {
         assert_eq!(
             BarChip::Tab(n).tag(),
-            format!("shell.appbar.tab.{}", tab.key),
+            crate::address::appbar_tab(tab.key),
             "the {:?} tab's chip does not carry its declared key",
             tab.title
         );
@@ -206,7 +206,7 @@ fn r1946_every_view_tab_the_bar_presses_is_one_the_specification_declares() {
         .collect();
     let declared: Vec<String> = spec::VIEW_TABS
         .iter()
-        .map(|tab| format!("shell.appbar.tab.{}", tab.key))
+        .map(|tab| crate::address::appbar_tab(tab.key))
         .collect();
     assert_eq!(
         pressed, declared,
@@ -2771,7 +2771,7 @@ fn r1699_choosing_a_member_from_the_keyboard_does_something() {
 /// ★★★★★ R1699 — **the application bar's tab list is entered, walked and left.**
 ///
 /// Measured the day the round opened by driving the running window: the bar's
-/// cursor reached `shell.appbar.tabs` in one step (WAI-ARIA's nesting, and
+/// cursor reached the tab strip in one step (WAI-ARIA's nesting, and
 /// correct) and `ArrowDown`, `ArrowUp`, `Enter` and `Space` there all left the
 /// active descendant exactly where it was. From a keyboard the two views could
 /// not be switched at all.
@@ -2786,14 +2786,17 @@ fn r1699_the_nested_tab_list_is_entered_walked_and_left() {
     owner.run(|| {
         let state = use_shell_state_off_disk();
         let descendant = || {
-            AnalyzerShellView::access_focus_target(&ScreenState::default(), Some("shell.appbar"))
-                .and_then(|t| t.active_descendant)
+            AnalyzerShellView::access_focus_target(
+                &ScreenState::default(),
+                Some(crate::address::APPBAR_ROOT),
+            )
+            .and_then(|t| t.active_descendant)
         };
-        assert!(press_key(Some("shell.appbar"), "Home"));
+        assert!(press_key(Some(crate::address::APPBAR_ROOT), "Home"));
         assert_eq!(descendant(), Some(super::APP_BAR_TABS.to_owned()));
 
         // An off-axis arrow enters, because THIS member is a composite.
-        assert!(press_key(Some("shell.appbar"), "ArrowDown"));
+        assert!(press_key(Some(crate::address::APPBAR_ROOT), "ArrowDown"));
         let inside = descendant().expect("the cursor is on a tab");
         assert_eq!(
             inside,
@@ -2807,11 +2810,11 @@ fn r1699_the_nested_tab_list_is_entered_walked_and_left() {
         );
 
         // The inner axis answers and the outer one does not move.
-        assert!(press_key(Some("shell.appbar"), "ArrowRight"));
+        assert!(press_key(Some(crate::address::APPBAR_ROOT), "ArrowRight"));
         assert_eq!(descendant(), Some(BarChip::Tab(1).tag()));
         assert_eq!(
             state
-                .cursor_of("shell.appbar")
+                .cursor_of(crate::address::APPBAR_ROOT)
                 .and_then(|r| r.cursor_tag().map(str::to_owned)),
             Some(super::APP_BAR_TABS.to_owned()),
             "the bar's own cursor stayed on the tab list while the reader was inside"
@@ -2819,7 +2822,7 @@ fn r1699_the_nested_tab_list_is_entered_walked_and_left() {
 
         // Choosing switches the view — the thing a keyboard could not do.
         let before = state.tab.get();
-        assert!(press_key(Some("shell.appbar"), "Enter"));
+        assert!(press_key(Some(crate::address::APPBAR_ROOT), "Enter"));
         let after = state.tab.get();
         assert_ne!(
             before, after,
@@ -2832,10 +2835,10 @@ fn r1699_the_nested_tab_list_is_entered_walked_and_left() {
         );
 
         // Escape leaves ONE level: back onto the tab list, still in the bar.
-        assert!(press_key(Some("shell.appbar"), "Escape"));
+        assert!(press_key(Some(crate::address::APPBAR_ROOT), "Escape"));
         assert_eq!(descendant(), Some(super::APP_BAR_TABS.to_owned()));
         assert!(
-            press_key(Some("shell.appbar"), "ArrowRight"),
+            press_key(Some(crate::address::APPBAR_ROOT), "ArrowRight"),
             "and the bar's own axis answers again"
         );
         assert_eq!(descendant(), Some(BarChip::Source.tag()));
@@ -2843,7 +2846,7 @@ fn r1699_the_nested_tab_list_is_entered_walked_and_left() {
         // ★ The narrowing R1699 had to make to R1698's invariant: the off-axis
         // arrow is consumed ONLY where there is something to enter.
         assert!(
-            !press_key(Some("shell.appbar"), "ArrowDown"),
+            !press_key(Some(crate::address::APPBAR_ROOT), "ArrowDown"),
             "the source chip is not a composite, so ArrowDown still falls through"
         );
     });
@@ -2864,7 +2867,7 @@ fn r1699_the_nested_composite_publishes_its_roster_unentered() {
         let by_tag: BTreeMap<&str, &pinion_a11y::AccessNode> =
             nodes.iter().map(|n| (n.tag.as_str(), n)).collect();
 
-        let bar = by_tag["shell.appbar"];
+        let bar = by_tag[crate::address::APPBAR_ROOT];
         let bar_nav = bar.navigation.as_ref().expect("the bar has a cursor");
         assert!(
             !bar_nav.entered(),
@@ -3241,7 +3244,7 @@ fn r1724_the_lab_destination_is_the_node_lab_itself() {
             lab.len()
         );
         // And the application is still the application.
-        for chrome in ["shell.appbar", "shell.rail", "shell.canvas"] {
+        for chrome in [crate::address::APPBAR_ROOT, "shell.rail", "shell.canvas"] {
             assert!(
                 catalog.contains(chrome),
                 "the shell's {chrome} is still painted"
@@ -5475,7 +5478,7 @@ fn r2027_every_declared_region_is_announced_with_the_role_it_declares() {
         // the answer is a fact about the two tables rather than a gap.
         //
         // A first draft asserted `canon ⊆ declared` and added a `tablist` row
-        // for `shell.appbar.tabs`. Three gates refused it in one run: this
+        // for the tab strip. Three gates refused it in one run: this
         // table is of regions the screen PAINTS (`r1695`: *the specification
         // gives this destination X and the screen does not paint it*), and the
         // strip has no box of its own — it is a grouping node whose bounds come
@@ -9677,6 +9680,201 @@ fn r2110_a_palette_address_is_typed_in_one_place() {
 /// page's build strip by address to say it was the same shape. It names the
 /// strip now — a prose copy of an address is the copy that goes stale, which is
 /// the whole of what this debt is.
+/// ★★★★★ R2158 — **the header chrome's addresses are typed in ONE place, and
+/// this counts.**
+///
+/// The shell's two bars and the menu one of them opens: measured at entry,
+/// **47 sites in this crate's five modules** and 10 across two walks.
+///
+/// ⚠⚠ **This family had a COMPOSER already, and that is why it looked
+/// converted.** `AppChip::tag()` and `SubChip::tag()` are `match`es over closed
+/// enums returning one seat's address each — a good mapping, held in one place.
+/// What nobody could reach through it is the PREFIX and the ROSTER, so
+/// `judge.rs` declared a sub-bar prefix const of its own, the
+/// specification re-listed all six seats because a `const` table cannot call a
+/// method, and the paint sweep listed them a third time. ⇒ **a composer is not
+/// a declaration**: it answers *what is this seat's address* and not *what is
+/// this family's prefix*, *which seats are there*, or *which seat is this tag*
+/// — and a reader denied those three writes the prefix out.
+///
+/// ⚠ Two needles, because the bars are two families under one word and a
+/// single needle over `shell.` would count every other family in the file.
+///
+/// ⚠ Assembled, for [`r2051_a_rail_seat_address_is_typed_in_one_place`]'s
+/// reason: this file is one of the sources it reads.
+#[test]
+fn r2158_a_header_chrome_address_is_typed_in_one_place() {
+    const APP: &str = concat!("shell.", "appbar");
+    const SUB: &str = concat!("shell.", "subbar");
+    const PRESET: &str = concat!("shell.", "preset");
+    let sources = shell_sources();
+    // ⚠ NON-VACUITY FIRST — R2108's lesson.
+    for (name, body) in sources {
+        assert!(
+            !body.is_empty(),
+            "★ `{name}` reads as empty — the `include_str!` is not reaching the \
+             file, and a gate counting over nothing is green"
+        );
+    }
+    for needle in [APP, SUB, PRESET] {
+        let declared = sources
+            .iter()
+            .find(|(name, _)| *name == "address.rs")
+            .map(|(_, body)| body.matches(needle).count())
+            .unwrap_or_default();
+        assert!(
+            declared > 0,
+            "★ {needle:?} matches nothing in `address.rs`, so this gate is \
+             counting a family that no longer exists under that name"
+        );
+        let spellers: Vec<(&str, usize)> = sources
+            .iter()
+            .map(|(name, body)| (*name, body.matches(needle).count()))
+            .filter(|(name, count)| *count > 0 && *name != "address.rs")
+            .collect();
+        assert_eq!(
+            spellers,
+            Vec::new(),
+            "★★★★★ {needle:?} is declared in `address.rs` and derived \
+             everywhere else; these file(s) spell it themselves"
+        );
+    }
+    header_rosters_are_closed();
+    header_inverses_round_trip();
+    header_addresses_reach_the_wire();
+}
+
+/// ★★★★★ R2158 — the header's addresses reach the WIRE, which is the half a
+/// count of spellers cannot see.
+///
+/// A walk is Python and cannot call the declaration, so a family converted in
+/// the crate and not published just moves the spelling to the walks. This is
+/// what says the door exists and answers with the same strings.
+fn header_addresses_reach_the_wire() {
+    let wire = super::spec_json();
+    let published = &wire["header_addresses"];
+    assert_eq!(
+        published["appbar"].as_str(),
+        Some(crate::address::APPBAR_ROOT)
+    );
+    assert_eq!(
+        published["subbar"].as_str(),
+        Some(crate::address::SUBBAR_ROOT)
+    );
+    assert_eq!(
+        published["subbar_seat"].as_str(),
+        Some(crate::address::SUBBAR),
+        "★★ the prefix a walk composes onto CARRIES its separator; publishing \
+         the bar's bare tag would hand every walk an address with none in it"
+    );
+    assert_eq!(
+        published["appbar_tab"].as_str(),
+        Some(crate::address::APPBAR_TAB)
+    );
+    assert_eq!(
+        published["preset_item"].as_str(),
+        Some(crate::address::PRESET_ITEM)
+    );
+    for (key, roster) in [
+        ("appbar_seats", crate::address::APPBAR_SEATS),
+        ("subbar_seats", crate::address::SUBBAR_SEATS),
+    ] {
+        let seats: Vec<(String, String)> = published[key]
+            .as_array()
+            .unwrap_or_else(|| panic!("the wire publishes {key} as a list"))
+            .iter()
+            .map(|row| {
+                (
+                    row["word"].as_str().unwrap_or_default().to_owned(),
+                    row["tag"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        let declared: Vec<(String, String)> = roster
+            .iter()
+            .map(|(word, tag)| ((*word).to_owned(), (*tag).to_owned()))
+            .collect();
+        assert_eq!(
+            seats, declared,
+            "★★★★★ what {key} publishes is not what the declaration holds, so a \
+             walk handed it looks for a mark the paint did not make"
+        );
+    }
+}
+
+/// ★★ Every roster entry's address begins with its family's prefix, and the
+/// roster is the population the bar actually paints.
+///
+/// ⚠ The non-seats are asserted OUT: `SUBBAR_COUNT` shares the sub bar's prefix
+/// and is a readout, `APPBAR_TABS` shares the app bar's and is a container. A
+/// roster that quietly grew one of them would make every reader counting seats
+/// count wrong — [`crate::address::rail_account`]'s case, twice.
+fn header_rosters_are_closed() {
+    for (word, tag) in crate::address::APPBAR_SEATS {
+        assert!(
+            tag.starts_with(crate::address::APPBAR_ROOT),
+            "★ the app bar seat {word:?} is addressed at {tag:?}, outside its \
+             own family"
+        );
+    }
+    for (word, tag) in crate::address::SUBBAR_SEATS {
+        assert!(
+            tag.starts_with(crate::address::SUBBAR),
+            "★ the sub bar seat {word:?} is addressed at {tag:?}, outside its \
+             own family"
+        );
+    }
+    assert!(
+        !crate::address::SUBBAR_SEATS
+            .iter()
+            .any(|(_, tag)| *tag == crate::address::SUBBAR_COUNT),
+        "★★ the widget count is a READOUT and the roster must not hold it: a \
+         reader counting the bar's seats would count one too many"
+    );
+    assert!(
+        crate::address::APPBAR_TABS.starts_with(crate::address::APPBAR_ROOT)
+            && crate::address::appbar_seat("tabs").is_none(),
+        "★★ the tab strip is a CONTAINER under the bar's prefix and not a seat"
+    );
+    // ★ The sub bar's prefix is its own tag with the separator, so the form
+    // `judge.rs` reads and the form the paint writes cannot drift.
+    assert_eq!(
+        crate::address::SUBBAR,
+        format!("{}.", crate::address::SUBBAR_ROOT)
+    );
+    assert_eq!(
+        crate::address::APPBAR_TAB_TEMPLATE,
+        crate::address::appbar_tab("{}")
+    );
+}
+
+/// ★★★★★ Each composer and its inverse, driven against each other.
+///
+/// R2049's rule: an address and its parse are one pair, and a parse written
+/// against a separately-typed prefix fails the SILENT way round — the press
+/// lands on nothing and the screen simply does not respond.
+fn header_inverses_round_trip() {
+    for (word, tag) in crate::address::SUBBAR_SEATS {
+        assert_eq!(crate::address::subbar_seat(word), Some(*tag));
+    }
+    for (word, tag) in crate::address::APPBAR_SEATS {
+        assert_eq!(crate::address::appbar_seat(word), Some(*tag));
+    }
+    // ★ The one family here that IS parsed, because the router parses it: a
+    // pressed preset row carries its index and nothing else identifies it.
+    for n in 0..4 {
+        assert_eq!(
+            crate::address::preset_item_index(&crate::address::preset_item(n)),
+            Some(n),
+        );
+    }
+    // ⚠ And the refusals, which are what stop a plausible wrong answer. The
+    // menu itself is not an item; a word the bar does not seat is not a seat.
+    assert!(crate::address::preset_item_index(crate::address::PRESET_MENU).is_none());
+    assert!(crate::address::subbar_seat("nope").is_none());
+    assert!(crate::address::appbar_seat("nope").is_none());
+}
+
 #[test]
 fn r2119_a_settings_address_is_typed_in_one_place() {
     const NEEDLE: &str = concat!("shell.", "settings");

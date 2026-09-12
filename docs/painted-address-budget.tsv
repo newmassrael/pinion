@@ -132,14 +132,14 @@ scatter.point	4	7
 settings_panel.persistence	0	1
 share.legend	0	5
 share.slice	5	6
-shell.appbar	3	15
+shell.appbar	0	0
 shell.canvas	0	2
 shell.carry	13	16
 shell.palette	0	0
-shell.preset	1	8
+shell.preset	0	0
 shell.settings	0	0
 shell.status	1	4
-shell.subbar	6	17
+shell.subbar	0	0
 shell.toast	0	3
 sizes.legend	0	1
 struct_modified.struct	4	3
@@ -162,7 +162,7 @@ topology.label	0	2
 topology.node	3	2
 topology.wire	1	3
 trail.spark	0	1
-transport.link	0	2
+transport.link	0	1
 transport.unicast	0	0
 trend.label	1	2
 tv.chip	0	0

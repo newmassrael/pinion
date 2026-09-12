@@ -70,6 +70,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     access_node_by_tag,
     run_demo,
+    shell_header_tag,
     shell_palette_root,
     shell_palette_tag,
 )
@@ -258,7 +259,7 @@ def section_e(app: RpcSubprocess, rest: dict) -> None:
     settle(app)
     ok("E: (folded again, to aim the add button at a shut palette)",
        palette(app)["at"]["folded"] is True)
-    app.click(centre(rects(app)["shell.subbar.add"]))
+    app.click(centre(rects(app)[shell_header_tag(app, "add")]))
     settle(app)
     ok(
         "E: ★★★★★ the add button OPENS it, which is the canon's `openPalette` "

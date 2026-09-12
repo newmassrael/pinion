@@ -642,3 +642,187 @@ pub fn settings_theme(n: usize) -> String {
 pub fn settings_theme_index(tag: &str) -> Option<usize> {
     tag.strip_prefix(SETTINGS_THEME_SEAT)?.parse().ok()
 }
+
+// --- the header chrome --------------------------------------------------
+//
+// ★★★★★ R2158 §5.2 §5.11 — **the shell's two bars and the menu one of them
+// opens**, the largest cluster this campaign had left in Rust.
+//
+// Measured at entry: **40 sites in this crate and 10 across two walks, 50 in
+// all** — `shell.appbar` 15+3, `shell.subbar` 17+6, `shell.preset` 8+1.
+//
+// ⚠⚠ **This family had a composer already, and that is why it looks converted
+// and is not.** `AppChip::tag()` and `SubChip::tag()` are `match`es over closed
+// enums, each returning the address for one seat — a perfectly good mapping
+// from seat to address, held in one place. What no one could reach through it
+// is the PREFIX and the FAMILY: `judge.rs` wanted "everything under the sub
+// bar" and a method returning one seat's whole address cannot answer that, so
+// it declared `const LAYOUT_BAR: &str = "shell.subbar."` of its own. The
+// specification re-listed all six seat addresses because a `const` table cannot
+// call a method. The paint sweep spelled them a third time.
+//
+// ⇒ ★★★★★ **a composer is not a declaration.** A composer answers *what is
+// this one seat's address*; a declaration also answers *what is this family's
+// prefix*, *which seats are there* and *which seat is this tag* — and a reader
+// denied those three writes the prefix out, which is where the second speller
+// comes from every time.
+
+/// The application bar itself — the toolbar the seats sit in.
+///
+/// ⚠⚠ **The census cannot see this one, and it was spelled eight times.** A
+/// bar's own tag is two segments with nothing after it, and the address needle
+/// requires a dot AFTER the second word, so `"shell.appbar"` matched nothing
+/// and was reported as no sites at all. R2125 met the same blind spot on
+/// `lab.canvas` and R2156 met it on a two-segment configuration key. ⇒ a family
+/// the instrument scores at zero is not a family that is finished, and the
+/// declaration is what finds these because it is derived from the SEATS rather
+/// than from what a regex can match.
+pub const APPBAR_ROOT: &str = "shell.appbar";
+
+// ⚠ There is deliberately NO `APPBAR` prefix const to match [`SUBBAR`], and the
+// asymmetry is driven by readers rather than by tidiness: `judge.rs` asks *what
+// is under the sub bar* and nothing asks that of the application bar. A const
+// with no reader is not a declaration — it is a second spelling waiting for
+// somebody to disagree with, which is this module's whole subject.
+
+/// The tab strip's own container, which is not a seat.
+///
+/// Its own const for [`RAIL_ACCOUNT`]'s reason: it takes no press and the seat
+/// roster does not hold it, so a reader that treated it as a seat would count
+/// the bar's seats wrong.
+pub const APPBAR_TABS: &str = "shell.appbar.tabs";
+
+/// The prefix every application-bar TAB carries — deeper than [`APPBAR`],
+/// because a tab is addressed by the key its specification row declares.
+pub const APPBAR_TAB: &str = "shell.appbar.tab.";
+
+/// [`APPBAR_TAB`] with the population's placeholder, for a specification table
+/// whose rows must be `&'static str`. A test holds it against the derivation.
+pub const APPBAR_TAB_TEMPLATE: &str = "shell.appbar.tab.{}";
+
+/// The source picker.
+pub const APPBAR_SOURCE: &str = "shell.appbar.source";
+
+/// The capture readout — a live region rather than a control.
+pub const APPBAR_CAPTURE: &str = "shell.appbar.capture";
+
+/// The search box.
+pub const APPBAR_SEARCH: &str = "shell.appbar.search";
+
+/// The application bar's fixed seats, by the word each is known by.
+///
+/// ⚠ The tabs are NOT here and must not be: their population is
+/// `spec::VIEW_TABS`, which is where the keys live, and a second list of them
+/// here is exactly the drift this module exists to remove.
+///
+/// ★ Built from the consts above rather than holding the literals, for
+/// [`PALETTE_SEATS`]' reason: a specification table's rows must be
+/// `&'static str`, so each seat needs a name a `const` can take, and the roster
+/// is then the same strings rather than a second set of them.
+pub const APPBAR_SEATS: &[(&str, &str)] = &[
+    ("source", APPBAR_SOURCE),
+    ("capture", APPBAR_CAPTURE),
+    ("search", APPBAR_SEARCH),
+];
+
+/// The address of the application-bar seat known by `word`.
+#[must_use]
+pub fn appbar_seat(word: &str) -> Option<&'static str> {
+    APPBAR_SEATS
+        .iter()
+        .find(|(known, _)| *known == word)
+        .map(|(_, tag)| *tag)
+}
+
+/// The address of the application-bar tab for `key`.
+///
+/// ★ Takes anything that reads as a string, for [`rail_seat`]'s reason: the
+/// rosters this is called over hold their keys differently.
+#[must_use]
+pub fn appbar_tab(key: impl AsRef<str>) -> String {
+    format!("{APPBAR_TAB}{}", key.as_ref())
+}
+
+// ⚠ And no `appbar_tab_key` inverse. R2049's rule is that an address and its
+// parse are one pair — but the pair exists because somebody PARSES. This shell
+// resolves a press by comparing against the closed enum's own `tag()`
+// (`BarChip::all().find(|c| c.tag() == tag)`), so there is no parse here to be
+// the second speller. Writing one anyway would add an item whose only caller is
+// the test that checks it, which is a check of itself.
+
+/// The sub bar itself — see [`APPBAR_ROOT`] for why this is its own const and
+/// why the census reported it as nothing.
+pub const SUBBAR_ROOT: &str = "shell.subbar";
+
+/// The prefix every sub-bar seat address carries.
+///
+/// ⚠ This is the const `judge.rs` used to declare for itself as `LAYOUT_BAR`,
+/// and the reason it did is recorded above: the bar had a composer and no
+/// declaration, so "everything under the sub bar" was unaskable.
+pub const SUBBAR: &str = "shell.subbar.";
+
+/// The sub bar's live widget count, which is a readout rather than a seat.
+pub const SUBBAR_COUNT: &str = "shell.subbar.count";
+
+/// The chip that opens the preset menu.
+pub const SUBBAR_PRESET: &str = "shell.subbar.preset";
+
+/// The chip that enters layout-edit mode.
+pub const SUBBAR_EDIT: &str = "shell.subbar.edit";
+
+/// The chip that adds a widget.
+pub const SUBBAR_ADD: &str = "shell.subbar.add";
+
+/// The sub bar's pressable seats, by the word each is known by — built from the
+/// consts above for [`APPBAR_SEATS`]' reason.
+pub const SUBBAR_SEATS: &[(&str, &str)] = &[
+    ("preset", SUBBAR_PRESET),
+    ("edit", SUBBAR_EDIT),
+    ("add", SUBBAR_ADD),
+];
+
+/// The address of the sub-bar seat known by `word`.
+#[must_use]
+pub fn subbar_seat(word: &str) -> Option<&'static str> {
+    SUBBAR_SEATS
+        .iter()
+        .find(|(known, _)| *known == word)
+        .map(|(_, tag)| *tag)
+}
+
+// ⚠ No `subbar_word` inverse either, for the reason above. If one is ever
+// needed it must consult [`SUBBAR_SEATS`] rather than strip [`SUBBAR`]:
+// [`SUBBAR_COUNT`] carries that prefix and is a readout, so a bare
+// `strip_prefix` would answer `Some("count")` — a plausible wrong answer rather
+// than a loud one.
+
+/// The preset menu itself.
+pub const PRESET_MENU: &str = "shell.preset.menu";
+
+/// The prefix every preset menu ITEM carries.
+pub const PRESET_ITEM: &str = "shell.preset.item.";
+
+// ⚠ No `PRESET_ITEM_TEMPLATE`. The other families carry one because a
+// specification table's rows must be `&'static str` and those families HAVE a
+// row; the preset menu is built from whatever is saved and no table declares
+// it. A template here would be a `const` whose only reader is the test holding
+// it against the composer.
+
+/// The address of the preset menu item at `n`.
+///
+/// ★ Indexed, not worded: the menu is built from whatever presets are saved, so
+/// position is the only vocabulary its press carries — [`settings_theme`]'s
+/// case, one page over.
+#[must_use]
+pub fn preset_item(n: usize) -> String {
+    format!("{PRESET_ITEM}{n}")
+}
+
+/// The preset an address names, or `None` when the tag is not an item.
+///
+/// ★★ Refuses a tail that is not a number, which is what tells an item from
+/// [`PRESET_MENU`] under the same stem.
+#[must_use]
+pub fn preset_item_index(tag: &str) -> Option<usize> {
+    tag.strip_prefix(PRESET_ITEM)?.parse().ok()
+}
