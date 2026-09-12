@@ -177,9 +177,45 @@ def body() -> None:
         assert "origin" in disclosed, f"G: beside the surface that refused: {disclosed}"
 
         # ── (H) ★ the WHOLE surface is honest, not the paths this demo picked ─
+        # ★ R2182 — the fixture's declared surface is a RECORDED DECISION here,
+        # by name, and a refusal says which path moved and which way. It was a
+        # count, `{"read": 12, "invoke": 12}`; R2176 gave the fixture a `spec`
+        # read slot and the count refused, rightly and without saying why.
+        #
+        # ⚠ It is NOT read off the wire instead, and the first repair did exactly
+        # that. An expectation taken from the surface under test passes a surface
+        # that quietly re-declares a verb as a read slot — the defect R1566
+        # measured on 116 fields — so (A)'s own read cannot be what H compares
+        # with. What made this refusal five rounds of red was a radius that never
+        # ran the walk locally, repaid in `tools/blast_radius.py`.
+        recorded_reads = frozenset({
+            "spec", "mode", "services", "dependencies", "depth", "service_names",
+            "last_event", "feed_remaining", "crossings", "order_changes", "bends",
+            "inner_segments", "straight_inner",
+        })
+        recorded_actions = frozenset({
+            "node_x", "node_y", "node_column", "column_order", "wire_points",
+            "advance", "reset", "untangle", "add_service", "remove_service",
+            "connect", "disconnect",
+        })
+        moved = sorted(
+            [f"{p}: newly declared on the READ channel" for p in set(reads) - recorded_reads]
+            + [f"{p}: newly declared on the INVOKE channel"
+               for p in set(actions) - recorded_actions]
+            + [f"{p}: no longer declared on the READ channel"
+               for p in recorded_reads - set(reads)]
+            + [f"{p}: no longer declared on the INVOKE channel"
+               for p in recorded_actions - set(actions)]
+        )
+        assert not moved, (
+            f"H: the fixture's declared surface is not the one this walk records: "
+            f"{moved} — a slot the fixture legitimately gained is recorded here; a "
+            f"verb that moved to the read channel is R1566's defect"
+        )
         counted = assert_declared_channels_are_true(tf)
-        assert counted == {"read": 12, "invoke": 12}, (
-            f"H: the fixture's declared split, exactly: {counted}"
+        assert counted == {"read": len(recorded_reads), "invoke": len(recorded_actions)}, (
+            f"H: the gate checked {counted}, not the {len(recorded_reads)} read / "
+            f"{len(recorded_actions)} invoke path(s) recorded"
         )
 
     # ── (I) ★ and the gate holds for the surface that had the MOST wrong ────

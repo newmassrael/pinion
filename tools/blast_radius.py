@@ -41,9 +41,11 @@ is where the cost bound lives — with the measurement that chose it.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 
@@ -108,16 +110,151 @@ def is_workspace_wide(path: str) -> bool:
     return path in ("Cargo.toml", "Cargo.lock") or path == "vendor" or path.startswith("vendor/")
 
 
-def owning_packages(changed: list[str], dirs: list[tuple[str, str]]) -> set[str]:
+#: The lockfile, by name — the one [`WORKSPACE_WIDE`] input whose CONTENTS say
+#: which members a change to it reaches. See [`lock_owners`].
+LOCKFILE = "Cargo.lock"
+
+
+def lock_owners(
+    old: dict | None, new: dict | None, members: set[str]
+) -> set[str] | None:
+    """The members a change between two parsed lockfiles reaches, or `None`
+    when the change cannot be read that narrowly and every member is assumed.
+
+    ★★★★★ R2182 — **the lockfile is not opaque, and treating it as if it were
+    hid a red.** R2176 added `serde_json` to one example's manifest; the lock
+    changed by one line, inside that example's own `[[package]]` entry;
+    [`WORKSPACE_WIDE`] made the radius all 262 members. `demo_radius.py` then
+    answered 725 demos, the consumer gate said *over the local cap, CI covers
+    them* and tested nothing, and the round read "everything" as "CI's" and ran
+    one of the three walks that boot the example it had changed. The second of
+    them was red in CI on every push after.
+
+    Measured over the last 60 commits that touched the lockfile: 38 changed
+    only member entries, reaching one or two members each, and 22 were engine
+    pin bumps reaching 244-253. *The lockfile owns every member* was right 22
+    times and wrong 38.
+
+    A lock is a list of resolved `[[package]]` entries. An entry that changed
+    and is a MEMBER reaches that member. An entry that changed and is not — a
+    version, a source, a checksum, its own dependency list — reaches every
+    member whose resolved dependency closure contains its name, in EITHER lock
+    (an added crate is resolved in the new one, a removed one in the old). By
+    name rather than by version, which errs towards reaching more.
+
+    `None` for anything this cannot vouch for: a side that is absent or does
+    not parse, or a change outside the package list (the format `version`, a
+    `[metadata]` or `[patch]` table), because what those alter is not a
+    property of any one entry.
+    """
+    if old is None or new is None:
+        return None
+    if {k: v for k, v in old.items() if k != "package"} != {
+        k: v for k, v in new.items() if k != "package"
+    }:
+        return None
+
+    def entries(lock: dict) -> dict[tuple, dict]:
+        return {
+            (entry.get("name"), entry.get("version"), entry.get("source")): entry
+            for entry in lock.get("package", [])
+        }
+
+    before, after = entries(old), entries(new)
+    changed = {
+        key[0] for key in set(before) | set(after) if before.get(key) != after.get(key)
+    }
+    reached = changed & members
+    external = changed - members
+    if external:
+        graph: dict[str, set[str]] = {}
+        for lock in (old, new):
+            for entry in lock.get("package", []):
+                graph.setdefault(entry.get("name"), set()).update(
+                    dependency.split(" ")[0]
+                    for dependency in entry.get("dependencies", [])
+                )
+        for member in members - reached:
+            seen: set[str] = set()
+            stack = [member]
+            while stack:
+                for dependency in graph.get(stack.pop(), ()):
+                    if dependency not in seen:
+                        seen.add(dependency)
+                        stack.append(dependency)
+            if seen & external:
+                reached.add(member)
+    return reached
+
+
+def lock_at(spec: str, root: Path) -> dict | None:
+    """The lockfile `git show <spec>` names, parsed — `None` when git has no
+    such blob or it does not parse."""
+    done = subprocess.run(["git", "show", spec], cwd=root, capture_output=True, text=True)
+    if done.returncode != 0:
+        return None
+    try:
+        return tomllib.loads(done.stdout)
+    except tomllib.TOMLDecodeError:
+        return None
+
+
+def lock_sides(
+    mode: str, rev_range: str | None, root: Path
+) -> tuple[dict | None, dict | None]:
+    """The lockfile before and after the change [`changed_paths`] diffs.
+
+    The same two trees that diff compares: `HEAD` and the index for `staged`;
+    `A` and `B` for `A..B`; their merge base and `B` for `A...B`. A range of
+    any other shape answers `(None, None)`, which [`lock_owners`] reads as
+    every member.
+    """
+    if mode == "staged":
+        return lock_at(f"HEAD:{LOCKFILE}", root), lock_at(f":{LOCKFILE}", root)
+    if not rev_range:
+        return None, None
+    if "..." in rev_range:
+        left, right = rev_range.split("...", 1)
+        base = subprocess.run(
+            ["git", "merge-base", left or "HEAD", right or "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+        )
+        if base.returncode != 0:
+            return None, None
+        return (
+            lock_at(f"{base.stdout.strip()}:{LOCKFILE}", root),
+            lock_at(f"{right or 'HEAD'}:{LOCKFILE}", root),
+        )
+    if ".." in rev_range:
+        left, right = rev_range.split("..", 1)
+        return (
+            lock_at(f"{left or 'HEAD'}:{LOCKFILE}", root),
+            lock_at(f"{right or 'HEAD'}:{LOCKFILE}", root),
+        )
+    return None, None
+
+
+def owning_packages(
+    changed: list[str],
+    dirs: list[tuple[str, str]],
+    lock_reach: set[str] | None = None,
+) -> set[str]:
     """The packages that own `changed`.
 
     A path under no package — `tools/`, `docs/`, a hook — owns nothing, which
     is the right answer rather than an error: those cannot break a cargo test.
-    The exception is [`WORKSPACE_WIDE`], which owns every member instead.
+    The exception is [`WORKSPACE_WIDE`], which owns every member instead — and
+    the lockfile, when `lock_reach` says which members its change reaches, owns
+    those (R2182, [`lock_owners`]).
     """
     owners: set[str] = set()
     for path in changed:
         if not path:
+            continue
+        if path == LOCKFILE and lock_reach is not None:
+            owners.update(lock_reach)
             continue
         if is_workspace_wide(path):
             owners.update(name for name, _ in dirs)
@@ -145,15 +282,27 @@ def consumers(metadata: dict) -> dict[str, set[str]]:
     return reverse
 
 
-def radius(changed: list[str], metadata: dict, root: Path) -> list[str]:
+def radius(
+    changed: list[str],
+    metadata: dict,
+    root: Path,
+    lock: tuple[dict | None, dict | None] | None = None,
+) -> list[str]:
     """Every package whose behaviour the change can alter, sorted.
 
     Breadth-first over the reverse dependency relation. A workspace with a
     dependency cycle is not buildable by cargo at all, so the `seen` set is
     about determinism rather than termination.
+
+    `lock` is the lockfile before and after, when the caller has them. Without
+    it a lockfile change keeps [`WORKSPACE_WIDE`]'s answer (R2182).
     """
     reverse = consumers(metadata)
-    frontier = list(owning_packages(changed, package_dirs(metadata, root)))
+    reach = None
+    if lock is not None and LOCKFILE in changed:
+        members = {pkg["name"] for pkg in metadata["packages"]}
+        reach = lock_owners(lock[0], lock[1], members)
+    frontier = list(owning_packages(changed, package_dirs(metadata, root), reach))
     seen = set(frontier)
     while frontier:
         current = frontier.pop()
@@ -244,9 +393,102 @@ def selftest() -> int:
         ["app", "app-tests-only", "leaf", "mid", "nested", "unrelated"],
     )
     ok(
-        "and so does the lockfile",
+        "and so does the lockfile, while nothing says what changed inside it",
         radius(["Cargo.lock"], FIXTURE, root),
         ["app", "app-tests-only", "leaf", "mid", "nested", "unrelated"],
+    )
+
+    # ★★★★★ R2182 — and when the lockfile's two sides ARE known, its own entries
+    # say whom the change reaches. The fixture lock resolves the workspace above
+    # plus two registry crates, `serde` (which `mid` resolves) and `itoa` (which
+    # nothing does).
+    fixture_lock = {
+        "version": 4,
+        "package": [
+            {"name": "leaf", "version": "0.1.0"},
+            {"name": "mid", "version": "0.1.0", "dependencies": ["leaf", "serde"]},
+            {"name": "app", "version": "0.1.0", "dependencies": ["mid"]},
+            {"name": "app-tests-only", "version": "0.1.0", "dependencies": ["leaf"]},
+            {"name": "unrelated", "version": "0.1.0"},
+            {"name": "nested", "version": "0.1.0"},
+            {"name": "serde", "version": "1.0.0", "source": "registry+x", "checksum": "a"},
+            {"name": "itoa", "version": "1.0.0", "source": "registry+x", "checksum": "b"},
+        ],
+    }
+    everyone = ["app", "app-tests-only", "leaf", "mid", "nested", "unrelated"]
+
+    def entry(lock: dict, name: str) -> dict:
+        return next(item for item in lock["package"] if item["name"] == name)
+
+    def edited(mutate) -> tuple[dict, dict]:
+        new = copy.deepcopy(fixture_lock)
+        mutate(new)
+        return fixture_lock, new
+
+    def drop_serde(lock: dict) -> None:
+        lock["package"].remove(entry(lock, "serde"))
+        entry(lock, "mid")["dependencies"].remove("serde")
+
+    ok(
+        "★ the R2176 shape: a member's own entry reaches that member and its "
+        "consumers, not the workspace",
+        radius(
+            ["Cargo.lock", "crates/mid/Cargo.toml"],
+            FIXTURE,
+            root,
+            edited(lambda lock: entry(lock, "mid")["dependencies"].append("itoa")),
+        ),
+        ["app", "mid"],
+    )
+    ok(
+        "an external version reaches every member that resolves it",
+        radius(
+            ["Cargo.lock"],
+            FIXTURE,
+            root,
+            edited(lambda lock: entry(lock, "serde").update(version="1.0.1", checksum="c")),
+        ),
+        ["app", "mid"],
+    )
+    ok(
+        "an external nothing resolves reaches nothing",
+        radius(
+            ["Cargo.lock"],
+            FIXTURE,
+            root,
+            edited(lambda lock: entry(lock, "itoa").update(checksum="z")),
+        ),
+        [],
+    )
+    ok(
+        "a removed external reaches the member that resolved it, read in the old lock",
+        radius(["Cargo.lock"], FIXTURE, root, edited(drop_serde)),
+        ["app", "mid"],
+    )
+    ok(
+        "⚠ a change outside the package list cannot be read narrowly",
+        radius(["Cargo.lock"], FIXTURE, root, edited(lambda lock: lock.update(version=3))),
+        everyone,
+    )
+    ok(
+        "⚠ nor can a side that is absent or does not parse",
+        radius(["Cargo.lock"], FIXTURE, root, (None, fixture_lock)),
+        everyone,
+    )
+    ok(
+        "an identical lock reaches nothing",
+        radius(["Cargo.lock"], FIXTURE, root, (fixture_lock, copy.deepcopy(fixture_lock))),
+        [],
+    )
+    ok(
+        "a lock pair beside a change that does not touch the lockfile is ignored",
+        radius(
+            ["examples/app/src/main.rs"],
+            FIXTURE,
+            root,
+            edited(lambda lock: lock.update(version=3)),
+        ),
+        ["app"],
     )
     ok(
         "and so does a vendored submodule",
@@ -326,6 +568,56 @@ def selftest() -> int:
         )
     if not all(p.get("manifest_path") for p in meta.get("packages", [])):
         failures.append("a package with no manifest path cannot be located by `radius`")
+    # ★★★★★ R2182 — the lock rule against THIS tree's lockfile, and without
+    # history: a shallow checkout has HEAD and nothing before it, so the arm
+    # mutates the real lock rather than replaying a commit. The fixture cases
+    # above prove the discrimination; this proves the reader hands it a real
+    # lock and that the rule still separates on a graph of this size.
+    head_lock = lock_at(f"HEAD:{LOCKFILE}", real)
+    if not head_lock or not head_lock.get("package"):
+        failures.append("lock_at could not read this tree's own lockfile at HEAD")
+    else:
+        if None in lock_sides("staged", None, real):
+            failures.append("lock_sides could not read the staged lockfile's two sides")
+        member = next(
+            (item["name"] for item in head_lock["package"]
+             if item["name"] in names and item["name"] != "pinion-core"),
+            None,
+        )
+        if member is None:
+            failures.append("this tree's lock names no member besides pinion-core")
+        else:
+            mutated = copy.deepcopy(head_lock)
+            entry(mutated, member).setdefault("dependencies", []).append("serde")
+            ok(
+                f"this tree's lock: an edit inside {member}'s own entry reaches "
+                f"{member} alone",
+                lock_owners(head_lock, mutated, names),
+                {member},
+            )
+        core = entry(head_lock, "pinion-core")
+        outside = next(
+            (dependency.split(" ")[0] for dependency in core.get("dependencies", [])
+             if dependency.split(" ")[0] not in names),
+            None,
+        )
+        if outside is None:
+            failures.append(
+                "pinion-core resolves no external crate, so the external arm "
+                "cannot discriminate anything"
+            )
+        else:
+            mutated = copy.deepcopy(head_lock)
+            for item in mutated["package"]:
+                if item["name"] == outside:
+                    item["checksum"] = "0" * 64
+            reach = lock_owners(head_lock, mutated, names) or set()
+            ok(
+                f"this tree's lock: a change to {outside}, which pinion-core "
+                "resolves, reaches it and most of the tree",
+                "pinion-core" in reach and len(reach) > len(names) // 2,
+                True,
+            )
     # ★ `staged`, because it is the mode the hooks use and it answers whatever
     # the index holds — including nothing, which is a legitimate answer and the
     # reason this asserts the SHAPE rather than a count.
@@ -357,7 +649,9 @@ def main() -> int:
 
     root = Path(__file__).resolve().parent.parent
     metadata = workspace_metadata(root)
-    names = radius(changed_paths(args.mode, args.rev_range, root), metadata, root)
+    changed = changed_paths(args.mode, args.rev_range, root)
+    lock = lock_sides(args.mode, args.rev_range, root) if LOCKFILE in changed else None
+    names = radius(changed, metadata, root, lock)
 
     if args.count:
         print(len(names))

@@ -42,9 +42,11 @@ enforceable rather than reported — R1858 chose reporting for the pin axis
 because the alternative was hundreds of demos, and here the alternative is one.
 
 Owners are taken from paths under `examples/` ONLY, deliberately: for
-`blast_radius.py` a change to `Cargo.lock` owns every member, which is the right
-answer to *what can break* and the wrong one here — it would demand a walk per
-example on any lockfile touch.
+`blast_radius.py` a change to `Cargo.lock` owns every member its changed entries
+reach — since R2182 read off the lockfile itself, which is one member for an
+added dependency and still nearly every member for an engine pin bump — and
+that is the right answer to *what can break* and the wrong one here: it would
+demand a walk per example on any dependency bump.
 
 ## What the evidence is
 
@@ -385,7 +387,8 @@ def selftest() -> int:
             ["shell"],
         )
         # ★★★★★ The reason owners are read off `examples/` only. Through
-        # `blast_radius.owning_packages` a lockfile edit owns EVERY member, so
+        # `blast_radius.owning_packages` a lockfile edit owns every member its
+        # entries reach — nearly all of them for an engine pin bump — so
         # without the prefix restriction this gate would demand a walk per
         # example on any dependency bump.
         ok(
