@@ -2726,18 +2726,57 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         and report the screen as fine. A frame with no chart is not a frame
         this helper should be asked about.
         """
+        return sorted(self.chart_overlay_parts(viewport=viewport))
+
+    def chart_overlay_parts(
+        self, *, viewport: Optional[tuple[int, int]] = None
+    ) -> dict[str, Optional[str]]:
+        """★★★★★ R2162 — **every chart on the frame, and the PART each paints
+        its callout under.**
+
+        R2153 made the prefix askable and stopped one coordinate short. An
+        overlay address is `{prefix}.{part}.…`: eight chart kinds paint under
+        `inspect` and the timeline paints the same members under `playhead`, and
+        nothing on the frame said which. A walk therefore had to KNOW the part,
+        and a walk that assumed the majority asked a timeline for
+        `…inspect.header`, found nothing, and read the silence as *the chart
+        painted no callout* — this campaign's failure mode, one coordinate over
+        from the one R2153 closed.
+
+            for prefix, part in tf.chart_overlay_parts().items():
+                if part is not None:
+                    tf.find(chart_overlay_address("header", prefix=prefix, part=part))
+
+        `None` is a chart that paints no callout at all — the sparkline — and it
+        is a different answer from a chart that is missing, which is why the key
+        is present with a `None` value rather than absent.
+
+        ⚠ Refuses an empty answer for [`chart_prefixes`]' reason: a walk that
+        silently got nothing would compose nothing, pass vacuously, and report
+        the screen as fine.
+        """
         params: dict[str, Any] = {"kind": "chosen"}
         if viewport is not None:
             params["viewport"] = {"w": viewport[0], "h": viewport[1]}
         resp = self.request("scene/derivations", params)
         assert resp is not None, "scene/derivations answered nothing"
         assert isinstance(resp.result, dict), f"scene/derivations: {resp.error}"
-        found: list[str] = []
+        charts: dict[str, Optional[str]] = {}
         for node in resp.result.get("nodes", []):
-            for entry in node.get("derivations") or []:
-                if entry.get("name") == "tag_prefix":
-                    found.append(node["tag"])
-                    break
+            entries = {
+                entry.get("name"): entry.get("evidence")
+                for entry in node.get("derivations") or []
+            }
+            if "tag_prefix" not in entries:
+                continue
+            # ⚠ `Evidence::Name` arrives as `{"type": "name", "name": <word>}`,
+            # not as a bare string. Reading `evidence` directly yields a dict
+            # that composes into an address nothing paints — so the shape is
+            # unwrapped here, once, rather than at every caller.
+            evidence = entries.get("overlay_part")
+            part = evidence.get("name") if isinstance(evidence, dict) else evidence
+            charts[node["tag"]] = part
+        found = sorted(charts)
         assert found, (
             "no node on this frame declares a chart `tag_prefix`. A walk that "
             "went on would compose no address at all and read the silence as "
@@ -2745,7 +2784,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             f"to remove. Nodes that published: "
             f"{[n.get('tag') for n in resp.result.get('nodes', [])]}"
         )
-        return found
+        return charts
 
     def mark_names(
         self,

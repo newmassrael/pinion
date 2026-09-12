@@ -647,7 +647,12 @@ impl CandlestickChart {
                 .into_iter()
                 .flat_map(|(axis, f)| derivations::fit_reports(axis, f)),
         );
-        derivations::chart_root(children, self.tag_prefix.clone(), fitted)
+        derivations::chart_root(
+            children,
+            self.tag_prefix.clone(),
+            fitted,
+            Some(crate::address::inspect(&self.tag_prefix)),
+        )
     }
 
     /// The x-axis labels — one per drawn slot on the ordinal reading, one per

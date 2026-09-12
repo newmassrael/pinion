@@ -415,7 +415,15 @@ impl Timeline {
             children.extend(self.playhead_callout(&g, px, style));
         }
 
-        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
+        derivations::chart_root(
+            children,
+            self.tag_prefix.clone(),
+            self.derivations(),
+            // ★ The ONE kind that is not `inspect`, and the reason this
+            // derivation exists: a reader assuming the other eight finds
+            // nothing here and reads it as a chart with no callout.
+            Some(crate::address::playhead(&self.tag_prefix)),
+        )
     }
 
     /// Span `s`'s placed box within a lane band (`span_top`, `span_h`), or

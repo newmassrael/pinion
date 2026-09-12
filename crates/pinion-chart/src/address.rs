@@ -423,6 +423,21 @@ pub struct Overlay<'a> {
     part: &'a str,
 }
 
+impl<'a> Overlay<'a> {
+    /// The part word this overlay is painted under.
+    ///
+    /// ★★★★★ R2162 — published so a chart can STATE its part on the frame
+    /// without naming the word a second time. The kind already chose by calling
+    /// [`inspect`] or [`playhead`]; asking the overlay it built is one
+    /// declaration read twice, where passing the word again would be two
+    /// spellings that can disagree — the defect this module exists to remove,
+    /// inside the repair for it.
+    #[must_use]
+    pub const fn part(&self) -> &'a str {
+        self.part
+    }
+}
+
 overlay_parts! {
     /// The overlay eight chart kinds paint under the part name `inspect`.
     inspect = "inspect";

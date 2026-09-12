@@ -749,7 +749,12 @@ impl BoxPlotChart {
                 .into_iter()
                 .flat_map(|(axis, f)| derivations::fit_reports(axis, f)),
         );
-        derivations::chart_root(children, self.tag_prefix.clone(), fitted)
+        derivations::chart_root(
+            children,
+            self.tag_prefix.clone(),
+            fitted,
+            Some(crate::address::inspect(&self.tag_prefix)),
+        )
     }
 
     /// Every mark of distribution `i`: the box, its median, the two whiskers

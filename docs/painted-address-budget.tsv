@@ -152,11 +152,11 @@ sv.tip	0	0
 the_tide.vn	0	2
 throughput.legend	0	4
 throughput.series	3	7
-timeline.axis	3	1
-timeline.grid	1	0
-timeline.lane	6	5
-timeline.playhead	4	5
-timeline.tick	1	0
+timeline.axis	1	1
+timeline.grid	0	0
+timeline.lane	0	5
+timeline.playhead	1	5
+timeline.tick	0	0
 todomvc.persistence	0	1
 topology.label	0	2
 topology.node	3	2

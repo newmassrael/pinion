@@ -48,6 +48,9 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    chart_address,
+    chart_family,
+    chart_overlay_address,
     find_by_tag,
     run_demo,
     wait_until,
@@ -86,12 +89,12 @@ def _count_prefix(snap: dict, prefix: str) -> int:
     return n
 
 
-def _playhead_x(snap: dict) -> int:
-    return _node(snap, "timeline.playhead")["rect"]["x"]
+def _playhead_x(snap: dict, callout) -> int:
+    return _node(snap, callout("root"))["rect"]["x"]
 
 
-def _header(snap: dict) -> str:
-    content = _node(snap, "timeline.playhead.header").get("content")
+def _header(snap: dict, callout) -> str:
+    content = _node(snap, callout("header")).get("content")
     assert content is not None, "the playhead header carries a time string"
     return content
 
@@ -149,17 +152,30 @@ def body() -> None:
         _wait_available(d)
 
         # ── (A) ruler + lanes exist before any span flows ────────────────────
+        # ★★★★★ R2162 — the prefix AND the overlay part are ASKED FOR. This is
+        # the one chart kind of ten that does not paint its callout under
+        # `inspect`, so a walk that knew the majority would look for
+        # `timeline.inspect.header`, find nothing, and read that as the chart
+        # painting no callout. The frame answers both halves now.
+        (prefix,) = d.chart_prefixes(viewport=VIEWPORT)
+        part = d.chart_overlay_parts(viewport=VIEWPORT)[prefix]
+        assert part is not None, "a timeline paints a callout, so it declares a part"
+        here = lambda name, **f: chart_address(name, prefix=prefix, **f)  # noqa: E731
+        callout = lambda name, **f: chart_overlay_address(  # noqa: E731
+            name, prefix=prefix, part=part, **f
+        )
+
         snap = _snap(d)
-        assert find_by_tag(snap, "timeline") is not None, "the timeline root"
+        assert find_by_tag(snap, prefix) is not None, "the timeline root"
         assert find_by_tag(snap, "timeline_scrub") is not None, "the scrub surface"
-        assert _node(snap, "timeline.axis.x")["type"] == "Path", "top ruler is a path"
-        assert find_by_tag(snap, "timeline.axis.y") is not None, "left gutter edge"
-        assert find_by_tag(snap, "timeline.grid.x.0") is not None, "a time gridline"
-        tick0 = _node(snap, "timeline.tick.0")
+        assert _node(snap, here("axis_x"))["type"] == "Path", "top ruler is a path"
+        assert find_by_tag(snap, here("axis_y")) is not None, "left gutter edge"
+        assert find_by_tag(snap, here("grid_x", index=0)) is not None, "a time gridline"
+        tick0 = _node(snap, here("tick", index=0))
         assert_eq(tick0["type"], "Text", "a ruler tick is a text label")
         assert tick0.get("content"), "the ruler tick names a time"
         for i, name in enumerate(PHASES):
-            label = _node(snap, f"timeline.lane.{i}.label")
+            label = _node(snap, here("lane_label", index=i))
             assert_eq(label["type"], "Text", f"lane {i} label is text")
             assert_eq(label.get("content"), name, f"lane {i} is named {name}")
 
@@ -168,29 +184,34 @@ def body() -> None:
         _drive_frame_beyond(d, base + 5, "populate the flame")
         snap = _snap(d)
         for i in range(len(PHASES)):
-            span0 = _node(snap, f"timeline.lane.{i}.span.0")
+            span0 = _node(snap, here("lane_span", lane=i, at=0))
             assert_eq(span0["type"], "Box", f"lane {i} span 0 is a box")
             assert span0["style"]["fill"] is not None, f"lane {i} span 0 is filled"
         # The lanes stack top-to-bottom: build (lane 0) sits above render (lane 3).
-        y_build = _node(snap, "timeline.lane.0.span.0")["rect"]["y"]
-        y_render = _node(snap, "timeline.lane.3.span.0")["rect"]["y"]
+        y_build = _node(snap, here("lane_span", lane=0, at=0))["rect"]["y"]
+        y_render = _node(snap, here("lane_span", lane=3, at=0))["rect"]["y"]
         assert y_build < y_render, (
             f"lane 0 (build) must sit above lane 3 (render): y {y_build} < {y_render}"
         )
         # Several frames drove, so the build lane carries several spans (and no
         # more than the binding's RECENT=24 cap).
-        build_spans = _count_prefix(snap, "timeline.lane.0.span.")
+        build_spans = _count_prefix(
+            snap, f"{chart_family('lane_span', prefix=prefix, lane=0)}."
+        )
         assert 2 <= build_spans <= 24, (
             f"the build lane accumulates spans up to the RECENT cap; got {build_spans}"
         )
 
         # ── (C) the playhead overlay ─────────────────────────────────────────
-        head = _node(snap, "timeline.playhead")
+        head = _node(snap, callout("root"))
         assert_eq(head["type"], "Path", "the playhead is a path")
         assert head["style"]["stroke"] is not None, "the playhead line is stroked"
-        assert _node(snap, "timeline.playhead.tooltip")["type"] == "Box", "readout box"
-        assert _header(snap), "the playhead names a time"
-        assert _count_prefix(snap, "timeline.playhead.value.") >= 1, (
+        assert _node(snap, callout("tooltip"))["type"] == "Box", "readout box"
+        assert _header(snap, callout), "the playhead names a time"
+        # ⚠ `value_at`, not `value`: this kind indexes its callout rows, and the
+        # crate declares the two as separate grammars under one word because a
+        # reader asking the wrong one finds nothing.
+        assert _count_prefix(snap, f"{callout('value')}.") >= 1, (
             "the playhead names at least one active lane/frame"
         )
 
@@ -198,20 +219,24 @@ def body() -> None:
         d.intervene("/external/value", 0.05)
         assert abs(d.query("/external/value") - 0.05) < 0.02, "scrub set to 0.05"
         low = wait_until(
-            lambda: (lambda s: s if _playhead_x(s) < CHART_MID else None)(_snap(d)),
+            lambda: (lambda s: s if _playhead_x(s, callout) < CHART_MID else None)(
+                _snap(d)
+            ),
             desc="playhead moves into the left half",
         )
-        low_x = _playhead_x(low)
-        low_header = _header(low)
+        low_x = _playhead_x(low, callout)
+        low_header = _header(low, callout)
 
         d.intervene("/external/value", 0.95)
         assert abs(d.query("/external/value") - 0.95) < 0.02, "scrub set to 0.95"
         high = wait_until(
-            lambda: (lambda s: s if _playhead_x(s) > CHART_MID else None)(_snap(d)),
+            lambda: (lambda s: s if _playhead_x(s, callout) > CHART_MID else None)(
+                _snap(d)
+            ),
             desc="playhead moves into the right half",
         )
-        high_x = _playhead_x(high)
-        high_header = _header(high)
+        high_x = _playhead_x(high, callout)
+        high_header = _header(high, callout)
 
         assert low_x < high_x, (
             f"the playhead moves right as the scrub advances: {low_x} -> {high_x}"
@@ -222,7 +247,7 @@ def body() -> None:
         )
         # And the spans survive a re-domain-free scrub (the flame is unchanged
         # by moving the playhead — only the overlay moves).
-        assert find_by_tag(high, "timeline.lane.0.span.0") is not None, (
+        assert find_by_tag(high, here("lane_span", lane=0, at=0)) is not None, (
             "the flame persists across a playhead move"
         )
 

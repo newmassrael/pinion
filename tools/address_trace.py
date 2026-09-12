@@ -62,6 +62,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import importlib
+import itertools
 import re
 import sys
 from pathlib import Path
@@ -169,14 +170,44 @@ def trace(walk: str, out: Path) -> int:
     return 0
 
 
+def runs(lines: list[str]) -> list[str]:
+    """One entry per RUN of the same lookup repeated back to back.
+
+    ★★★★★ R2162 — **the comparison unit is the run, not the lookup, and using
+    this tool on a harder walk is what found that out.** `r1389_frame_timeline`
+    polls: `wait_until` re-snapshots and asks the same address again until the
+    screen catches up. How many times it spun is TIMING. Measured at R2162, two
+    runs of an IDENTICAL tree differed by 8 lookups and 1,436 diff lines — so
+    the raw sequence called a faithful conversion broken, which is the failure
+    that teaches a round to stop believing its instrument.
+
+    Collapsed, the same two runs are equal at 22 entries, and so is the
+    conversion's before against its after. ⚠ Consecutive duplicates only —
+    ORDER is preserved and a lookup that comes back later is its own run, so
+    this removes repetition without removing sequence.
+    """
+    return [line for line, _ in itertools.groupby(lines)]
+
+
 def compare(before: Path, after: Path) -> int:
-    """Diff two traces; non-zero when they differ."""
-    left = before.read_text(encoding="utf-8").splitlines()
-    right = after.read_text(encoding="utf-8").splitlines()
+    """Diff two traces; non-zero when they differ in MEANING.
+
+    The verdict is on the collapsed sequences (see [`runs`]); a difference in
+    how many times a poll spun is reported and is not a failure.
+    """
+    raw_left = before.read_text(encoding="utf-8").splitlines()
+    raw_right = after.read_text(encoding="utf-8").splitlines()
+    left, right = runs(raw_left), runs(raw_right)
     if left == right:
+        spun = ""
+        if len(raw_left) != len(raw_right):
+            spun = (
+                f" (raw {len(raw_left)} vs {len(raw_right)} — a poll spun a "
+                "different number of times, which is timing and not meaning)"
+            )
         print(
-            f"address-trace: identical — {len(left)} lookup(s), and the "
-            "conversion asked the paint for exactly what it asked before"
+            f"address-trace: identical — {len(left)} lookup run(s), and the "
+            f"conversion asked the paint for exactly what it asked before{spun}"
         )
         return 0
     changed = [
@@ -185,7 +216,7 @@ def compare(before: Path, after: Path) -> int:
         if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
     ]
     print(
-        f"address-trace: {len(left)} -> {len(right)} lookup(s), "
+        f"address-trace: {len(left)} -> {len(right)} lookup run(s), "
         f"{len(changed)} line(s) differ"
     )
     for line in changed[:80]:
@@ -259,6 +290,19 @@ def selftest() -> int:
         check(compare(one, two) == 0, "identical traces compare equal")
         two.write_text("find chart.series.1\n", encoding="utf-8")
         check(compare(one, two) == 1, "a changed address is reported")
+        # ★★★★★ R2162 — a POLL that spun a different number of times is timing,
+        # not meaning. Two runs of an identical tree measured 8 lookups apart
+        # and 1,436 diff lines, which called a faithful conversion broken.
+        two.write_text("find chart.series.0\n" * 4, encoding="utf-8")
+        check(
+            compare(one, two) == 0,
+            "a repeated lookup is one run, so a poll's spin count is not a diff",
+        )
+        # ⚠ And the other arm: collapsing repeats must not collapse ORDER. A
+        # lookup that comes back after a different one is its own run.
+        one.write_text("find a.b\nfind c.d\nfind a.b\n", encoding="utf-8")
+        two.write_text("find a.b\nfind c.d\n", encoding="utf-8")
+        check(compare(one, two) == 1, "a lookup that returns later is its own run")
     print(f"address_trace selftest: {ran - failed} of {ran} checks OK")
     return 1 if failed else 0
 

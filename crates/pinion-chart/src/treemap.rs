@@ -441,7 +441,12 @@ impl Treemap {
             children.push(highlight);
         }
         children.extend(tooltip);
-        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
+        derivations::chart_root(
+            children,
+            self.tag_prefix.clone(),
+            self.derivations(),
+            Some(crate::address::inspect(&self.tag_prefix)),
+        )
     }
 
     /// R1439 — the active colour domain: pinned, else measured off the tiles,

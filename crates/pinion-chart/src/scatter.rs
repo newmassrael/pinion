@@ -513,7 +513,12 @@ impl ScatterChart {
                 .into_iter()
                 .flat_map(|(axis, f)| derivations::fit_reports(axis, f)),
         );
-        derivations::chart_root(children, self.tag_prefix.clone(), fitted)
+        derivations::chart_root(
+            children,
+            self.tag_prefix.clone(),
+            fitted,
+            Some(crate::address::inspect(&self.tag_prefix)),
+        )
     }
 
     /// One filled circle per finite, in-domain point of every series. A point

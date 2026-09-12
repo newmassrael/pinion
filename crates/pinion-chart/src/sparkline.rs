@@ -295,7 +295,10 @@ impl Sparkline {
             }
         }
 
-        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
+        // ⚠ `None`: a sparkline paints no callout at all, and saying `inspect`
+        // would send every reader looking for one it never draws. The absence
+        // is the true answer here.
+        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations(), None)
     }
 
     /// Resolve the pixel points + baseline + extreme indices, or `None` when

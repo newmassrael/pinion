@@ -102,6 +102,16 @@ pub(crate) mod name {
     /// stated in [`chart_root`](super::chart_root), the one constructor all of
     /// them route through.
     pub const TAG_PREFIX: &str = "tag_prefix";
+
+    /// ★★★★★ R2162 — the part word this chart paints its CALLOUT under.
+    ///
+    /// R2153 made the prefix askable and left the other half of an overlay
+    /// address unaskable: eight kinds paint under `inspect` and the timeline
+    /// paints the same members under `playhead`, and nothing on the frame said
+    /// which. A reader that assumed `inspect` found nothing on a timeline and
+    /// read the silence as *the chart painted no callout* — this campaign's
+    /// failure mode, one coordinate over from the one R2153 closed.
+    pub const OVERLAY_PART: &str = "overlay_part";
 }
 
 /// The units a [`Evidence::Real`] is measured in.
@@ -213,12 +223,25 @@ pub(crate) fn chart_root(
     children: Vec<Scene>,
     tag: String,
     derivations: DerivationSet,
+    overlay: Option<crate::address::Overlay<'_>>,
 ) -> ContainerNode {
-    let stated = derivations.stating(Derivation::new(
+    let mut stated = derivations.stating(Derivation::new(
         DerivationKind::Chosen,
         name::TAG_PREFIX,
         Evidence::Name(tag.clone().into()),
     ));
+    // ⚠ `None` is a chart that paints no callout at all — the sparkline — and
+    // it states nothing rather than naming a part it does not use. R2153's own
+    // rule about when a composition should speak: an answer nobody can act on
+    // is worse than an absence a reader can see, and a sparkline claiming
+    // `inspect` would send every reader looking for a callout it never paints.
+    if let Some(overlay) = overlay {
+        stated = stated.stating(Derivation::new(
+            DerivationKind::Chosen,
+            name::OVERLAY_PART,
+            Evidence::Name(overlay.part().to_owned().into()),
+        ));
+    }
     ContainerNode::new(children)
         .with_tag(tag)
         .with_derivations(stated)
@@ -947,6 +970,7 @@ mod chart_tests {
             vec![],
             "throughput".to_owned(),
             DerivationSet::over("sample"),
+            Some(crate::address::inspect("throughput")),
         );
         let stated: Vec<(&str, String)> = root
             .derivations
@@ -958,10 +982,56 @@ mod chart_tests {
             .collect();
         assert_eq!(
             stated,
-            vec![(name::TAG_PREFIX, "throughput".to_owned())],
-            "a chart states the prefix it was constructed with",
+            vec![
+                (name::TAG_PREFIX, "throughput".to_owned()),
+                (name::OVERLAY_PART, "inspect".to_owned()),
+            ],
+            "a chart states the prefix it was constructed with, and the part \
+             it paints its callout under",
         );
         assert_eq!(root.tag.as_deref(), Some("throughput"), "and it IS the tag");
+    }
+
+    /// ★★★★★ R2162 — **the part is the chart's own, not a default**, and a
+    /// chart that paints no callout states none.
+    ///
+    /// The timeline is the one kind of the ten that is not `inspect`, so a
+    /// reader assuming the majority finds nothing on it and reads the silence
+    /// as *this chart paints no callout*. That is this campaign's failure mode
+    /// one coordinate over from the prefix R2153 made askable, which is why it
+    /// is asserted on the shared constructor rather than in the timeline's own
+    /// tests: a kind added later must decide, because the parameter has no
+    /// default to fall through.
+    #[test]
+    fn r2162_the_shared_root_states_the_part_it_paints_its_callout_under() {
+        use crate::derivations::{chart_root, name};
+        let part_of = |overlay| {
+            chart_root(vec![], "c".to_owned(), DerivationSet::over("s"), overlay)
+                .derivations
+                .as_deref()
+                .expect("the root publishes")
+                .entries()
+                .iter()
+                .find(|d| d.name() == name::OVERLAY_PART)
+                .map(|d| d.evidence().to_string())
+        };
+        assert_eq!(
+            part_of(Some(crate::address::inspect("c"))),
+            Some("inspect".to_owned())
+        );
+        assert_eq!(
+            part_of(Some(crate::address::playhead("c"))),
+            Some("playhead".to_owned()),
+            "the timeline's part is its own and not the other eight's",
+        );
+        // ⚠ A chart with no callout says NOTHING rather than naming a part it
+        // does not use — the sparkline's case, and an absence a reader can act
+        // on beats an answer that sends them looking.
+        assert_eq!(
+            part_of(None),
+            None,
+            "a chart with no callout claims no part"
+        );
     }
 
     /// ★★★★★ R2153 — **and end to end: a chart given a prefix is discoverable

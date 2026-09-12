@@ -800,7 +800,12 @@ impl LineChart {
                 .into_iter()
                 .flat_map(|(axis, f)| derivations::fit_reports(axis, f)),
         );
-        derivations::chart_root(children, self.tag_prefix.clone(), fitted)
+        derivations::chart_root(
+            children,
+            self.tag_prefix.clone(),
+            fitted,
+            Some(crate::address::inspect(&self.tag_prefix)),
+        )
     }
 
     /// R1629 §2 #7 — everything this chart's drawing did that the drawing
