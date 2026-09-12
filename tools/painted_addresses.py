@@ -106,6 +106,10 @@ import sys
 from pathlib import Path
 from typing import Iterable, NamedTuple
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import painted_grammar  # noqa: E402  — the one reader of the emitted artifact
+
 ROOT = Path(__file__).resolve().parent.parent
 BUDGET = ROOT / "docs" / "painted-address-budget.tsv"
 
@@ -981,7 +985,11 @@ CONFIG_SURFACE_ARTIFACTS = "docs/analyzer-config-surface.json"
 #: which prefix a given chart took — and that is published on the frame since
 #: R2153 and pinned by the reading walk's own assertion. Two checked halves,
 #: where before there was one literal.
-GRAMMAR_ARTIFACTS = "crates/*/src/painted_grammar.tsv"
+#: ★★★★★ R2163 — **where the artifact lives, and how it is cut, belong to
+#: [`painted_grammar`] now and not to this file.** Two readers of one artifact
+#: each wrote the cut rule, R2154 measured one of them wrong and fixed it there,
+#: and this one kept the broken form for eight rounds. See that module's header.
+GRAMMAR_ARTIFACTS = painted_grammar.ARTIFACTS
 
 
 @functools.lru_cache(maxsize=1)
@@ -1028,37 +1036,25 @@ def config_surface_paths() -> tuple[str, ...]:
     )
 
 
-@functools.lru_cache(maxsize=1)
 def grammar_parts() -> tuple[str, ...]:
-    """Every family a committed grammar artifact pins, as its fixed segments.
+    """Every PART WORD a committed grammar artifact can put after a prefix.
 
-    A template is `{prefix}.<fixed>.<fixed>.{arg}…`; what it pins is the fixed
-    run between the prefix and the first argument — `area`, `focus.series`,
-    `grid.minor.x`. A template with no fixed segment after the prefix pins no
-    family and is skipped rather than folded into one.
+    ★★★★★ R2163 — **this used to return whole fixed RUNS and its one caller
+    compared them to a family STEM.** A stem is an address's first two segments,
+    so `{prefix}.grid.minor.x.{index}` offered `grid.minor.x` to a question
+    asking about `chart.grid`, and the two could only ever agree when a run
+    happened to be one segment long. Every deep grammar, and every overlay
+    template (whose first segment is `{part}`), was invisible to the pin it
+    genuinely provides — measured: ten families, 98 walk and 55 Rust sites,
+    `chart.inspect` the largest family in the whole queue, and `scatter.inspect`
+    reported BLOCKED, which is this census's word for work no round may finish.
+
+    ⇒ the unit is now the one the caller asks in: the single word that can
+    follow a prefix. [`painted_grammar.family_heads`] derives it, including the
+    overlay parts the artifact itself declares and excluding the caller-supplied
+    ones it does not — see there for why that exclusion is the safe direction.
     """
-    out: list[str] = []
-    for path in sorted(ROOT.glob(GRAMMAR_ARTIFACTS)):
-        try:
-            text = path.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        for line in text.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or line.count("\t") < 2:
-                continue
-            _kind, _name, value = line.split("\t", 2)
-            head, marker, rest = value.partition("{prefix}")
-            if head or not marker or not rest.startswith("."):
-                continue
-            fixed: list[str] = []
-            for segment in rest[1:].split("."):
-                if segment.startswith("{"):
-                    break
-                fixed.append(segment)
-            if fixed:
-                out.append(".".join(fixed))
-    return tuple(sorted(set(out)))
+    return tuple(sorted(painted_grammar.family_heads()))
 
 
 #: How a chart is given a prefix, and how a `const` holding one is written.
@@ -1090,18 +1086,23 @@ def grammar_prefixes() -> tuple[str, ...]:
     (built at run time, or named in another module) is simply not in the set,
     and the family reads as unpinned — the safe direction, and the one that
     asks a person to look.
+
+    ⚠⚠ R2163 MEASURED A NAMED GAP HERE, and it is the other half of the pin the
+    round repaired. This reads `with_tag_prefix` CALLS, so a prefix a chart kind
+    carries as its own DEFAULT is invisible: `Timeline` defaults to `timeline`
+    and `Sparkline` to `spark`, neither is ever passed to `with_tag_prefix`, and
+    the artifact publishes only the crate-wide `DEFAULT_PREFIX`. So
+    `timeline.playhead` and `timeline.axis` read as pinned by an assertion while
+    the same grammar under `chart` reads as pinned by the artifact. Two kinds,
+    a handful of sites — and the repair is not a wider regex here: it is for the
+    artifact to PUBLISH the prefix each kind defaults to, the way R2153 made a
+    running chart publish the one it took. Registered, not patched.
     """
     found: set[str] = set()
-    default = None
-    for path in sorted(ROOT.glob(GRAMMAR_ARTIFACTS)):
-        try:
-            for line in path.read_text(encoding="utf-8").splitlines():
-                if line.startswith("const\tDEFAULT_PREFIX\t"):
-                    default = line.split("\t", 2)[2].strip()
-        except OSError:
-            continue
-    if default:
-        found.add(default)
+    for path in painted_grammar.artifacts():
+        default = painted_grammar.table(path).get("const", {}).get("DEFAULT_PREFIX")
+        if default:
+            found.add(default.strip())
     for root in RUST_ROOTS:
         for path in sorted((ROOT / root).rglob("*.rs")):
             try:
@@ -1122,10 +1123,14 @@ def grammar_prefixes() -> tuple[str, ...]:
 def grammar_pins(stem: str) -> bool:
     """Whether a committed grammar artifact holds `stem`'s family.
 
-    The stem is `<prefix>.<part>`. Both halves must answer: the part must be a
-    family some crate declares a grammar for, and the prefix must be one a
-    chart in this tree is actually given — see [`grammar_prefixes`] for why the
-    second half is not optional.
+    The stem is `<prefix>.<part>` — exactly two segments, which is what
+    [`ADDRESS`] captures. Both halves must answer: the part must be a word some
+    crate's grammar can put after a prefix, and the prefix must be one a chart
+    in this tree is actually given — see [`grammar_prefixes`] for why the second
+    half is not optional.
+
+    ⚠ R2163 — the two halves are now asked in the same UNIT. They were not
+    before: [`grammar_parts`] offered fixed runs to a two-segment question.
     """
     prefix, _, part = stem.partition(".")
     return bool(part) and part in grammar_parts() and prefix in grammar_prefixes()
@@ -1664,6 +1669,23 @@ def selftest() -> int:
         ),
         ("a part no grammar declares is not pinned by one", "chart.nosuchpart", False),
         ("a bare stem with no part is not pinned", "chart", False),
+        # ★★★★★ R2163 — the cases the eight rounds above could not have caught,
+        # because every one of them is a grammar with MORE than one fixed
+        # segment, or an overlay whose first segment is `{part}`. The census
+        # compared a fixed RUN to a two-segment stem, so these read as pinned by
+        # an assertion — and `scatter.inspect` as pinned by NOTHING, which is
+        # this file's word for work no round may finish.
+        ("★ a DEEP grammar pins its family by its FIRST word", "chart.axis", True),
+        ("★ the same, where two templates share that word", "chart.grid", True),
+        ("★ and where the segment after it carries the argument", "chart.label", True),
+        ("★★ an OVERLAY part is a family the artifact declares", "chart.inspect", True),
+        ("★★ under a custom prefix too — 68 sites sat here", "scatter.inspect", True),
+        (
+            "★★★ but an overlay part is still only pinned under a prefix a\n"
+            "       chart takes: this is the half that keeps the widening safe",
+            "panel.inspect",
+            False,
+        ),
     ]
     for label, stem, want in grammar_cases:
         if grammar_pins(stem) is not want:
@@ -2152,19 +2174,21 @@ def selftest() -> int:
                 file=sys.stderr,
             )
 
-    # ⚠ R2144 — this sum is HAND-MAINTAINED, and adding a case list without
-    # adding it here leaves the printed number covering less than it claims:
-    # the six `role_cases` ran for one edit while the line still said 39. The
-    # trailing `+ 10` is a pre-existing constant for the ad-hoc assertions
-    # above; it is left alone rather than guessed at.
-    total = (
-        len(cases)
-        + len(needle_cases)
-        + len(rust_cases)
-        + len(role_cases)
-        + len(covers_cases)
-        + 4  # R2147: three classifier words and the artifact corpus floor
-        + 10
+    # ⚠ R2144 warned that this sum is HAND-MAINTAINED and that a case list added
+    # without a term here is a printed number covering less than it claims. It
+    # then happened again: `grammar_cases` landed at R2153 and was never a term,
+    # so for ten rounds this line said 53 while 53 + those cases ran — and R2163
+    # added six more to it without the number moving. ⇒ ★ a warning beside a
+    # hand-maintained number is not a gate; the population has to be DERIVED.
+    #
+    # The two trailing constants are ad-hoc assertions with no list to count,
+    # and they are NAMED rather than folded into one number nobody can read.
+    total = sum(
+        len(case_list)
+        for case_list in (cases, needle_cases, rust_cases, role_cases, covers_cases, grammar_cases)
+    ) + (
+        4  # R2147: three classifier words and the artifact corpus floor
+        + 10  # the ad-hoc assertions above, pre-existing and left alone
     )
     print(f"painted_addresses selftest: {total - failed} of {total} cases OK")
     return 1 if failed else 0

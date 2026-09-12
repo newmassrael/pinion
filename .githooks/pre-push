@@ -446,6 +446,17 @@ if ! python3 "$repo_root/tools/seed_freshness.py" --check >&2; then
 fi
 
 step "painted address spellers"
+# ★★★★★ R2163 — the ONE reader of an emitted grammar, ahead of the two tools
+# that ask it. Its cut rule decides both what a walk composes and what the
+# census calls pinned; those were two copies of one rule, R2154 repaired one of
+# them, and the other stayed broken for eight rounds. A cut that silently went
+# wrong again would widen every pin at once, which is the direction that loses
+# a check — so this runs first and its own tests are the needle. Reads every
+# committed grammar artifact, which is one today and is not written down here.
+if ! python3 "$repo_root/tools/painted_grammar.py" >&2; then
+    echo "pre-push: the emitted-grammar reader failed its own tests" >&2
+    exit 1
+fi
 if ! python3 "$repo_root/tools/painted_addresses.py" --selftest >&2; then
     echo "pre-push: the painted-address ratchet failed its own tests" >&2
     exit 1

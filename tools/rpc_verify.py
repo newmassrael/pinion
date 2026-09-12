@@ -32,7 +32,6 @@ import queue
 import shutil
 import signal
 import socket
-import string
 import struct
 import subprocess
 import sys
@@ -49,6 +48,7 @@ from typing import Any, Callable, Iterable, Iterator, NoReturn, Optional, Sequen
 
 from build_gate import BuildError, ensure_built
 import driven_binaries
+import painted_grammar
 
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
@@ -5201,14 +5201,8 @@ def chart_grammar() -> dict[str, dict[str, str]]:
     """
     if _CHART_GRAMMAR_CACHE:
         return _CHART_GRAMMAR_CACHE
-    text = _CHART_GRAMMAR_PATH.read_text(encoding="utf-8")
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        kind, name, value = line.split("\t", 2)
-        _CHART_GRAMMAR_CACHE.setdefault(kind, {})[name] = value
-    missing = {"const", "grammar", "overlay", "part"} - set(_CHART_GRAMMAR_CACHE)
+    _CHART_GRAMMAR_CACHE.update(painted_grammar.table(_CHART_GRAMMAR_PATH))
+    missing = set(painted_grammar.KINDS) - set(_CHART_GRAMMAR_CACHE)
     if missing:
         raise AssertionError(
             f"{_CHART_GRAMMAR_PATH} carries no {sorted(missing)} row. A walk "
@@ -5231,11 +5225,7 @@ def _chart_format(template: str, name: str, prefix: Optional[str], fields: dict)
     grammar = chart_grammar()
     if prefix is None:
         prefix = grammar["const"]["DEFAULT_PREFIX"]
-    wanted = {
-        field
-        for _text, field, _spec, _conv in string.Formatter().parse(template)
-        if field
-    } - {"prefix"}
+    wanted = painted_grammar.fields(template) - {"prefix"}
     given = set(fields)
     if wanted != given:
         raise AssertionError(
@@ -5323,11 +5313,10 @@ def chart_family(name: str, *, prefix: Optional[str] = None, **fields: Any) -> s
     stem_parts: list[str] = []
     reached: set[str] = set()
     for segment in rest[1:].split("."):
-        wanted = {
-            field
-            for _text, field, _spec, _conv in string.Formatter().parse(segment)
-            if field
-        }
+        # ★ R2163 — the rule about what a segment CARRIES lives in one place
+        # now. The census had its own copy, cutting on `startswith("{")`, and
+        # R2154's repair of this copy never reached it.
+        wanted = painted_grammar.fields(segment)
         if wanted - set(fields):
             break
         stem_parts.append(segment.format(**fields) if wanted else segment)
