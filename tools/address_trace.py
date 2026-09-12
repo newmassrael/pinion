@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""★★★★★ R2161 — **what a walk ASKS the paint for, recorded in order.**
+
+# Why this exists
+
+The address campaign converts a walk by replacing every spelled painted address
+with one composed from the screen's own declaration. The obvious check on such a
+conversion is that the walk still passes. **It is not a check.**
+
+R2154 measured why, on `r1553_distribution_datum.py`: that walk carries four
+`assert_eq(find_by_tag(...), None, ...)` checks, and a WRONG composed address
+passes every one of them — `find_by_tag` answers `None` for an address nothing
+paints, which is exactly what those four assert. So a conversion that quietly
+started asking for the wrong mark is green, and the walk now proves less than it
+did while reading as if it proved the same.
+
+What does discriminate is the SEQUENCE OF ADDRESSES THE WALK ASKS FOR. Record it
+before the edit and after; a faithful conversion changes nothing, and a
+deliberate change shows up as exactly the lines the round meant to change.
+R2154 did that by hand and measured 3,202 lookups with one intended difference;
+R2156 did it again. Both wrote the harness in a scratchpad and both scratchpads
+are gone, so the carry that says *measure every conversion this way* has been
+asking for a tool that does not exist. This is that tool.
+
+# Using it
+
+    python3 tools/address_trace.py r1553_distribution_datum --out before.trace
+    # ... convert the walk ...
+    python3 tools/address_trace.py r1553_distribution_datum --out after.trace
+    python3 tools/address_trace.py --compare before.trace after.trace
+
+The compare exits non-zero when the traces differ and prints the difference, so
+a round can state *this conversion changed these lookups and no others* rather
+than *the walk still passes*.
+
+# ⚠ What it can see, and what it cannot
+
+It wraps two populations and says so on every run:
+
+* the shared readers in `rpc_verify` that take a tag — this is where a walk asks
+  the paint about an address at all;
+* every module-level function of the walk itself, because a walk's own helper
+  (`count_prefix(snap, "chart.box.")`) is where a PREFIX is used and no shared
+  reader ever sees that string.
+
+What is recorded from a call is every string argument that LOOKS LIKE a painted
+address — dotted, lower-case, no whitespace. That rule is derived from the
+value's shape rather than from a list of parameter names, so a helper nobody
+told this tool about is still covered.
+
+⚠⚠ It cannot see an address a walk builds and compares itself without passing it
+to any function — `if node["tag"] == "chart.bar.0"` is invisible here. That is a
+real hole and it is stated rather than left to be discovered: a round whose
+conversion touches such a site must say so, because this tool's silence about it
+is not evidence. The census (`tools/painted_addresses.py`) is what counts those;
+this tool is about whether a conversion preserved MEANING, not about finding
+sites.
+"""
+
+from __future__ import annotations
+
+import argparse
+import difflib
+import importlib
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+#: A string that looks like a painted address: two lower-case words joined by a
+#: dot, then anything.
+#:
+#: ⚠⚠ **The tail is deliberately permissive, and the selftest is what taught it
+#: so.** The first draft required the whole string to be lower-case and caught
+#: `chart.series.0` while silently missing `lab.node.P-01` and
+#: `lab.node.Group Input` — this tree addresses marks by NODE NAME, so an
+#: address carries capitals and spaces. A needle that drops those records
+#: nothing for the families that use them, and two traces that record nothing
+#: compare equal: the vacuous pass this whole tool exists to stop, inside the
+#: tool.
+#:
+#: ⚠ The first segment must be at least two characters. That is what keeps
+#: ordinary prose out — `e.g. something` matched the loose form, and an
+#: assertion message in a trace is noise a reader has to step over. The
+#: direction of the remaining error is chosen: a false positive appears
+#: identically in both runs and cancels in the diff, while a false negative is
+#: a lookup the comparison cannot see at all.
+LOOKS_LIKE_ADDRESS = re.compile(r"^[a-z][a-z0-9_]+\.[A-Za-z0-9_][\w .#*{}:/-]*$")
+
+#: The shared readers a walk asks the paint through. Named rather than derived
+#: because `rpc_verify` is 6,000 lines and most of it is not a tag reader; what
+#: makes the list honest is that the walk's OWN functions are wrapped
+#: generically beside it, so a helper this list forgets is still covered from
+#: the other side.
+SHARED_READERS = ("find_by_tag", "access_node_by_tag", "find_node", "rect_of")
+
+
+def _addresses_in(args: tuple, kwargs: dict) -> list[str]:
+    """Every argument of one call that looks like a painted address."""
+    found: list[str] = []
+    for value in (*args, *kwargs.values()):
+        if isinstance(value, str) and LOOKS_LIKE_ADDRESS.match(value):
+            found.append(value)
+    return found
+
+
+def _wrap(where, name: str, log: list[str]) -> bool:
+    """Wrap one callable so its address-shaped arguments are recorded."""
+    original = getattr(where, name, None)
+    if not callable(original) or getattr(original, "_address_traced", False):
+        return False
+
+    def traced(*args, **kwargs):
+        for address in _addresses_in(args, kwargs):
+            log.append(f"{name} {address}")
+        return original(*args, **kwargs)
+
+    traced._address_traced = True  # noqa: SLF001 — our own marker
+    setattr(where, name, traced)
+    return True
+
+
+def trace(walk: str, out: Path) -> int:
+    """Run one walk with its address lookups recorded, and write them to `out`."""
+    sys.path.insert(0, str(ROOT / "tools"))
+    sys.path.insert(0, str(ROOT / "tools" / "demos"))
+    import rpc_verify  # noqa: PLC0415 — the path has to be set first
+
+    log: list[str] = []
+    wrapped = [name for name in SHARED_READERS if _wrap(rpc_verify, name, log)]
+    module = importlib.import_module(walk)
+    # ⚠ The walk's own module namespace is wrapped AFTER it is imported, because
+    # a walk does `from rpc_verify import find_by_tag` — its module holds its own
+    # reference, and wrapping the source afterwards would leave that reference
+    # pointing at the original. Wrapping the walk's namespace catches both its
+    # imported readers and its own helpers in one pass.
+    own = [
+        name
+        for name in dir(module)
+        if not name.startswith("_") and _wrap(module, name, log)
+    ]
+    if not hasattr(module, "body"):
+        print(
+            f"address-trace: {walk} has no `body()` to drive. 702 of this "
+            "tree's 726 walks do; one that does not needs its entry point "
+            "named before it can be traced.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        module.body()
+    finally:
+        out.write_text("\n".join(log) + "\n", encoding="utf-8")
+    print(
+        f"address-trace: {len(log)} lookup(s) -> {out} "
+        f"({len(wrapped)} shared reader(s) and {len(own)} of the walk's own "
+        "callables wrapped)"
+    )
+    if not log:
+        print(
+            "address-trace: NOTHING was recorded, which is not the same as "
+            "nothing being asked — a trace this tool cannot see is a "
+            "comparison that passes vacuously. Check the walk reaches the "
+            "screen before trusting a diff of this.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def compare(before: Path, after: Path) -> int:
+    """Diff two traces; non-zero when they differ."""
+    left = before.read_text(encoding="utf-8").splitlines()
+    right = after.read_text(encoding="utf-8").splitlines()
+    if left == right:
+        print(
+            f"address-trace: identical — {len(left)} lookup(s), and the "
+            "conversion asked the paint for exactly what it asked before"
+        )
+        return 0
+    changed = [
+        line
+        for line in difflib.unified_diff(left, right, "before", "after", lineterm="")
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+    ]
+    print(
+        f"address-trace: {len(left)} -> {len(right)} lookup(s), "
+        f"{len(changed)} line(s) differ"
+    )
+    for line in changed[:80]:
+        print(f"  {line}")
+    if len(changed) > 80:
+        print(f"  … {len(changed) - 80} more")
+    print(
+        "address-trace: a faithful conversion changes NOTHING here. Every line "
+        "above is a change of meaning, and a round that meant it should say so "
+        "in as many words.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def selftest() -> int:
+    """The pure halves, exercised. Runs no walk and opens no window.
+
+    ★★★★★ R2154's lesson applied to this tool on the day it was written: a
+    helper with no test is a second unchecked copy of the thing it replaced,
+    and `chart_family` shipped that way and was wrong. What can be wrong here
+    is the needle (a trace that records nothing compares clean against another
+    trace that records nothing — the vacuous pass this whole tool exists to
+    stop) and the comparison (one that never reports a difference would call
+    every conversion faithful).
+    """
+    failed = 0
+    ran = 0
+
+    def check(ok: bool, label: str) -> None:
+        nonlocal failed, ran
+        ran += 1
+        if not ok:
+            failed += 1
+            print(f"FAIL: {label}", file=sys.stderr)
+
+    for address in (
+        "chart.series.0",
+        "lab.form.control.id",
+        "card.packet#0.cell.1",
+        "chart.grid.minor.y.",
+        # ⚠ The two that the first draft of the needle MISSED — this tree
+        # addresses marks by node name, so capitals and spaces are ordinary.
+        "lab.node.P-01",
+        "lab.node.Group Input",
+        "lab.palette.role.Router",
+    ):
+        check(bool(LOOKS_LIKE_ADDRESS.match(address)), f"needle matches {address!r}")
+    # ⚠ The other arm, and it is the one that keeps a trace readable: an
+    # ordinary sentence, a number and a bare word are not addresses, and a
+    # needle that took them would bury the lookups in prose.
+    for other in ("the chart is painted", "1.5", "dashboard", "", "A.B", "e.g. this"):
+        check(
+            not LOOKS_LIKE_ADDRESS.match(other), f"needle declines {other!r}"
+        )
+    # ★ And a call's arguments are read for shape, not for position — a helper
+    # taking `(snap, prefix)` and one taking `(tag)` are both covered.
+    picked = _addresses_in(({"tag": "x"}, "chart.grid.y."), {"where": "lab.node.P-01"})
+    check(
+        picked == ["chart.grid.y.", "lab.node.P-01"],
+        f"address-shaped arguments are picked out of a call: {picked}",
+    )
+    # ★★ The comparison reports a difference and reports sameness, and the two
+    # are different exit codes because a round reads this as a verdict.
+    import tempfile  # noqa: PLC0415 — the selftest's own need
+
+    with tempfile.TemporaryDirectory() as box:
+        one, two = Path(box) / "a", Path(box) / "b"
+        one.write_text("find chart.series.0\n", encoding="utf-8")
+        two.write_text("find chart.series.0\n", encoding="utf-8")
+        check(compare(one, two) == 0, "identical traces compare equal")
+        two.write_text("find chart.series.1\n", encoding="utf-8")
+        check(compare(one, two) == 1, "a changed address is reported")
+    print(f"address_trace selftest: {ran - failed} of {ran} checks OK")
+    return 1 if failed else 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("walk", nargs="?", help="the walk module name, no .py")
+    parser.add_argument("--out", type=Path, help="where to write the trace")
+    parser.add_argument(
+        "--compare",
+        nargs=2,
+        type=Path,
+        metavar=("BEFORE", "AFTER"),
+        help="diff two traces instead of running a walk",
+    )
+    parser.add_argument(
+        "--selftest", action="store_true", help="exercise the needle and the compare"
+    )
+    args = parser.parse_args()
+    if args.selftest:
+        return selftest()
+    if args.compare:
+        return compare(*args.compare)
+    if not args.walk or not args.out:
+        parser.error("a walk and --out, or --compare BEFORE AFTER")
+    return trace(args.walk, args.out)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

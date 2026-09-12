@@ -48,6 +48,9 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     access_node_by_tag,
     assert_eq,
+    chart_address,
+    chart_family,
+    chart_grammar,
     find_by_tag,
     run_demo,
 )
@@ -79,20 +82,18 @@ def text_of(snap, tag: str) -> str:
     return n["content"]
 
 
-def y_labels(snap) -> list[str]:
-    """Every `chart.label.y.{k}`, in axis order."""
+def axis_labels(snap, which: str) -> list[str]:
+    """Every label the crate paints on one axis, in axis order.
+
+    ★ R2161 — `which` is the composer's own name (`label_y` / `label_x`) and the
+    address comes from the grammar `pinion-chart` emits, so this walk names no
+    address of its own. The two functions this replaced differed by one letter
+    in a string, which is the shape a reader cannot check and a wrong letter
+    turns into *the chart painted no labels*.
+    """
     out = []
     k = 0
-    while (n := find_by_tag(snap, f"chart.label.y.{k}")) is not None:
-        out.append(n["content"])
-        k += 1
-    return out
-
-
-def x_labels(snap) -> list[str]:
-    out = []
-    k = 0
-    while (n := find_by_tag(snap, f"chart.label.x.{k}")) is not None:
+    while (n := find_by_tag(snap, chart_address(which, index=k))) is not None:
         out.append(n["content"])
         k += 1
     return out
@@ -122,14 +123,19 @@ def body() -> None:
     with RpcSubprocess("hello-log-chart") as d:
         # ── Phase 1 — the log axis (the boot state) ──────────────────
         log = d.snapshot(source="paint", viewport=VIEWPORT)
-        assert find_by_tag(log, "chart") is not None, "chart container present"
+        # ★ R2161 — the container, under the crate's own declared default. This
+        # screen does not re-prefix its chart, and that is the claim being made
+        # rather than a coincidence of spelling.
+        assert (
+            find_by_tag(log, chart_grammar()["const"]["DEFAULT_PREFIX"]) is not None
+        ), "chart container present"
 
         # The axis is labelled in decades. This — not the spacing — is what
         # a linear axis cannot produce.
-        assert_eq(y_labels(log), DECADES, "y-axis labels are decades")
+        assert_eq(axis_labels(log, "label_y"), DECADES, "y-axis labels are decades")
 
         # And those decades are evenly spaced: equal ratios, equal pixels.
-        grid = gridline_ys(log, "chart.grid.y.")
+        grid = gridline_ys(log, f"{chart_family('grid_y')}.")
         assert_eq(len(grid), len(DECADES), "one labelled gridline per decade")
         gaps = [abs(b - a) for a, b in zip(grid, grid[1:])]
         assert len(gaps) == len(DECADES) - 1, f"a gap between each decade: {gaps}"
@@ -143,9 +149,9 @@ def body() -> None:
 
         # The subdivisions inside each decade, in their OWN tag namespace so
         # `chart.grid.y.{k}` keeps counting only the labelled lines.
-        minors = gridline_ys(log, "chart.grid.minor.y.")
+        minors = gridline_ys(log, f"{chart_family('grid_minor_y')}.")
         assert_eq(len(minors), 40, "eight subdivisions in each of five decades")
-        assert find_by_tag(log, "chart.grid.minor.x.0") is None, (
+        assert find_by_tag(log, chart_address("grid_minor_x", index=0)) is None, (
             "the x-axis is still linear, so it contributes no minor ticks"
         )
         # Minor lines sit strictly between the decades they subdivide.
@@ -155,13 +161,13 @@ def body() -> None:
 
         # The zero sample has no pixel: 11 of 12 buckets reach the polyline.
         assert_eq(
-            vertex_count(log, "chart.series.0"),
+            vertex_count(log, chart_address("series", index=0)),
             BUCKETS - 1,
             "the p50 polyline skips the bucket with no traffic",
         )
         for i in (1, 2):
             assert_eq(
-                vertex_count(log, f"chart.series.{i}"),
+                vertex_count(log, chart_address("series", index=i)),
                 BUCKETS,
                 f"series {i} is positive throughout, so nothing is dropped",
             )
@@ -175,30 +181,30 @@ def body() -> None:
         assert "p50" in cap, f"caption names the series: {cap}"
         assert str(IDLE_BUCKET) in cap, f"caption names the bucket: {cap}"
 
-        log_p50 = series_height(log, "chart.series.0")
-        log_x = x_labels(log)
+        log_p50 = series_height(log, chart_address("series", index=0))
+        log_x = axis_labels(log, "label_x")
         assert len(log_x) >= 2, f"the x-axis is labelled: {log_x}"
 
         # ── Phase 2 — one click, and the same data on a linear axis ──
         d.click(path=SCALE_TAG)
         lin = d.snapshot(source="paint", viewport=VIEWPORT)
 
-        lin_y = y_labels(lin)
+        lin_y = axis_labels(lin, "label_y")
         assert lin_y != DECADES, f"the y-axis is no longer decades: {lin_y}"
         assert "0" in lin_y, f"a linear value axis reaches zero: {lin_y}"
         assert_eq(
-            find_by_tag(lin, "chart.grid.minor.y.0"),
+            find_by_tag(lin, chart_address("grid_minor_y", index=0)),
             None,
             "a linear axis has no minor ticks, so it draws none",
         )
 
         # ★ The x-axis did NOT move. `y_log()` names one axis, and a change
         # that logged both would pass every check above.
-        assert_eq(x_labels(lin), log_x, "the x-axis is untouched by y_log")
+        assert_eq(axis_labels(lin, "label_x"), log_x, "the x-axis is untouched by y_log")
 
         # The zero sample is an ordinary value here — all 12 buckets draw.
         assert_eq(
-            vertex_count(lin, "chart.series.0"),
+            vertex_count(lin, chart_address("series", index=0)),
             BUCKETS,
             "zero is plottable on a linear axis",
         )
@@ -210,7 +216,7 @@ def body() -> None:
 
         # ★ The whole round in one number: the same series, the same plot,
         # and four times the room to be read in.
-        lin_p50 = series_height(lin, "chart.series.0")
+        lin_p50 = series_height(lin, chart_address("series", index=0))
         assert lin_p50 < 10, (
             f"linear: p50 spans {lin_p50}px — pressed onto the baseline by p99.9"
         )
@@ -219,20 +225,25 @@ def body() -> None:
         )
         # The dominant series keeps its room on both — the log axis reveals
         # the small series without hiding the big one.
-        assert series_height(lin, "chart.series.2") > 40, "p99.9 fills the plot"
-        assert series_height(log, "chart.series.2") > 20, "p99.9 stays readable"
+        dominant = chart_address("series", index=2)
+        assert series_height(lin, dominant) > 40, "p99.9 fills the plot"
+        assert series_height(log, dominant) > 20, "p99.9 stays readable"
 
         # ── Phase 3 — the toggle is a real, reversible control ───────
         d.click(path=SCALE_TAG)
         back = d.snapshot(source="paint", viewport=VIEWPORT)
-        assert_eq(y_labels(back), DECADES, "clicking again returns to the log axis")
         assert_eq(
-            len(gridline_ys(back, "chart.grid.minor.y.")),
+            axis_labels(back, "label_y"),
+            DECADES,
+            "clicking again returns to the log axis",
+        )
+        assert_eq(
+            len(gridline_ys(back, f"{chart_family('grid_minor_y')}.")),
             40,
             "and brings its subdivisions back",
         )
         assert_eq(
-            vertex_count(back, "chart.series.0"),
+            vertex_count(back, chart_address("series", index=0)),
             BUCKETS - 1,
             "and drops the zero sample again",
         )

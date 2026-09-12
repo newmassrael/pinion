@@ -453,6 +453,18 @@ fi
 if ! python3 "$repo_root/tools/painted_addresses.py" --check >&2; then
     exit 1
 fi
+# ★★★★★ R2161 — the tool that proves a walk CONVERSION faithful, held to its own
+# tests. It is not run over a walk here (that needs a display and the round's
+# own before/after pair); what this checks is that its needle still recognises
+# an address and its comparison still reports a difference. A needle that
+# stopped matching would make every future conversion compare clean against
+# nothing, which is the exact failure the tool exists to prevent — so its
+# silence has to be a measurement rather than an absence. Reads no tree and
+# opens no window; measured under a second.
+if ! python3 "$repo_root/tools/address_trace.py" --selftest >&2; then
+    echo "pre-push: the address tracer failed its own tests" >&2
+    exit 1
+fi
 
 # R2129 — one read path, one wire shape. THREE checks over three populations,
 # because they are three different claims and sharing a population is how the
