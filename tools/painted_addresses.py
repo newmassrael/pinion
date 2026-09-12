@@ -434,7 +434,8 @@ def rust_site_literals(text: str) -> list[tuple[int, str, str]]:
 
     ★★★★★ R2178 — this census had THREE copies of its Rust literal loop: this
     one, [`rust_reader_duplication`] (R2168) and the Rust half of
-    [`address_spellings`] (R2168). Each re-spelled the comment rule R2170 moved
+    `address_spellings` (R2168, now [`address_literal_sites`]). Each re-spelled
+    the comment rule R2170 moved
     here, and the third only agreed with the needle by accident — it looked a
     role up by LINE, so a non-address literal sharing a line with a real tag
     would have been counted as a reader. R2175 named the copy and deferred it
@@ -1246,13 +1247,18 @@ def check() -> int:
     # ★★★★★ R2168 — and HOW MANY OF THE RUST READERS ARE ACTUALLY RETYPED. The
     # debt's own name says `retyped`; this census counts spellings, and the two
     # differ exactly where it matters. See [`rust_reader_duplication`].
+    #
+    # ★★★★★ R2179 — counted in ADDRESSES (a template can name a concrete
+    # member), and the sentence no longer claims a single reader is beyond
+    # conversion: whether a declaring home exists was never measured, and three
+    # of the single readers at R2179 re-compose a grammar a crate already owns.
     retyped, single = rust_reader_duplication()
     print(
         f"painted-addresses: of the {retyped + single} Rust reader(s), "
-        f"{retyped} spell an address some other place also spells — the RETYPING "
-        f"this debt is named for — and {single} are the only place their address "
-        "is written anywhere, which no conversion can remove because there is "
-        "nothing above them to call"
+        f"{retyped} name an address some other site can also name — the "
+        f"RETYPING this debt is named for — and {single} are the only site "
+        "naming their address. A single reader is not thereby irreducible: it "
+        "goes when something that owns the grammar declares it"
     )
     contested = sorted(
         stem
@@ -1854,8 +1860,16 @@ def schema_pins(stem: str) -> bool:
 
 
 @functools.lru_cache(maxsize=1)
-def address_spellings() -> dict[str, int]:
-    """Every whole address literal in this tree -> how many places spell it.
+def address_literal_sites() -> tuple[tuple[str, str, str], ...]:
+    """`(where, family stem, literal)` for every whole address literal in this
+    tree — the population a reader is retyped AGAINST.
+
+    ★★★★★ R2179 — this was `address_spellings`, a count keyed by literal TEXT,
+    and text is not the unit a retyping is asked in: a template like
+    `feed.row.{n}` can never be textually equal to the concrete `feed.row.3`, so
+    every template reader looked like the only place its address was written.
+    It now lists SITES, and [`rust_reader_duplication`] asks
+    [`may_denote_same`] of them. The corpus rules below are unchanged.
 
     ★★★★★ R2168 — **this debt is named `a paint address is RETYPED at every
     reader`, and the census counts SPELLINGS.** The two differ exactly where it
@@ -1881,26 +1895,113 @@ def address_spellings() -> dict[str, int]:
     # slot name, not an address) would have gone on being counted here as an
     # address spelling. The corpus stays the WIDE one, declaring files included,
     # for the reason above; only the definition of a spelling is now shared.
-    seen: dict[str, int] = {}
+    found: list[tuple[str, str, str]] = []
     for root in RUST_ROOTS:
         for path in sorted((ROOT / root).rglob("*.rs")):
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            for _line, _stem, literal in rust_site_literals(text):
-                seen[literal] = seen.get(literal, 0) + 1
+            where = str(path.relative_to(ROOT))
+            for line, stem, literal in rust_site_literals(text):
+                found.append((f"{where}:{line}", stem, literal))
     for path in sources():
-        for _line, literal in _walk_literals(path):
-            seen[literal] = seen.get(literal, 0) + 1
-    return seen
+        where = str(path.relative_to(ROOT))
+        for line, literal in _walk_literals(path):
+            hit = ADDRESS.match(literal)
+            if hit:
+                found.append((f"{where}:{line}", hit.group(1), literal))
+    return tuple(found)
+
+
+#: A placeholder inside an address literal — `{n}`, `{index}`, `{lane}`, `{}`.
+_PLACEHOLDER = re.compile(r"\{[^{}]*\}")
+
+#: The two wildcard tokens a placeholder becomes: exactly one character, then
+#: any number more. A placeholder fills at least one character of ONE address
+#: segment and never crosses a `.` — which is the unit an address is built in.
+_ANY, _ANYSTAR = object(), object()
+
+
+def _segment_tokens(segment: str) -> list:
+    """One address segment as literal characters and wildcard tokens."""
+    tokens: list = []
+    for index, piece in enumerate(segment.split("\x00")):
+        if index:
+            tokens += [_ANY, _ANYSTAR]
+        tokens += list(piece)
+    return tokens
+
+
+def _segments_meet(left: list, right: list) -> bool:
+    """Whether two segment patterns can match one common string — exactly."""
+
+    @functools.lru_cache(maxsize=None)
+    def meet(i: int, j: int) -> bool:
+        if i == len(left) and j == len(right):
+            return True
+        if i < len(left) and left[i] is _ANYSTAR:
+            if meet(i + 1, j):
+                return True
+            return j < len(right) and right[j] is not _ANYSTAR and meet(i, j + 1)
+        if j < len(right) and right[j] is _ANYSTAR:
+            if meet(i, j + 1):
+                return True
+            return i < len(left) and meet(i + 1, j)
+        if i == len(left) or j == len(right):
+            return False
+        a, b = left[i], right[j]
+        if a is _ANY or b is _ANY or a == b:
+            return meet(i + 1, j + 1)
+        return False
+
+    return meet(0, 0)
+
+
+def may_denote_same(a: str, b: str) -> bool:
+    """Whether two address literals can name the same painted address.
+
+    ★★★★★ R2179 — **the unit `retyped` is asked in.** Until this round the
+    duplication split compared literal TEXT, so a format template like
+    `feed.row.{n}` could never equal the concrete `feed.row.3` a test reads,
+    and every template reader was reported as the only place its address is
+    written — by construction of the measure, not by any fact about the tree.
+    Measured at R2179: the tool said 12 retyped / 8 single, and six of the
+    eight were templates. Counted in addresses, it is 15 / 5, and each of the
+    three that moved has named sites behind it (`records.row.0` and
+    `records.row.7` in its screen's tests; `lab.scenario.main.2` in a test;
+    `feed.row.{index}` in the crate that paints the feed).
+
+    ⚠ NOT "the same family", which was measured too and rejected: 18 / 2 under
+    that rule, because `feed.row.{n}` and `feed.row.{n}.cell.{k}` share a family
+    and sit side by side in one builder, and one does not retype the other.
+
+    EXACT, not a shortcut. Both literals are split into segments at `.`; a
+    placeholder fills one or more characters of one segment and never a dot;
+    two literals meet iff they have the same number of segments and every pair
+    of segments can match a common string. A concrete literal is a template
+    with no placeholders, so there is no special case — and a placeholder
+    beside literal text in one segment (`col#{n}`, `{from}-{to}`, both in this
+    tree) is decided exactly rather than approximated.
+    """
+    left = _PLACEHOLDER.sub("\x00", a).split(".")
+    right = _PLACEHOLDER.sub("\x00", b).split(".")
+    if len(left) != len(right):
+        return False
+    return all(
+        _segments_meet(_segment_tokens(x), _segment_tokens(y))
+        for x, y in zip(left, right)
+    )
 
 
 def _walk_literals(path: Path) -> list[tuple[int, str]]:
     """`(line, whole address)` for every address literal a walk spells.
 
     [`sites`] answers the same population as family STEMS; this keeps the whole
-    address, which is the unit [`address_spellings`] counts in.
+    address, which is what [`address_literal_sites`] lists and
+    [`may_denote_same`] compares. Since R2179 an f-string keeps its placeholder
+    SHAPE (`{}` per interpolated value), so a walk's composed address can be
+    matched against a Rust template rather than truncated to its constant head.
     """
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -1909,50 +2010,70 @@ def _walk_literals(path: Path) -> list[tuple[int, str]]:
     skip = _skipped(tree)
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
-        pieces: list[str] = []
+        literal: str | None = None
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             if id(node) in skip:
                 continue
-            pieces = [node.value]
+            literal = node.value
         elif isinstance(node, ast.JoinedStr):
-            pieces = [
+            # ★★★★★ R2179 — the WHOLE template, `{}` for every interpolated
+            # value. This kept only the constant halves, so `f"feed.row.{n}"`
+            # became `feed.row.` and could never denote the address a Rust
+            # template composes — the unit error `may_denote_same` repairs, one
+            # language over. Measured before writing: 25 address f-strings in
+            # the walk corpus, none with a format spec, a conversion or a
+            # nested f-string; a spec would still fill one placeholder anyway.
+            literal = "".join(
                 part.value
-                for part in node.values
                 if isinstance(part, ast.Constant) and isinstance(part.value, str)
-            ]
-        for piece in pieces:
-            if ADDRESS.match(piece):
-                found.append((node.lineno, piece))
+                else "{}"
+                for part in node.values
+            )
+        if literal is not None and ADDRESS.match(literal):
+            found.append((node.lineno, literal))
     return found
 
 
 def rust_reader_duplication() -> tuple[int, int]:
     """`(retyped, single)` over the Rust READERS the reducible queue counts.
 
-    `retyped` is a reader whose address some other place also spells — the
-    defect this debt is named for. `single` is a reader that is the ONLY place
-    its address is written anywhere, which is not a retyping and cannot be made
-    to disappear by converting it: there is nothing above it to call.
+    `retyped` is a reader whose address some OTHER site can also name — the
+    defect this debt is named for. `single` is a reader no other site denotes.
+
+    ★★★★★ R2179 — **asked in addresses, not in literal text.** A reader is
+    retyped iff another site in the same family carries a literal that
+    [`may_denote_same`] says can name one of the addresses this one names.
+    Counted by text, a template like `feed.row.{n}` could never match the
+    concrete `feed.row.3` a test reads, so every template reader was reported
+    single: measured at R2179, 12 / 8 by text against 15 / 5 in addresses.
+
+    🟥 **And `single` says only what was measured.** This docstring used to add
+    that a single reader "cannot be made to disappear by converting it: there
+    is nothing above it to call". Whether a declaring home exists or could
+    exist was never measured, and at R2179 three of the five single readers are
+    the shell's `spec.rs` re-composing the feed widget's grammar, whose own
+    crate already spells two members of it. The inference is gone rather than
+    reworded.
 
     ⚠⚠ REPORTED, NOT SHED. R2160's rule stands — a census that drops its hard
     part measures comfort instead of remainder — so the queue keeps counting
-    these while this says how many they are. What they change is what CLOSING
-    could mean: the only way to make a single spelling vanish is to move the
-    line into a file named `address.rs`, and a criterion a file rename can
-    satisfy is measuring the file name rather than the property.
+    single readers while this says how many they are.
     """
-    # ★★★★★ R2178 — DERIVED from `rust_reader_scan`, which carries each
-    # reader's literal. This used to be a third walk over the Rust corpus with
-    # its own copy of the needle and of the comment rule, finding readers by
-    # looking a role up by LINE — so a non-address literal sharing a line with a
-    # real tag would have been counted as a reader here and nowhere else. The
-    # arithmetic arm in `selftest` (retyped + single == the role tally's
-    # readers) still holds this to an independent walk.
-    spellings = address_spellings()
+    # ★ R2178 — derived from `rust_reader_scan`, which carries each reader's
+    # literal; the arithmetic arm in `selftest` (retyped + single == the role
+    # tally's readers) holds this to an independent walk.
+    by_family: dict[str, list[tuple[str, str]]] = {}
+    for where, stem, literal in address_literal_sites():
+        by_family.setdefault(stem, []).append((where, literal))
     retyped = single = 0
-    for sites in rust_reader_scan().values():
-        for _path, _line, literal in sites:
-            if spellings.get(literal, 0) > 1:
+    for stem, sites in rust_reader_scan().items():
+        others = by_family.get(stem, [])
+        for path, line, literal in sites:
+            me = f"{path}:{line}"
+            if any(
+                where != me and may_denote_same(literal, theirs)
+                for where, theirs in others
+            ):
                 retyped += 1
             else:
                 single += 1
@@ -2803,19 +2924,56 @@ def selftest() -> int:
             "population, two answers",
             file=sys.stderr,
         )
-    if not retyped_n or not single_n:
+    # ★★★★★ R2179 — the split's DISCRIMINATION is proven by fixtures, not by the
+    # live tree. The arm that stood here failed whenever either bucket was
+    # empty, so it would have gone red the day the campaign legitimately left no
+    # single reader: a gate that fails on success, which is R2174's fixture
+    # lesson in a second place. Each case is asked in BOTH directions, because
+    # "can these name the same address" is symmetric and a matcher that is not
+    # has a bug.
+    denote_cases: list[tuple[str, tuple[str, str], bool]] = [
+        ("a concrete literal names itself",
+         ("chart.series.0", "chart.series.0"), True),
+        ("and not its neighbour",
+         ("chart.series.0", "chart.series.1"), False),
+        ("★ a template names its concrete member — the unit this repaired",
+         ("records.row.{r}", "records.row.7"), True),
+        ("and with two placeholders",
+         ("lab.scenario.{lane}.{at}", "lab.scenario.main.2"), True),
+        ("a placeholder's NAME does not matter",
+         ("feed.row.{n}", "feed.row.{index}"), True),
+        ("★★ a longer sibling in the same family is not the same address",
+         ("feed.row.{n}", "feed.row.{n}.cell.{k}"), False),
+        ("★★ a placeholder never crosses a dot",
+         ("feed.row.{n}", "feed.row.3.cell.1"), False),
+        ("a placeholder beside literal text, inside one segment",
+         ("feed.head.col#{n}", "feed.head.col#0"), True),
+        ("and that literal text still has to agree",
+         ("feed.head.col#{n}", "feed.head.col_label#0"), False),
+        ("★ two templates that overlap at DIFFERENT positions",
+         ("a.{x}x.y", "a.z{y}.y"), True),
+        ("a placeholder fills at least one character",
+         ("lab.advanced.{name}", "lab.advanced."), False),
+        ("a prefix names itself",
+         ("lab.advanced.", "lab.advanced."), True),
+    ]
+    for label, (left, right), want in denote_cases:
+        for a, b in ((left, right), (right, left)):
+            if may_denote_same(a, b) != want:
+                failed += 1
+                print(
+                    f"FAIL: {label}: may_denote_same({a!r}, {b!r}) -> "
+                    f"{not want}, wanted {want}",
+                    file=sys.stderr,
+                )
+                break
+    distinct = len({literal for _where, _stem, literal in address_literal_sites()})
+    if distinct < 100:
         failed += 1
         print(
-            f"FAIL: the split answered {retyped_n} retyped / {single_n} single "
-            "— one of the buckets is empty, so it is not discriminating",
-            file=sys.stderr,
-        )
-    if len(address_spellings()) < 100:
-        failed += 1
-        print(
-            f"FAIL: only {len(address_spellings())} distinct address literal(s) "
-            "were read — this is not the corpus, and every site would look "
-            "like a single spelling",
+            f"FAIL: only {distinct} distinct address literal(s) were read — this "
+            "is not the corpus, and every reader would look like the only site "
+            "naming its address",
             file=sys.stderr,
         )
 
@@ -3590,13 +3748,15 @@ def selftest() -> int:
             vocab_cases,
             declaring_cases,
             word_cases,
+            denote_cases,
         )
     ) + (
         5  # R2147/R2166: four classifier words and the artifact corpus floor
         + 1  # R2166: the parametric-declaration corpus floor
         + 1  # R2167: no family is claimed by BOTH vocabularies
         + 1  # R2170: the census total and the role tally are one population
-        + 3  # R2168: the retyped/single split's three derived checks
+        + 2  # R2168: the split's arithmetic and corpus-size arms (R2179 moved
+        #      its discrimination arm to the `denote_cases` fixtures)
         + 4  # R2164: the role rule's four derived cross-checks
         + 3  # R2175: the queue's arithmetic arm and BLOCKED's two subset arms
         + 1  # R2176: a binary example's declaring module must stay private
