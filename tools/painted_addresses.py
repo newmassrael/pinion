@@ -99,6 +99,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import bisect
 import functools
 import json
 import re
@@ -469,7 +470,8 @@ def resolve_placeholders(literal: str, constants: dict[str, str]) -> str:
     )
 
 
-def rust_literals(text: str) -> list[tuple[int, int, str]]:
+@functools.lru_cache(maxsize=None)
+def rust_literals(text: str) -> tuple[tuple[int, int, str], ...]:
     """`(offset, line, literal)` for every Rust string literal outside a comment
     line, quotes stripped and constant placeholders resolved — **the one scan**
     every Rust needle in this file reads.
@@ -480,18 +482,29 @@ def rust_literals(text: str) -> list[tuple[int, int, str]]:
     would have made the populations disagree on purpose, which is R2178's
     finding one layer down. `offset` is the opening quote, which is what
     [`handed_to`] reads back from.
+
+    ★★★★★ R2183 — **linear, and read once per source.** Each literal's line was
+    `text.count("\n", 0, offset)`, a rescan from the top of the file per
+    literal, and every derivation in this file re-ran the scan on the same text:
+    profiled at R2183, `--check` spent 71.6 s of 109.3 s in `str.count`, over
+    4,388 calls of this function for ~1,500 files, and the push gate's census
+    step took 158.6 s. The line is now a bisection over the newline offsets —
+    the same count, taken once — and the result is cached by source text, the
+    arrangement [`python_literals`] has had since R2181. The comment rule still
+    indexes `splitlines`, exactly as before, so no output can move.
     """
     lines = text.splitlines()
     constants = rust_str_constants(text)
+    line_starts = [0] + [match.end() for match in re.finditer("\n", text)]
     found: list[tuple[int, int, str]] = []
     for match in RUST_LITERAL.finditer(text):
-        line = text.count("\n", 0, match.start()) + 1
+        line = bisect.bisect_right(line_starts, match.start())
         if lines[line - 1].lstrip().startswith("//"):
             continue
         found.append(
             (match.start(), line, resolve_placeholders(match.group(0)[1:-1], constants))
         )
-    return found
+    return tuple(found)
 
 
 def rust_site_literals(text: str) -> list[tuple[int, str, str]]:
