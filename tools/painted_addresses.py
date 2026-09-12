@@ -2373,7 +2373,16 @@ def selftest() -> int:
         ("an emitted grammar's family is paint", "chart.candle", "paint"),
         ("a screen pin's family is paint", "lab.frame", "paint"),
         ("a parametric declaration's family is a path", "value.elem", "path"),
-        ("★ and one nothing declares is neither, said as such", "nodegroups.node", "unknown"),
+        # ★★★★★ R2174 — a stem NO round can declare, and that is the repair.
+        # This case named `nodegroups.node` until the round that declared it,
+        # and it would have named whichever family came next: a fixture whose
+        # subject is "nothing declares this" cannot be a live family in a tree
+        # whose whole campaign is to declare them all. The three cases above
+        # anchor on live declarations because being live is what they assert;
+        # this one asserts the ABSENCE of one, so its subject has to be absent
+        # by construction. It still fails if the classifier ever starts
+        # guessing a vocabulary rather than answering `unknown`.
+        ("★ and one nothing declares is neither, said as such", "absent.family", "unknown"),
     ]
     for label, stem, want in vocab_cases:
         if site_vocabulary(stem) != want:

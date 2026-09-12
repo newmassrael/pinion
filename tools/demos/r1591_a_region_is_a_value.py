@@ -57,7 +57,9 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    declared_address,
     run_demo,
+    seat_member,
 )
 
 #: A widget's primary External is addressed by the framework path, not the tag.
@@ -74,23 +76,37 @@ def inv(tf: RpcSubprocess, path: str, args):
     return tf.invoke(f"{EXT}/{path}", args)
 
 
-def cards(tf: RpcSubprocess) -> dict[int, tuple[int, int, int, int]]:
+def node_at(seat: str, tag: str) -> int | None:
+    """The node a painted address names, or `None` when the tag is not a card.
+
+    ★★★★★ R2174 — both readers below used to carry the recovery written out:
+    `tag.startswith("nodegroups.node.") and tag.count(".") == 2`. That is TWO
+    of the screen's rules spelled in a walk — the seat, and *a card has nothing
+    under it* — and nothing compared either with the paint. The seat comes from
+    the screen now, and the second clause is `rpc_verify.seat_member`, the same
+    rule `hello-node-groups`'s own `address::node_id` applies at the other end.
+    """
+    key = seat_member(seat, tag)
+    return int(key) if key is not None and key.isdigit() else None
+
+
+def cards(tf: RpcSubprocess, seat: str) -> dict[int, tuple[int, int, int, int]]:
     """Every node card's window-absolute rect, from the PAINT scene."""
     rects = abs_rects_of(tf.snapshot(source="paint", viewport=VIEW))
-    out: dict[int, tuple[int, int, int, int]] = {}
-    for tag, rect in rects.items():
-        if tag.startswith("nodegroups.node.") and tag.count(".") == 2:
-            out[int(tag.rsplit(".", 1)[1])] = rect
-    return out
+    return {
+        node: rect
+        for tag, rect in rects.items()
+        if (node := node_at(seat, tag)) is not None
+    }
 
 
-def nodes_in(reply) -> list[int]:
+def nodes_in(seat: str, reply) -> list[int]:
     """The node ids a region answer names — the application's own mapping."""
-    found = []
-    for path in reply["paths"]:
-        leaf = path.rsplit("/", 1)[-1]
-        if leaf.startswith("nodegroups.node.") and leaf.count(".") == 2:
-            found.append(int(leaf.rsplit(".", 1)[1]))
+    found = [
+        node
+        for path in reply["paths"]
+        if (node := node_at(seat, path.rsplit("/", 1)[-1])) is not None
+    ]
     return sorted(found)
 
 
@@ -108,7 +124,10 @@ def body() -> None:
             tf.tick(0.016)
 
         # ── (A) where the cards actually are ────────────────────────────────
-        placed = cards(tf)
+        # ★★★★★ R2174 — the seat a card is addressed under comes from the
+        # screen's own declaration, asked once and held for the whole walk.
+        seat = declared_address(tf, "node_seat")
+        placed = cards(tf, seat)
         assert_eq(len(placed), 6, "A: the seeded material, painted")
         for node in (BASE, MIX, OUT):
             assert node in placed, f"A: node {node} is painted"
@@ -118,7 +137,7 @@ def body() -> None:
         over_base = tf.locate_region(
             x=bx, y=by, w=bw, h=bh, source="paint", viewport=VIEW
         )
-        assert_eq(nodes_in(over_base), [BASE], "B: the rect over one card")
+        assert_eq(nodes_in(seat, over_base), [BASE], "B: the rect over one card")
         assert_eq(over_base["shape"], "rect", "B: and the answer repeats the shape")
         assert_eq(
             over_base["fit"],
@@ -142,12 +161,12 @@ def body() -> None:
         half = tf.locate_region(
             x=bx, y=by, w=max(bw // 2, 1), h=bh, source="paint", viewport=VIEW
         )
-        assert_eq(nodes_in(half), [BASE], "C: it touches the card")
+        assert_eq(nodes_in(seat, half), [BASE], "C: it touches the card")
         strict = tf.locate_region(
             x=bx, y=by, w=max(bw // 2, 1), h=bh, fit="contains",
             source="paint", viewport=VIEW,
         )
-        assert_eq(nodes_in(strict), [], "C: and does not contain it")
+        assert_eq(nodes_in(seat, strict), [], "C: and does not contain it")
         assert_eq(strict["fit"], "contains", "C: which the answer states")
 
         # ── (D) a circle, which the DCC needs a second operator for ─────────
@@ -155,13 +174,13 @@ def body() -> None:
         disc = tf.locate_region(
             shape="circle", cx=cx, cy=cy, r=6, source="paint", viewport=VIEW
         )
-        assert_eq(nodes_in(disc), [BASE], "D: a small disc inside the card")
+        assert_eq(nodes_in(seat, disc), [BASE], "D: a small disc inside the card")
         assert_eq(disc["shape"], "circle")
         far = tf.locate_region(
             shape="circle", cx=cx, cy=cy, r=6, fit="contains",
             source="paint", viewport=VIEW,
         )
-        assert_eq(nodes_in(far), [], "D: which it does not swallow")
+        assert_eq(nodes_in(seat, far), [], "D: which it does not swallow")
 
         # ── (E) a lasso is not its bounding box ─────────────────────────────
         # A right triangle at the top-left whose legs span every card, so its
@@ -181,8 +200,8 @@ def body() -> None:
         box = tf.locate_region(
             x=0, y=0, w=span_x, h=span_y, source="paint", viewport=VIEW
         )
-        inside_lasso = set(nodes_in(lasso))
-        inside_box = set(nodes_in(box))
+        inside_lasso = set(nodes_in(seat, lasso))
+        inside_box = set(nodes_in(seat, box))
         assert_eq(
             sorted(inside_box),
             sorted(placed),
@@ -221,7 +240,7 @@ def body() -> None:
             x=bx, y=by, w=bw, h=bh, source="state", viewport=VIEW
         )
         assert_eq(
-            nodes_in(state),
+            nodes_in(seat, state),
             [],
             "G: a view-fn binding's STATE tree carries no geometry, so the same "
             "rectangle finds no card there. Both scenes are askable and the "
@@ -233,7 +252,7 @@ def body() -> None:
         # A node editor's lasso select is this method plus the application's own
         # tag→node mapping. Nothing in `pinion-node-graph` took part; the result
         # is then handed to the SELECTION, which is the editor's.
-        picked = nodes_in(lasso)
+        picked = nodes_in(seat, lasso)
         inv(tf, "select", ",".join(str(n) for n in picked))
         assert_eq(
             [int(n) for n in str(tf.query(f"{EXT}/selection")).split(",")],

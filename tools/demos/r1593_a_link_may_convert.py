@@ -67,6 +67,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    declared_address,
     run_demo,
 )
 
@@ -127,12 +128,19 @@ DASHED = {"on": 6, "off": 4, "offset": 0, "period": 10}
 
 
 def wire_dash(tf: RpcSubprocess, link: int):
-    """The stroke rhythm the PAINT gave `nodegroups.wire.<link>`."""
+    """The stroke rhythm the PAINT gave the wire for `link`.
+
+    ★★★★★ R2174 — the address comes from the screen. This walk spelled
+    `nodegroups.wire.<link>`, and a walk is Python: a wrong letter there does
+    not fail as a wrong address, it fails as *the paint has no such wire*,
+    which is the one sentence below that already reads like a real finding.
+    """
+    tag = f"{declared_address(tf, 'wire_seat')}{link}"
     found: list = []
 
     def walk(node) -> None:
         if isinstance(node, dict):
-            if node.get("tag") == f"nodegroups.wire.{link}":
+            if node.get("tag") == tag:
                 found.append(node["style"]["stroke"]["dash"])
             for value in node.values():
                 walk(value)
@@ -141,7 +149,7 @@ def wire_dash(tf: RpcSubprocess, link: int):
                 walk(value)
 
     walk(tf.snapshot(source="paint"))
-    assert len(found) == 1, f"exactly one wire.{link} in the paint, got {len(found)}"
+    assert len(found) == 1, f"exactly one {tag} in the paint, got {len(found)}"
     return found[0]
 
 

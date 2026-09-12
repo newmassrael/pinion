@@ -6689,6 +6689,57 @@ def appbar_tag(tf, word: str, *, ext: str = "/external") -> str:
     return appbar_seats(screen_spec(tf, ext))[word]
 
 
+def declared_address(tf, family: str, part: str | None = None, *, ext: str = "/external"):
+    """An address a SCREEN publishes for a reader that cannot call its
+    declaration — **the one reader of `spec["declared_addresses"]`**.
+
+    ★★★★★ R2174 — [`lab_address`] (R2128) and [`shell_address`] (R2171) were
+    byte-identical bodies under two names, and this round's screen would have
+    made a third. That is this campaign's own recurring finding turned on the
+    campaign's own tools: *a rule written twice is repaired once*. The row's
+    shape — a family key, optionally a member key under it — is one rule about
+    one published surface, so it is spelled here and the per-screen names below
+    are the doors onto it.
+
+    `family` is a key of the screen's `declared_addresses` row; `part` names one
+    member when the family is a group of named marks, and is left off when it is
+    a lone one. A family or part the screen does not publish is a `KeyError`
+    naming it — which is the point: a walk asking for something the declaration
+    does not hold should stop, not look for a mark that is not there.
+
+    ⚠ Deliberately NOT a door onto the whole spec. A family with a row of its
+    own (the node lab's fault panel, the shell's palette) is read there, because
+    those rows carry a SHAPE as well as a prefix.
+    """
+    row = screen_spec(tf, ext)["declared_addresses"][family]
+    return row if part is None else row[part]
+
+
+def seat_member(seat: str, tag: str) -> Optional[str]:
+    """The key a painted address names directly under `seat`, or `None` when the
+    tag is not a member of that family.
+
+    ★★★★★ R2174 — the walks' half of the inverse R2158 named missing: a screen's
+    declaration says *what is this thing's address* and a reader scanning a
+    snapshot needs *which thing is this tag*. Without it every such reader wrote
+    the recovery out — `tag.startswith("<seat>") and tag.count(".") == 2` — and
+    that second clause is a SECOND COPY of the screen's own rule, in a walk,
+    where nothing compares it with the paint.
+
+    `hello-node-groups` declares the same inverse in Rust (`address::node_id`),
+    so the two ends of the wire recover a key by the same rule.
+
+    ⚠ DIRECTLY under: `nodegroups.node.3` is a member of `nodegroups.node.` and
+    `nodegroups.node.3.title` is not, which is what the counted-dots form was
+    reaching for. PURE over the seat a caller already holds, for the reason
+    [`pin_of`] is — its callers run it over every tag in a snapshot.
+    """
+    if not tag.startswith(seat):
+        return None
+    rest = tag[len(seat) :]
+    return rest if rest and "." not in rest else None
+
+
 def lab_address(tf, family: str, part: str | None = None, *, ext: str = "/external"):
     """An address the node lab publishes for a reader that cannot call its
     declaration.
@@ -6712,8 +6763,7 @@ def lab_address(tf, family: str, part: str | None = None, *, ext: str = "/extern
     here: each rides on the rail row beside the destination it belongs to, which
     is where a walk already is when it wants one (`seat["tag"]`).
     """
-    row = screen_spec(tf, ext)["declared_addresses"][family]
-    return row if part is None else row[part]
+    return declared_address(tf, family, part, ext=ext)
 
 
 def shell_address(tf, family: str, part: str | None = None, *, ext: str = "/external"):
@@ -6731,8 +6781,7 @@ def shell_address(tf, family: str, part: str | None = None, *, ext: str = "/exte
     member of it. A family or part the screen does not publish is a `KeyError`
     naming it, which is the answer worth having.
     """
-    row = screen_spec(tf, ext)["declared_addresses"][family]
-    return row if part is None else row[part]
+    return declared_address(tf, family, part, ext=ext)
 
 
 def lab_fault_panel(tf, *, ext: str = "/external") -> dict:

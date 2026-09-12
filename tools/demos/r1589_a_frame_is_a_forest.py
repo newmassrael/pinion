@@ -72,6 +72,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    declared_address,
     run_demo,
 )
 
@@ -278,13 +279,20 @@ def body() -> None:
         assert_eq(where(tf, BASE)["parent"], str(inner), "G: put back for what follows")
 
         # ── (H) the picture is derived from the model (§2 #7) ───────────────
-        fence = rect_of(tf, f"nodegroups.frame.{inner}")
-        card = rect_of(tf, f"nodegroups.node.{BASE}")
+        # ★★★★★ R2174 — the SEATS come from the screen. Until this round this
+        # walk typed `nodegroups.frame.<id>` and `nodegroups.node.<id>` out
+        # seven times, which is a second copy of the screen's composition in a
+        # language no compiler checks: a wrong letter here does not fail as a
+        # wrong address, it fails as *the screen did not paint it*.
+        node_seat = declared_address(tf, "node_seat")
+        frame_seat = declared_address(tf, "frame_seat")
+        fence = rect_of(tf, f"{frame_seat}{inner}")
+        card = rect_of(tf, f"{node_seat}{BASE}")
         assert fence[0] < card[0] and fence[1] < card[1], (
             f"H: the fence starts above and left of what it fences: {fence} vs {card}"
         )
         assert fence[0] + fence[2] > card[0] + card[2], f"H: and ends past it: {fence}"
-        outer_fence = rect_of(tf, f"nodegroups.frame.{frame}")
+        outer_fence = rect_of(tf, f"{frame_seat}{frame}")
         assert outer_fence[0] < fence[0], (
             f"H: an outer fence stands OFF the inner one rather than coinciding "
             f"with it: {outer_fence} vs {fence}"
@@ -293,16 +301,16 @@ def body() -> None:
         # ── (I) moving a frame moves what it contains ───────────────────────
         before_card = card
         before_fence = fence
-        before_outside = rect_of(tf, f"nodegroups.node.{MIX}")
+        before_outside = rect_of(tf, f"{node_seat}{MIX}")
         carried = str(inv(tf, "nudge", f"{inner}:40:0")).split(",")
         assert str(inner) == carried[0], f"I: the frame itself comes first: {carried}"
         assert str(BASE) in carried, f"I: and its contents come along: {carried}"
-        after_card = rect_of(tf, f"nodegroups.node.{BASE}")
-        after_fence = rect_of(tf, f"nodegroups.frame.{inner}")
+        after_card = rect_of(tf, f"{node_seat}{BASE}")
+        after_fence = rect_of(tf, f"{frame_seat}{inner}")
         assert_eq(after_card[0] - before_card[0], 40, "I: the card moved with the fence")
         assert_eq(after_fence[0] - before_fence[0], 40, "I: by exactly the same amount")
         assert_eq(
-            rect_of(tf, f"nodegroups.node.{MIX}")[0],
+            rect_of(tf, f"{node_seat}{MIX}")[0],
             before_outside[0],
             "I: and a node outside the fence did not move — read from a rect "
             "captured BEFORE the drag, so this can fail",

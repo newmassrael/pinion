@@ -741,6 +741,32 @@ def test_external_paths_compose_the_declared_introspection_vocabulary() -> None:
             check(False, f"ExternalPaths: {label} must be refused -> {composed}")
 
 
+def test_seat_member_recovers_a_key_and_refuses_what_is_not_one() -> None:
+    """★★★★★ R2174 — the inverse R2158 named missing, as a PURE rule.
+
+    A screen's declaration says *what is this thing's address*; a reader
+    scanning a snapshot needs *which thing is this tag*. Every such reader wrote
+    the recovery out — `tag.startswith(seat) and tag.count(".") == 2` — and the
+    counted-dots half is a second copy of the screen's own rule, living in a
+    walk where nothing compares it with the paint.
+
+    ⚠ The discriminating case is the LAST one: a mark painted UNDER a member is
+    not that member. `nodegroups.frame.6.title` is the frame's caption, not the
+    frame whose key is `6.title`, and a reader that took it for one would
+    classify a caption as a card. That is what the counted-dots form was
+    reaching for and what a seat's own rule states directly.
+    """
+    seat = "nodegroups.node."
+    check(rpc_verify.seat_member(seat, "nodegroups.node.3") == "3",
+          "seat_member: a direct member answers its key")
+    check(rpc_verify.seat_member(seat, "nodegroups.frame.3") is None,
+          "seat_member: a sibling family is not a member")
+    check(rpc_verify.seat_member(seat, "nodegroups.node.") is None,
+          "seat_member: the bare seat names no member")
+    check(rpc_verify.seat_member("nodegroups.frame.", "nodegroups.frame.6.title") is None,
+          "seat_member: ★ a mark painted UNDER a member is not that member")
+
+
 def test_request_matches_its_own_id() -> None:
     tf = wired()
     deliver(tf, {"jsonrpc": "2.0", "id": 999, "result": "somebody else's"})

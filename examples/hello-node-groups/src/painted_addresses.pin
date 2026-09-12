@@ -1,0 +1,29 @@
+# Every address this screen painted IN THE STATES ITS SWEEP DRIVES,
+# folded by `repeating_site`.
+#
+# R2159 — that qualifier is not pedantry and it replaces a claim this
+# header made for six rounds: "every address this screen paints".
+# The set is the union over the sweep's own STATES x SIZES, so a mark
+# the sweep never reaches is absent from a file that said it held
+# everything. A family's ABSENCE here therefore means one of two
+# things and the file cannot tell you which: the screen does not paint
+# it, or the sweep does not go where it is painted. That matters
+# because the address campaign's rule is PIN BEFORE CONVERTING, and a
+# reader taking absence for the first reading would convert a family
+# whose value nothing holds.
+#
+# Rewritten by setting PINION_REGEN_ADDRESS_PIN and running this
+# screen's address-pin test; do not hand-edit.
+nodegroups
+nodegroups.breadcrumb
+nodegroups.frame.*
+nodegroups.frame.*.title
+nodegroups.node.*
+nodegroups.pin.*.in.*
+nodegroups.pin.*.out.*
+nodegroups.pinlabel.*.in.*
+nodegroups.pinlabel.*.out.*
+nodegroups.status
+nodegroups.through.*.*
+nodegroups.title.*
+nodegroups.wire.*

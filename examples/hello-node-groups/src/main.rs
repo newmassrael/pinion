@@ -820,7 +820,7 @@ fn frame_scene(
                 BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow))
                     .with_border(Border::new(outline, if selected { 2 } else { 1 })),
             )
-            .with_tag(format!("{VIEW_TAG}.frame.{}", node.id.0))
+            .with_tag(crate::address::frame(node.id.0))
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(rect.x, rect.y)
@@ -835,7 +835,7 @@ fn frame_scene(
                     .with_size_px(STATUS_FONT_PX)
                     .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
             )
-            .with_tag(format!("{VIEW_TAG}.frame.{}.title", node.id.0))
+            .with_tag(crate::address::frame_title(node.id.0))
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(rect.x + 6, rect.y + 4)
@@ -870,10 +870,10 @@ fn port_scenes(
                     None => ColorRole::Outline,
                 })),
             )
-            .with_tag(format!(
-                "{VIEW_TAG}.pin.{}.{}.{port}",
+            .with_tag(crate::address::pin(
                 node.0,
-                if output { "out" } else { "in" }
+                if output { "out" } else { "in" },
+                port,
             ))
             .with_layout(
                 LayoutStyle::new()
@@ -890,10 +890,10 @@ fn port_scenes(
             // R1632 — the name a variadic port shows is DERIVED from its item's
             // ordinal, so it is worth being able to read the painted one rather
             // than the model's. Addressed like the pin beside it.
-            .with_tag(format!(
-                "{VIEW_TAG}.pinlabel.{}.{}.{port}",
+            .with_tag(crate::address::pin_label(
                 node.0,
-                if output { "out" } else { "in" }
+                if output { "out" } else { "in" },
+                port,
             ))
             .with_layout(
                 LayoutStyle::new()
@@ -938,7 +938,7 @@ fn passthrough_scenes(
                 pin_at(at.0, at.1, position(&shown.outputs, route.output), true),
                 muted,
                 muted,
-                format!("{VIEW_TAG}.through.{}.{}", node.0, route.output),
+                crate::address::through(node.0, route.output),
             )
         })
         .collect()
@@ -1059,7 +1059,7 @@ fn node_scene(
                 BoxStyle::filled(fill)
                     .with_border(Border::new(outline, if selected { 2 } else { 1 })),
             )
-            .with_tag(format!("{VIEW_TAG}.node.{}", node.id.0))
+            .with_tag(crate::address::node(node.id.0))
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(rect.x, rect.y)
@@ -1072,7 +1072,7 @@ fn node_scene(
                 Rect::default(),
                 TextStyle::new().with_size_px(LABEL_FONT_PX).with_fg(label),
             )
-            .with_tag(format!("{VIEW_TAG}.title.{}", node.id.0))
+            .with_tag(crate::address::node_title(node.id.0))
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(rect.x + 8, rect.y + 6)
@@ -1227,7 +1227,7 @@ fn view() -> Scene {
                 Rect::default(),
                 TextStyle::new().with_size_px(TITLE_FONT_PX).with_fg(ink),
             )
-            .with_tag(format!("{VIEW_TAG}.breadcrumb"))
+            .with_tag(crate::address::BREADCRUMB)
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(20, 18)
@@ -1242,7 +1242,7 @@ fn view() -> Scene {
                     .with_size_px(STATUS_FONT_PX)
                     .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
             )
-            .with_tag(format!("{VIEW_TAG}.status"))
+            .with_tag(crate::address::STATUS)
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(20, 46)
@@ -1292,7 +1292,7 @@ fn view() -> Scene {
                 to,
                 wire_colour,
                 theme.resolve(ColorRole::OnSurfaceMuted),
-                format!("{VIEW_TAG}.wire.{}", link.id.0),
+                crate::address::wire(link.id.0),
             ));
         }
         for node in host.nodes().filter(|n| !n.is_frame()) {
@@ -1607,6 +1607,18 @@ impl GroupsOracle {
     }
 }
 
+/// What this screen publishes about itself, for a reader that cannot call its
+/// declaration.
+///
+/// ★★★★★ R2174 — its own function rather than an arm inside `query`, for the
+/// reason the sibling screens have one: `spec` is a SURFACE that grows, and
+/// inlining it puts a growing thing inside a function already at its line
+/// budget. The addresses themselves live in [`address::declared`], which is
+/// where they are declared; this names the surface they are published on.
+fn spec_json() -> serde_json::Value {
+    serde_json::json!({ "declared_addresses": crate::address::declared() })
+}
+
 impl ExternalIntrospect for GroupsOracle {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(
@@ -1634,6 +1646,15 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::new("clipboard_bytes", "int"),
                     SchemaField::new("last_insert", "string"),
                     SchemaField::new("last_move", "string"),
+                    // ★★★★★ R2174 — what this screen says about ITSELF, and the
+                    // only row it has needed so far: the addresses it declares.
+                    // A walk is Python and cannot call `address.rs`, so before
+                    // this it typed `nodegroups.node.…` out — ten sites across
+                    // three walks. Published under `spec` because that is where
+                    // the node lab (R2128) and the shell (R2171) publish theirs,
+                    // and a third place for one fact is the split this tree
+                    // keeps paying for.
+                    SchemaField::new("spec", "json"),
                     // R1586 — how each node and wire takes part.
                     SchemaField::new("bypassed", "string"),
                     SchemaField::new("muted_links", "string"),
@@ -1817,6 +1838,7 @@ impl ExternalIntrospect for GroupsOracle {
                 .map_or(0, |json| json.len())),
             "last_insert" => Ok(IntrospectValue::Text(state.last_insert.get())),
             "last_move" => Ok(IntrospectValue::Text(state.last_move.get())),
+            "spec" => Ok(IntrospectValue::Json(spec_json())),
             "last_rewire" => Ok(IntrospectValue::Text(state.last_rewire.get())),
             "bypassed" => Ok(IntrospectValue::Text(join_ids(
                 document
@@ -3268,5 +3290,11 @@ fn main() {
     pinion_shell::run::<NodeGroupsView>();
 }
 
+// ★★★★★ R2174 — the screen's own address declaration. Its header lives inside
+// the module for the reason recorded there.
+pub mod address;
+
+#[cfg(test)]
+mod painted;
 #[cfg(test)]
 mod tests;

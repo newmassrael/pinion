@@ -108,9 +108,9 @@ match.spark	0	2
 modified.elem	0	5
 name.elem	0	1
 no.such	0	0
-nodegroups.frame	3	0
-nodegroups.node	6	0
-nodegroups.wire	1	0
+nodegroups.frame	0	0
+nodegroups.node	0	0
+nodegroups.wire	0	0
 origin.l3	0	0
 palette.role	0	1
 palette.swatch	0	1
