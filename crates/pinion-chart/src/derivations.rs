@@ -1034,6 +1034,79 @@ mod chart_tests {
         );
     }
 
+    /// ★★★★★ R2170 — **every default prefix this crate declares is one a chart
+    /// will REPORT**, so a Rust reader never has to know which kind is special.
+    ///
+    /// R2153 put the prefix on the frame for a walk; `tag_prefix()` is the same
+    /// answer for a Rust caller. The risk it carries is a kind that invents a
+    /// new default and tells nobody, so BOTH sides are derived: the defaults
+    /// are scanned out of this crate's own sources, and the accessors are asked
+    /// by constructing every kind. A new default value that no accessor reports
+    /// fails here rather than surfacing as an address nothing paints.
+    #[test]
+    fn r2170_every_declared_default_prefix_is_one_a_chart_reports() {
+        use std::collections::BTreeSet;
+
+        // Scanned, not listed: each kind's `Default` sets `tag_prefix` to a
+        // literal, and this reads them back out of the sources themselves.
+        let sources: &[&str] = &[
+            include_str!("bar.rs"),
+            include_str!("boxplot.rs"),
+            include_str!("candlestick.rs"),
+            include_str!("donut.rs"),
+            include_str!("line.rs"),
+            include_str!("polar_chart.rs"),
+            include_str!("scatter.rs"),
+            include_str!("sparkline.rs"),
+            include_str!("timeline.rs"),
+            include_str!("treemap.rs"),
+        ];
+        let mut declared: BTreeSet<String> = BTreeSet::new();
+        for source in sources {
+            for (offset, _) in source.match_indices("tag_prefix: \"") {
+                let rest = &source[offset + "tag_prefix: \"".len()..];
+                let end = rest.find('"').expect("a literal closes");
+                declared.insert(rest[..end].to_owned());
+            }
+        }
+        // ⚠ Eight of the ten do not spell theirs at all — they name the
+        // crate-wide constant, which is the arrangement this campaign asks for
+        // and is therefore invisible to a scan for literals. It is added by
+        // NAME rather than by its value, so the two cannot drift.
+        declared.insert(crate::address::DEFAULT_PREFIX.to_owned());
+        assert!(
+            declared.len() >= 3,
+            "only {declared:?} declared — this scan is not reading the sources, \
+             and every comparison below would be vacuous"
+        );
+
+        // Every kind, built empty: what is asked here is the DEFAULT prefix, so
+        // the data does not matter and an empty chart is the cheapest witness.
+        let reported: BTreeSet<String> = [
+            crate::BarChart::new(vec![]).tag_prefix().to_owned(),
+            crate::BoxPlotChart::new(vec![]).tag_prefix().to_owned(),
+            crate::CandlestickChart::new(vec![]).tag_prefix().to_owned(),
+            crate::DonutChart::new(vec![]).tag_prefix().to_owned(),
+            crate::LineChart::new(vec![]).tag_prefix().to_owned(),
+            crate::PolarChart::new(vec![], crate::AngularScale::new((0.0, 360.0)))
+                .tag_prefix()
+                .to_owned(),
+            crate::ScatterChart::new(vec![]).tag_prefix().to_owned(),
+            crate::Sparkline::new(vec![]).tag_prefix().to_owned(),
+            crate::Timeline::new(vec![]).tag_prefix().to_owned(),
+            crate::Treemap::new(vec![]).tag_prefix().to_owned(),
+        ]
+        .into_iter()
+        .collect();
+
+        assert_eq!(
+            declared, reported,
+            "★ a default prefix this crate sets and no chart reports is one \
+             every Rust reader has to spell — which is the debt this accessor \
+             exists to remove"
+        );
+    }
+
     /// ★★★★★ R2153 — **and end to end: a chart given a prefix is discoverable
     /// from the frame by a reader holding no prefix at all.**
     ///

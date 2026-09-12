@@ -331,6 +331,13 @@ impl Treemap {
         self
     }
 
+    /// R2170 — the prefix every address under this chart is composed with; see
+    /// [`ScatterChart::tag_prefix`](crate::ScatterChart::tag_prefix).
+    #[must_use]
+    pub fn tag_prefix(&self) -> &str {
+        &self.tag_prefix
+    }
+
     /// The tiles this treemap was built with.
     #[must_use]
     pub fn tiles(&self) -> &[Tile] {

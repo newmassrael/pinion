@@ -12,4 +12,5 @@
 # `python3 tools/painted_addresses.py --write-budget`.
 #
 # Rewritten by that command; do not hand-edit.
+echo.demo
 no.such

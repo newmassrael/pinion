@@ -345,12 +345,26 @@ def rust_sites_in(text: str) -> list[tuple[int, str]]:
     can over-count and cannot under-count. Against a ratchet an over-count is a
     stable offset rather than a hole: it makes the pinned number larger than the
     truth, and a family whose real count RISES still rises here.
+
+    ★★★★★ R2170 — **a COMMENT line is not a site, and that rule lives here
+    now.** It was written in [`rust_site_roles`] and not in this needle, so the
+    two populations disagreed: measured, the census counted 378 Rust sites
+    while only 372 of them could be given a role, the other six being prose —
+    four doc comments naming `echo.demo.echo`, one naming `modified.elem.2`,
+    and one a comment R2170 itself wrote while converting a site. A rule that
+    holds for one caller and not the needle is this session's recurring defect;
+    the needle owns it, and the arithmetic is gated in [`selftest`].
     """
+    lines = text.splitlines()
     found: list[tuple[int, str]] = []
     for match in RUST_LITERAL.finditer(text):
         hit = ADDRESS.match(match.group(0)[1:])
-        if hit:
-            found.append((text.count("\n", 0, match.start()) + 1, hit.group(1)))
+        if not hit:
+            continue
+        line = text.count("\n", 0, match.start()) + 1
+        if lines[line - 1].lstrip().startswith("//"):
+            continue
+        found.append((line, hit.group(1)))
     return sorted(found)
 
 
@@ -486,6 +500,60 @@ def const_items(text: str) -> dict[str, set[int]]:
     return found
 
 
+#: A function header, and the return type that makes it an address COMPOSER.
+#:
+#: ★★★★★ R2170 — R2169 recognised a `const` binding and stopped there, and a
+#: composer FUNCTION is the same declaration in another syntactic form:
+#: `fn cell_tag(r, c) -> String { format!("dev.cell.{r}.{c}") }` has three
+#: consumers and a test pinning its value, and its one `format!` was still
+#: billed as a reader owing conversion.
+#:
+#: ⚠ The RETURN TYPE is the discriminator, and it was chosen over a size limit
+#: because a size limit is a magic number. `card_scene(...) -> Scene` happens to
+#: tag a node and is an ordinary reader; `block_tag(i) -> &'static str` exists
+#: to make the address. What a function RETURNS says which it is.
+FN_HEADER = re.compile(
+    r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?(?:async\s+)?fn\s+([a-z_][A-Za-z0-9_]*)\s*[(<]"
+)
+FN_RETURNS_STRING = re.compile(r"->\s*(?:&(?:'[A-Za-z_]+\s+)?str|String)\s*\{")
+
+
+def composer_items(text: str) -> dict[str, set[int]]:
+    """`fn` name -> the lines of every function that RETURNS a string.
+
+    PURE, like [`const_items`], and closed by brace depth. A function whose
+    return type is not a string is not a composer however many addresses it
+    mentions — see [`FN_HEADER`] for why the type rather than the size.
+    """
+    found: dict[str, set[int]] = {}
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        match = FN_HEADER.match(lines[index])
+        if not match:
+            index += 1
+            continue
+        opening = index
+        while opening < len(lines) and "{" not in lines[opening]:
+            opening += 1
+        if opening >= len(lines):
+            break
+        signature = " ".join(line.strip() for line in lines[index : opening + 1])
+        depth = 0
+        cursor = opening
+        span: set[int] = set()
+        while cursor < len(lines):
+            depth += lines[cursor].count("{") - lines[cursor].count("}")
+            span.add(cursor + 1)
+            if depth <= 0:
+                break
+            cursor += 1
+        if FN_RETURNS_STRING.search(signature):
+            found.setdefault(match.group(1), set()).update(span)
+        index = cursor + 1
+    return found
+
+
 def declaring_lines(text: str, is_used: Callable[[str], bool]) -> set[int]:
     """The lines of `text` that BIND an address to a name other code calls.
 
@@ -512,9 +580,10 @@ def declaring_lines(text: str, is_used: Callable[[str], bool]) -> set[int]:
     in the queue — which is the whole point of charging the right column.
     """
     lines: set[int] = set()
-    for name, span in const_items(text).items():
-        if is_used(name):
-            lines |= span
+    for items in (const_items(text), composer_items(text)):
+        for name, span in items.items():
+            if is_used(name):
+                lines |= span
     return lines
 
 
@@ -2036,7 +2105,7 @@ def selftest() -> int:
     # and a literal used inline. Tested on [`declaring_lines`] rather than
     # through `rust_roles`, because the "is it used" half needs a package and
     # the rule must be checkable without one.
-    used = {"HOVER_KEYS", "CARD_TAG", "SPAN"}
+    used = {"HOVER_KEYS", "CARD_TAG", "SPAN", "cell_tag", "card_scene"}
     declaring_cases: list[tuple[str, str, set[int]]] = [
         (
             "a const bound to one address is a declaration",
@@ -2065,6 +2134,24 @@ def selftest() -> int:
             "★ a let binding is not one either — it is not a NAME other code "
             "can call, only a local",
             'fn view() { let t = "lab.node.T-01"; use_it(t); }\n',
+            set(),
+        ),
+        # ★★★★★ R2170 — the other syntactic form of the same declaration.
+        (
+            "★★ a fn that RETURNS a string is a composer, and its body is the "
+            "declaration — the form R2169's const rule stopped short of",
+            'fn cell_tag(r: usize) -> String {\n    format!("dev.cell.{r}")\n}\n',
+            {1, 2, 3},
+        ),
+        (
+            "★★ and the RETURN TYPE is what says so: a fn that returns a Scene "
+            "and happens to tag a node is an ordinary reader, however short",
+            'fn card_scene(n: &str) -> Scene {\n    boxed().with_tag("a.node.x")\n}\n',
+            set(),
+        ),
+        (
+            "★ a composer nothing else calls is dead code here too",
+            'fn unused_tag() -> String {\n    format!("dev.cell.0")\n}\n',
             set(),
         ),
     ]
@@ -2241,8 +2328,23 @@ def selftest() -> int:
     # Derived, so it cannot drift from the reader total the queue is built on:
     # a bug that lost or invented sites would show up as arithmetic rather than
     # as a number nobody re-derives.
+    # ★★★★★ R2170 — the census's Rust TOTAL and the role tally are one
+    # population, so they must add up. They did not: the comment rule lived in
+    # `rust_site_roles` and not in the needle, and six prose lines were counted
+    # as sites with no role. Stated as arithmetic so a third population cannot
+    # appear quietly.
+    reader_total, assert_total, decl_total = rust_role_totals()
+    if sum(rust_census().values()) != reader_total + assert_total + decl_total:
+        failed += 1
+        print(
+            f"FAIL: the Rust census counts {sum(rust_census().values())} site(s) "
+            f"and the role tally accounts for "
+            f"{reader_total + assert_total + decl_total} — one population, two "
+            "answers",
+            file=sys.stderr,
+        )
+
     retyped_n, single_n = rust_reader_duplication()
-    reader_total, _assert_total, _decl_total = rust_role_totals()
     if retyped_n + single_n != reader_total:
         failed += 1
         print(
@@ -2854,6 +2956,7 @@ def selftest() -> int:
         5  # R2147/R2166: four classifier words and the artifact corpus floor
         + 1  # R2166: the parametric-declaration corpus floor
         + 1  # R2167: no family is claimed by BOTH vocabularies
+        + 1  # R2170: the census total and the role tally are one population
         + 3  # R2168: the retyped/single split's three derived checks
         + 4  # R2164: the role rule's four derived cross-checks
         + 10  # the ad-hoc assertions above, pre-existing and left alone

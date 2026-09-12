@@ -283,6 +283,13 @@ impl PolarChart {
         self
     }
 
+    /// R2170 — the prefix every address under this chart is composed with; see
+    /// [`ScatterChart::tag_prefix`](crate::ScatterChart::tag_prefix).
+    #[must_use]
+    pub fn tag_prefix(&self) -> &str {
+        &self.tag_prefix
+    }
+
     /// Every sample this chart's axes cannot place, in series order then
     /// point order.
     ///

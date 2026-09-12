@@ -152,6 +152,16 @@ impl Sparkline {
         self
     }
 
+    /// R2170 — the prefix every address under this chart is composed with; see
+    /// [`ScatterChart::tag_prefix`](crate::ScatterChart::tag_prefix).
+    ///
+    /// ⚠ This kind's default is `"spark"`, the second of the two that are not
+    /// the crate-wide `chart`.
+    #[must_use]
+    pub fn tag_prefix(&self) -> &str {
+        &self.tag_prefix
+    }
+
     /// The values this sparkline was built with.
     #[must_use]
     pub fn values(&self) -> &[f64] {

@@ -314,8 +314,13 @@ impl WidgetA11y for TimelineView {
             ..AccessState::from_interaction(interaction, None)
         };
         let timings = use_frame_timings();
-        let readout =
-            timeline(&timings, scrub).playhead_readout(CHART_RECT, &ChartStyle::default());
+        let track = timeline(&timings, scrub);
+        // ★★★★★ R2170 — composed from the chart that paints it. This kind's
+        // prefix is `timeline` rather than the crate-wide `chart`, so a reader
+        // that assumed the default would have been wrong here — which is why
+        // the chart is asked rather than the address written out.
+        let tooltip_tag = pinion_chart::address::playhead(track.tag_prefix()).tooltip();
+        let readout = track.playhead_readout(CHART_RECT, &ChartStyle::default());
         let has_readout = readout.is_some();
         // R1692 — a transparent capture surface has no contents to be named
         // from, so an unauthored name reaches a reader as "slider" and nothing.
@@ -329,7 +334,7 @@ impl WidgetA11y for TimelineView {
             .with_state(access_state);
         describedby_region(
             control,
-            "timeline.playhead.tooltip",
+            &tooltip_tag,
             AriaRole::Tooltip,
             readout,
             has_readout,

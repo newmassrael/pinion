@@ -238,6 +238,17 @@ impl Timeline {
         self
     }
 
+    /// R2170 — the prefix every address under this chart is composed with; see
+    /// [`ScatterChart::tag_prefix`](crate::ScatterChart::tag_prefix).
+    ///
+    /// ⚠ This kind's default is `"timeline"` rather than the crate-wide
+    /// `chart`, so a reader that assumed the default would be wrong here —
+    /// which is why asking is not a convenience.
+    #[must_use]
+    pub fn tag_prefix(&self) -> &str {
+        &self.tag_prefix
+    }
+
     /// Show the playhead overlay (a vertical line across every lane at the
     /// scrubbed time, plus a readout of the span under it per lane) at
     /// `fraction` — the cursor's position as a fraction `0.0..=1.0` across the

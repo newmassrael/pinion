@@ -413,6 +413,13 @@ impl BoxPlotChart {
         self
     }
 
+    /// R2170 — the prefix every address under this chart is composed with; see
+    /// [`ScatterChart::tag_prefix`](crate::ScatterChart::tag_prefix).
+    #[must_use]
+    pub fn tag_prefix(&self) -> &str {
+        &self.tag_prefix
+    }
+
     /// Every landmark this chart's value axis cannot place, in distribution
     /// order then landmark order (R1553).
     ///

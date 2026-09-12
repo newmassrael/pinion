@@ -340,6 +340,13 @@ impl BarChart {
         self
     }
 
+    /// R2170 — the prefix every address under this chart is composed with; see
+    /// [`ScatterChart::tag_prefix`](crate::ScatterChart::tag_prefix).
+    #[must_use]
+    pub fn tag_prefix(&self) -> &str {
+        &self.tag_prefix
+    }
+
     /// Show the inspect overlay (a highlight ring around the focused bar and a
     /// value tooltip) at `fraction` — the cursor's position as a fraction
     /// `0.0..=1.0` across the chart `rect` width. `None` (the default) draws no

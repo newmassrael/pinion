@@ -343,11 +343,17 @@ impl WidgetA11y for HistogramBrushView {
         // focus depends on the plot geometry (rect + margins + ticks + data +
         // domain), NOT the colours, so this default-style call over the pinned
         // `SCATTER_RECT` resolves the identical point the themed overlay rings.
-        let readout = ScatterChart::new(samples())
+        let scatter = ScatterChart::new(samples())
             .with_tag_prefix("scatter")
             .with_x_domain(X_DOMAIN.0, X_DOMAIN.1)
-            .inspect(Some(scrub))
-            .inspect_readout(SCATTER_RECT, &ChartStyle::default());
+            .inspect(Some(scrub));
+        // ★★★★★ R2170 — the tooltip's address is COMPOSED from the chart that
+        // paints it. It used to be spelled `"scatter.inspect.tooltip"` a few
+        // lines below the builder whose prefix it means, so a rename in the
+        // crate or here left the accessibility region pointing at nothing and
+        // nothing said so.
+        let tooltip_tag = pinion_chart::address::inspect(scatter.tag_prefix()).tooltip();
+        let readout = scatter.inspect_readout(SCATTER_RECT, &ChartStyle::default());
         // R1692 — a transparent capture surface has no contents to be named
         // from, so an unauthored name reaches a reader as "slider" and nothing.
         let control = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
@@ -358,13 +364,7 @@ impl WidgetA11y for HistogramBrushView {
                 max: 1.0,
             })
             .with_state(access_state);
-        let mut nodes = describedby_region(
-            control,
-            "scatter.inspect.tooltip",
-            AriaRole::Tooltip,
-            readout,
-            true,
-        );
+        let mut nodes = describedby_region(control, &tooltip_tag, AriaRole::Tooltip, readout, true);
         let (x_lo, x_hi) = brush_domain(low, high);
         nodes.push(
             AccessNode::new(BRUSH_TAG, AriaRole::Slider)

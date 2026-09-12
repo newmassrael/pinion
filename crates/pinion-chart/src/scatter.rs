@@ -301,6 +301,20 @@ impl ScatterChart {
         self
     }
 
+    /// ★★★★★ R2170 — **the prefix every address under this chart is composed
+    /// with**, said by the chart itself.
+    ///
+    /// R2153 put this on the FRAME so a walk could ask; a Rust reader had no
+    /// such answer and spelled it. Measured at R2170: three accessibility
+    /// regions across three examples name a chart's tooltip by writing the
+    /// whole address out — `"scatter.inspect.tooltip"` — beside the very
+    /// builder whose prefix they mean. With this they compose it from the
+    /// chart they built, so the two move together.
+    #[must_use]
+    pub fn tag_prefix(&self) -> &str {
+        &self.tag_prefix
+    }
+
     /// The series this chart was built with.
     #[must_use]
     pub fn series(&self) -> &[Series] {
