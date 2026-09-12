@@ -1318,7 +1318,7 @@ fn r2156_a_published_row_role_names_a_real_row() {
     keys.sort_unstable();
     let before = keys.len();
     keys.dedup();
-    assert_eq!(before, keys.len(), "two role(s) name one row: {:?}", roster,);
+    assert_eq!(before, keys.len(), "two role(s) name one row: {roster:?}");
 }
 
 /// ★★★★★ R2155 — **every configuration key this screen names is one the
