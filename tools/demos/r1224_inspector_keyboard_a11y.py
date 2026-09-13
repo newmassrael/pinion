@@ -40,6 +40,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -57,6 +58,7 @@ def wait_q(tf: RpcSubprocess, key: str, expected: Any, desc: str) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-inspector", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot: the Objects pane owns the keyboard ─────────────
         wait_until(lambda: True if q(tf, "object_count") == 3 else None,
                    desc="inspector ready")
@@ -84,33 +86,33 @@ def body() -> None:
         assert_eq(q(tf, "prop_cursor"), 0, "the cursor persists across the region cycle")
 
         # Row 0 is Visible (Bool true). Space toggles it (the switch-activate key).
-        assert_eq(q(tf, "value.0"), True, "Visible starts On")
+        assert_eq(q(tf, gp.at("value", i=0)), True, "Visible starts On")
         tf.key(path=INSPECTOR, name=" ")
-        wait_q(tf, "value.0", False, desc="Space toggles the Bool cell at the cursor")
+        wait_q(tf, gp.at("value", i=0), False, desc="Space toggles the Bool cell at the cursor")
         tf.key(path=INSPECTOR, name="Enter")
-        wait_q(tf, "value.0", True, desc="Enter also toggles the Bool cell")
+        wait_q(tf, gp.at("value", i=0), True, desc="Enter also toggles the Bool cell")
 
         # ArrowDown moves the cursor to row 1 (Layer, an Int) — the spinbutton.
         tf.key(path=INSPECTOR, name="ArrowDown")
         wait_q(tf, "prop_cursor", 1, desc="ArrowDown -> property cursor 1 (Layer)")
-        assert_eq(q(tf, "value.1"), 1, "Layer starts at 1")
+        assert_eq(q(tf, gp.at("value", i=1)), 1, "Layer starts at 1")
         # ArrowRight / '+' step up, ArrowLeft / '-' step down (relative).
         tf.key(path=INSPECTOR, name="ArrowRight")
-        wait_q(tf, "value.1", 2, desc="ArrowRight steps the numeric +1")
+        wait_q(tf, gp.at("value", i=1), 2, desc="ArrowRight steps the numeric +1")
         tf.key(path=INSPECTOR, name="+")
-        wait_q(tf, "value.1", 3, desc="'+' steps the numeric +1")
+        wait_q(tf, gp.at("value", i=1), 3, desc="'+' steps the numeric +1")
         tf.key(path=INSPECTOR, name="-")
-        wait_q(tf, "value.1", 2, desc="'-' steps the numeric -1")
+        wait_q(tf, gp.at("value", i=1), 2, desc="'-' steps the numeric -1")
         tf.key(path=INSPECTOR, name="ArrowLeft")
-        wait_q(tf, "value.1", 1, desc="ArrowLeft steps the numeric -1")
+        wait_q(tf, gp.at("value", i=1), 1, desc="ArrowLeft steps the numeric -1")
 
         # Modify Layer, then Delete resets the modified row to its default.
         tf.key(path=INSPECTOR, name="ArrowRight")
-        wait_q(tf, "value.1", 2, desc="Layer stepped to 2")
-        assert_eq(q(tf, "modified.1"), True, "Layer now diverges from its default")
+        wait_q(tf, gp.at("value", i=1), 2, desc="Layer stepped to 2")
+        assert_eq(q(tf, gp.at("modified", i=1)), True, "Layer now diverges from its default")
         tf.key(path=INSPECTOR, name="Delete")
-        wait_q(tf, "value.1", 1, desc="Delete resets the modified row to default")
-        assert_eq(q(tf, "modified.1"), False, "Layer is back at its default")
+        wait_q(tf, gp.at("value", i=1), 1, desc="Delete resets the modified row to default")
+        assert_eq(q(tf, gp.at("modified", i=1)), False, "Layer is back at its default")
 
         # Home / End jump the property cursor to the first / last row.
         tf.key(path=INSPECTOR, name="End")

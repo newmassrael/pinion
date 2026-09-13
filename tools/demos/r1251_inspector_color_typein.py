@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -53,9 +54,9 @@ def q(tf: RpcSubprocess, key: str) -> Any:
     return tf.query(f"/external/{key}")
 
 
-def hex_of(tf: RpcSubprocess) -> str:
-    """Tint's current hex off the `value.6` Colour JSON."""
-    return q(tf, f"value.{TINT}")["hex"]
+def hex_of(tf: RpcSubprocess, gp) -> str:
+    """Tint's current hex off the Tint row's Colour JSON."""
+    return q(tf, gp.at("value", i=TINT))["hex"]
 
 
 def wait_editing(tf: RpcSubprocess, expected: Any, desc: str) -> None:
@@ -64,16 +65,17 @@ def wait_editing(tf: RpcSubprocess, expected: Any, desc: str) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-inspector", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot: Tint is a common Colour row, editor closed ─────
         wait_until(lambda: True if q(tf, "object_count") == 3 else None,
                    desc="inspector ready")
         assert_eq(q(tf, "selected"), 0, "Player is the boot selection")
         assert_eq(q(tf, "selection_count"), 1, "one object selected")
         assert_eq(q(tf, "row_count"), 7, "Player exposes 7 properties")
-        assert_eq(q(tf, f"kind.{TINT}"), "color", "row 6 (Tint) is a Colour")
-        assert_eq(q(tf, f"name.{TINT}"), "Tint", "row 6 is named Tint")
+        assert_eq(q(tf, gp.at("kind", i=TINT)), "color", "row 6 (Tint) is a Colour")
+        assert_eq(q(tf, gp.at("name", i=TINT)), "Tint", "row 6 is named Tint")
         assert_eq(q(tf, "editing"), None, "the editor is closed at boot")
-        boot_hex = hex_of(tf)
+        boot_hex = hex_of(tf, gp)
         assert boot_hex.startswith("#"), f"Tint reads a hex, got {boot_hex!r}"
 
         # ── (B) begin_edit opens + seeds with the hex ────────────────
@@ -83,7 +85,7 @@ def body() -> None:
         assert_eq(q(tf, "edit_text"), boot_hex, "seeded with the current hex")
         tf.invoke("/external/cancel_edit", None)
         wait_editing(tf, None, desc="cancel closes the editor")
-        assert_eq(hex_of(tf), boot_hex, "cancel left the colour untouched")
+        assert_eq(hex_of(tf, gp), boot_hex, "cancel left the colour untouched")
 
         # ── (C) commit a new hex writes the colour ───────────────────
         for new_hex in ("#ff0000", "#123456", "#00ff88"):
@@ -91,14 +93,14 @@ def body() -> None:
             assert_eq(tf.invoke("/external/commit_edit", new_hex), True,
                       f"commit {new_hex} returns true")
             wait_editing(tf, None, desc=f"commit {new_hex} closes the editor")
-            assert_eq(hex_of(tf), new_hex, f"Tint is now {new_hex}")
+            assert_eq(hex_of(tf, gp), new_hex, f"Tint is now {new_hex}")
 
         # ── (D) a malformed hex keeps the prior colour ───────────────
-        kept = hex_of(tf)  # #00ff88 from (C)
+        kept = hex_of(tf, gp)  # #00ff88 from (C)
         assert_eq(tf.invoke("/external/begin_edit", TINT), True, "re-open")
         assert_eq(tf.invoke("/external/commit_edit", "not-a-hex"), False,
                   "a malformed hex commit returns false")
-        assert_eq(hex_of(tf), kept, "the prior colour is kept (no data loss)")
+        assert_eq(hex_of(tf, gp), kept, "the prior colour is kept (no data loss)")
         wait_editing(tf, None, desc="editor closed after a failed commit")
 
         # ── (E) a double-click opens the editor ──────────────────────
@@ -119,7 +121,7 @@ def body() -> None:
                    desc="a hex digit 'a' lands in the field")
         tf.key(path=INSPECTOR, name="Escape")
         wait_editing(tf, None, desc="Escape discards the keyboard edit")
-        assert_eq(hex_of(tf), kept, "Escape left the colour unchanged")
+        assert_eq(hex_of(tf, gp), kept, "Escape left the colour unchanged")
 
         # A full keyboard commit: open, clear, type a hex, Enter.
         assert_eq(tf.invoke("/external/begin_edit", TINT), True, "open for keyboard")
@@ -133,7 +135,7 @@ def body() -> None:
                    desc="typed hex lands in the buffer")
         tf.key(path=INSPECTOR, name="Enter")
         wait_editing(tf, None, desc="Enter commits + closes the editor")
-        assert_eq(hex_of(tf), "#ffffff", "Enter committed the typed hex")
+        assert_eq(hex_of(tf, gp), "#ffffff", "Enter committed the typed hex")
 
         # ── (G) rejects: begin_edit on a Bool is a benign no-op ──────
         assert_eq(tf.invoke("/external/begin_edit", 0), False,
@@ -146,14 +148,14 @@ def body() -> None:
         # (with_intervene only took a bare hex Text) — the §2#2 primary AI path
         # could not round-trip a read value. R1253 makes with_intervene accept the
         # JSON shape to_introspect emits.
-        original = q(tf, f"value.{TINT}")            # the full {hex,r,g,b,a} object
+        original = q(tf, gp.at("value", i=TINT))     # the full {hex,r,g,b,a} object
         assert isinstance(original, dict) and "hex" in original, "Colour reads as JSON"
         tf.invoke("/external/begin_edit", TINT)
         tf.invoke("/external/commit_edit", "#111111")
-        assert_eq(hex_of(tf), "#111111", "changed the colour away from the read value")
+        assert_eq(hex_of(tf, gp), "#111111", "changed the colour away from the read value")
         # Write the originally-READ JSON object straight back — no re-wrapping.
-        tf.intervene(f"/external/value.{TINT}", original)
-        assert_eq(hex_of(tf), original["hex"],
+        tf.intervene(f"/external/{gp.at('value', i=TINT)}", original)
+        assert_eq(hex_of(tf, gp), original["hex"],
                   "query -> intervene round-trips the read JSON object (R1253 fix)")
 
 

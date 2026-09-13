@@ -1515,6 +1515,54 @@ fn no_such_property(i: usize, len: usize) -> ReadRefusal {
     ReadRefusal::no_such_member(format!("property {i} is outside 0..{len}"))
 }
 
+/// ★★★★★ R2201 — the display name of object `j`, declared ONCE: the
+/// inspector's schema lists this field, and a reader composes from it
+/// ([`SchemaField::at`]) instead of spelling `object_name.<j>` again.
+const OBJECT_NAME: SchemaField = SchemaField::parametric(
+    "object_name.<j>",
+    "string",
+    const { &[SchemaArg::index("j", "object_count")] },
+);
+
+/// ★★★★★ R2201 — the name of common property `i`, declared once. This and
+/// the four families below are each an index into `row_count`.
+const NAME: SchemaField = SchemaField::parametric(
+    "name.<i>",
+    "string",
+    const { &[SchemaArg::index("i", "row_count")] },
+);
+
+/// ★★★★★ R2201 — the kind token of common property `i`; see [`NAME`].
+const KIND: SchemaField = SchemaField::parametric(
+    "kind.<i>",
+    "string",
+    const { &[SchemaArg::index("i", "row_count")] },
+);
+
+/// ★★★★★ R2201 — the representative value of common property `i`; see
+/// [`NAME`].
+const VALUE: SchemaField = SchemaField::parametric(
+    "value.<i>",
+    "json",
+    const { &[SchemaArg::index("i", "row_count")] },
+);
+
+/// ★★★★★ R2201 — whether common property `i` disagrees across the selection;
+/// see [`NAME`].
+const MIXED: SchemaField = SchemaField::parametric(
+    "mixed.<i>",
+    "bool",
+    const { &[SchemaArg::index("i", "row_count")] },
+);
+
+/// ★★★★★ R2201 — whether common property `i` diverges from its default; see
+/// [`NAME`].
+const MODIFIED: SchemaField = SchemaField::parametric(
+    "modified.<i>",
+    "bool",
+    const { &[SchemaArg::index("i", "row_count")] },
+);
+
 impl ExternalIntrospect for InspectorExternal {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(
@@ -1527,36 +1575,12 @@ impl ExternalIntrospect for InspectorExternal {
                     SchemaField::new("selection_summary", "string"),
                     SchemaField::new("mode", "string"),
                     SchemaField::new("row_count", "int"),
-                    SchemaField::parametric(
-                        "object_name.<j>",
-                        "string",
-                        const { &[SchemaArg::index("j", "object_count")] },
-                    ),
-                    SchemaField::parametric(
-                        "name.<i>",
-                        "string",
-                        const { &[SchemaArg::index("i", "row_count")] },
-                    ),
-                    SchemaField::parametric(
-                        "kind.<i>",
-                        "string",
-                        const { &[SchemaArg::index("i", "row_count")] },
-                    ),
-                    SchemaField::parametric(
-                        "value.<i>",
-                        "json",
-                        const { &[SchemaArg::index("i", "row_count")] },
-                    ),
-                    SchemaField::parametric(
-                        "mixed.<i>",
-                        "bool",
-                        const { &[SchemaArg::index("i", "row_count")] },
-                    ),
-                    SchemaField::parametric(
-                        "modified.<i>",
-                        "bool",
-                        const { &[SchemaArg::index("i", "row_count")] },
-                    ),
+                    OBJECT_NAME,
+                    NAME,
+                    KIND,
+                    VALUE,
+                    MIXED,
+                    MODIFIED,
                     SchemaField::new("any_modified", "bool"),
                     SchemaField::action("select", "int"),
                     SchemaField::action("toggle", "int"),
@@ -2831,7 +2855,7 @@ fn read_prop_cursor(intro: &dyn ExternalIntrospect) -> Option<usize> {
 /// (`"int"` / `"float"` / `"choice"` / …), so the keyboard routes ArrowLeft/Right
 /// to the kind-appropriate edit; `None` when the row is absent.
 fn read_kind_at(intro: &dyn ExternalIntrospect, i: usize) -> Option<String> {
-    match intro.query(&format!("kind.{i}")) {
+    match intro.query(&KIND.at(&[&i])) {
         Ok(IntrospectValue::Text(k)) => Some(k),
         _ => None,
     }

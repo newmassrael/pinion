@@ -41,6 +41,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -59,6 +60,7 @@ def wait_editing(tf: RpcSubprocess, expected: Any, desc: str) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-inspector", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot: Layer is a common Int, editor closed ───────────
         wait_until(lambda: True if q(tf, "object_count") == 3 else None,
                    desc="inspector ready")
@@ -67,10 +69,10 @@ def body() -> None:
         wait_until(lambda: True if q(tf, "selection_count") == 3 else None,
                    desc="all three objects selected")
         assert_eq(q(tf, "row_count"), 3, "three common rows across the selection")
-        assert_eq(q(tf, "kind.0"), "bool", "row 0 (Visible) is a Bool")
-        assert_eq(q(tf, f"kind.{LAYER}"), "int", "row 1 (Layer) is an Int")
-        assert_eq(q(tf, f"name.{LAYER}"), "Layer", "row 1 is named Layer")
-        assert_eq(q(tf, f"mixed.{LAYER}"), True, "Layer is 1,1,2 -> Multiple Values")
+        assert_eq(q(tf, gp.at("kind", i=0)), "bool", "row 0 (Visible) is a Bool")
+        assert_eq(q(tf, gp.at("kind", i=LAYER)), "int", "row 1 (Layer) is an Int")
+        assert_eq(q(tf, gp.at("name", i=LAYER)), "Layer", "row 1 is named Layer")
+        assert_eq(q(tf, gp.at("mixed", i=LAYER)), True, "Layer is 1,1,2 -> Multiple Values")
         assert_eq(q(tf, "editing"), None, "the editor is closed at boot")
 
         # ── (B) begin_edit opens + seeds; introspect reads it ────────
@@ -84,9 +86,9 @@ def body() -> None:
         assert_eq(tf.invoke("/external/cancel_edit", None), None,
                   "cancel_edit returns null")
         wait_editing(tf, None, desc="cancel closes the editor")
-        assert_eq(q(tf, f"value.{LAYER}"), 1,
+        assert_eq(q(tf, gp.at("value", i=LAYER)), 1,
                   "the representative Layer is untouched (still 1) after a cancel")
-        assert_eq(q(tf, f"mixed.{LAYER}"), True, "Layer still 1,1,2 after cancel")
+        assert_eq(q(tf, gp.at("mixed", i=LAYER)), True, "Layer still 1,1,2 after cancel")
 
         # ── (D) commit writes the ABSOLUTE value across the selection ─
         assert_eq(tf.invoke("/external/begin_edit", LAYER), True, "re-open Layer")
@@ -95,14 +97,14 @@ def body() -> None:
         wait_editing(tf, None, desc="commit closes the editor")
         # Every selected object's Layer is now exactly 7 (absolute, collapsing the
         # prior 1/1/2 divergence) -> the representative is 7 and it is UNIFORM.
-        assert_eq(q(tf, f"value.{LAYER}"), 7, "the representative Layer is 7")
-        assert_eq(q(tf, f"mixed.{LAYER}"), False,
+        assert_eq(q(tf, gp.at("value", i=LAYER)), 7, "the representative Layer is 7")
+        assert_eq(q(tf, gp.at("mixed", i=LAYER)), False,
                   "an absolute write across the selection makes Layer uniform")
         # A malformed numeric keeps the prior value (no data loss).
         assert_eq(tf.invoke("/external/begin_edit", LAYER), True, "re-open")
         assert_eq(tf.invoke("/external/commit_edit", "not-a-number"), False,
                   "a malformed numeric commit returns false")
-        assert_eq(q(tf, f"value.{LAYER}"), 7, "the prior value (7) is kept")
+        assert_eq(q(tf, gp.at("value", i=LAYER)), 7, "the prior value (7) is kept")
         wait_editing(tf, None, desc="the editor still closed after a failed commit")
 
         # ── (E) a double-click on the numeric cell opens the editor ──
@@ -131,7 +133,7 @@ def body() -> None:
                    desc="typed digits land in the field buffer")
         tf.key(path=INSPECTOR, name="Enter")
         wait_editing(tf, None, desc="Enter commits + closes the editor")
-        assert_eq(q(tf, f"value.{LAYER}"), 31, "Enter committed the typed value 31")
+        assert_eq(q(tf, gp.at("value", i=LAYER)), 31, "Enter committed the typed value 31")
         # Escape cancels a keyboard edit without writing. The row now reads 31, so
         # re-opening seeds "31"; typing "9" appends -> "319", then Escape discards.
         tf.invoke("/external/begin_edit", LAYER)
@@ -140,7 +142,7 @@ def body() -> None:
                    desc="typed 9 appends to the seeded 31 (buffer grows)")
         tf.key(path=INSPECTOR, name="Escape")
         wait_editing(tf, None, desc="Escape closes the editor")
-        assert_eq(q(tf, f"value.{LAYER}"), 31, "Escape discarded the edit (still 31)")
+        assert_eq(q(tf, gp.at("value", i=LAYER)), 31, "Escape discarded the edit (still 31)")
 
         # ── (G) rejects: non-numeric + out-of-range are benign ───────
         assert_eq(tf.invoke("/external/begin_edit", 0), False,
@@ -160,21 +162,21 @@ def body() -> None:
         # property (wrong-property write). Now any selection change closes the
         # editor, so the stale index can never commit.
         tf.invoke("/external/select", 1)   # Camera: common idx3 = "Field of View"
-        wait_until(lambda: True if q(tf, "name.3") == "Field of View" else None,
+        wait_until(lambda: True if q(tf, gp.at("name", i=3)) == "Field of View" else None,
                    desc="Camera row 3 is Field of View")
-        fov_before = q(tf, "value.3")
+        fov_before = q(tf, gp.at("value", i=3))
         assert_eq(tf.invoke("/external/begin_edit", 3), True, "open the FoV editor")
         wait_editing(tf, 3, desc="editing -> Field of View")
         tf.invoke("/external/select", 2)   # Sun Light: common idx3 = "Intensity"
         wait_editing(tf, None, desc="the selection change closed the editor")
-        assert_eq(q(tf, "name.3"), "Intensity", "row 3 is now Intensity")
-        intensity_before = q(tf, "value.3")
+        assert_eq(q(tf, gp.at("name", i=3)), "Intensity", "row 3 is now Intensity")
+        intensity_before = q(tf, gp.at("value", i=3))
         assert_eq(tf.invoke("/external/commit_edit", "45"), False,
                   "commit with a closed editor writes nothing")
-        assert_eq(q(tf, "value.3"), intensity_before,
+        assert_eq(q(tf, gp.at("value", i=3)), intensity_before,
                   "Intensity was NOT clobbered by the stale index (R1252 fix)")
         tf.invoke("/external/select", 1)
-        assert_eq(q(tf, "value.3"), fov_before, "Field of View untouched too")
+        assert_eq(q(tf, gp.at("value", i=3)), fov_before, "Field of View untouched too")
 
         # ── (I) R1254: F2 opens the editor from the KEYBOARD (was mouse+RPC) ──
         tf.invoke("/external/select", 0)          # Player

@@ -46,6 +46,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -70,59 +71,60 @@ def rebaseline(tf: RpcSubprocess) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-inspector", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot + select_all: the common base, all mixed ────────
         wait_until(lambda: True if q(tf, "object_count") == 3 else None,
                    desc="inspector ready")
         select_all(tf)
         assert_eq(q(tf, "selection_count"), 3, "all three selected")
         assert_eq(q(tf, "row_count"), 3, "Visible / Layer / Locked are common")
-        assert_eq(q(tf, "name.0"), "Visible", "row 0 is the Bool")
-        assert_eq(q(tf, "name.1"), "Layer", "row 1 is the Int")
-        assert_eq(q(tf, "mixed.0"), True, "Visible is mixed (t, t, f)")
-        assert_eq(q(tf, "mixed.1"), True, "Layer is mixed (1, 1, 2)")
-        assert_eq(q(tf, "value.0"), True, "value.0 = the representative (Player) Visible")
-        assert_eq(q(tf, "value.1"), 1, "value.1 = the representative (Player) Layer")
+        assert_eq(q(tf, gp.at("name", i=0)), "Visible", "row 0 is the Bool")
+        assert_eq(q(tf, gp.at("name", i=1)), "Layer", "row 1 is the Int")
+        assert_eq(q(tf, gp.at("mixed", i=0)), True, "Visible is mixed (t, t, f)")
+        assert_eq(q(tf, gp.at("mixed", i=1)), True, "Layer is mixed (1, 1, 2)")
+        assert_eq(q(tf, gp.at("value", i=0)), True, "row 0 shows the representative (Player) Visible")
+        assert_eq(q(tf, gp.at("value", i=1)), 1, "row 1 shows the representative (Player) Layer")
 
         # ── (B) RPC toggle_property: resolve a mixed Bool to CHECKED ── R1223:
         # a mixed Bool resolves to true (the toolkit/the engine
         # indeterminate-checkbox convention, order-independent), not
         # !first_selected.
         assert_eq(tf.invoke("/external/toggle_property", 0), True, "toggle Visible across all")
-        assert_eq(q(tf, "mixed.0"), False, "the mix is resolved")
-        assert_eq(q(tf, "value.0"), True, "mixed -> checked (all true)")
+        assert_eq(q(tf, gp.at("mixed", i=0)), False, "the mix is resolved")
+        assert_eq(q(tf, gp.at("value", i=0)), True, "mixed -> checked (all true)")
         assert_eq(tf.invoke("/external/toggle_property", 0), True, "toggle again")
-        assert_eq(q(tf, "value.0"), False, "uniform true -> flips to false")
-        assert_eq(q(tf, "mixed.0"), False, "still uniform")
+        assert_eq(q(tf, gp.at("value", i=0)), False, "uniform true -> flips to false")
+        assert_eq(q(tf, gp.at("mixed", i=0)), False, "still uniform")
 
         # ── (C) RPC step_property: relative shift, mix PRESERVED ──────
         rebaseline(tf)
-        assert_eq(q(tf, "mixed.1"), True, "Layer mixed again after rebaseline")
+        assert_eq(q(tf, gp.at("mixed", i=1)), True, "Layer mixed again after rebaseline")
         assert_eq(tf.invoke("/external/step_property", "1,1"), True, "step Layer +1 across all")
-        assert_eq(q(tf, "value.1"), 2, "representative Layer 1 -> 2")
-        assert_eq(q(tf, "mixed.1"), True, "each shifted by 1 -> still mixed (2, 2, 3)")
+        assert_eq(q(tf, gp.at("value", i=1)), 2, "representative Layer 1 -> 2")
+        assert_eq(q(tf, gp.at("mixed", i=1)), True, "each shifted by 1 -> still mixed (2, 2, 3)")
         assert_eq(tf.invoke("/external/step_property", "1,-1"), True, "step -1 back")
-        assert_eq(q(tf, "value.1"), 1, "representative back to 1")
+        assert_eq(q(tf, gp.at("value", i=1)), 1, "representative back to 1")
 
         # ── (D) GUI CLICK the painted cells (paint -> route) ─────────
         rebaseline(tf)
         # Click the Locked(2) Bool value cell: resolves its mix across all.
         tf.click(path=f"{INSPECTOR}#toggle2")
-        wait_until(lambda: True if q(tf, "mixed.2") is False else None,
+        wait_until(lambda: True if q(tf, gp.at("mixed", i=2)) is False else None,
                    desc="clicking the Bool cell toggled Locked across all")
         # Click the Layer(1) +/- steppers: +1, +1, -1 = net +1.
         tf.click(path=f"{INSPECTOR}#inc1")
         tf.click(path=f"{INSPECTOR}#inc1")
         tf.click(path=f"{INSPECTOR}#dec1")
-        wait_until(lambda: True if q(tf, "value.1") == 2 else None,
+        wait_until(lambda: True if q(tf, gp.at("value", i=1)) == 2 else None,
                    desc="stepper clicks netted +1 on the representative Layer")
 
         # ── (E) an AGREEING selection stays uniform after a step ─────
         tf.intervene("/external/selection", [[0, 1]])  # Player + Camera, Layer both 1
-        assert_eq(q(tf, "mixed.1"), False, "agreeing Layer is not mixed")
-        assert_eq(q(tf, "value.1"), 2, "both are 2 (from D's net +1)")
+        assert_eq(q(tf, gp.at("mixed", i=1)), False, "agreeing Layer is not mixed")
+        assert_eq(q(tf, gp.at("value", i=1)), 2, "both are 2 (from D's net +1)")
         assert_eq(tf.invoke("/external/step_property", "1,3"), True, "step +3")
-        assert_eq(q(tf, "value.1"), 5, "both shifted equally 2 -> 5")
-        assert_eq(q(tf, "mixed.1"), False, "still uniform (both moved the same)")
+        assert_eq(q(tf, gp.at("value", i=1)), 5, "both shifted equally 2 -> 5")
+        assert_eq(q(tf, gp.at("mixed", i=1)), False, "still uniform (both moved the same)")
 
         # ── (F) rejects + no-selection no-ops ────────────────────────
         select_all(tf)
