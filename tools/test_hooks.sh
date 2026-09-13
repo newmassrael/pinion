@@ -1983,6 +1983,39 @@ ok "the push gate runs the census selftest before trusting it" \
 ok "CI runs the census selftest before trusting it" \
    "${ci_census_self:+present}" "present"
 
+# ★★★★★ R2213 — and the gate that reads those walks AS PYTHON, in both places.
+#
+# Until R2213 nothing in this tree did: no linter is configured, none is
+# installed, and the `# noqa` markers the walks carry are enforced by nothing.
+# An unbound name is a NameError on the line that reads it, so the demo sweep
+# is the only thing that can notice — and only if that line is reached. Its
+# first run found two reads of `ok(...)` — the idiom of THIS file, which is
+# bash — inside a loop over a list that is empty in this tree, so the sweep had
+# been green over them.
+#
+# Asserted the way the census is, and for the same reason: `--check` answers
+# from what it parses, so a needle that stopped matching would report "every
+# name resolves" and pass. The selftest is what says it can still see, and it
+# holds the POPULATION too — it fails if the gate reads fewer files than the
+# walks, because a gate that reads nothing passes vacuously.
+hook_walk_names="$(sed -n 's|^if ! python3 "$repo_root/\(tools/walk_names\.py\)" \(--check\) >&2; then$|\1 \2|p' \
+    "$repo_root/.githooks/pre-push" | head -1)"
+ci_walk_names="$(sed -n 's|^ *run: python3 \(tools/walk_names\.py\) \(--check\)$|\1 \2|p' \
+    "$repo_root/.github/workflows/ci.yml" | head -1)"
+hook_walk_self="$(sed -n 's|^if ! python3 "$repo_root/\(tools/walk_names\.py\)" \(--selftest\) >&2; then$|\1 \2|p' \
+    "$repo_root/.githooks/pre-push" | head -1)"
+ci_walk_self="$(sed -n 's|^ *run: python3 \(tools/walk_names\.py\) \(--selftest\)$|\1 \2|p' \
+    "$repo_root/.github/workflows/ci.yml" | head -1)"
+ok "the push gate reads the walks as Python at all" \
+   "${hook_walk_names:+present}" "present"
+ok "CI reads the walks as Python at all" \
+   "${ci_walk_names:+present}" "present"
+ok "and both run the SAME walk-name command" "$hook_walk_names" "$ci_walk_names"
+ok "the push gate runs the walk-name selftest before trusting it" \
+   "${hook_walk_self:+present}" "present"
+ok "CI runs the walk-name selftest before trusting it" \
+   "${ci_walk_self:+present}" "present"
+
 # ★★★★★ R2067 — and the SCOPE covers `examples/`, which it did not.
 #
 # The selection was read out of `crates/<name>/…` alone, so a push touching only

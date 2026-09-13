@@ -445,6 +445,30 @@ if ! python3 "$repo_root/tools/seed_freshness.py" --check >&2; then
     exit 1
 fi
 
+step "walk name resolution"
+# R2213 — a walk may not READ a name nothing binds.
+#
+# `tools/demos/` is 700-odd scripts that drive real binaries, and until this
+# step NOTHING here read them as Python: no linter is configured in this repo,
+# none is installed, and no hook or CI job ran one. An unbound name is a
+# `NameError` raised on the line that reads it, so the demo sweep is the only
+# thing that can notice — and only if that line is reached.
+#
+# Its first run found exactly that: `r1649` called `ok(...)`, the idiom of
+# `tools/test_hooks.sh` (bash) rather than of any Python helper here, at two
+# sites inside `for seat in closed_rail_keys():` — a list that is EMPTY in this
+# tree, so the loop never ran and the sweep was green over a NameError.
+#
+# Reads source with `ast`; boots nothing. The selftest is asserted first
+# because the check answers "clean" when its needle stops matching.
+if ! python3 "$repo_root/tools/walk_names.py" --selftest >&2; then
+    echo "pre-push: the walk-name gate failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/walk_names.py" --check >&2; then
+    exit 1
+fi
+
 step "painted address spellers"
 # ★★★★★ R2163 — the ONE reader of an emitted grammar, ahead of the two tools
 # that ask it. Its cut rule decides both what a walk composes and what the

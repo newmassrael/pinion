@@ -117,6 +117,15 @@ jobs:
         run: python3 tools/painted_addresses.py --selftest
       - name: painted address census
         run: python3 tools/painted_addresses.py --check
+      - name: walk name gate selftest
+        # R2213 — a walk may not READ a name nothing binds. Nothing in this
+        # repo read the demos as Python before it: no linter is configured,
+        # none is installed, and an unbound name is a runtime NameError that
+        # only the sweep can see, and only if that line is reached. Its first
+        # run found two in a branch the sweep never enters. Reads source.
+        run: python3 tools/walk_names.py --selftest
+      - name: walk name gate
+        run: python3 tools/walk_names.py --check
       - name: analysis-tool census proofs
         # ★★★★★ R1804 — placed HERE, immediately after `cargo test --workspace`,
         # and the position is the whole point. This gate runs

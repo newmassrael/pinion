@@ -425,7 +425,7 @@ def body() -> None:
         for seat in closed_rail_keys():
             row = inert.get(f"{seat_tag}{seat}")
             assert row is not None, f"B2: the {seat} rail seat is reserved and reported live"
-            ok(f"B2: and {seat} names what it waits for", len(row["detail"]) > 8)
+            assert len(row["detail"]) > 8, f"B2: and {seat} names what it waits for"
         for seat in ahead_keys():
             assert f"{seat_tag}{seat}" not in inert, (
                 f"B2: ★ {seat} is declared AHEAD of the reference — the mockup "
@@ -514,9 +514,8 @@ def body() -> None:
         # that would catch a divergence declared and not delivered.
         for seat in closed_rail_keys():
             said = refused_write(tf, "nav", seat)
-            ok(
-                f"B2: ★ the reserved {seat} seat refuses the write and says why",
-                len(said) > 8,
+            assert len(said) > 8, (
+                f"B2: ★ the reserved {seat} seat refuses the write and says why"
             )
             assert_eq(q(tf, "nav"), "dashboard", "B2: and the section did not change")
         for seat in ahead_keys():
