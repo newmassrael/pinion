@@ -28,6 +28,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -62,10 +63,11 @@ def rejects(fn) -> bool:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot: typed defaults, wired ports hide the label ────
         assert_eq(ncount(tf), 4, "boot: 4 seed nodes")
         # Multiply (node 2) input 0 is a Vector port -> a colour default.
-        d = tf.query("/external/node.2.input_default.0")
+        d = tf.query(f"/external/{gp.at('node.input_default', id=2, port=0)}")
         assert_eq(d["r"], 0x80, "Vector default is mid-grey (r)")
         assert_eq(d["g"], 0x80, "Vector default is mid-grey (g)")
         assert "hex" in d, "a colour default reads as a {hex,r,g,b,a} object"
@@ -80,26 +82,33 @@ def body() -> None:
         assert_eq(l0, "#808080", "Vector port default paints as a hex colour")
         assert_eq(default_label(tf, f"idefault_{lerp}_2"), "0", "Float factor port default paints as 0")
         # back-compat: the R898 typed-port surface is intact.
-        assert_eq(tf.query(f"/external/node.{lerp}.input_types"), "Vector,Vector,Float", "R898 types intact")
-        assert_eq(tf.query(f"/external/node.{lerp}.inputs"), 3, "back-compat: arity still reads")
+        assert_eq(tf.query(f"/external/{gp.at('node.input_types', id=lerp)}"), "Vector,Vector,Float",
+                  "R898 types intact")
+        assert_eq(tf.query(f"/external/{gp.at('node.inputs', id=lerp)}"), 3,
+                  "back-compat: arity still reads")
         # The Float factor default reads as a scalar; a typed write reads back.
-        assert_eq(tf.query(f"/external/node.{lerp}.input_default.2"), 0.0, "Float default reads as a scalar")
-        tf.intervene(f"/external/node.{lerp}.input_default.2", 0.5)
-        assert_eq(tf.query(f"/external/node.{lerp}.input_default.2"), 0.5, "the typed Float write reads back")
+        assert_eq(tf.query(f"/external/{gp.at('node.input_default', id=lerp, port=2)}"), 0.0,
+                  "Float default reads as a scalar")
+        tf.intervene(f"/external/{gp.at('node.input_default', id=lerp, port=2)}", 0.5)
+        assert_eq(tf.query(f"/external/{gp.at('node.input_default', id=lerp, port=2)}"), 0.5,
+                  "the typed Float write reads back")
         assert_eq(default_label(tf, f"idefault_{lerp}_2"), "0.5", "the paint reflects the written default")
         # A colour write takes a hex string and reads back the parsed channels.
-        tf.intervene(f"/external/node.{lerp}.input_default.0", "#3366cc")
-        d = tf.query(f"/external/node.{lerp}.input_default.0")
+        tf.intervene(f"/external/{gp.at('node.input_default', id=lerp, port=0)}", "#3366cc")
+        d = tf.query(f"/external/{gp.at('node.input_default', id=lerp, port=0)}")
         assert_eq(d["r"], 0x33, "written colour r")
         assert_eq(d["b"], 0xCC, "written colour b")
         assert_eq(default_label(tf, f"idefault_{lerp}_0"), "#3366cc", "paint reflects the written colour")
         # Wrong value type for the port is rejected (no scalar into a colour,
         # no garbage into a Float), and out-of-range ports are unknown paths.
-        assert rejects(lambda: tf.intervene(f"/external/node.{lerp}.input_default.0", 1.0)), "scalar into a colour rejected"
-        assert rejects(lambda: tf.intervene(f"/external/node.{lerp}.input_default.2", "abc")), "garbage into a Float rejected"
-        assert rejects(lambda: tf.intervene(f"/external/node.{lerp}.input_default.0", "#zzzz")), "malformed hex rejected"
-        assert rejects(lambda: tf.query(f"/external/node.{lerp}.input_default.9")), "out-of-range port query is unknown"
-        assert rejects(lambda: tf.intervene(f"/external/node.{lerp}.input_default.9", "#000000")), "out-of-range write is unknown"
+        p0 = f"/external/{gp.at('node.input_default', id=lerp, port=0)}"
+        p2 = f"/external/{gp.at('node.input_default', id=lerp, port=2)}"
+        p9 = f"/external/{gp.at('node.input_default', id=lerp, port=9)}"
+        assert rejects(lambda: tf.intervene(p0, 1.0)), "scalar into a colour rejected"
+        assert rejects(lambda: tf.intervene(p2, "abc")), "garbage into a Float rejected"
+        assert rejects(lambda: tf.intervene(p0, "#zzzz")), "malformed hex rejected"
+        assert rejects(lambda: tf.query(p9)), "out-of-range port query is unknown"
+        assert rejects(lambda: tf.intervene(p9, "#000000")), "out-of-range write is unknown"
 
         # ── (C) wiring a port hides the label but retains the value ──
         assert_eq(tf.invoke("/external/add_edge", f"0,0,{lerp},0"), True, "wire Texture -> Lerp input 0")
@@ -111,17 +120,18 @@ def body() -> None:
         assert default_label(tf, f"idefault_{lerp}_1") is not None, "the still-open ports keep their labels"
         # The value is retained (wiring only hides the editor — the engine
         # model).
-        d = tf.query(f"/external/node.{lerp}.input_default.0")
+        d = tf.query(f"/external/{gp.at('node.input_default', id=lerp, port=0)}")
         assert_eq(d["r"], 0x33, "the wired port's default value is retained")
 
         # ── (D) a default change is one undoable step ───────────────
-        tf.intervene(f"/external/node.{lerp}.input_default.1", "#112233")
-        assert_eq(tf.query(f"/external/node.{lerp}.input_default.1")["r"], 0x11, "wrote a new default")
+        p1 = f"/external/{gp.at('node.input_default', id=lerp, port=1)}"
+        tf.intervene(p1, "#112233")
+        assert_eq(tf.query(p1)["r"], 0x11, "wrote a new default")
         assert_eq(tf.query(f"{UNDO}/can_undo"), True, "the default change is undoable")
         assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo the default change")
-        assert_eq(tf.query(f"/external/node.{lerp}.input_default.1")["r"], 0x80, "undo restored the prior default")
+        assert_eq(tf.query(p1)["r"], 0x80, "undo restored the prior default")
         assert_eq(tf.invoke(f"{UNDO}/redo", None), True, "redo the default change")
-        assert_eq(tf.query(f"/external/node.{lerp}.input_default.1")["r"], 0x11, "redo re-applied it")
+        assert_eq(tf.query(p1)["r"], 0x11, "redo re-applied it")
 
 
 if __name__ == "__main__":

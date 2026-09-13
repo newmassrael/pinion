@@ -47,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_query,
@@ -59,19 +60,19 @@ CARD_H = 68  # a 1-port source card's height (HEADER_H 30 + 1*PORT_PITCH 28 + BO
 PITCH = 190  # NODE_W (130) + LAYER_GAP (60)
 
 
-def nx(tf, nid: int) -> int:
-    return tf.query(f"/external/node.{nid}.x")
+def nx(tf, gp, nid: int) -> int:
+    return tf.query(f"/external/{gp.at('node.x', id=nid)}")
 
 
-def ny(tf, nid: int) -> int:
-    return tf.query(f"/external/node.{nid}.y")
+def ny(tf, gp, nid: int) -> int:
+    return tf.query(f"/external/{gp.at('node.y', id=nid)}")
 
 
-def place(tf, nid: int, x: int, y: int) -> None:
-    tf.intervene(f"/external/node.{nid}.x", x)
-    tf.intervene(f"/external/node.{nid}.y", y)
-    wait_query(tf, f"/external/node.{nid}.x", x, desc=f"node {nid} x parked")
-    wait_query(tf, f"/external/node.{nid}.y", y, desc=f"node {nid} y parked")
+def place(tf, gp, nid: int, x: int, y: int) -> None:
+    tf.intervene(f"/external/{gp.at('node.x', id=nid)}", x)
+    tf.intervene(f"/external/{gp.at('node.y', id=nid)}", y)
+    wait_query(tf, f"/external/{gp.at('node.x', id=nid)}", x, desc=f"node {nid} x parked")
+    wait_query(tf, f"/external/{gp.at('node.y', id=nid)}", y, desc=f"node {nid} y parked")
 
 
 def auto_layout(tf) -> bool:
@@ -92,6 +93,7 @@ def redo(tf) -> bool:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot taxonomy ────────────────────────────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, G) is not None, "graph canvas present"
@@ -100,46 +102,46 @@ def body() -> None:
 
         # ── (B) tidy a deliberately scrambled graph ──────────────────
         # Reverse the natural order: sink far left, sources far right.
-        place(tf, 3, 40, 60)  # Output
-        place(tf, 2, 240, 300)  # Multiply
-        place(tf, 1, 500, 60)  # Color
-        place(tf, 0, 520, 260)  # Texture
+        place(tf, gp, 3, 40, 60)  # Output
+        place(tf, gp, 2, 240, 300)  # Multiply
+        place(tf, gp, 1, 500, 60)  # Color
+        place(tf, gp, 0, 520, 260)  # Texture
         assert_eq(auto_layout(tf), True, "auto_layout rearranged the scrambled graph")
 
         # Columns: Texture(0) x Color(1) [layer 0] -> Multiply(2) -> Output(3).
-        assert_eq(nx(tf, 0), nx(tf, 1), "the two sources share the layer-0 column")
-        assert nx(tf, 0) < nx(tf, 2), "a source is left of its Multiply consumer"
-        assert nx(tf, 1) < nx(tf, 2), "the other source is too"
-        assert nx(tf, 2) < nx(tf, 3), "Multiply is left of Output"
-        assert_eq(nx(tf, 2) - nx(tf, 0), PITCH, "one column advances exactly NODE_W + LAYER_GAP")
-        assert_eq(nx(tf, 3) - nx(tf, 2), PITCH, "and the next column too")
+        assert_eq(nx(tf, gp, 0), nx(tf, gp, 1), "the two sources share the layer-0 column")
+        assert nx(tf, gp, 0) < nx(tf, gp, 2), "a source is left of its Multiply consumer"
+        assert nx(tf, gp, 1) < nx(tf, gp, 2), "the other source is too"
+        assert nx(tf, gp, 2) < nx(tf, gp, 3), "Multiply is left of Output"
+        assert_eq(nx(tf, gp, 2) - nx(tf, gp, 0), PITCH, "one column advances exactly NODE_W + LAYER_GAP")
+        assert_eq(nx(tf, gp, 3) - nx(tf, gp, 2), PITCH, "and the next column too")
         # The stacked sources do not overlap (>= a card height apart in y).
-        assert abs(ny(tf, 0) - ny(tf, 1)) >= CARD_H, "the source pair is stacked, not overlapping"
+        assert abs(ny(tf, gp, 0) - ny(tf, gp, 1)) >= CARD_H, "the source pair is stacked, not overlapping"
 
         # ── (C) idempotent — a second pass moves nothing ─────────────
-        tidy = {nid: (nx(tf, nid), ny(tf, nid)) for nid in (0, 1, 2, 3)}
+        tidy = {nid: (nx(tf, gp, nid), ny(tf, gp, nid)) for nid in (0, 1, 2, 3)}
         assert_eq(auto_layout(tf), False, "a second auto_layout over the tidy graph is a no-op")
         for nid, (x, y) in tidy.items():
-            assert_eq(nx(tf, nid), x, f"node {nid} x unchanged by the idempotent pass")
-            assert_eq(ny(tf, nid), y, f"node {nid} y unchanged by the idempotent pass")
+            assert_eq(nx(tf, gp, nid), x, f"node {nid} x unchanged by the idempotent pass")
+            assert_eq(ny(tf, gp, nid), y, f"node {nid} y unchanged by the idempotent pass")
 
         # ── (D) undo — one discrete step; undo restores, redo re-applies ─
         # Re-scramble every node, then a single auto_layout must be ONE step
         # whose undo restores all four scrambled positions verbatim.
         scrambled = {3: (60, 40), 2: (300, 240), 1: (60, 500), 0: (260, 520)}
         for nid, (x, y) in scrambled.items():
-            place(tf, nid, x, y)
+            place(tf, gp, nid, x, y)
         before = ucount(tf)
         assert_eq(auto_layout(tf), True, "auto_layout tidied the re-scrambled graph")
         assert_eq(ucount(tf), before + 1, "a whole re-layout is exactly ONE undo step")
-        laid0 = (nx(tf, 0), ny(tf, 0))
+        laid0 = (nx(tf, gp, 0), ny(tf, gp, 0))
         assert laid0 != scrambled[0], "node 0 left its scrambled spot"
         assert_eq(undo(tf), True, "one undo reverses the whole re-layout")
         for nid, (x, y) in scrambled.items():
-            wait_query(tf, f"/external/node.{nid}.x", x, desc=f"undo restored node {nid} x")
-            wait_query(tf, f"/external/node.{nid}.y", y, desc=f"undo restored node {nid} y")
+            wait_query(tf, f"/external/{gp.at('node.x', id=nid)}", x, desc=f"undo restored node {nid} x")
+            wait_query(tf, f"/external/{gp.at('node.y', id=nid)}", y, desc=f"undo restored node {nid} y")
         assert_eq(redo(tf), True, "redo re-applies the re-layout")
-        wait_query(tf, "/external/node.0.x", laid0[0], desc="redo re-laid node 0")
+        wait_query(tf, f"/external/{gp.at('node.x', id=0)}", laid0[0], desc="redo re-laid node 0")
 
         # ── (E) a wider graph — a 3-node column + a 2-node column ────
         # Add an `Add` consumer of Multiply, fed also by a fresh Texture source,
@@ -155,17 +157,17 @@ def body() -> None:
 
         assert_eq(auto_layout(tf), True, "auto_layout tidies the widened graph")
         # Layer 0 = {0, 1, 5}: three sources sharing one column.
-        assert_eq(nx(tf, 0), nx(tf, 1), "sources 0 and 1 share the layer-0 column")
-        assert_eq(nx(tf, 0), nx(tf, 5), "the added source 5 joins the same column")
-        col0 = sorted((ny(tf, 0), ny(tf, 1), ny(tf, 5)))
+        assert_eq(nx(tf, gp, 0), nx(tf, gp, 1), "sources 0 and 1 share the layer-0 column")
+        assert_eq(nx(tf, gp, 0), nx(tf, gp, 5), "the added source 5 joins the same column")
+        col0 = sorted((ny(tf, gp, 0), ny(tf, gp, 1), ny(tf, gp, 5)))
         assert col0[1] - col0[0] >= CARD_H, "the lower source pair does not overlap"
         assert col0[2] - col0[1] >= CARD_H, "nor the upper pair"
         # Layer 2 = {3, 4}: Output and Add both consume Multiply.
-        assert_eq(nx(tf, 3), nx(tf, 4), "Output and Add share the consumer column")
-        assert nx(tf, 2) < nx(tf, 3), "Multiply is left of both its consumers"
+        assert_eq(nx(tf, gp, 3), nx(tf, gp, 4), "Output and Add share the consumer column")
+        assert nx(tf, gp, 2) < nx(tf, gp, 3), "Multiply is left of both its consumers"
         # Every edge — old and new — flows strictly forward.
         for (frm, to) in [(0, 2), (1, 2), (2, 3), (2, 4), (5, 4)]:
-            assert nx(tf, frm) < nx(tf, to), f"edge {frm}->{to} flows forward"
+            assert nx(tf, gp, frm) < nx(tf, gp, to), f"edge {frm}->{to} flows forward"
 
 
 if __name__ == "__main__":

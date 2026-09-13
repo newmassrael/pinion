@@ -53,6 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_query,
@@ -63,29 +64,29 @@ G = "node_graph"
 UNDO = "/node_undo/external"
 
 
-def nx(tf, nid: int) -> int:
-    return tf.query(f"/external/node.{nid}.x")
+def nx(tf, gp, nid: int) -> int:
+    return tf.query(f"/external/{gp.at('node.x', id=nid)}")
 
 
-def ny(tf, nid: int) -> int:
-    return tf.query(f"/external/node.{nid}.y")
+def ny(tf, gp, nid: int) -> int:
+    return tf.query(f"/external/{gp.at('node.y', id=nid)}")
 
 
-def node_dist(tf, a: int, b: int) -> float:
-    return math.hypot(nx(tf, a) - nx(tf, b), ny(tf, a) - ny(tf, b))
+def node_dist(tf, gp, a: int, b: int) -> float:
+    return math.hypot(nx(tf, gp, a) - nx(tf, gp, b), ny(tf, gp, a) - ny(tf, gp, b))
 
 
-def offsets(tf, ids: tuple[int, ...]) -> dict[int, tuple[int, int]]:
+def offsets(tf, gp, ids: tuple[int, ...]) -> dict[int, tuple[int, int]]:
     """Every node's position relative to node `ids[0]` — the anchor-free shape."""
-    ox, oy = nx(tf, ids[0]), ny(tf, ids[0])
-    return {nid: (nx(tf, nid) - ox, ny(tf, nid) - oy) for nid in ids}
+    ox, oy = nx(tf, gp, ids[0]), ny(tf, gp, ids[0])
+    return {nid: (nx(tf, gp, nid) - ox, ny(tf, gp, nid) - oy) for nid in ids}
 
 
-def place(tf, nid: int, x: int, y: int) -> None:
-    tf.intervene(f"/external/node.{nid}.x", x)
-    tf.intervene(f"/external/node.{nid}.y", y)
-    wait_query(tf, f"/external/node.{nid}.x", x, desc=f"node {nid} x parked")
-    wait_query(tf, f"/external/node.{nid}.y", y, desc=f"node {nid} y parked")
+def place(tf, gp, nid: int, x: int, y: int) -> None:
+    tf.intervene(f"/external/{gp.at('node.x', id=nid)}", x)
+    tf.intervene(f"/external/{gp.at('node.y', id=nid)}", y)
+    wait_query(tf, f"/external/{gp.at('node.x', id=nid)}", x, desc=f"node {nid} x parked")
+    wait_query(tf, f"/external/{gp.at('node.y', id=nid)}", y, desc=f"node {nid} y parked")
 
 
 def force_layout(tf) -> bool:
@@ -110,6 +111,7 @@ def redo(tf) -> bool:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         ids = (0, 1, 2, 3)
 
         # ── (A) boot taxonomy ────────────────────────────────────────
@@ -119,22 +121,22 @@ def body() -> None:
         assert_eq(tf.query("/external/edge_count"), 3, "3 seed edges")
 
         # ── (B) relax a deliberately scrambled graph ─────────────────
-        place(tf, 3, 40, 60)  # Output
-        place(tf, 2, 240, 300)  # Multiply
-        place(tf, 1, 500, 60)  # Color
-        place(tf, 0, 520, 260)  # Texture
+        place(tf, gp, 3, 40, 60)  # Output
+        place(tf, gp, 2, 240, 300)  # Multiply
+        place(tf, gp, 1, 500, 60)  # Color
+        place(tf, gp, 0, 520, 260)  # Texture
         assert_eq(force_layout(tf), True, "force_layout relaxed the scrambled graph")
 
         # Every node stays on the world surface (0 <= x,y <= 2048).
         for nid in ids:
-            assert 0 <= nx(tf, nid) <= 2048, f"node {nid} x on the world surface"
-            assert 0 <= ny(tf, nid) <= 2048, f"node {nid} y on the world surface"
+            assert 0 <= nx(tf, gp, nid) <= 2048, f"node {nid} x on the world surface"
+            assert 0 <= ny(tf, gp, nid) <= 2048, f"node {nid} y on the world surface"
 
         # FR property: a directly-wired pair settles tighter than a two-hop pair.
         # Edges 0->2, 1->2, 2->3, so 0 and 3 are two hops apart.
-        d02 = node_dist(tf, 0, 2)  # wired
-        d23 = node_dist(tf, 2, 3)  # wired
-        d03 = node_dist(tf, 0, 3)  # two hops
+        d02 = node_dist(tf, gp, 0, 2)  # wired
+        d23 = node_dist(tf, gp, 2, 3)  # wired
+        d03 = node_dist(tf, gp, 0, 3)  # two hops
         assert d02 < d03, f"wired 0-2 ({d02:.0f}) tighter than two-hop 0..3 ({d03:.0f})"
         assert d23 < d03, f"wired 2-3 ({d23:.0f}) tighter than two-hop 0..3 ({d03:.0f})"
 
@@ -142,55 +144,56 @@ def body() -> None:
         for i in ids:
             for j in ids:
                 if i < j:
-                    assert (nx(tf, i), ny(tf, i)) != (nx(tf, j), ny(tf, j)), (
+                    assert (nx(tf, gp, i), ny(tf, gp, i)) != (nx(tf, gp, j), ny(tf, gp, j)), (
                         f"nodes {i} and {j} never coincide"
                     )
 
         # ── (C) idempotent — a second pass moves nothing ─────────────
-        relaxed = {nid: (nx(tf, nid), ny(tf, nid)) for nid in ids}
+        relaxed = {nid: (nx(tf, gp, nid), ny(tf, gp, nid)) for nid in ids}
         assert_eq(force_layout(tf), False, "a second force_layout is a no-op (idempotent)")
         for nid, (x, y) in relaxed.items():
-            assert_eq((nx(tf, nid), ny(tf, nid)), (x, y), f"node {nid} unchanged by the idempotent pass")
+            assert_eq((nx(tf, gp, nid), ny(tf, gp, nid)), (x, y),
+                      f"node {nid} unchanged by the idempotent pass")
 
         # ── (D) undo — one discrete step; undo restores, redo re-applies ─
         scrambled = {3: (60, 40), 2: (300, 240), 1: (60, 500), 0: (260, 520)}
         for nid, (x, y) in scrambled.items():
-            place(tf, nid, x, y)
+            place(tf, gp, nid, x, y)
         before = ucount(tf)
         assert_eq(force_layout(tf), True, "force_layout relaxed the re-scrambled graph")
         assert_eq(ucount(tf), before + 1, "a whole relaxation is exactly ONE undo step")
-        laid0 = (nx(tf, 0), ny(tf, 0))
+        laid0 = (nx(tf, gp, 0), ny(tf, gp, 0))
         assert laid0 != scrambled[0], "node 0 left its scrambled spot"
         assert_eq(undo(tf), True, "one undo reverses the whole relaxation")
         for nid, (x, y) in scrambled.items():
-            wait_query(tf, f"/external/node.{nid}.x", x, desc=f"undo restored node {nid} x")
-            wait_query(tf, f"/external/node.{nid}.y", y, desc=f"undo restored node {nid} y")
+            wait_query(tf, f"/external/{gp.at('node.x', id=nid)}", x, desc=f"undo restored node {nid} x")
+            wait_query(tf, f"/external/{gp.at('node.y', id=nid)}", y, desc=f"undo restored node {nid} y")
         assert_eq(redo(tf), True, "redo re-applies the relaxation")
-        wait_query(tf, "/external/node.0.x", laid0[0], desc="redo re-laid node 0 x")
+        wait_query(tf, f"/external/{gp.at('node.x', id=0)}", laid0[0], desc="redo re-laid node 0 x")
 
         # ── (E) the organic shape is position-independent ────────────
         # Scramble to config A, relax, record the anchor-free shape.
         for nid, (x, y) in {0: (500, 40), 1: (40, 300), 2: (300, 40), 3: (520, 300)}.items():
-            place(tf, nid, x, y)
+            place(tf, gp, nid, x, y)
         assert_eq(force_layout(tf), True, "force_layout relaxed config A")
-        shape_a = offsets(tf, ids)
+        shape_a = offsets(tf, gp, ids)
         # Scramble to a DIFFERENT config B (a different bounding box), relax again.
         for nid, (x, y) in {0: (80, 400), 1: (600, 120), 2: (200, 260), 3: (440, 80)}.items():
-            place(tf, nid, x, y)
+            place(tf, gp, nid, x, y)
         assert_eq(force_layout(tf), True, "force_layout relaxed config B")
-        shape_b = offsets(tf, ids)
+        shape_b = offsets(tf, gp, ids)
         for nid in ids:
             assert_eq(shape_b[nid], shape_a[nid], f"node {nid} offset is position-independent")
 
         # ── (F) coexists with the layered mode; each is deterministic ─
         # auto_layout re-columns the graph (the two sources share layer 0)...
         assert_eq(auto_layout(tf), True, "auto_layout re-columns the organic graph")
-        assert_eq(nx(tf, 0), nx(tf, 1), "the two sources share the layered layer-0 column")
-        assert nx(tf, 0) < nx(tf, 2), "a source is left of its Multiply consumer (layered)"
+        assert_eq(nx(tf, gp, 0), nx(tf, gp, 1), "the two sources share the layered layer-0 column")
+        assert nx(tf, gp, 0) < nx(tf, gp, 2), "a source is left of its Multiply consumer (layered)"
         # ...and force_layout returns to the SAME organic shape, whatever the
         # intermediate arrangement — proof the modes are independent.
         assert_eq(force_layout(tf), True, "force_layout re-relaxes the columned graph")
-        shape_c = offsets(tf, ids)
+        shape_c = offsets(tf, gp, ids)
         for nid in ids:
             assert_eq(shape_c[nid], shape_a[nid], f"node {nid} returns to the same organic offset")
 

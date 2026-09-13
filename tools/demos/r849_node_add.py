@@ -30,6 +30,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -60,11 +61,12 @@ def node_ids(tf) -> list[int]:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot ────────────────────────────────────────────────
         assert_eq(ncount(tf), 4, "boot: 4 seed nodes")
         assert_eq(ecount(tf), 3, "boot: 3 seed edges")
         assert_eq(tf.query("/external/node_ids"), "0,1,2,3", "boot: dense seed id space")
-        assert_eq(tf.query("/external/node.2.title"), "Multiply", "seed node 2 is Multiply")
+        assert_eq(tf.query(f"/external/{gp.at('node.title', id=2)}"), "Multiply", "seed node 2 is Multiply")
         # The palette sidebar painted its 7 kind cards.
         rects = abs_rects_of(tf.snapshot(source="paint", viewport=WIN))
         for idx in range(NKINDS):
@@ -74,9 +76,9 @@ def body() -> None:
         new_id = tf.invoke("/external/add_node", "Multiply")
         assert_eq(new_id, FIRST_DYN, "add_node returns the first minted id")
         assert_eq(ncount(tf), 5, "RPC add_node grew the graph")
-        assert_eq(tf.query(f"/external/node.{new_id}.title"), "Multiply", "new node title")
-        assert_eq(tf.query(f"/external/node.{new_id}.inputs"), 2, "Multiply has 2 inputs")
-        assert_eq(tf.query(f"/external/node.{new_id}.outputs"), 1, "Multiply has 1 output")
+        assert_eq(tf.query(f"/external/{gp.at('node.title', id=new_id)}"), "Multiply", "new node title")
+        assert_eq(tf.query(f"/external/{gp.at('node.inputs', id=new_id)}"), 2, "Multiply has 2 inputs")
+        assert_eq(tf.query(f"/external/{gp.at('node.outputs', id=new_id)}"), 1, "Multiply has 1 output")
         assert_eq(tf.query("/external/selected"), new_id, "the new node is selected")
         assert new_id in node_ids(tf), "node_ids enumerates the new sparse id"
         # An unknown kind is rejected and changes nothing.
@@ -95,9 +97,11 @@ def body() -> None:
             desc="a palette card click adds a node",
         )
         assert_eq(ncount(tf), 6, "palette click added a node")
-        assert_eq(tf.query(f"/external/node.{tex_id}.title"), "Texture", "palette card 0 makes a Texture")
-        assert_eq(tf.query(f"/external/node.{tex_id}.outputs"), 1, "Texture is a source (1 out, 0 in)")
-        assert_eq(tf.query(f"/external/node.{tex_id}.inputs"), 0, "Texture has no inputs")
+        assert_eq(tf.query(f"/external/{gp.at('node.title', id=tex_id)}"), "Texture",
+                  "palette card 0 makes a Texture")
+        assert_eq(tf.query(f"/external/{gp.at('node.outputs', id=tex_id)}"), 1,
+                  "Texture is a source (1 out, 0 in)")
+        assert_eq(tf.query(f"/external/{gp.at('node.inputs', id=tex_id)}"), 0, "Texture has no inputs")
 
         # The new node paints as a real card on the canvas.
         def tex_card_rendered():
@@ -112,8 +116,9 @@ def body() -> None:
         assert_eq(tf.invoke("/external/add_edge", f"0,0,{new_id},0"), True, "wire into the new node")
         assert_eq(ecount(tf), 4, "the new edge landed")
         # Move it (intervene the canvas position; clamped, read back).
-        tf.intervene(f"/external/node.{new_id}.x", 220)
-        assert_eq(tf.query(f"/external/node.{new_id}.x"), 220, "the new node moves like any node")
+        tf.intervene(f"/external/{gp.at('node.x', id=new_id)}", 220)
+        assert_eq(tf.query(f"/external/{gp.at('node.x', id=new_id)}"), 220,
+                  "the new node moves like any node")
         # Delete it — node + incident edge gone, survivors keep their ids.
         assert_eq(tf.invoke("/external/delete_node", new_id), True, "delete the new node")
         assert_eq(ncount(tf), 5, "delete removed the node")
@@ -122,7 +127,8 @@ def body() -> None:
         # Monotonic mint: a fresh add never reuses the deleted id.
         reborn = tf.invoke("/external/add_node", "Add")
         assert reborn > new_id, f"a minted id ({reborn}) never reuses a deleted one ({new_id})"
-        assert_eq(tf.query(f"/external/node.{reborn}.title"), "Add", "the reborn node is the requested kind")
+        assert_eq(tf.query(f"/external/{gp.at('node.title', id=reborn)}"), "Add",
+                  "the reborn node is the requested kind")
         assert_eq(ncount(tf), 6, "the reborn node grew the graph again")
 
 

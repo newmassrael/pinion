@@ -34,6 +34,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -77,36 +78,51 @@ def port_fill(tf, tag: str) -> dict:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot: the seed graph carries typed ports ────────────
         assert_eq(ncount(tf), 4, "boot: 4 seed nodes")
         assert_eq(ecount(tf), 3, "boot: 3 seed edges")
         # The material graph's data type is Vector (colour / vec3).
-        assert_eq(tf.query("/external/node.0.output_types"), "Vector", "Texture outputs a Vector")
-        assert_eq(tf.query("/external/node.0.input_types"), "", "Texture is a source (no inputs)")
-        assert_eq(tf.query("/external/node.1.output_types"), "Vector", "Color outputs a Vector")
-        assert_eq(tf.query("/external/node.2.input_types"), "Vector,Vector", "Multiply takes 2 Vectors")
-        assert_eq(tf.query("/external/node.2.output_types"), "Vector", "Multiply outputs a Vector")
-        assert_eq(tf.query("/external/node.3.input_types"), "Vector", "Output takes a Vector")
-        assert_eq(tf.query("/external/node.3.output_types"), "", "Output is a sink (no outputs)")
+        assert_eq(tf.query(f"/external/{gp.at('node.output_types', id=0)}"), "Vector",
+                  "Texture outputs a Vector")
+        assert_eq(tf.query(f"/external/{gp.at('node.input_types', id=0)}"), "",
+                  "Texture is a source (no inputs)")
+        assert_eq(tf.query(f"/external/{gp.at('node.output_types', id=1)}"), "Vector",
+                  "Color outputs a Vector")
+        assert_eq(tf.query(f"/external/{gp.at('node.input_types', id=2)}"), "Vector,Vector",
+                  "Multiply takes 2 Vectors")
+        assert_eq(tf.query(f"/external/{gp.at('node.output_types', id=2)}"), "Vector",
+                  "Multiply outputs a Vector")
+        assert_eq(tf.query(f"/external/{gp.at('node.input_types', id=3)}"), "Vector",
+                  "Output takes a Vector")
+        assert_eq(tf.query(f"/external/{gp.at('node.output_types', id=3)}"), "",
+                  "Output is a sink (no outputs)")
         # Back-compat: the pre-R898 arity reads are byte-identical.
-        assert_eq(tf.query("/external/node.2.inputs"), 2, "back-compat: Multiply arity is still 2 in")
-        assert_eq(tf.query("/external/node.2.outputs"), 1, "back-compat: Multiply arity is still 1 out")
-        assert_eq(tf.query("/external/node.3.inputs"), 1, "back-compat: Output arity is still 1 in")
+        assert_eq(tf.query(f"/external/{gp.at('node.inputs', id=2)}"), 2,
+                  "back-compat: Multiply arity is still 2 in")
+        assert_eq(tf.query(f"/external/{gp.at('node.outputs', id=2)}"), 1,
+                  "back-compat: Multiply arity is still 1 out")
+        assert_eq(tf.query(f"/external/{gp.at('node.inputs', id=3)}"), 1,
+                  "back-compat: Output arity is still 1 in")
 
         # ── (B) typed sources/ops + type-checked connect ────────────
         scalar = tf.invoke("/external/add_node", "Scalar")
         lerp = tf.invoke("/external/add_node", "Lerp")
         assert_eq(scalar, FIRST_DYN, "Scalar mints the first dynamic id")
         assert_eq(lerp, FIRST_DYN + 1, "Lerp mints the next id")
-        assert_eq(tf.query(f"/external/node.{scalar}.output_types"), "Float", "Scalar outputs a Float")
-        assert_eq(tf.query(f"/external/node.{scalar}.input_types"), "", "Scalar is a source")
+        assert_eq(tf.query(f"/external/{gp.at('node.output_types', id=scalar)}"), "Float",
+                  "Scalar outputs a Float")
+        assert_eq(tf.query(f"/external/{gp.at('node.input_types', id=scalar)}"), "",
+                  "Scalar is a source")
         assert_eq(
-            tf.query(f"/external/node.{lerp}.input_types"),
+            tf.query(f"/external/{gp.at('node.input_types', id=lerp)}"),
             "Vector,Vector,Float",
             "Lerp takes two Vectors and a Float factor",
         )
-        assert_eq(tf.query(f"/external/node.{scalar}.inputs"), 0, "back-compat: Scalar arity 0 in")
-        assert_eq(tf.query(f"/external/node.{lerp}.inputs"), 3, "back-compat: Lerp arity 3 in")
+        assert_eq(tf.query(f"/external/{gp.at('node.inputs', id=scalar)}"), 0,
+                  "back-compat: Scalar arity 0 in")
+        assert_eq(tf.query(f"/external/{gp.at('node.inputs', id=lerp)}"), 3,
+                  "back-compat: Lerp arity 3 in")
 
         base = ecount(tf)  # 3 seed edges; adding nodes added none.
         assert_eq(base, 3, "adding nodes adds no edges")
@@ -149,8 +165,8 @@ def body() -> None:
 
         # ── (C) typed-port lists are read-only ──────────────────────
         for path, what in (
-            ("/external/node.2.input_types", "Multiply input_types"),
-            (f"/external/node.{lerp}.output_types", "Lerp output_types"),
+            (f"/external/{gp.at('node.input_types', id=2)}", "Multiply input_types"),
+            (f"/external/{gp.at('node.output_types', id=lerp)}", "Lerp output_types"),
         ):
             rejected = False
             try:
