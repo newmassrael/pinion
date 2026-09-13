@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
+    external_paths,
     run_demo,
     runs_of,
     wait_query,
@@ -74,7 +75,7 @@ def _assert_boot_multi_wire(tf: RpcSubprocess) -> None:
     assert _q(tf, "row_count") == 7, "a single selection shows that object's full schema"
 
 
-def _assert_funnel_builds_common_panel(tf: RpcSubprocess) -> None:
+def _assert_funnel_builds_common_panel(tf: RpcSubprocess, gp) -> None:
     """(B) toggle builds a multi-selection; the panel becomes the common
     properties; clear empties it."""
     assert tf.invoke("/external/toggle", 1) == runs_of([0, 1]), "toggle returns the new set"
@@ -84,13 +85,13 @@ def _assert_funnel_builds_common_panel(tf: RpcSubprocess) -> None:
     # The panel is now the common actor base only (the type-specific tails are
     # not shared between Player and Camera).
     assert _q(tf, "row_count") == 3, "Visible / Layer / Locked are the common base"
-    assert _q(tf, "name.0") == "Visible"
-    assert _q(tf, "name.1") == "Layer"
-    assert _q(tf, "name.2") == "Locked"
+    assert _q(tf, gp.at("name", i=0)) == "Visible"
+    assert _q(tf, gp.at("name", i=1)) == "Layer"
+    assert _q(tf, gp.at("name", i=2)) == "Locked"
     # Player + Camera agree on every base value (both Visible True, Layer 1).
-    assert _q(tf, "mixed.0") is False, "Visible agrees across Player + Camera"
-    assert _q(tf, "mixed.1") is False, "Layer agrees (both 1)"
-    assert _q(tf, "value.1") == 1, "the agreed Layer value is shown"
+    assert _q(tf, gp.at("mixed", i=0)) is False, "Visible agrees across Player + Camera"
+    assert _q(tf, gp.at("mixed", i=1)) is False, "Layer agrees (both 1)"
+    assert _q(tf, gp.at("value", i=1)) == 1, "the agreed Layer value is shown"
 
     tf.invoke("/external/clear", None)
     wait_query(tf, "/external/selection", [], desc="clear empties the selection")
@@ -99,58 +100,58 @@ def _assert_funnel_builds_common_panel(tf: RpcSubprocess) -> None:
     assert _q(tf, "selection_summary") == "No selection"
 
 
-def _assert_select_all_reports_mixed(tf: RpcSubprocess) -> None:
+def _assert_select_all_reports_mixed(tf: RpcSubprocess, gp) -> None:
     """(C) select_all → the differing base properties report "Multiple Values"."""
     assert tf.invoke("/external/select_all", None) == runs_of([0, 1, 2])
     wait_query(tf, "/external/selection", runs_of([0, 1, 2]), desc="every object selected")
     assert _q(tf, "selection_summary") == "3 objects selected"
     # Visible is (True, True, False); Layer is (1, 1, 2); Locked is
     # (False, False, True) — all three base properties differ across the trio.
-    assert _q(tf, "mixed.0") is True, "Visible is mixed across all three"
-    assert _q(tf, "mixed.1") is True, "Layer is mixed (1, 1, 2)"
-    assert _q(tf, "mixed.2") is True, "Locked is mixed"
+    assert _q(tf, gp.at("mixed", i=0)) is True, "Visible is mixed across all three"
+    assert _q(tf, gp.at("mixed", i=1)) is True, "Layer is mixed (1, 1, 2)"
+    assert _q(tf, gp.at("mixed", i=2)) is True, "Locked is mixed"
     # value.<i> reports the representative (first selected = Player) value.
-    assert _q(tf, "value.1") == 1, "value.1 is the representative (Player) Layer"
+    assert _q(tf, gp.at("value", i=1)) == 1, "row 1 shows the representative (Player) Layer"
 
 
-def _assert_selection_restore_and_mixed(tf: RpcSubprocess) -> None:
+def _assert_selection_restore_and_mixed(tf: RpcSubprocess, gp) -> None:
     """(D) intervene 'selection' restores an arbitrary set; mixed flags follow."""
     tf.intervene("/external/selection", [[0, 0], [2, 2]])  # Player + Sun Light.
     wait_query(tf, "/external/selection", runs_of([0, 2]), desc="restore the set {Player, Light}")
     assert _q(tf, "selection_count") == 2
     assert _q(tf, "row_count") == 3
     # Player vs Light: Visible (True vs False), Layer (1 vs 2), Locked (False vs True).
-    assert _q(tf, "mixed.0") is True, "Visible differs Player vs Light"
-    assert _q(tf, "mixed.1") is True, "Layer differs (1 vs 2)"
-    assert _q(tf, "mixed.2") is True, "Locked differs"
+    assert _q(tf, gp.at("mixed", i=0)) is True, "Visible differs Player vs Light"
+    assert _q(tf, gp.at("mixed", i=1)) is True, "Layer differs (1 vs 2)"
+    assert _q(tf, gp.at("mixed", i=2)) is True, "Locked differs"
 
 
-def _assert_multi_object_edit(tf: RpcSubprocess) -> None:
+def _assert_multi_object_edit(tf: RpcSubprocess, gp) -> None:
     """(E) writing a common property hits every selected object and resolves
     the mixed state — the multi-object edit headline."""
     tf.invoke("/external/select_all", None)
     wait_query(tf, "/external/selection", runs_of([0, 1, 2]), desc="select every object to edit")
     # Set the common Layer (index 1) to 5 across all three objects at once.
-    tf.intervene("/external/value.1", 5)
-    wait_query(tf, "/external/value.1", 5, desc="Layer written to 5")
-    assert _q(tf, "mixed.1") is False, "after the write the selection agrees"
+    tf.intervene(f"/external/{gp.at('value', i=1)}", 5)
+    wait_query(tf, f"/external/{gp.at('value', i=1)}", 5, desc="Layer written to 5")
+    assert _q(tf, gp.at("mixed", i=1)) is False, "after the write the selection agrees"
     # Each object individually now carries Layer == 5.
     for obj in range(3):
         tf.invoke("/external/select", obj)
         wait_query(tf, "/external/selected", obj, desc=f"inspect object {obj}")
-        assert _q(tf, "value.1") == 5, f"object {obj} Layer written through to 5"
+        assert _q(tf, gp.at("value", i=1)) == 5, f"object {obj} Layer written through to 5"
 
     # Resolve a mixed bool too: set Visible True across all three.
     tf.invoke("/external/select_all", None)
     wait_query(tf, "/external/selection", runs_of([0, 1, 2]), desc="re-select all")
-    assert _q(tf, "mixed.0") is True, "Visible still mixed before the write"
-    tf.intervene("/external/value.0", True)
-    wait_query(tf, "/external/mixed.0", False, desc="Visible now agrees")
-    assert _q(tf, "value.0") is True
+    assert _q(tf, gp.at("mixed", i=0)) is True, "Visible still mixed before the write"
+    tf.intervene(f"/external/{gp.at('value', i=0)}", True)
+    wait_query(tf, f"/external/{gp.at('mixed', i=0)}", False, desc="Visible now agrees")
+    assert _q(tf, gp.at("value", i=0)) is True
     for obj in range(3):
         tf.invoke("/external/select", obj)
         wait_query(tf, "/external/selected", obj, desc=f"re-inspect object {obj}")
-        assert _q(tf, "value.0") is True, f"object {obj} Visible written through to True"
+        assert _q(tf, gp.at("value", i=0)) is True, f"object {obj} Visible written through to True"
 
 
 def _assert_modifier_clicks(tf: RpcSubprocess) -> None:
@@ -202,12 +203,16 @@ def _assert_keyboard_chords(tf: RpcSubprocess) -> None:
     wait_query(tf, "/external/selection", runs_of([2]), desc="plain nav replaces (selection-follows-focus)")
 
 
-def _assert_errors(tf: RpcSubprocess) -> None:
+def _assert_errors(tf: RpcSubprocess, gp) -> None:
     """(H) the derived axes are read-only; an out-of-range toggle is rejected."""
     tf.invoke("/external/select_all", None)
     wait_query(tf, "/external/selection", runs_of([0, 1, 2]), desc="select all for the read-only checks")
 
-    for path, value in (("mixed.0", True), ("name.0", "x"), ("selection_summary", "x")):
+    for path, value in (
+        (gp.at("mixed", i=0), True),
+        (gp.at("name", i=0), "x"),
+        ("selection_summary", "x"),
+    ):
         raised = False
         try:
             tf.intervene(f"/external/{path}", value)
@@ -229,14 +234,15 @@ def _assert_errors(tf: RpcSubprocess) -> None:
 def body() -> None:
     with RpcSubprocess("hello-inspector", boot_grace=1.5) as tf:
         _wait_ready(tf)
+        gp = external_paths(tf)
         _assert_boot_multi_wire(tf)              # (A)
-        _assert_funnel_builds_common_panel(tf)   # (B)
-        _assert_select_all_reports_mixed(tf)     # (C)
-        _assert_selection_restore_and_mixed(tf)  # (D)
-        _assert_multi_object_edit(tf)            # (E)
+        _assert_funnel_builds_common_panel(tf, gp)   # (B)
+        _assert_select_all_reports_mixed(tf, gp)     # (C)
+        _assert_selection_restore_and_mixed(tf, gp)  # (D)
+        _assert_multi_object_edit(tf, gp)            # (E)
         _assert_modifier_clicks(tf)              # (F)
         _assert_keyboard_chords(tf)              # (G)
-        _assert_errors(tf)                       # (H)
+        _assert_errors(tf, gp)                       # (H)
 
 
 if __name__ == "__main__":

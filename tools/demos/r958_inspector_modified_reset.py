@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     runs_of,
@@ -61,31 +62,32 @@ def _arrow_present(tf: RpcSubprocess, i: int) -> bool:
 
 def body() -> None:
     with RpcSubprocess("hello-inspector", request_timeout=12.0) as tf:
+        gp = external_paths(tf)
         wait_until(lambda: True if _q(tf, "object_count") == 3 else None, desc="inspector ready")
 
         # ── (A) boot: one object, nothing modified ──────────────────────
         assert_eq(_q(tf, "selection"), runs_of([0]), "boots with Player selected")
         assert_eq(_q(tf, "any_modified"), False, "boot Player is all at default")
-        assert_eq(_q(tf, "modified.1"), False, "Player property 1 at default")
+        assert_eq(_q(tf, gp.at("modified", i=1)), False, "Player property 1 at default")
 
         # ── select all three; common base = Visible / Layer / Locked ────
         tf.invoke("/external/select_all", None)
         wait_query(tf, "/external/selection", runs_of([0, 1, 2]),
                    desc="all three selected")
         assert_eq(_q(tf, "row_count"), 3, "Visible / Layer / Locked are common")
-        assert_eq(_q(tf, "name.1"), "Layer", "common property 1 is Layer")
+        assert_eq(_q(tf, gp.at("name", i=1)), "Layer", "common property 1 is Layer")
 
         # ── (A) modified is orthogonal to mixed ─────────────────────────
         # The base props boot MIXED (Layer is 1/1/2) but at DEFAULT.
-        assert_eq(_q(tf, "mixed.1"), True, "Layer disagrees across the selection (1/1/2)")
-        assert_eq(_q(tf, "modified.1"), False, "...yet Layer is at default in every object")
+        assert_eq(_q(tf, gp.at("mixed", i=1)), True, "Layer disagrees across the selection (1/1/2)")
+        assert_eq(_q(tf, gp.at("modified", i=1)), False, "...yet Layer is at default in every object")
         assert_eq(_q(tf, "any_modified"), False, "nothing modified at boot")
         assert not _arrow_present(tf, 1), "no reset arrow on an at-default row"
 
         # ── (B) edit Layer across the selection -> modified ─────────────
-        tf.intervene("/external/value.1", 5)
-        wait_query(tf, "/external/value.1", 5, desc="Layer set to 5 across the selection")
-        assert_eq(_q(tf, "modified.1"), True, "edited Layer is modified from default")
+        tf.intervene(f"/external/{gp.at('value', i=1)}", 5)
+        wait_query(tf, f"/external/{gp.at('value', i=1)}", 5, desc="Layer set to 5 across the selection")
+        assert_eq(_q(tf, gp.at("modified", i=1)), True, "edited Layer is modified from default")
         assert_eq(_q(tf, "any_modified"), True, "the panel is now dirty")
         snap = wait_snap(
             tf,
@@ -97,10 +99,10 @@ def body() -> None:
 
         # ── (C) RPC reset restores EACH object's own default ────────────
         assert_eq(tf.invoke("/external/reset", 1), True, "reset reports it changed something")
-        wait_query(tf, "/external/modified.1", False, desc="Layer no longer modified")
-        assert_eq(_q(tf, "value.1"), 1, "representative back to Player's default (1)")
+        wait_query(tf, f"/external/{gp.at('modified', i=1)}", False, desc="Layer no longer modified")
+        assert_eq(_q(tf, gp.at("value", i=1)), 1, "representative back to Player's default (1)")
         assert_eq(
-            _q(tf, "mixed.1"),
+            _q(tf, gp.at("mixed", i=1)),
             True,
             "per-object defaults differ (1/1/2) -> mixed again, but not modified",
         )
@@ -110,36 +112,36 @@ def body() -> None:
         assert_eq(tf.invoke("/external/reset", 1), False, "re-resetting an at-default row is a no-op")
 
         # ── (D) the GUI reset arrow click drives the same reset ─────────
-        tf.intervene("/external/value.0", False)  # Visible -> false (Player+Camera diverge)
-        wait_query(tf, "/external/modified.0", True, desc="Visible modified after edit")
+        tf.intervene(f"/external/{gp.at('value', i=0)}", False)  # Visible -> false (Player+Camera diverge)
+        wait_query(tf, f"/external/{gp.at('modified', i=0)}", True, desc="Visible modified after edit")
         assert _arrow_present(tf, 0), "Visible reset arrow now paints"
         tf.click(path="inspector#reset0")
-        wait_query(tf, "/external/modified.0", False, desc="clicking the arrow reset Visible")
-        assert_eq(_q(tf, "value.0"), True, "Visible back to Player's default (true)")
-        assert_eq(_q(tf, "mixed.0"), True, "Visible defaults differ (true/true/false) -> mixed")
+        wait_query(tf, f"/external/{gp.at('modified', i=0)}", False, desc="clicking the arrow reset Visible")
+        assert_eq(_q(tf, gp.at("value", i=0)), True, "Visible back to Player's default (true)")
+        assert_eq(_q(tf, gp.at("mixed", i=0)), True, "Visible defaults differ (true/true/false) -> mixed")
 
         # ── (E) reset_all clears every modified property at once ────────
-        tf.intervene("/external/value.1", 7)  # Layer (all diverge)
-        tf.intervene("/external/value.2", True)  # Locked -> true (Player+Camera diverge)
+        tf.intervene(f"/external/{gp.at('value', i=1)}", 7)  # Layer (all diverge)
+        tf.intervene(f"/external/{gp.at('value', i=2)}", True)  # Locked -> true (Player+Camera diverge)
         wait_query(tf, "/external/any_modified", True, desc="two properties modified")
-        assert_eq(_q(tf, "modified.1"), True, "Layer modified")
-        assert_eq(_q(tf, "modified.2"), True, "Locked modified")
+        assert_eq(_q(tf, gp.at("modified", i=1)), True, "Layer modified")
+        assert_eq(_q(tf, gp.at("modified", i=2)), True, "Locked modified")
         assert_eq(tf.invoke("/external/reset_all", None), 2, "reset_all reports 2 properties cleared")
         wait_query(tf, "/external/any_modified", False, desc="nothing modified after reset_all")
-        assert_eq(_q(tf, "modified.1"), False, "Layer cleared")
-        assert_eq(_q(tf, "modified.2"), False, "Locked cleared")
+        assert_eq(_q(tf, gp.at("modified", i=1)), False, "Layer cleared")
+        assert_eq(_q(tf, gp.at("modified", i=2)), False, "Locked cleared")
 
         # ── (G) single-object selection: reset to that object's default ─
         tf.invoke("/external/select", 2)  # Light only
         wait_query(tf, "/external/selection", runs_of([2]),
                    desc="Light selected alone")
-        assert_eq(_q(tf, "name.1"), "Layer", "Light's common[1] is Layer")
-        assert_eq(_q(tf, "modified.1"), False, "Light Layer at its default (2)")
-        tf.intervene("/external/value.1", 9)
-        wait_query(tf, "/external/modified.1", True, desc="Light Layer modified")
+        assert_eq(_q(tf, gp.at("name", i=1)), "Layer", "Light's common[1] is Layer")
+        assert_eq(_q(tf, gp.at("modified", i=1)), False, "Light Layer at its default (2)")
+        tf.intervene(f"/external/{gp.at('value', i=1)}", 9)
+        wait_query(tf, f"/external/{gp.at('modified', i=1)}", True, desc="Light Layer modified")
         assert_eq(tf.invoke("/external/reset", 1), True, "reset Light's Layer")
-        wait_query(tf, "/external/value.1", 2, desc="Light Layer back to its own default (2)")
-        assert_eq(_q(tf, "modified.1"), False, "Light Layer at default again")
+        wait_query(tf, f"/external/{gp.at('value', i=1)}", 2, desc="Light Layer back to its own default (2)")
+        assert_eq(_q(tf, gp.at("modified", i=1)), False, "Light Layer at default again")
 
 
 if __name__ == "__main__":

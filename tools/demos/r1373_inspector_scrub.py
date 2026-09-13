@@ -46,6 +46,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -114,6 +115,7 @@ def expected_int_steps(pw: int, dx: int) -> int:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         wait_until(lambda: True if q(tf, "object_count") == 3 else None,
                    desc="inspector ready")
 
@@ -123,18 +125,18 @@ def body() -> None:
                    desc="Player selected")
         pw = panel_width(tf)
         assert abs(pw - REF_W) <= 4, f"the Details panel paints at ~{REF_W}px (the scrub basis), got {pw}"
-        assert_eq(q(tf, f"kind.{LAYER}"), "int", "Layer (row 1) is an int")
-        assert_eq(q(tf, f"kind.{HEALTH}"), "int", "Health (row 3) is an int")
-        assert_eq(q(tf, f"kind.{SPEED}"), "float", "Speed (row 4) is a float")
-        assert_eq(q(tf, "kind.0"), "bool", "Visible (row 0) is a bool")
-        assert_eq(q(tf, f"value.{LAYER}"), 1, "Player Layer boots at 1")
-        assert_eq(q(tf, f"value.{HEALTH}"), 100, "Player Health boots at 100")
-        assert_eq(q(tf, f"value.{SPEED}"), 6.5, "Player Speed boots at 6.5")
+        assert_eq(q(tf, gp.at("kind", i=LAYER)), "int", "Layer (row 1) is an int")
+        assert_eq(q(tf, gp.at("kind", i=HEALTH)), "int", "Health (row 3) is an int")
+        assert_eq(q(tf, gp.at("kind", i=SPEED)), "float", "Speed (row 4) is a float")
+        assert_eq(q(tf, gp.at("kind", i=0)), "bool", "Visible (row 0) is a bool")
+        assert_eq(q(tf, gp.at("value", i=LAYER)), 1, "Player Layer boots at 1")
+        assert_eq(q(tf, gp.at("value", i=HEALTH)), 100, "Player Health boots at 100")
+        assert_eq(q(tf, gp.at("value", i=SPEED)), 6.5, "Player Speed boots at 6.5")
         assert_eq(q(tf, "scrubbing"), False, "not scrubbing at boot")
 
         # ── (B) float scrub right: Speed up over +100px ─────────────
         scrub(tf, numeric_cell(SPEED), 100)
-        v = q(tf, f"value.{SPEED}")
+        v = q(tf, gp.at("value", i=SPEED))
         exp = expected_float(6.5, pw, 100)
         assert isinstance(v, float) and abs(v - exp) < 0.05, f"Speed scrubbed to ~{exp:.3f}, got {v}"
         assert v > 6.5, "a rightward drag increases the value"
@@ -143,60 +145,60 @@ def body() -> None:
 
         # ── (C) float scrub left: signed — drags back toward 6.5 ────
         scrub(tf, numeric_cell(SPEED), -100)
-        v2 = q(tf, f"value.{SPEED}")
+        v2 = q(tf, gp.at("value", i=SPEED))
         assert v2 < v, "a leftward drag decreases the value"
         assert abs(v2 - 6.5) < 0.05, f"-100px returns Speed to ~6.5, got {v2}"
 
         # ── (D) int scrub: Health steps in whole units (8px/step) ───
         scrub(tf, numeric_cell(HEALTH), 80)
         steps = expected_int_steps(pw, 80)
-        assert_eq(q(tf, f"value.{HEALTH}"), 100 + steps, f"Health steps +{steps} over +80px")
-        assert isinstance(q(tf, f"value.{HEALTH}"), int), "an int scrub stays an int"
+        assert_eq(q(tf, gp.at("value", i=HEALTH)), 100 + steps, f"Health steps +{steps} over +80px")
+        assert isinstance(q(tf, gp.at("value", i=HEALTH)), int), "an int scrub stays an int"
 
         # ── (E) int scrub left: steps back down ─────────────────────
-        health_hi = q(tf, f"value.{HEALTH}")
+        health_hi = q(tf, gp.at("value", i=HEALTH))
         scrub(tf, numeric_cell(HEALTH), -40)
         back = expected_int_steps(pw, 40)
-        assert_eq(q(tf, f"value.{HEALTH}"), health_hi - back, f"Health steps -{back} over -40px")
+        assert_eq(q(tf, gp.at("value", i=HEALTH)), health_hi - back, f"Health steps -{back} over -40px")
 
         # ── (F) MULTI-object scrub: Layer shifts EACH, mix preserved ─
         tf.invoke("/external/select_all", None)
         wait_until(lambda: True if q(tf, "selection_count") == 3 else None,
                    desc="all three objects selected")
         # Common rows across all: Visible(0) Layer(1) Locked(2). Layer is 1,1,2.
-        assert_eq(q(tf, f"name.{LAYER}"), "Layer", "common row 1 is Layer")
-        assert_eq(q(tf, f"mixed.{LAYER}"), True, "Layer is 1,1,2 -> Multiple Values")
+        assert_eq(q(tf, gp.at("name", i=LAYER)), "Layer", "common row 1 is Layer")
+        assert_eq(q(tf, gp.at("mixed", i=LAYER)), True, "Layer is 1,1,2 -> Multiple Values")
         pw2 = panel_width(tf)
         scrub(tf, numeric_cell(LAYER), 24)  # +24px -> +3 steps to EACH
         k = expected_int_steps(pw2, 24)
         assert k >= 1, "the drag crossed at least one step"
-        assert_eq(q(tf, f"mixed.{LAYER}"), True, "still mixed after a uniform relative shift")
+        assert_eq(q(tf, gp.at("mixed", i=LAYER)), True, "still mixed after a uniform relative shift")
         assert_eq(q(tf, "scrubbing"), False, "scrub cleared after release")
         # Verify EACH object moved by the same k (the mix-preserving write): re-select
         # each object alone and read its Layer (still common row 1 for all three).
         tf.invoke("/external/select", 0)
-        assert_eq(q(tf, f"value.{LAYER}"), 1 + k, f"Player Layer 1 + {k}")
+        assert_eq(q(tf, gp.at("value", i=LAYER)), 1 + k, f"Player Layer 1 + {k}")
         tf.invoke("/external/select", 1)
-        assert_eq(q(tf, f"value.{LAYER}"), 1 + k, f"Camera Layer 1 + {k}")
+        assert_eq(q(tf, gp.at("value", i=LAYER)), 1 + k, f"Camera Layer 1 + {k}")
         tf.invoke("/external/select", 2)
-        assert_eq(q(tf, f"value.{LAYER}"), 2 + k, f"Light Layer 2 + {k} (mix preserved)")
+        assert_eq(q(tf, gp.at("value", i=LAYER)), 2 + k, f"Light Layer 2 + {k} (mix preserved)")
 
         # ── (G) isolation: the Layer scrub touched only Layer ───────
         tf.invoke("/external/select", 0)  # Player
-        assert abs(q(tf, f"value.{SPEED}") - 6.5) < 0.05, "Player Speed untouched by the Layer scrub"
-        assert_eq(q(tf, f"value.{HEALTH}"), health_hi - back, "Player Health at its (E) value")
+        assert abs(q(tf, gp.at("value", i=SPEED)) - 6.5) < 0.05, "Player Speed untouched by the Layer scrub"
+        assert_eq(q(tf, gp.at("value", i=HEALTH)), health_hi - back, "Player Health at its (E) value")
 
         # ── (H) a click (no move) does not scrub and does not edit ──
-        before = q(tf, f"value.{SPEED}")
+        before = q(tf, gp.at("value", i=SPEED))
         tf.click(path=numeric_cell(SPEED))
-        assert abs(q(tf, f"value.{SPEED}") - before) < 1e-9, "a click leaves the value unchanged"
+        assert abs(q(tf, gp.at("value", i=SPEED)) - before) < 1e-9, "a click leaves the value unchanged"
         assert_eq(q(tf, "scrubbing"), False, "a click never calibrates a scrub")
         assert_eq(q(tf, "editing"), None, "a single click on a numeric cell does not edit")
 
         # ── (I) a drag on a non-numeric (bool) cell never scrubs ────
-        assert_eq(q(tf, "value.0"), True, "Player Visible boots true")
+        assert_eq(q(tf, gp.at("value", i=0)), True, "Player Visible boots true")
         scrub(tf, f"{INSPECTOR}#toggle0", 70)  # drag the bool cell
-        assert_eq(q(tf, "value.0"), False, "the bool toggles on release (the drag did not scrub)")
+        assert_eq(q(tf, gp.at("value", i=0)), False, "the bool toggles on release (the drag did not scrub)")
         assert_eq(q(tf, "scrubbing"), False, "a non-numeric drag never scrubs")
 
         # ── (J) double-click still opens the inline editor ──────────
