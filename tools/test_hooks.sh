@@ -2804,6 +2804,57 @@ ok "and in CI, which is the other home" "$seat_ci" "1"
 # ★ The rule itself, exercised through this file too: a gate that merely EXISTS
 # is what R1884 found. One call, one sentence, and it fails if the criterion
 # stops discriminating.
+# ── R2221: the rule has a FACILITY, and nothing hand-rolls one beside it ───
+#
+# ★★★★★ R2220 left the rule able to say "not here" and nothing able to say
+# "there". The sweep's default was the seat, so a run with nothing exported
+# refused instead of running — correct, and useless. The facility is what makes
+# the refusal actionable, and what would make it stop mattering is any of the
+# three below: the sweep going back to a hard-coded number, CI keeping its own
+# hand-rolled server, or the refusal's advice pointing at an `Xvfb ... &` that
+# a person has to remember to take away again.
+seat_provide="$(grep -c 'display_seat.py" --with-offscreen' \
+    "$repo_root/tools/sweep_headless.sh" 2>/dev/null || echo 0)"
+ok "the sweep makes its own display when none is named" "$seat_provide" "1"
+# ⚠ The old default is the regression, so it is named rather than counted: a
+# count of `--with-offscreen` stays at 1 while somebody puts `:0` back beside it.
+if grep -q 'PINION_SWEEP_DISPLAY:-:0' "$repo_root/tools/sweep_headless.sh"; then
+    seat_default="falls back to the seat"
+else
+    seat_default="no hard-coded default"
+fi
+ok "and it has no hard-coded display to fall back to" \
+   "$seat_default" "no hard-coded default"
+# ★ CI is where the full sweep actually runs, so a facility it does not use is
+# a facility with no consumer. Asserted in both directions: the wrapper is
+# there, and the `Xvfb ... &` it replaced is not.
+#
+# ⚠ Comment lines are stripped FIRST, and that is not tidiness. The first draft
+# counted `display_seat.py --with-offscreen` across the whole file and got 2 —
+# the second was the note above the step explaining the change. A needle that
+# matches the prose about a thing as well as the thing is a needle that goes
+# green when somebody deletes the step and keeps the comment.
+ci_code="$(grep -v '^[[:space:]]*#' "$repo_root/.github/workflows/ci.yml" 2>/dev/null)"
+seat_ci_provide="$(printf '%s\n' "$ci_code" \
+    | grep -c 'display_seat.py --with-offscreen' || true)"
+ok "CI runs its sweep on a display the tree starts" "$seat_ci_provide" "1"
+# ⚠ And `|| echo 0` is wrong for an assertion that EXPECTS zero: `grep -c`
+# prints its own `0` and then exits 1, so the fallback appends a second line and
+# the comparison fails against a value that was already right.
+seat_ci_handrolled="$(printf '%s\n' "$ci_code" \
+    | grep -cE '^[[:space:]]*Xvfb :[0-9]+ ' || true)"
+ok "and no longer starts one by hand beside it" "$seat_ci_handrolled" "0"
+# ★ The advice is the half of a refusal that does any good, and it is the half
+# that silently rots — it named a hand-typed server for exactly one round.
+seat_advice="$(python3 - "$repo_root" <<'PY' 2>&1 || true
+import sys
+sys.path.insert(0, sys.argv[1] + "/tools")
+import display_seat
+text = "\n".join(display_seat.advice())
+print("names-facility" if "--with-offscreen" in text else "names-a-hand-typed-server")
+PY
+)"
+ok "the refusal tells a reader about the facility" "$seat_advice" "names-facility"
 seat_verdict="$(python3 - "$repo_root" <<'PY' 2>&1 || true
 import sys
 sys.path.insert(0, sys.argv[1] + "/tools")

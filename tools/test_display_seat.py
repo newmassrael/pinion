@@ -33,6 +33,8 @@ has none and still falsifiable wherever one does.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -430,10 +432,204 @@ def test_the_advice_names_a_display_that_is_actually_free() -> None:
     check(spare not in live, f"{spare} is not one of the live displays {live}")
     check(spare.startswith(":"), "and it is spelled as a display")
     lines = "\n".join(display_seat.advice())
+    check(display_seat.ALLOW_ENV in lines, "the advice carries the override")
+    # ★ R2221 — and it names the FACILITY, not an `Xvfb ... &` the reader has to
+    # remember to take away again. Asserted unconditionally, because the branch
+    # that used to carry the hand-typed server was the one taken on a machine
+    # with no offscreen display — exactly where the advice matters most.
     check(
-        "DISPLAY=" in lines and display_seat.ALLOW_ENV in lines,
-        "the advice carries a command and the override",
+        "--with-offscreen" in lines,
+        "the advice points at the thing that starts and reaps a display",
     )
+    if display_seat.offscreen_here():
+        check("DISPLAY=" in lines, "and offers the live one as an alternative")
+
+
+# ---------------------------------------------------------------------------
+# The facility — a display made on purpose, and taken away again
+# ---------------------------------------------------------------------------
+
+
+def test_the_candidate_order_skips_what_is_in_use() -> None:
+    """Pure: the order is a rule, so it is asserted without starting anything."""
+    got = display_seat.offscreen_candidates((":90", ":92"), start=90, tries=4)
+    check(got == (":91", ":93", ":94", ":95"), f"taken numbers are skipped: {got}")
+    check(
+        display_seat.offscreen_candidates((), start=7, tries=3) == (":7", ":8", ":9"),
+        "and with nothing taken it counts up from the start",
+    )
+    check(
+        len(display_seat.offscreen_candidates((":90",) * 1, start=90, tries=5)) == 5,
+        "the count asked for is the count returned, skips notwithstanding",
+    )
+
+
+def test_the_number_the_server_reports_is_the_one_we_asked_for() -> None:
+    """Pure: a server that answers about a different display is not believed."""
+    check(
+        display_seat.read_display_number(b"90\n", expected=":90") == ":90",
+        "the reported number is read",
+    )
+    check(
+        display_seat.read_display_number(b"91\n", expected=":90") is None,
+        "a different number is refused rather than followed",
+    )
+    for junk in (b"", b"\n", b"x\n", b"9 0\n", b"-1\n"):
+        check(
+            display_seat.read_display_number(junk, expected=":90") is None,
+            f"{junk!r} is not a display number",
+        )
+
+
+def test_a_display_is_started_proven_offscreen_and_then_gone() -> None:
+    """The whole facility, for real — and the reap is the half that rots.
+
+    ⚠ This case does what the milestone claims and then checks the claim from
+    outside: the socket is there while the block runs and gone after it. A test
+    that only asserted the display worked would pass forever on a tree that
+    leaked one server per sweep, which is the defect this facility exists to
+    stop ([[debt-the-demo-sweep-paints-on-the-users-own-screen]] records the
+    stray `:98` that leak already produced).
+    """
+    if not shutil.which("Xvfb"):
+        print("[display] no Xvfb here — the facility cases assert nothing")
+        return
+    with display_seat.offscreen_display(start=140) as display:
+        number = display[1:]
+        check(display.startswith(":"), f"a display was handed out: {display}")
+        check(
+            os.path.exists(f"{display_seat.SOCKET_DIR}/X{number}"),
+            f"{display} has a socket while the block runs",
+        )
+        verdict = display_seat.classify(display, refresh=True)
+        check(verdict.kind == OFFSCREEN, f"{display} classifies offscreen")
+        check(verdict.may_paint, "so a test may paint on it")
+        probed = subprocess.run(  # noqa: S603 — argv, no shell
+            ["xdpyinfo", "-display", display],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        check(probed.returncode == 0, "and a real X client can connect to it")
+        check(
+            "1920x1200" in probed.stdout,
+            "with the geometry the borrowed :98 had, so a walk carries over",
+        )
+    check(
+        not os.path.exists(f"{display_seat.SOCKET_DIR}/X{number}"),
+        f"{display} is gone once the block ends — the reap actually runs",
+    )
+    check(display not in display_seat.live_displays(), "and the census agrees")
+
+
+def test_a_number_already_bound_is_stepped_over() -> None:
+    """The bind is the authority — measured against a server we put in the way.
+
+    ⚠ The occupant is started WITHOUT a lock file being the reason it is found:
+    `xvfb-run -a` chooses by scanning `/tmp/.X<n>-lock`, and R2220 measured that
+    backwards on this machine (the seat has no lock file, the virtual server
+    does). Here the first candidate is genuinely taken and the facility must
+    move past it because the *bind* failed.
+    """
+    if not shutil.which("Xvfb"):
+        return
+    occupant = display_seat.start_offscreen(":150", geometry="640x480x24")
+    check(occupant is not None, "an occupant was started on :150")
+    if occupant is None:
+        return
+    try:
+        with display_seat.offscreen_display(start=150) as display:
+            check(display != ":150", f"the facility stepped over :150, got {display}")
+            check(
+                os.path.exists(f"{display_seat.SOCKET_DIR}/X{display[1:]}"),
+                "and what it handed out is live",
+            )
+        check(
+            os.path.exists(f"{display_seat.SOCKET_DIR}/X150"),
+            "the occupant it did not start is still there — never reaped",
+        )
+    finally:
+        display_seat.reap_offscreen(occupant)
+
+
+def test_a_server_that_answers_like_a_seat_is_not_handed_out() -> None:
+    """The facility feeds the rule; it does not get to declare its own output.
+
+    ⚠ The rule is replaced rather than the server, because there is no Xvfb
+    flag that makes one look like a panel — and a check with no reachable
+    failing case is decoration, which is the thing
+    [[an-assertion-that-cannot-stand-moves-rather-than-dies]] names. What this
+    pins is the direction of authority: if `classify` ever says seat, the
+    facility refuses and still takes the server away.
+    """
+    if not shutil.which("Xvfb"):
+        return
+    seen: list[str] = []
+
+    def pretend_seated(display: str, *, refresh: bool = False) -> object:
+        seen.append(display)
+        return display_seat.Verdict(
+            display=display,
+            kind=SEATED,
+            signs=("a sign this test invented",),
+            ran=("fixture",),
+        )
+
+    real = display_seat.classify
+    display_seat.classify = pretend_seated  # type: ignore[assignment]
+    try:
+        refused = False
+        try:
+            with display_seat.offscreen_display(start=160):
+                check(False, "a display that classifies as a seat was handed out")
+        except display_seat.OffscreenUnavailable:
+            refused = True
+        check(refused, "the facility refused its own server")
+    finally:
+        display_seat.classify = real  # type: ignore[assignment]
+    check(len(seen) == 1, f"the rule was asked exactly once: {seen}")
+    if seen:
+        check(
+            not os.path.exists(f"{display_seat.SOCKET_DIR}/X{seen[0][1:]}"),
+            f"and {seen[0]} was reaped even though the block raised",
+        )
+
+
+def test_the_wrapper_runs_a_command_there_and_forwards_its_verdict() -> None:
+    """`--with-offscreen` end to end, including the exit code.
+
+    The exit code is asserted because a wrapper that swallows it turns every red
+    sweep green, and nothing else in this tree would notice.
+    """
+    if not shutil.which("Xvfb"):
+        return
+    tool = str(Path(display_seat.__file__).resolve())
+    ok = subprocess.run(  # noqa: S603 — argv, no shell
+        [sys.executable, tool, "--with-offscreen", "--", "sh", "-c",
+         'test -n "$DISPLAY" && xdpyinfo >/dev/null'],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    check(ok.returncode == 0, f"the child got a working DISPLAY (rc={ok.returncode})")
+    check(
+        "offscreen server this tool started" in ok.stderr,
+        "and the wrapper said which display it made",
+    )
+    red = subprocess.run(  # noqa: S603 — argv, no shell
+        [sys.executable, tool, "--with-offscreen", "--", "sh", "-c", "exit 7"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    check(red.returncode == 7, f"a failing child fails the wrapper (rc={red.returncode})")
+    empty = subprocess.run(  # noqa: S603 — argv, no shell
+        [sys.executable, tool, "--with-offscreen"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    check(empty.returncode == 2, "and with no command it refuses rather than runs")
 
 
 # ---------------------------------------------------------------------------

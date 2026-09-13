@@ -18,8 +18,12 @@
 #
 # Two render modes (PINION_SWEEP_MODE):
 #
-#   realgpu (default, R808) — real GPU via Vulkan on an X display
-#     (PINION_SWEEP_DISPLAY, default :0). Forced because vello 0.9 + wgpu 29
+#   realgpu (default, R808) — real GPU via Vulkan on an X display.
+#     ★★★★★ R2221 — with PINION_SWEEP_DISPLAY unset the sweep STARTS ITS OWN
+#     offscreen server and reaps it when it exits (the default used to be `:0`,
+#     the developer's own screen). Set PINION_SWEEP_DISPLAY to point it at a
+#     server you manage; it is then checked and never reaped, because it is not
+#     the sweep's. Forced because vello 0.9 + wgpu 29
 #     broke the Xvfb + software-GL path: vello's RenderContext builds its
 #     instance with display:None (upstream TODO), so wgpu 29's GL backend
 #     finds no surface-compatible adapter -> NoCompatibleDevice (VELLO-002).
@@ -79,12 +83,16 @@ cd "$ROOT" || exit 2
 # therefore unavailable on vello 0.9 until vello threads the window
 # display handle through.
 #
-# Until then the sweep defaults to a real GPU via Vulkan on the host X
-# display (PINION_SWEEP_DISPLAY, default :0) — 144/144 verified R808.
-# That reintroduces the host cursor the R720 Xvfb move removed, but the
-# R719 scene/pointer_leave boot baseline absorbs the boot-hover so the
-# sweep stays green. Set PINION_SWEEP_MODE=xvfb to restore the old Xvfb +
-# software-GL path once VELLO-002 lands upstream.
+# Until then the sweep defaults to a real GPU via Vulkan on an X display —
+# 144/144 verified R808. That reintroduced the host cursor the R720 Xvfb move
+# had removed, but the R719 scene/pointer_leave boot baseline absorbs the
+# boot-hover so the sweep stays green. Set PINION_SWEEP_MODE=xvfb to restore
+# the old Xvfb + software-GL path once VELLO-002 lands upstream.
+#
+# ★ R2221 — "the host X display" no longer means the developer's screen. The
+# sweep starts an offscreen server of its own unless PINION_SWEEP_DISPLAY names
+# one, and R2220 measured that a real GPU does not need a monitor: this whole
+# sweep's walks run on a throwaway Xvfb with Vulkan on the real adapter.
 PINION_SWEEP_MODE="${PINION_SWEEP_MODE:-realgpu}"
 
 # --- demo selection -------------------------------------------------------
@@ -343,14 +351,34 @@ mkdir -p "$(dirname "$PINION_PRESENT_CENSUS")" 2>/dev/null || true
 
 case "$PINION_SWEEP_MODE" in
   realgpu)
-    # Real GPU via Vulkan on the host display (VELLO-002 workaround).
+    # Real GPU via Vulkan on an X display (VELLO-002 workaround).
     export WGPU_BACKEND="${WGPU_BACKEND:-vulkan}"
-    export DISPLAY="${PINION_SWEEP_DISPLAY:-:0}"
+    # ★★★★★ R2221 — with no display named, the sweep MAKES one.
+    #
+    # R2220 gave this mode a rule ("not a display somebody is sitting at") and
+    # left the default at `:0`, so a sweep with nothing exported now refused
+    # instead of running: correct, and useless. What was missing was not another
+    # check but a FACILITY — something that hands the run a display it may paint
+    # on. `tools/display_seat.py --with-offscreen` starts an Xvfb, waits for the
+    # server's own ready signal, hands it over, and takes it away again; see that
+    # file for why the bind rather than the lock file chooses the number.
+    #
+    # ⚠ Deliberately not `exec`: the wrapper has to outlive the runner in order
+    # to reap the server. It forwards the runner's exit code.
+    if [ -z "${PINION_SWEEP_DISPLAY:-}" ]; then
+      python3 "$ROOT/tools/display_seat.py" --with-offscreen \
+        --what "this demo sweep" -- bash -c "$runner" _ "${demos[@]}"
+      exit "$?"
+    fi
+    # A display named on purpose is honoured, and checked. This is the path a
+    # CI job or a person with a particular server takes; the sweep does not own
+    # that server, so it does not reap it either.
+    export DISPLAY="$PINION_SWEEP_DISPLAY"
     if ! xdpyinfo >/dev/null 2>&1; then
-      echo "[sweep] FATAL: host display $DISPLAY unavailable. A real-GPU X" >&2
-      echo "        server is required while VELLO-002 blocks Xvfb + GL on" >&2
-      echo "        vello 0.9. Set PINION_SWEEP_DISPLAY, or PINION_SWEEP_MODE" >&2
-      echo "        =xvfb once vello threads the window display handle." >&2
+      echo "[sweep] FATAL: PINION_SWEEP_DISPLAY=$DISPLAY is unavailable. Unset" >&2
+      echo "        it to let the sweep start its own offscreen server, or" >&2
+      echo "        set PINION_SWEEP_MODE=xvfb once vello threads the window" >&2
+      echo "        display handle (VELLO-002)." >&2
       exit 2
     fi
     # ★★★★★ R2220 — and it must not be a display somebody is SITTING at.
@@ -358,10 +386,9 @@ case "$PINION_SWEEP_MODE" in
     # This mode exists because VELLO-002 forced the sweep off Xvfb onto a real
     # GPU, and the header above records the price in prose: "that reintroduces
     # the host cursor the R720 Xvfb move removed". A price recorded in prose is
-    # a price nobody is stopped from paying — the default here was `:0`, i.e.
-    # whatever X server the developer is looking at. `tools/display_seat.py`
-    # decides from what the server says about its own outputs, not from the
-    # display NUMBER, which is a convention and cannot refuse.
+    # a price nobody is stopped from paying. `tools/display_seat.py` decides
+    # from what the server says about its own outputs, not from the display
+    # NUMBER, which is a convention and cannot refuse.
     #
     # The harness refuses per-launch as well (`rpc_verify._enter_inner`), which
     # covers a demo run by hand. This one is here so the sweep says so ONCE, up

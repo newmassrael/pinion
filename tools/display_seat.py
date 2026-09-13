@@ -97,11 +97,17 @@ Run it:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import ctypes
 import os
 import re
+import select
 import shutil
+import signal
 import subprocess
 import sys
+import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 #: Setting this sets aside THIS rule and nothing else — the idiom this tree
@@ -111,6 +117,23 @@ ALLOW_ENV = "PINION_ALLOW_SEATED_DISPLAY"
 
 #: Where X servers put their sockets. The census reads it; nothing else does.
 SOCKET_DIR = "/tmp/.X11-unix"
+
+#: The throwaway server's screen. `:98`, the offscreen display this machine had
+#: been borrowing from an earlier session, is `1920x1200x24`; matching it means a
+#: walk that passed there passes here.
+GEOMETRY_ENV = "PINION_OFFSCREEN_GEOMETRY"
+DEFAULT_GEOMETRY = "1920x1200x24"
+
+#: Where the search for a free display number starts, and how far it goes. High,
+#: because low numbers are where session managers put seats — not because a low
+#: number would be unsafe (the bind settles that; see `start_offscreen`) but
+#: because a throwaway server squatting `:0` is in somebody else's way.
+CANDIDATE_START = 90
+CANDIDATE_TRIES = 16
+
+#: How long the server gets to say it is ready. Measured 2026-09-13 on this
+#: machine: 0.06s. The bound is for the case where it never will.
+READY_TIMEOUT_S = 10.0
 
 #: Verdict kinds. Only `OFFSCREEN` may be painted on.
 SEATED = "seated"
@@ -413,24 +436,304 @@ def offscreen_here() -> tuple[str, ...]:
     return tuple(d for d in live_displays() if classify(d).may_paint)
 
 
+# ---------------------------------------------------------------------------
+# The facility — the rule's counterpart: "then WHERE may I paint?"
+# ---------------------------------------------------------------------------
+#
+# ★★★★★ R2221. The rule above answers *may a test paint here?*. Until this
+# section existed, the answer "no" was the end of the conversation: `advice()`
+# printed an `Xvfb ... &` line and a person had to run it, and whether a sweep
+# was offscreen came down to whether somebody had. That is how this machine came
+# to have a `:98` — an Xvfb an earlier session started, never reaped, and which
+# every run since had been *borrowing*. The debt states the consequence plainly:
+# when it dies the sweep can only refuse, because nothing here can make one.
+#
+# So a run that needs a display makes its own and takes it away again. Three
+# decisions, each from a measurement rather than from what reads well:
+#
+#   1. **The bind is the authority, not the lock file.** `xvfb-run -a` chooses a
+#      number by scanning `/tmp/.X<n>-lock`, and R2220 measured that backwards
+#      here: `/tmp/.X98-lock` exists for the virtual server while the seat at
+#      `:1` has no lock file at all (gdm starts Xorg with `-displayfd` and
+#      `-keeptty`). Measured 2026-09-13: `Xvfb :1` and `Xvfb :98`, each given an
+#      explicit number, BOTH fail with *server already running* — the socket
+#      bind sees the occupant the lock file misses. So candidates are tried with
+#      an explicit number and a refusal advances to the next one.
+#
+#   2. **The server says when it is ready.** `-displayfd` writes the display
+#      number to a pipe *when it is ready to connect* (measured: 0.06s), which
+#      is the same mechanism gdm uses. The alternative — sleep, then poll
+#      `xdpyinfo` — is a race dressed as a wait, and this tree has a zero-flake
+#      policy to keep.
+#
+#   3. **What we start, we reap; what we did not start, we never touch.** The
+#      reap runs from a `finally`, and `PR_SET_PDEATHSIG` is the backstop for
+#      the case a `finally` cannot cover — the wrapper being SIGKILLed. That
+#      backstop is not theoretical: the stray `:98` IS this leak, already
+#      observed in this tree.
+#
+# ⚠ Limits, stated rather than found later:
+#
+#   * The server runs with no `-auth` cookie, so any local user could connect to
+#     it — the same posture as the `:98` this tree has been borrowing, and
+#     `-nolisten tcp` keeps it off the network. An auth file was considered and
+#     refused for a structural reason: `probe()` would have to be told where the
+#     cookie is, which makes THE RULE depend on THE FACILITY. The rule has to be
+#     answerable about a display nobody here started.
+#   * A `-displayfd` that never arrives is bounded by `READY_TIMEOUT_S`, and the
+#     partially-started server is reaped before the next candidate is tried.
+
+
+class OffscreenUnavailable(RuntimeError):
+    """Raised when no offscreen display could be made."""
+
+
+def offscreen_candidates(
+    taken: tuple[str, ...],
+    *,
+    start: int = CANDIDATE_START,
+    tries: int = CANDIDATE_TRIES,
+) -> tuple[str, ...]:
+    """Display numbers to try, in order, skipping the ones already in use.
+
+    Pure, and separate from the bind for the reason `seat_signs` is separate
+    from `probe`: the order is a rule, and a rule with no falsifiable case is
+    decoration. ⚠ Skipping `taken` is a courtesy, not the safety — a socket that
+    appears between this list and the bind is caught by the bind itself, which
+    is the only check that cannot be raced.
+    """
+    out: list[str] = []
+    n = start
+    while len(out) < tries:
+        name = f":{n}"
+        if name not in taken:
+            out.append(name)
+        n += 1
+    return tuple(out)
+
+
+def read_display_number(data: bytes, *, expected: str) -> str | None:
+    """The display the server reported on its `-displayfd` pipe, or None.
+
+    Pure. `expected` is what we asked for on the command line; a server that
+    answers something else is not believed, because every later decision — the
+    reap, the verdict, the `DISPLAY` the child gets — is about one display and
+    they must all be about the same one.
+    """
+    text = data.decode("utf-8", "replace").strip()
+    if not text or not text.isdigit():
+        return None
+    got = f":{int(text)}"
+    return got if got == expected else None
+
+
+def _pdeathsig() -> None:  # pragma: no cover — runs in the forked child
+    """Ask the kernel to SIGTERM this child when its parent dies.
+
+    The `finally` below covers every exit this process can observe. This covers
+    the one it cannot: being SIGKILLed. Best-effort by construction — a kernel
+    or libc without `prctl` leaves the reap to the `finally`, which is where it
+    was anyway.
+    """
+    try:
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(1, signal.SIGTERM, 0, 0, 0)
+    except Exception:  # noqa: BLE001 — a backstop that fails is still a backstop
+        pass
+
+
+def start_offscreen(
+    display: str,
+    *,
+    geometry: str,
+    timeout: float = READY_TIMEOUT_S,
+) -> subprocess.Popen[bytes] | None:
+    """Start `Xvfb` on exactly `display`, or None if that number is taken.
+
+    Returns only once the server has said it is ready to connect.
+    """
+    read_fd, write_fd = os.pipe()
+    os.set_inheritable(write_fd, True)
+    try:
+        proc = subprocess.Popen(  # noqa: S603 — argv, no shell
+            [
+                "Xvfb",
+                display,
+                "-displayfd",
+                str(write_fd),
+                "-screen",
+                "0",
+                geometry,
+                "-nolisten",
+                "tcp",
+            ],
+            pass_fds=(write_fd,),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            preexec_fn=_pdeathsig,  # noqa: PLW1509 — single-threaded by design
+        )
+    except OSError:
+        os.close(read_fd)
+        os.close(write_fd)
+        raise
+    # ⚠ Our copy of the write end must go, or the read below never sees EOF when
+    # the server dies — the pipe would stay open because WE hold it.
+    os.close(write_fd)
+
+    buf = b""
+    deadline = time.monotonic() + timeout
+    try:
+        while b"\n" not in buf:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            ready, _, _ = select.select([read_fd], [], [], min(remaining, 0.25))
+            if ready:
+                chunk = os.read(read_fd, 64)
+                if not chunk:
+                    break  # EOF — the server exited without reporting
+                buf += chunk
+            elif proc.poll() is not None:
+                break  # died, and its end of the pipe is gone with it
+    finally:
+        os.close(read_fd)
+
+    if read_display_number(buf, expected=display) == display:
+        return proc
+    reap_offscreen(proc)
+    return None
+
+
+def reap_offscreen(proc: subprocess.Popen[bytes]) -> None:
+    """Take the server away: ask, then insist."""
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
+
+
+@contextlib.contextmanager
+def offscreen_display(
+    *,
+    geometry: str | None = None,
+    start: int = CANDIDATE_START,
+    tries: int = CANDIDATE_TRIES,
+) -> Iterator[str]:
+    """A display this process owns, offscreen by construction and by verdict.
+
+    ★ The verdict is asserted rather than assumed. A facility that *declares*
+    its output offscreen is the rule spelled a second time, and a second
+    spelling is what this whole module exists to remove — so the display goes
+    through `classify` like any other, and a server that somehow answers with a
+    seat's signs is refused instead of painted on.
+    """
+    geometry = geometry or os.environ.get(GEOMETRY_ENV) or DEFAULT_GEOMETRY
+    if not shutil.which("Xvfb"):
+        raise OffscreenUnavailable(
+            "Xvfb is not installed, so no offscreen display can be made "
+            "(Debian/Ubuntu: the 'xvfb' package)"
+        )
+    candidates = offscreen_candidates(live_displays(), start=start, tries=tries)
+    proc: subprocess.Popen[bytes] | None = None
+    display = ""
+    for name in candidates:
+        proc = start_offscreen(name, geometry=geometry)
+        if proc is not None:
+            display = name
+            break
+    if proc is None:
+        raise OffscreenUnavailable(
+            f"no free display number in {candidates[0]}..{candidates[-1]} — "
+            f"{len(candidates)} were tried and each was already bound"
+        )
+    try:
+        verdict = classify(display, refresh=True)
+        if not verdict.may_paint:
+            raise OffscreenUnavailable(
+                f"the display this tool just started ({display}) does not "
+                f"classify as offscreen but as {verdict.kind} — refusing to "
+                f"hand it out, because the rule is the authority and not this"
+            )
+        yield display
+    finally:
+        reap_offscreen(proc)
+        _JUDGED.pop(display, None)
+
+
+def run_offscreen(argv: list[str], *, what: str = "this command") -> int:
+    """Run `argv` on a display made for it, and take the display away after.
+
+    The whole facility as one call, because this is what every caller wants and
+    a caller assembling it from the parts would be the second spelling again.
+    """
+    if not argv:
+        print("[display] --with-offscreen needs a command to run", file=sys.stderr)
+        return 2
+    with offscreen_display() as display:
+        env = dict(os.environ)
+        env["DISPLAY"] = display
+        print(
+            f"[display] {what} runs on {display}, an offscreen server this tool "
+            f"started and reaps when it exits",
+            file=sys.stderr,
+        )
+        # ⚠ Not `exec`: this process has to outlive the child in order to reap.
+        # The child keeps THIS process group, so a terminal's Ctrl-C reaches it
+        # directly; the server was put in its own session so the same Ctrl-C
+        # does NOT kill it out from under a child that is still shutting down.
+        proc = subprocess.Popen(  # noqa: S603 — argv, no shell
+            argv,
+            env=env,
+            # ⚠ The same backstop the server gets, and for the other half of the
+            # same failure: measured 2026-09-13, SIGKILLing the wrapper reaped
+            # the server (pdeathsig) and left the CHILD running — a run still
+            # driving windows on a display that had just been taken away.
+            preexec_fn=_pdeathsig,  # noqa: PLW1509 — single-threaded by design
+        )
+        try:
+            return proc.wait()
+        except KeyboardInterrupt:
+            # The terminal sent it to the whole group, so the child has it too.
+            proc.wait()
+            return 130
+        finally:
+            # Reached when SIGTERM raised `SystemExit` inside `wait` (see
+            # `_reap_on_sigterm`). A child left running would keep painting on a
+            # display that is about to be taken away.
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+
+
 def advice() -> list[str]:
     """What to do instead — measured against this machine, not generic."""
+    lines: list[str] = [
+        # ★★★★★ R2221 — this used to read `Xvfb :90 -screen 0 1920x1200x24 &`,
+        # a server the reader had to remember to take away again. Nobody did:
+        # the `:98` this machine carries is one of those, left by a session that
+        # ended months ago. The facility below starts one and reaps it, so the
+        # advice names it instead of asking a person to be the facility.
+        "  Run it on a throwaway display this tree starts and reaps for you:",
+        "      python3 tools/display_seat.py --with-offscreen -- "
+        "<the command you just ran>",
+        "      tools/sweep_headless.sh ...   # does this for itself, with no",
+        "                                    # PINION_SWEEP_DISPLAY set",
+    ]
     ready = offscreen_here()
-    lines: list[str] = []
     if ready:
-        lines.append(f"  This machine already has an offscreen display: {ready[0]}")
+        lines.append(
+            f"  Or reuse one this machine already has ({ready[0]}) — but it is "
+            f"somebody else's to stop:"
+        )
         lines.append(f"      DISPLAY={ready[0]} <the command you just ran>")
-        lines.append(
-            f"      PINION_SWEEP_DISPLAY={ready[0]} tools/sweep_headless.sh ..."
-        )
-    else:
-        spare = free_display()
-        lines.append("  Start a throwaway display and point the run at it:")
-        lines.append(f"      Xvfb {spare} -screen 0 1920x1200x24 &")
-        lines.append(f"      DISPLAY={spare} <the command you just ran>")
-        lines.append(
-            f"      PINION_SWEEP_DISPLAY={spare} tools/sweep_headless.sh ..."
-        )
     lines.append(
         f"  To watch a window on purpose, set {ALLOW_ENV}=1 — it sets aside"
     )
@@ -504,6 +807,21 @@ def refuse_seated(display: str | None, *, what: str) -> Verdict | None:
 # ---------------------------------------------------------------------------
 
 
+def _reap_on_sigterm() -> None:
+    """Make SIGTERM unwind instead of vanishing, so the reap's `finally` runs.
+
+    Python's default SIGTERM handling ends the process without unwinding, which
+    would leave the server this tool started behind — the exact leak this
+    facility exists to stop. SIGINT already raises, so only SIGTERM needs this.
+    """
+
+    def _raise(signum: int, _frame: object) -> None:
+        raise SystemExit(128 + signum)
+
+    with contextlib.suppress(ValueError):  # not the main thread — then no signals
+        signal.signal(signal.SIGTERM, _raise)
+
+
 def _describe(verdict: Verdict) -> str:
     parts = [f"{verdict.display:>5}  {verdict.kind}"]
     if verdict.ran:
@@ -536,12 +854,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--selftest", action="store_true", help="run the rule against fixtures"
     )
+    parser.add_argument(
+        "--with-offscreen",
+        action="store_true",
+        help="run the command after `--` on a throwaway offscreen display",
+    )
+    parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
 
     if args.selftest:
         import test_display_seat  # noqa: PLC0415 — the suite is the selftest
 
         return test_display_seat.main()
+
+    if args.with_offscreen:
+        command = list(args.command)
+        if command and command[0] == "--":
+            command = command[1:]
+        _reap_on_sigterm()
+        try:
+            return run_offscreen(command, what=args.what)
+        except OffscreenUnavailable as exc:
+            print(f"[display] REFUSED: {exc}", file=sys.stderr)
+            return 4
 
     if args.census:
         displays = live_displays()

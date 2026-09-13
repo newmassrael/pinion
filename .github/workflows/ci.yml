@@ -166,7 +166,12 @@ jobs:
       # render path available on a GPU-less runner; tune the screen
       # geometry / driver here if a demo OOMs or fails to find an adapter.
       PINION_HIDDEN_WINDOW: "1"
-      PINION_SWEEP_DISPLAY: ":99"
+      # R2221 — the display is no longer a number written here. The sweep step
+      # below asks `tools/display_seat.py --with-offscreen` for one, which binds
+      # whatever number is actually free and takes the server away afterwards.
+      # The geometry is pinned to what this job used before so nothing else
+      # about the sweep changes in the round that moved it.
+      PINION_OFFSCREEN_GEOMETRY: "1600x1200x24"
       # R1330 — the "Build workspace" step below is the freshness build, so the
       # sweep must not run its own `cargo build --release --workspace` on top of it
       # (it does so by default now, to protect a local run from a stale binary).
@@ -340,11 +345,26 @@ jobs:
         # parse it rests on reads three programs' output, and a parse that has
         # stopped matching refuses nothing while reporting success.
         run: python3 tools/test_display_seat.py
-      - name: Run full demo sweep under Xvfb
+      - name: Run full demo sweep on a display the tree starts and reaps
+        # ★★★★★ R2221 — this step used to be the SECOND hand-rolled spelling of
+        # "get an offscreen display": `Xvfb :99 ... & sleep 3`. Two things were
+        # wrong with it beyond the duplication. `sleep 3` is a race dressed as a
+        # wait — nothing here asserted the server had come up, and a slow runner
+        # would have failed the whole job in a way that reads like a demo bug.
+        # And a chosen NUMBER can collide, which is what `--with-offscreen`
+        # settles by letting the socket bind decide (see `tools/display_seat.py`).
+        #
+        # ⚠ The inner script exports `PINION_SWEEP_DISPLAY` so the sweep takes
+        # its "a display named on purpose" path: it checks this display and does
+        # NOT reap it, because the wrapper outside owns it. Without that the
+        # sweep would start a second server nested inside the first, and the
+        # presentability test above would be on a different display than the
+        # demos below it.
         run: |
-          Xvfb :99 -screen 0 1600x1200x24 >/tmp/xvfb.log 2>&1 &
-          sleep 3
-          export DISPLAY=:99
+          python3 tools/display_seat.py --with-offscreen \
+            --what "the CI demo sweep" -- bash -c '
+          set -e
+          export PINION_SWEEP_DISPLAY="$DISPLAY"
           vulkaninfo --summary 2>/dev/null | head -30 || true
           # ★ R2088 — the surface-presentability guard runs FIRST, on the
           # display and adapter the sweep is about to use. It is the only
@@ -362,6 +382,7 @@ jobs:
           # arriving as an unattributable red.
           cargo test -p pinion-shell --test surface_presentability_gpu -- --ignored
           bash tools/sweep_headless.sh
+          '
 
   gpu-tests:
     name: headless GPU pixel tests (lavapipe, --ignored)
