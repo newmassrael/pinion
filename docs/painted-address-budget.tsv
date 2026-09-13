@@ -78,7 +78,7 @@ discovery.multicast	1	0
 dissolvable.{}	0	2
 dissolve_severs.{}	0	1
 echo.demo	0	0
-edge.{}	15	14
+edge.{}	11	14
 effective_resize_mode.{}	0	0
 enabled.{}	3	0
 expanded.arr	0	0
@@ -170,7 +170,7 @@ modified.{}	0	31
 name.elem	0	0
 name.{}	11	12
 no.such	1	0
-node.{}	168	96
+node.{}	105	96
 nodegroups.frame	0	0
 nodegroups.node	2	0
 nodegroups.pinlabel	1	0

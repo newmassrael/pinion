@@ -59,6 +59,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -86,18 +87,19 @@ def _ids(tf, which: str) -> list[int]:
     return [int(x) for x in csv.split(",")] if csv else []
 
 
-def _edge_conns(tf) -> dict[int, str]:
+def _edge_conns(tf, gp) -> dict[int, str]:
     """Map each live edge id → its "from:port->to:port" connection string."""
-    return {eid: tf.query(f"/external/edge.{eid}") for eid in _ids(tf, "edge_ids")}
+    return {eid: tf.query(f"/external/{gp.at('edge', id=eid)}") for eid in _ids(tf, "edge_ids")}
 
 
-def _edge_id_of(tf, conn: str) -> int | None:
+def _edge_id_of(tf, gp, conn: str) -> int | None:
     """The stable id of the edge with connection string `conn`, if present."""
-    return next((eid for eid, c in _edge_conns(tf).items() if c == conn), None)
+    return next((eid for eid, c in _edge_conns(tf, gp).items() if c == conn), None)
 
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot taxonomy ────────────────────────────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, G) is not None, "graph canvas present"
@@ -105,14 +107,14 @@ def body() -> None:
         assert_eq(tf.query("/external/edge_count"), 3, "3 edges")
         assert_eq(tf.query("/external/selected"), None, "nothing selected")
         assert_eq(tf.query("/external/selected_edge"), None, "no edge selected")
-        assert_eq(tf.query("/external/node.0.title"), "Texture", "node 0 title")
-        assert_eq(tf.query("/external/node.2.title"), "Multiply", "node 2 title")
-        assert_eq(tf.query("/external/node.2.inputs"), 2, "Multiply has 2 inputs")
-        assert_eq(tf.query("/external/node.2.outputs"), 1, "Multiply has 1 output")
-        assert_eq(tf.query("/external/node.3.outputs"), 0, "Output is a sink")
-        assert_eq(tf.query("/external/edge.0"), "0:0->2:0", "Texture -> Multiply.in0")
-        assert_eq(tf.query("/external/edge.1"), "1:0->2:1", "Color -> Multiply.in1")
-        assert_eq(tf.query("/external/edge.2"), "2:0->3:0", "Multiply -> Output.in0")
+        assert_eq(tf.query(f"/external/{gp.at('node.title', id=0)}"), "Texture", "node 0 title")
+        assert_eq(tf.query(f"/external/{gp.at('node.title', id=2)}"), "Multiply", "node 2 title")
+        assert_eq(tf.query(f"/external/{gp.at('node.inputs', id=2)}"), 2, "Multiply has 2 inputs")
+        assert_eq(tf.query(f"/external/{gp.at('node.outputs', id=2)}"), 1, "Multiply has 1 output")
+        assert_eq(tf.query(f"/external/{gp.at('node.outputs', id=3)}"), 0, "Output is a sink")
+        assert_eq(tf.query(f"/external/{gp.at('edge', id=0)}"), "0:0->2:0", "Texture -> Multiply.in0")
+        assert_eq(tf.query(f"/external/{gp.at('edge', id=1)}"), "1:0->2:1", "Color -> Multiply.in1")
+        assert_eq(tf.query(f"/external/{gp.at('edge', id=2)}"), "2:0->3:0", "Multiply -> Output.in0")
         # R841 stable-id enumeration handles.
         assert_eq(tf.query("/external/node_ids"), "0,1,2,3", "node id space")
         assert_eq(tf.query("/external/edge_ids"), "0,1,2", "edge id space")
@@ -143,16 +145,16 @@ def body() -> None:
                    interval=0.03, desc="empty-canvas click clears selection")
 
         # ── (B) RPC node move (the AI-first path) + clamp ────────────
-        tf.intervene("/external/node.0.x", 180)
-        tf.intervene("/external/node.0.y", 90)
-        assert_eq(tf.query("/external/node.0.x"), 180, "node 0 moved x")
-        assert_eq(tf.query("/external/node.0.y"), 90, "node 0 moved y")
-        tf.intervene("/external/node.0.x", 99999)  # beyond the world edge
-        clamped_x = tf.query("/external/node.0.x")
+        tf.intervene(f"/external/{gp.at('node.x', id=0)}", 180)
+        tf.intervene(f"/external/{gp.at('node.y', id=0)}", 90)
+        assert_eq(tf.query(f"/external/{gp.at('node.x', id=0)}"), 180, "node 0 moved x")
+        assert_eq(tf.query(f"/external/{gp.at('node.y', id=0)}"), 90, "node 0 moved y")
+        tf.intervene(f"/external/{gp.at('node.x', id=0)}", 99999)  # beyond the world edge
+        clamped_x = tf.query(f"/external/{gp.at('node.x', id=0)}")
         # R877 — the canvas pans over a finite WORLD (2048), so the clamp is
         # the world extent, not the boot window.
         assert clamped_x < 2048, f"an off-world x clamps to the WORLD extent ({clamped_x})"
-        tf.intervene("/external/node.0.x", 40)  # restore
+        tf.intervene(f"/external/{gp.at('node.x', id=0)}", 40)  # restore
 
         # ── (C) selection: click selects, empty click / intervene clear ─
         tf.click(path=f"{G}#node_2")
@@ -173,24 +175,24 @@ def body() -> None:
         # (input takes one wire) — count stays 3, the new edge mints a fresh id.
         assert_eq(tf.invoke("/external/add_edge", "0,0,3,0"), True, "valid edge added")
         assert_eq(tf.query("/external/edge_count"), 3, "input single-wire dedup keeps 3")
-        conns = set(_edge_conns(tf).values())
+        conns = set(_edge_conns(tf, gp).values())
         assert "0:0->3:0" in conns, f"Output input rewired ({conns})"
         assert "2:0->3:0" not in conns, "old Multiply->Output wire replaced"
-        new_eid = _edge_id_of(tf, "0:0->3:0")
+        new_eid = _edge_id_of(tf, gp, "0:0->3:0")
         assert new_eid is not None, "new edge id resolvable"
         assert_eq(tf.invoke("/external/remove_edge", new_eid), True, "remove that edge by id")
         assert_eq(tf.query("/external/edge_count"), 2, "now 2 edges")
         assert_eq(tf.invoke("/external/remove_edge", 999), False, "unknown edge id rejected")
 
         # ── (E) live node drag (R51.34 capture lock) ─────────────────
-        x_before = tf.query("/external/node.1.x")
-        y_before = tf.query("/external/node.1.y")
+        x_before = tf.query(f"/external/{gp.at('node.x', id=1)}")
+        y_before = tf.query(f"/external/{gp.at('node.y', id=1)}")
         tf.drag(from_path=f"{G}#node_1", to_at=(330.0, 330.0), steps=10)
-        wait_until(lambda: tf.query("/external/node.1.x") != x_before
-                   or tf.query("/external/node.1.y") != y_before,
+        wait_until(lambda: tf.query(f"/external/{gp.at('node.x', id=1)}") != x_before
+                   or tf.query(f"/external/{gp.at('node.y', id=1)}") != y_before,
                    timeout=4.0, interval=0.05, desc="node 1 moved under a live drag")
-        assert tf.query("/external/node.1.x") > x_before + 40, "node dragged right"
-        assert tf.query("/external/node.1.y") > y_before + 40, "node dragged down"
+        assert tf.query(f"/external/{gp.at('node.x', id=1)}") > x_before + 40, "node dragged right"
+        assert tf.query(f"/external/{gp.at('node.y', id=1)}") > y_before + 40, "node dragged down"
 
         # ── (F) live edge connect (R742 drag substrate) ──────────────
         # Output's input was left unwired by (D). Reconnect Multiply.out0 ->
@@ -201,18 +203,18 @@ def body() -> None:
         wait_until(lambda: tf.query("/external/edge_count") == 3, timeout=4.0,
                    interval=0.05, desc="port drag created an edge")
         # The new edge connects Multiply (2) output 0 to Output (3) input 0.
-        conns = set(_edge_conns(tf).values())
+        conns = set(_edge_conns(tf, gp).values())
         assert "2:0->3:0" in conns, f"Multiply->Output wire present ({conns})"
 
         # ── (G) keyboard nudge + delete the selected node ────────────
         _focus_graph(tf)
         tf.intervene("/external/selected", 0)
-        nx = tf.query("/external/node.0.x")
+        nx = tf.query(f"/external/{gp.at('node.x', id=0)}")
         tf.key(path=G, name="ArrowRight")
-        wait_until(lambda: tf.query("/external/node.0.x") == nx + 12, timeout=4.0,
+        wait_until(lambda: tf.query(f"/external/{gp.at('node.x', id=0)}") == nx + 12, timeout=4.0,
                    interval=0.03, desc="ArrowRight nudges selected node by 12")
         tf.key(path=G, name="ArrowDown")
-        ny = tf.query("/external/node.0.y")
+        ny = tf.query(f"/external/{gp.at('node.y', id=0)}")
         assert ny is not None, "node still present after nudge"
         # Delete removes the selected node + its incident edges.
         tf.key(path=G, name="Delete")

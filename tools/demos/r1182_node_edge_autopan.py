@@ -49,6 +49,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -72,12 +73,12 @@ def canvas_at(cx: float, cy: float) -> tuple[float, float]:
     return (PALETTE_W + cx, cy)
 
 
-def nx(tf, nid: int) -> int:
-    return tf.query(f"/external/node.{nid}.x")
+def nx(tf, gp, nid: int) -> int:
+    return tf.query(f"/external/{gp.at('node.x', id=nid)}")
 
 
-def ny(tf, nid: int) -> int:
-    return tf.query(f"/external/node.{nid}.y")
+def ny(tf, gp, nid: int) -> int:
+    return tf.query(f"/external/{gp.at('node.y', id=nid)}")
 
 
 def painted_x(tf, nid: int = 0) -> int:
@@ -195,6 +196,7 @@ def release(tf, at: tuple[float, float]) -> None:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot + the drag-to-pan foundation (R881/R882) ────────
         assert_eq(viewport(tf), (0.0, 0.0, 1.0), "A.1 boot viewport = origin @ 100%")
         assert_eq(tf.query("/external/node_count"), 4, "A.2 seed graph intact")
@@ -212,22 +214,22 @@ def body() -> None:
         reset_view(tf)
 
         # ── (B) a node held at the RIGHT rim auto-pans +x, node follows ─
-        tf.intervene("/external/node.0.x", 120)
-        tf.intervene("/external/node.0.y", 180)
+        tf.intervene(f"/external/{gp.at('node.x', id=0)}", 120)
+        tf.intervene(f"/external/{gp.at('node.y', id=0)}", 180)
         grab_to(tf, RIGHT_RIM)
-        ny0 = ny(tf, 0)   # the node's y after it followed the cursor to the rim
+        ny0 = ny(tf, gp, 0)   # the node's y after it followed the cursor to the rim
         tf.tick(0.1)
         assert vq(tf, "x") > 0.0, "B.1 the right rim auto-pans +x"
         assert_eq(vq(tf, "y"), 0.0, "B.2 a horizontal rim leaves the viewport y alone")
-        assert nx(tf, 0) > 120, "B.3 the node followed into the revealed area"
+        assert nx(tf, gp, 0) > 120, "B.3 the node followed into the revealed area"
         assert_eq(vq(tf, "zoom"), 1.0, "B.4 the pan does not change zoom")
-        assert_eq(ny(tf, 0), ny0, "B.5 an x-only auto-pan leaves the node's y put")
+        assert_eq(ny(tf, gp, 0), ny0, "B.5 an x-only auto-pan leaves the node's y put")
 
         # ── (C) the node rides the viewport 1:1 across ticks ─────────
         tf.tick(0.05)
-        vx1, nx1 = vq(tf, "x"), nx(tf, 0)
+        vx1, nx1 = vq(tf, "x"), nx(tf, gp, 0)
         tf.tick(0.05)
-        vx2, nx2 = vq(tf, "x"), nx(tf, 0)
+        vx2, nx2 = vq(tf, "x"), nx(tf, gp, 0)
         assert vx2 > vx1, "C.1 a further tick keeps panning toward the edge"
         assert nx2 > nx1, "C.2 the node keeps following"
         # ★★★★★ R1688.1 — **the ride is read from the PAINT, in one call.**
@@ -263,30 +265,30 @@ def body() -> None:
 
         # ── (D) release stops the auto-pan (driver + node at-rest) ───
         release(tf, RIGHT_RIM)
-        v_rest, n_rest = vq(tf, "x"), nx(tf, 0)
+        v_rest, n_rest = vq(tf, "x"), nx(tf, gp, 0)
         tf.tick(0.2)
         assert_eq(vq(tf, "x"), v_rest, "D.1 no auto-pan after the drag is released")
-        assert_eq(nx(tf, 0), n_rest, "D.2 the node is frozen after release")
+        assert_eq(nx(tf, gp, 0), n_rest, "D.2 the node is frozen after release")
         tf.tick(0.2)
         assert_eq(vq(tf, "x"), v_rest, "D.3 still at rest on a second idle tick")
 
         # ── (E) a node held at the CENTRE does not auto-pan ──────────
         reset_view(tf)
-        tf.intervene("/external/node.0.x", 260)
-        tf.intervene("/external/node.0.y", 190)
+        tf.intervene(f"/external/{gp.at('node.x', id=0)}", 260)
+        tf.intervene(f"/external/{gp.at('node.y', id=0)}", 190)
         grab_to(tf, CENTER)
         tf.tick(0.2)
         assert_eq((vq(tf, "x"), vq(tf, "y")), (0.0, 0.0),
                   "E.1 a centred hold never auto-pans (no rim)")
-        assert nx(tf, 0) != 260, "E.2 the node still followed the cursor to the centre"
+        assert nx(tf, gp, 0) != 260, "E.2 the node still followed the cursor to the centre"
         release(tf, CENTER)
 
         # ── (F) each rim pans the correct axis / direction ───────────
         # LEFT rim → pan -x. Seed a positive x so a decrease is observable.
         reset_view(tf)
         tf.intervene("/external/viewport.x", 800.0)
-        tf.intervene("/external/node.0.x", 860)
-        tf.intervene("/external/node.0.y", 190)
+        tf.intervene(f"/external/{gp.at('node.x', id=0)}", 860)
+        tf.intervene(f"/external/{gp.at('node.y', id=0)}", 190)
         grab_to(tf, LEFT_RIM)
         tf.tick(0.1)
         assert vq(tf, "x") < 800.0, "F.1 the left rim pans -x"
@@ -294,8 +296,8 @@ def body() -> None:
         # TOP rim → pan -y.
         reset_view(tf)
         tf.intervene("/external/viewport.y", 800.0)
-        tf.intervene("/external/node.0.x", 300)
-        tf.intervene("/external/node.0.y", 860)
+        tf.intervene(f"/external/{gp.at('node.x', id=0)}", 300)
+        tf.intervene(f"/external/{gp.at('node.y', id=0)}", 860)
         grab_to(tf, TOP_RIM)
         tf.tick(0.1)
         assert vq(tf, "y") < 800.0, "F.2 the top rim pans -y"
@@ -303,8 +305,8 @@ def body() -> None:
         release(tf, TOP_RIM)
         # BOTTOM rim → pan +y.
         reset_view(tf)
-        tf.intervene("/external/node.0.x", 300)
-        tf.intervene("/external/node.0.y", 120)
+        tf.intervene(f"/external/{gp.at('node.x', id=0)}", 300)
+        tf.intervene(f"/external/{gp.at('node.y', id=0)}", 120)
         grab_to(tf, BOTTOM_RIM)
         tf.tick(0.1)
         assert vq(tf, "y") > 0.0, "F.4 the bottom rim pans +y"
@@ -339,11 +341,11 @@ def body() -> None:
         tf.intervene("/external/selected", None)
         # One node off the right edge; the rest swept far away so nothing else
         # can be caught, and a background press can only arm a marquee.
-        tf.intervene("/external/node.0.x", 700)
-        tf.intervene("/external/node.0.y", 190)
+        tf.intervene(f"/external/{gp.at('node.x', id=0)}", 700)
+        tf.intervene(f"/external/{gp.at('node.y', id=0)}", 190)
         for i in range(1, 4):
-            tf.intervene(f"/external/node.{i}.x", 2600 + i * 40)
-            tf.intervene(f"/external/node.{i}.y", 2600)
+            tf.intervene(f"/external/{gp.at('node.x', id=i)}", 2600 + i * 40)
+            tf.intervene(f"/external/{gp.at('node.y', id=i)}", 2600)
         assert_eq(tf.query("/external/selected"), None, "H.0 nothing selected yet")
         tf.drag(from_at=canvas_at(40, 40), to_at=RIGHT_RIM, steps=10, phase="begin")
         vx_h0 = vq(tf, "x")
@@ -366,12 +368,12 @@ def body() -> None:
         # ── (I) at 2x zoom the auto-pan still works ──────────────────
         reset_view(tf)
         tf.intervene("/external/viewport.zoom", 2.0)
-        tf.intervene("/external/node.0.x", 80)
-        tf.intervene("/external/node.0.y", 90)
+        tf.intervene(f"/external/{gp.at('node.x', id=0)}", 80)
+        tf.intervene(f"/external/{gp.at('node.y', id=0)}", 90)
         grab_to(tf, RIGHT_RIM)
-        vx_i0, n_i0 = vq(tf, "x"), nx(tf, 0)
+        vx_i0, n_i0 = vq(tf, "x"), nx(tf, gp, 0)
         tf.tick(0.1)
-        vx_i1, n_i1 = vq(tf, "x"), nx(tf, 0)
+        vx_i1, n_i1 = vq(tf, "x"), nx(tf, gp, 0)
         assert vx_i1 > vx_i0, "I.1 auto-pan pans at 2x zoom"
         assert n_i1 > n_i0, "I.2 the node still follows at 2x zoom"
         # ★ R1688.1 — from the PAINT, for the reason section (C) sets out: the
@@ -392,14 +394,14 @@ def body() -> None:
         tf.intervene("/external/viewport.y", 1.0e9)
         mx, my = vq(tf, "x"), vq(tf, "y")
         assert mx < WORLD and my < WORLD, "J.1 a huge pan clamped to the world extent"
-        tf.intervene("/external/node.0.x", int(mx) + 150)
-        tf.intervene("/external/node.0.y", int(my) + 100)
+        tf.intervene(f"/external/{gp.at('node.x', id=0)}", int(mx) + 150)
+        tf.intervene(f"/external/{gp.at('node.y', id=0)}", int(my) + 100)
         grab_to(tf, BOTTOM_RIM)
         for _ in range(20):
             tf.tick(0.1)
         assert_eq(vq(tf, "y"), my, "J.2 the viewport y stays clamped at the world edge")
         assert_eq(vq(tf, "x"), mx, "J.3 the bottom rim leaves x at its clamp")
-        assert nx(tf, 0) <= WORLD and ny(tf, 0) <= WORLD, "J.4 the dragged node clamps in-world"
+        assert nx(tf, gp, 0) <= WORLD and ny(tf, gp, 0) <= WORLD, "J.4 the dragged node clamps in-world"
         release(tf, BOTTOM_RIM)
 
         # ── (K) clean origin ─────────────────────────────────────────

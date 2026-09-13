@@ -43,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_query,
@@ -53,20 +54,20 @@ G = "node_graph"
 UNDO = "/node_undo/external"
 
 
-def nx(tf, nid: int) -> int:
-    return tf.query(f"/external/node.{nid}.x")
+def nx(tf, gp, nid: int) -> int:
+    return tf.query(f"/external/{gp.at('node.x', id=nid)}")
 
 
-def ny(tf, nid: int) -> int:
-    return tf.query(f"/external/node.{nid}.y")
+def ny(tf, gp, nid: int) -> int:
+    return tf.query(f"/external/{gp.at('node.y', id=nid)}")
 
 
-def place(tf, nid: int, x: int, y: int) -> None:
+def place(tf, gp, nid: int, x: int, y: int) -> None:
     """Move node `nid` to `(x, y)` via the state-write channel, confirming."""
-    tf.intervene(f"/external/node.{nid}.x", x)
-    tf.intervene(f"/external/node.{nid}.y", y)
-    wait_query(tf, f"/external/node.{nid}.x", x, desc=f"node {nid} x placed")
-    wait_query(tf, f"/external/node.{nid}.y", y, desc=f"node {nid} y placed")
+    tf.intervene(f"/external/{gp.at('node.x', id=nid)}", x)
+    tf.intervene(f"/external/{gp.at('node.y', id=nid)}", y)
+    wait_query(tf, f"/external/{gp.at('node.x', id=nid)}", x, desc=f"node {nid} x placed")
+    wait_query(tf, f"/external/{gp.at('node.y', id=nid)}", y, desc=f"node {nid} y placed")
 
 
 def select(tf, ids: list[int]) -> None:
@@ -93,6 +94,7 @@ def redo(tf) -> bool:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot taxonomy ────────────────────────────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, G) is not None, "graph canvas present"
@@ -103,75 +105,78 @@ def body() -> None:
         # Left edges 100 / 300 / 200; NODE_W=130 -> right edges 230 / 430 /
         # 330 -> bbox left=100, right=430.
         def place_h_row() -> None:
-            place(tf, 0, 100, 60)
-            place(tf, 1, 300, 160)
-            place(tf, 2, 200, 260)
+            place(tf, gp, 0, 100, 60)
+            place(tf, gp, 1, 300, 160)
+            place(tf, gp, 2, 200, 260)
             select(tf, [0, 1, 2])
 
         place_h_row()
         assert_eq(layout(tf, "align_left"), True, "align_left moved the selection")
         for nid in (0, 1, 2):
-            wait_query(tf, f"/external/node.{nid}.x", 100, desc=f"node {nid} x -> bbox left")
-        assert_eq(ny(tf, 1), 160, "a horizontal align leaves y untouched")
+            wait_query(tf, f"/external/{gp.at('node.x', id=nid)}", 100, desc=f"node {nid} x -> bbox left")
+        assert_eq(ny(tf, gp, 1), 160, "a horizontal align leaves y untouched")
 
         place_h_row()
         assert_eq(layout(tf, "align_right"), True, "align_right moved the selection")
         for nid in (0, 1, 2):
-            wait_query(tf, f"/external/node.{nid}.x", 300, desc=f"node {nid} x -> right-w (430-130)")
+            wait_query(tf, f"/external/{gp.at('node.x', id=nid)}", 300,
+                       desc=f"node {nid} x -> right-w (430-130)")
 
         place_h_row()
         assert_eq(layout(tf, "align_center_h"), True, "align_center_h moved the selection")
         for nid in (0, 1, 2):
             # midpoint(100, 430) - NODE_W/2 = 265 - 65 = 200.
-            wait_query(tf, f"/external/node.{nid}.x", 200, desc=f"node {nid} x -> bbox centre")
+            wait_query(tf, f"/external/{gp.at('node.x', id=nid)}", 200, desc=f"node {nid} x -> bbox centre")
 
         # ── (C) vertical align (equal-height members 0 / 1 / 3) ──────
         def place_v_col() -> None:
-            place(tf, 0, 40, 80)
-            place(tf, 1, 40, 200)
-            place(tf, 3, 40, 400)
+            place(tf, gp, 0, 40, 80)
+            place(tf, gp, 1, 40, 200)
+            place(tf, gp, 3, 40, 400)
             select(tf, [0, 1, 3])
 
         place_v_col()
         assert_eq(layout(tf, "align_top"), True, "align_top moved the selection")
         for nid in (0, 1, 3):
-            wait_query(tf, f"/external/node.{nid}.y", 80, desc=f"node {nid} y -> bbox top")
-        assert_eq(nx(tf, 1), 40, "a vertical align leaves x untouched")
+            wait_query(tf, f"/external/{gp.at('node.y', id=nid)}", 80, desc=f"node {nid} y -> bbox top")
+        assert_eq(nx(tf, gp, 1), 40, "a vertical align leaves x untouched")
 
         place_v_col()
         assert_eq(layout(tf, "align_bottom"), True, "align_bottom moved the selection")
         for nid in (0, 1, 3):
             # equal heights -> bottom-align is y -> max (400).
-            wait_query(tf, f"/external/node.{nid}.y", 400, desc=f"node {nid} y -> bbox bottom")
+            wait_query(tf, f"/external/{gp.at('node.y', id=nid)}", 400, desc=f"node {nid} y -> bbox bottom")
 
         place_v_col()
         assert_eq(layout(tf, "align_center_v"), True, "align_center_v moved the selection")
         for nid in (0, 1, 3):
             # equal heights -> centre_v is y -> midpoint(80, 400) = 240.
-            wait_query(tf, f"/external/node.{nid}.y", 240, desc=f"node {nid} y -> bbox centre")
+            wait_query(tf, f"/external/{gp.at('node.y', id=nid)}", 240, desc=f"node {nid} y -> bbox centre")
 
         # ── (D) distribute (extremes fixed, middle evenly spaced) ────
         # Centres (x+65) 165 / 215 / 565 -> distribute_h fixes 165 & 565,
         # middle -> midpoint(165, 565) = 365 -> x = 300.
-        place(tf, 0, 100, 50)
-        place(tf, 1, 150, 50)
-        place(tf, 2, 500, 50)
+        place(tf, gp, 0, 100, 50)
+        place(tf, gp, 1, 150, 50)
+        place(tf, gp, 2, 500, 50)
         select(tf, [0, 1, 2])
         assert_eq(layout(tf, "distribute_h"), True, "distribute_h moved the middle")
-        wait_query(tf, "/external/node.0.x", 100, desc="distribute_h: left extreme fixed")
-        wait_query(tf, "/external/node.2.x", 500, desc="distribute_h: right extreme fixed")
-        wait_query(tf, "/external/node.1.x", 300, desc="distribute_h: middle centre evenly spaced")
+        wait_query(tf, f"/external/{gp.at('node.x', id=0)}", 100, desc="distribute_h: left extreme fixed")
+        wait_query(tf, f"/external/{gp.at('node.x', id=2)}", 500, desc="distribute_h: right extreme fixed")
+        wait_query(tf, f"/external/{gp.at('node.x', id=1)}", 300,
+                   desc="distribute_h: middle centre evenly spaced")
 
         # Vertical, equal-height members 0 / 1 / 3: y 100 / 150 / 500 ->
         # distribute_v fixes 100 & 500, middle -> 300.
-        place(tf, 0, 40, 100)
-        place(tf, 1, 40, 150)
-        place(tf, 3, 40, 500)
+        place(tf, gp, 0, 40, 100)
+        place(tf, gp, 1, 40, 150)
+        place(tf, gp, 3, 40, 500)
         select(tf, [0, 1, 3])
         assert_eq(layout(tf, "distribute_v"), True, "distribute_v moved the middle")
-        wait_query(tf, "/external/node.0.y", 100, desc="distribute_v: top extreme fixed")
-        wait_query(tf, "/external/node.3.y", 500, desc="distribute_v: bottom extreme fixed")
-        wait_query(tf, "/external/node.1.y", 300, desc="distribute_v: middle centre evenly spaced")
+        wait_query(tf, f"/external/{gp.at('node.y', id=0)}", 100, desc="distribute_v: top extreme fixed")
+        wait_query(tf, f"/external/{gp.at('node.y', id=3)}", 500, desc="distribute_v: bottom extreme fixed")
+        wait_query(tf, f"/external/{gp.at('node.y', id=1)}", 300,
+                   desc="distribute_v: middle centre evenly spaced")
 
         # ── (E) guards — align needs >=2, distribute needs >=3 ───────
         select(tf, [0])
@@ -182,19 +187,19 @@ def body() -> None:
         assert_eq(count(tf), steps, "a too-small align / distribute journals nothing")
 
         # ── (F) undo — one discrete step; undo restores, redo re-applies ─
-        place(tf, 0, 100, 50)
-        place(tf, 1, 300, 50)
-        place(tf, 2, 200, 50)
+        place(tf, gp, 0, 100, 50)
+        place(tf, gp, 1, 300, 50)
+        place(tf, gp, 2, 200, 50)
         select(tf, [0, 1, 2])
         before = count(tf)
         assert_eq(layout(tf, "align_left"), True, "align_left for the undo round-trip")
         assert_eq(count(tf), before + 1, "an align is exactly ONE undo step")
-        wait_query(tf, "/external/node.1.x", 100, desc="aligned before the undo")
+        wait_query(tf, f"/external/{gp.at('node.x', id=1)}", 100, desc="aligned before the undo")
         assert_eq(undo(tf), True, "one undo reverses the whole align")
-        wait_query(tf, "/external/node.1.x", 300, desc="undo restored the pre-align x")
-        wait_query(tf, "/external/node.2.x", 200, desc="undo restored every member")
+        wait_query(tf, f"/external/{gp.at('node.x', id=1)}", 300, desc="undo restored the pre-align x")
+        wait_query(tf, f"/external/{gp.at('node.x', id=2)}", 200, desc="undo restored every member")
         assert_eq(redo(tf), True, "redo re-applies the align")
-        wait_query(tf, "/external/node.1.x", 100, desc="redo re-aligned the selection")
+        wait_query(tf, f"/external/{gp.at('node.x', id=1)}", 100, desc="redo re-aligned the selection")
 
 
 if __name__ == "__main__":
