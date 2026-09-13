@@ -331,7 +331,7 @@ impl DetachedAffordance {
     /// ★★★★★ R2225 — **every affordance a detached header can carry**, so a
     /// caller enumerating the VOCABULARY has a declaration to read.
     ///
-    /// Deliberately not [`DetachHome::detached_affordances`], and the
+    /// Deliberately not [`DetachPolicy::detached_affordances`], and the
     /// difference is the unit rather than the contents: that answers *what
     /// does THIS host offer* — two or three, by policy — and this answers
     /// *what words exist*. A publisher emitting the grammar of a detached

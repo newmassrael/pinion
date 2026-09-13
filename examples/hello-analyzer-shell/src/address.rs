@@ -1549,24 +1549,26 @@ fn card_setting_rows() -> Vec<(&'static str, String, String)> {
 /// reads as *the screen did not paint it*. `painted_grammar.table` refuses the
 /// collision as of this round; this is the publisher's half, and it is the one
 /// that makes the refusal something no artifact ever has to hit.
+/// ⚠ R2225.1 — **from `CardAffordance::ALL`, which existed the whole time.**
+/// R2225 listed the four by hand here while the float rows beside it derived
+/// from `DetachedAffordance::ALL` and said so as a rule — *a word added to that
+/// vocabulary is published by adding it and nothing else*. One round, one file,
+/// the rule applied to one family. Counted at the repair: this was the ONLY
+/// site in the tree enumerating the whole card vocabulary by hand; nine others
+/// already read `ALL`, two of them in this same binary.
 fn card_affordance_rows() -> Vec<(&'static str, String, String)> {
     use pinion_core::widgets::card::CardAffordance;
 
-    [
-        CardAffordance::Settings,
-        CardAffordance::TearOff,
-        CardAffordance::Maximize,
-        CardAffordance::Close,
-    ]
-    .into_iter()
-    .map(|affordance| {
-        (
-            "part",
-            format!("card_{}", affordance.wire()),
-            card_affordance(GRAMMAR_ID, affordance),
-        )
-    })
-    .collect()
+    CardAffordance::ALL
+        .into_iter()
+        .map(|affordance| {
+            (
+                "part",
+                format!("card_{}", affordance.wire()),
+                card_affordance(GRAMMAR_ID, affordance),
+            )
+        })
+        .collect()
 }
 
 /// Every DETACHED PANEL address grammar this screen paints.
@@ -1939,6 +1941,65 @@ fn card_private(id: &str) -> String { String::new() }
         // ★ The floor's other half: a family with no composer answers empty
         // rather than raising, so the per-family floor above is what reports it.
         assert!(composers_of(FIXTURE, "float").is_empty());
+    }
+
+    /// ★★★★★ R2225.1 — every word of every affordance vocabulary is published,
+    /// and nothing else is.
+    ///
+    /// **This is the gate whose absence let R2225 hand-list one family.** The
+    /// composer scan above asks about `grammar` rows and nothing asked about
+    /// `part` ones, so a `part` builder that emitted three of four words — or
+    /// that went on emitting a word the vocabulary had dropped — passed every
+    /// gate in this file. Deriving the rows from `ALL` fixes today's instance;
+    /// this is what makes a hand-written list fail tomorrow.
+    ///
+    /// ⚠ Asserted in BOTH directions. *Every word is published* alone would
+    /// pass a builder that also published surplus rows, and *nothing else* alone
+    /// would pass one that published none — and the cheapest wrong repair to a
+    /// red here is to delete a row, which only the first direction refuses.
+    ///
+    /// ⚠ The two vocabularies are named here rather than derived, and that is
+    /// the honest place to stop: *which* families this screen paints is this
+    /// screen's own fact. What must not be restated is their CONTENTS, which is
+    /// what `ALL` answers.
+    #[test]
+    fn every_affordance_word_is_published_exactly_once() {
+        use pinion_core::detach::DetachedAffordance;
+        use pinion_core::widgets::card::CardAffordance;
+
+        let published: Vec<String> = super::grammar_rows()
+            .into_iter()
+            .filter(|(kind, _, _)| *kind == "part")
+            .map(|(_, name, _)| name)
+            .collect();
+
+        let mut wanted: Vec<String> = CardAffordance::ALL
+            .iter()
+            .map(|a| format!("card_{}", a.wire()))
+            .collect();
+        wanted.extend(
+            DetachedAffordance::ALL
+                .iter()
+                .map(|a| format!("float_{}", a.wire())),
+        );
+
+        for word in &wanted {
+            assert!(
+                published.contains(word),
+                "{word} is in an affordance vocabulary this screen paints and \
+                 the artifact does not publish it — a walk cannot ask for a \
+                 part nothing hands it"
+            );
+        }
+        let mut published_sorted = published.clone();
+        published_sorted.sort();
+        let mut wanted_sorted = wanted.clone();
+        wanted_sorted.sort();
+        assert_eq!(
+            published_sorted, wanted_sorted,
+            "the artifact's `part` rows are not exactly the two vocabularies — \
+             a surplus row names an address no affordance composes"
+        );
     }
 
     /// ★★★★★ R2225 — no two rows of this artifact claim one name.
