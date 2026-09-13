@@ -1515,6 +1515,34 @@ def check() -> int:
         "refusing (see `debt-a-published-address-can-be-renamed-and-nothing-"
         "refuses`)"
     )
+    # ★★★★★ R2228 — the list's rows now carry a judgement, and this reports the
+    # two halves apart. A BARE row is an open remainder (a check the campaign
+    # deleted); a JUDGED one is a stem a round measured and found not to be an
+    # address at all. This debt's closing criterion is the first number, which
+    # R2172 measured to be the only reachable reading of "the file is empty".
+    unpinned_rows = read_unpinned_rows()
+    bad_reason = sorted(
+        f"{stem}={reason}"
+        for stem, reason in unpinned_rows.items()
+        if reason and reason not in UNPINNED_REASONS
+    )
+    if bad_reason:
+        print(
+            f"painted-addresses: {UNPINNED.name} carries a judgement this "
+            f"reader does not know: {bad_reason}. It takes "
+            f"{sorted(UNPINNED_REASONS)} — a word nobody can query is "
+            "documentation, and this one is a gate's input.",
+            file=sys.stderr,
+        )
+        return 1
+    bare = sorted(stem for stem, reason in unpinned_rows.items() if not reason)
+    judged = len(unpinned_rows) - len(bare)
+    print(
+        f"painted-addresses: {len(unpinned_rows)} family/ies carry no value pin "
+        f"after conversion — {len(bare)} an OPEN remainder, {judged} measured "
+        "not to be an address at all (this debt closes on the first number "
+        "reaching zero, which R2172 measured to be the reachable reading)"
+    )
     joined = sorted(set(gone_checks) - read_unpinned())
     if joined:
         print(
@@ -3583,35 +3611,100 @@ def config_keys_in(source: str) -> list[tuple[int, str]]:
 
 
 def read_unpinned() -> set[str]:
-    """The converted-and-unpinned families this tree already carries."""
+    """Every family this list carries, judged or not — the population the gate
+    compares against so a NEW one is still refused."""
+    return set(read_unpinned_rows())
+
+
+def read_unpinned_rows() -> dict[str, str]:
+    """`stem -> the judgement recorded for it`, empty string when none.
+
+    ★★★★★ R2228 — **the second half of this debt's closing criterion could not
+    be reached, and R2172 left the decision in as many words: "what remains is
+    to decide how *the file is empty* should read."**
+
+    That round measured why. `echo.demo` is a SCXML event name — `substrate.rs`
+    lists it beside `PointerUp` and `KeyboardActivate` — and its nine
+    occurrences tree-wide are ALL comments, none executable. So it reaches zero
+    sites and no pin, which is exactly the shape of a check this campaign
+    deleted, and **no static property separates the two**: a converted family's
+    doc comments survive the same way. R2178 built the third state this list
+    needed (`non_address_stems`) for stems still spelled in LIVE code as a slot
+    name, and said in its own docstring that it does not reach this one.
+
+    ⇒ the row carries its judgement instead. A stem with a reason is one a round
+    MEASURED and found not to be an address; a bare stem is an open remainder.
+    The closing criterion then reads *no bare rows*, which is reachable, rather
+    than *no rows*, which is not.
+
+    ⚠ This is R2147's rule applied rather than set aside — that round met the
+    same thing in `no.such` and wrote *"손목록 제외가 더 나쁘다"*: naming a
+    false positive in place beats deleting it from a hand list, because the name
+    stays visible and the deletion does not. A reason here is a name, not a
+    removal: the stem is still in the population the gate refuses additions to.
+    """
     if not UNPINNED.is_file():
-        return set()
-    return {
-        line.strip()
-        for line in UNPINNED.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.startswith("#")
-    }
+        return {}
+    rows: dict[str, str] = {}
+    for line in UNPINNED.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        stem, _tab, reason = line.partition("\t")
+        rows[stem.strip()] = reason.strip()
+    return rows
+
+
+#: What a row's judgement may say, and what each word commits its author to.
+#:
+#: ⚠ A closed vocabulary rather than free text: a reason nobody can query is a
+#: reason that reads as documentation, and this one is a GATE's input.
+UNPINNED_REASONS: dict[str, str] = {
+    "not-an-address": (
+        "measured to be something else — an event name, a slot key — that the "
+        "needle counted as an address; it never had a check to delete"
+    ),
+}
 
 
 def write_unpinned(stems: Iterable[str]) -> None:
-    """Re-pin the list, so its SHRINKING is a diff rather than a claim."""
+    """Re-pin the list, so its SHRINKING is a diff rather than a claim.
+
+    ⚠ R2228 — a judgement already recorded for a stem is CARRIED, so
+    `--write-budget` does not silently un-judge a row. A stem that leaves the
+    population loses its judgement with it, which is right: the reason was about
+    that stem being in this list.
+    """
+    held = read_unpinned_rows()
     lines = [
         "# R2147 — family/ies whose every reader was converted and whose value",
         "# nothing pins: no `.pin` artifact covers them and no assertion spells",
-        "# them. Each row is a check this campaign DELETED rather than repaid.",
+        "# them. A BARE row is a check this campaign DELETED rather than repaid.",
+        "#",
+        "# R2228 — a row may carry a second, TAB-separated field: the judgement",
+        "# a round measured for it. `not-an-address` means the needle counted",
+        "# something that is not one (an event name, a slot key), so there was",
+        "# never a check to delete. The row stays here, named rather than",
+        "# removed, because a name stays visible and a deletion does not.",
+        "#",
+        "# ⇒ this debt's closing criterion reads NO BARE ROWS. R2172 measured",
+        "# that `no rows` is unreachable: a stem surviving only in comments",
+        "# cannot be told from a converted family by any static property.",
         "#",
         "# The gate refuses a family JOINING this list, which is what stops a",
         "# conversion from taking the last check with it. It does not refuse the",
         "# rows already here: a gate that is red the day it is written is one",
         "# nobody turns on, and these were created over many rounds.",
         "#",
-        "# The fix for a row is to give the family a value pin — a screen's",
+        "# The fix for a bare row is to give the family a value pin — a screen's",
         "# address-pin test, or a crate that emits its grammar — and then run",
         "# `python3 tools/painted_addresses.py --write-budget`.",
         "#",
         "# Rewritten by that command; do not hand-edit.",
     ]
-    lines += sorted(stems)
+    for stem in sorted(stems):
+        reason = held.get(stem, "")
+        lines.append(f"{stem}\t{reason}" if reason else stem)
     UNPINNED.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -5431,6 +5524,50 @@ def selftest() -> int:
             f"address families — carried in the budget: {carried}; filed as "
             f"deleted checks: {filed}. They were never families, so neither "
             "may name them. Run --write-budget.",
+            file=sys.stderr,
+        )
+
+    # ★★★★★ R2228 — the judgement a row of `unpinned-families.tsv` may carry,
+    # and the two ways it goes wrong.
+    #
+    # R2172 measured that this debt's second closing clause — *the file is
+    # empty* — cannot be reached: `echo.demo` is a SCXML event name whose nine
+    # tree-wide occurrences are ALL comments, and a converted family's doc
+    # comments survive identically, so no static property separates them. The
+    # clause now reads *no BARE rows*, which puts a judgement in the data — and
+    # a judgement in data needs its vocabulary held, or the next round writes
+    # `probably-fine` and the gate reads it as a measurement.
+    rows = read_unpinned_rows()
+    unknown = sorted(
+        f"{stem}={reason}"
+        for stem, reason in rows.items()
+        if reason and reason not in UNPINNED_REASONS
+    )
+    if unknown:
+        failed += 1
+        print(
+            f"FAIL: {UNPINNED.name} carries judgement(s) outside the closed "
+            f"vocabulary: {unknown}. It takes {sorted(UNPINNED_REASONS)}.",
+            file=sys.stderr,
+        )
+    # ⚠ And a judged row must still be IN the population, or the judgement is a
+    # deletion wearing a name — which is the thing R2147 refused when it met the
+    # same shape in `no.such`.
+    judged = {stem for stem, reason in rows.items() if reason}
+    if not judged <= set(rows):
+        failed += 1
+        print(
+            "FAIL: a judged stem left the list it was judged in — a reason is a "
+            "name, not a removal",
+            file=sys.stderr,
+        )
+    # ★★ `write_unpinned` must CARRY a judgement it already holds, or the next
+    # `--write-budget` silently un-judges every row and the clause re-opens.
+    if rows and not any(reason for reason in rows.values()):
+        failed += 1
+        print(
+            f"FAIL: {UNPINNED.name} has rows and not one judgement — either a "
+            "re-pin dropped them or the clause was never applied",
             file=sys.stderr,
         )
 

@@ -1,15 +1,25 @@
 # R2147 — family/ies whose every reader was converted and whose value
 # nothing pins: no `.pin` artifact covers them and no assertion spells
-# them. Each row is a check this campaign DELETED rather than repaid.
+# them. A BARE row is a check this campaign DELETED rather than repaid.
+#
+# R2228 — a row may carry a second, TAB-separated field: the judgement
+# a round measured for it. `not-an-address` means the needle counted
+# something that is not one (an event name, a slot key), so there was
+# never a check to delete. The row stays here, named rather than
+# removed, because a name stays visible and a deletion does not.
+#
+# ⇒ this debt's closing criterion reads NO BARE ROWS. R2172 measured
+# that `no rows` is unreachable: a stem surviving only in comments
+# cannot be told from a converted family by any static property.
 #
 # The gate refuses a family JOINING this list, which is what stops a
 # conversion from taking the last check with it. It does not refuse the
 # rows already here: a gate that is red the day it is written is one
 # nobody turns on, and these were created over many rounds.
 #
-# The fix for a row is to give the family a value pin — a screen's
+# The fix for a bare row is to give the family a value pin — a screen's
 # address-pin test, or a crate that emits its grammar — and then run
 # `python3 tools/painted_addresses.py --write-budget`.
 #
 # Rewritten by that command; do not hand-edit.
-echo.demo
+echo.demo	not-an-address
