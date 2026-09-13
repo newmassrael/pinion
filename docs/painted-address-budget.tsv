@@ -69,7 +69,7 @@ completion.{}	4	0
 connect.endpoints	2	0
 content_width.{}	0	0
 coverage.{}	3	0
-depth.{}	4	0
+depth.{}	0	0
 detail.input_default	0	3
 detail.resolved_input	0	2
 dev.cell	1	2
@@ -116,7 +116,7 @@ item.{}	0	1
 item_count.{}	4	0
 item_kind.{}	16	0
 kind.elem	0	1
-kind.{}	37	9
+kind.{}	31	9
 kind_at.{}	16	2
 kp.column	0	0
 kp.detail	0	0
@@ -167,7 +167,7 @@ model_height.{}	1	1
 modified.elem	0	5
 modified.{}	42	26
 name.elem	0	1
-name.{}	49	11
+name.{}	42	11
 no.such	1	0
 node.{}	168	96
 nodegroups.frame	0	0
@@ -182,7 +182,7 @@ owner.{}	4	0
 palette.role	0	1
 palette.swatch	0	1
 parent_of.{}	1	0
-path.{}	4	0
+path.{}	0	0
 pressed.{}	0	1
 profile.legend	0	3
 profile.series	0	2
@@ -265,7 +265,7 @@ tv.tip	0	0
 tv.toggle	0	0
 unmapped_bytes.{}	1	0
 value.elem	0	22
-value.{}	372	260
+value.{}	367	260
 visible_at.{}	10	2
 visual_index.{}	0	1
 vn.sprite	2	0

@@ -508,6 +508,45 @@ impl RowDissectionExternal {
 // subscribed view, so the widget is never independently dirty.
 query_proxy_external_impl!(RowDissectionExternal);
 
+/// ★★★★★ R2200 — the dotted path of a visible detail row, declared ONCE:
+/// [`RowDissectionExternal`]'s schema lists this field, and a reader composes
+/// from it ([`SchemaField::at`]) instead of spelling `path.<idx>` again. The
+/// same holds for every per-row family below; each is an index into
+/// `node_count`.
+pub const PATH: SchemaField = SchemaField::parametric(
+    "path.<idx>",
+    "string",
+    const { &[SchemaArg::index("idx", "node_count")] },
+);
+
+/// ★★★★★ R2200 — the key of a visible detail row; see [`PATH`].
+pub const NAME: SchemaField = SchemaField::parametric(
+    "name.<idx>",
+    "string",
+    const { &[SchemaArg::index("idx", "node_count")] },
+);
+
+/// ★★★★★ R2200 — the scalar value a visible detail row renders; see [`PATH`].
+pub const VALUE: SchemaField = SchemaField::parametric(
+    "value.<idx>",
+    "string",
+    const { &[SchemaArg::index("idx", "node_count")] },
+);
+
+/// ★★★★★ R2200 — the value kind of a visible detail row; see [`PATH`].
+pub const KIND: SchemaField = SchemaField::parametric(
+    "kind.<idx>",
+    "string",
+    const { &[SchemaArg::index("idx", "node_count")] },
+);
+
+/// ★★★★★ R2200 — the nesting depth of a visible detail row; see [`PATH`].
+pub const DEPTH: SchemaField = SchemaField::parametric(
+    "depth.<idx>",
+    "int",
+    const { &[SchemaArg::index("idx", "node_count")] },
+);
+
 impl ExternalIntrospect for RowDissectionExternal {
     fn schema(&self) -> IntrospectSchema {
         // `selected`   — selected master row, or Null (query + intervene).
@@ -521,31 +560,11 @@ impl ExternalIntrospect for RowDissectionExternal {
                     SchemaField::new("selected", "int"),
                     SchemaField::new("row_count", "int"),
                     SchemaField::new("node_count", "int"),
-                    SchemaField::parametric(
-                        "path.<idx>",
-                        "string",
-                        const { &[SchemaArg::index("idx", "node_count")] },
-                    ),
-                    SchemaField::parametric(
-                        "name.<idx>",
-                        "string",
-                        const { &[SchemaArg::index("idx", "node_count")] },
-                    ),
-                    SchemaField::parametric(
-                        "value.<idx>",
-                        "string",
-                        const { &[SchemaArg::index("idx", "node_count")] },
-                    ),
-                    SchemaField::parametric(
-                        "kind.<idx>",
-                        "string",
-                        const { &[SchemaArg::index("idx", "node_count")] },
-                    ),
-                    SchemaField::parametric(
-                        "depth.<idx>",
-                        "int",
-                        const { &[SchemaArg::index("idx", "node_count")] },
-                    ),
+                    PATH,
+                    NAME,
+                    VALUE,
+                    KIND,
+                    DEPTH,
                     SchemaField::action("select", "int"),
                     SchemaField::action("toggle", "string"),
                     SchemaField::action("expand", "string"),

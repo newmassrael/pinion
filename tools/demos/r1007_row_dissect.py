@@ -58,6 +58,7 @@ from rpc_verify import (  # noqa: E402
     WORKSPACE_ROOT,
     abs_rects_of,
     assert_eq,
+    external_paths,
     read_png_rgba8,
     run_demo,
     sample_png_points,
@@ -94,18 +95,19 @@ ROW0 = [
 ]
 
 
-def assert_node(d, i: int, name, path, value, kind, depth) -> None:
-    assert_eq(q(d, f"name.{i}"), name, f"name.{i}")
-    assert_eq(q(d, f"path.{i}"), path, f"path.{i}")
-    assert_eq(q(d, f"value.{i}"), value, f"value.{i}")
-    assert_eq(q(d, f"kind.{i}"), kind, f"kind.{i}")
-    assert_eq(q(d, f"depth.{i}"), depth, f"depth.{i}")
+def assert_node(d, gp, i: int, name, path, value, kind, depth) -> None:
+    assert_eq(q(d, gp.at("name", idx=i)), name, f"name of node {i}")
+    assert_eq(q(d, gp.at("path", idx=i)), path, f"path of node {i}")
+    assert_eq(q(d, gp.at("value", idx=i)), value, f"value of node {i}")
+    assert_eq(q(d, gp.at("kind", idx=i)), kind, f"kind of node {i}")
+    assert_eq(q(d, gp.at("depth", idx=i)), depth, f"depth of node {i}")
 
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         snap = tf.snapshot(source="paint", viewport=WIN)
         rects = abs_rects_of(snap)
+        gp = external_paths(tf, f"/{DISSECT_TAG}/external")
 
         # ── (A) boot: row 0 seeded; master + detail paint ───────────
         assert MASTER_TAG in rects, "master list container present"
@@ -117,9 +119,9 @@ def body() -> None:
 
         # ── (B) dissection witness — the AI-first scene-as-data ──────
         for i, (name, path, value, kind, depth) in enumerate(ROW0):
-            assert_node(tf, i, name, path, value, kind, depth)
-        assert_eq(q(tf, "name.11"), None, "one past the last node -> Null")
-        assert_eq(q(tf, "value.99"), None, "far out-of-range node -> Null")
+            assert_node(tf, gp, i, name, path, value, kind, depth)
+        assert_eq(q(tf, gp.at("name", idx=11)), None, "one past the last node -> Null")
+        assert_eq(q(tf, gp.at("value", idx=99)), None, "far out-of-range node -> Null")
         # The expanded branches paint a composite row tag the click router hits.
         assert f"{TREE_TAG}#headers" in rects, "the headers branch row is painted"
         assert f"{TREE_TAG}#headers.host" in rects, "an expanded child row is painted"
@@ -127,8 +129,8 @@ def body() -> None:
         # ── (C) collapse / expand a branch ──────────────────────────
         assert_eq(inv(tf, "collapse", "headers"), 9, "collapsing headers hides its 2 children")
         # The headers row stays; its children are gone from the flatten.
-        assert_eq(q(tf, "name.1"), "headers", "headers still visible after collapse")
-        assert_eq(q(tf, "name.2"), "method", "headers.* children dropped (method now at 2)")
+        assert_eq(q(tf, gp.at("name", idx=1)), "headers", "headers still visible after collapse")
+        assert_eq(q(tf, gp.at("name", idx=2)), "method", "headers.* children dropped (method now at 2)")
         assert_eq(inv(tf, "expand", "headers"), 11, "expand restores the children")
         assert_eq(inv(tf, "toggle", "tags"), 9, "toggle collapses tags")
         assert_eq(inv(tf, "toggle", "tags"), 11, "toggle re-expands tags")
@@ -142,17 +144,17 @@ def body() -> None:
         # attempts is a depth-1 array, collapsed -> 9 visible.
         assert_eq(inv(tf, "select", 4), 9, "row 4 dissects to 9 visible nodes")
         assert_eq(q(tf, "selected"), 4, "selection moved to row 4")
-        assert_eq(q(tf, "name.1"), "error", "error branch at index 1")
-        assert_eq(q(tf, "kind.1"), "object", "error is an object branch")
-        assert_eq(q(tf, "path.2"), "error.attempts", "error.attempts nested array")
-        assert_eq(q(tf, "kind.2"), "array", "attempts is an array")
-        assert_eq(q(tf, "depth.2"), 1, "attempts sits one level deep")
+        assert_eq(q(tf, gp.at("name", idx=1)), "error", "error branch at index 1")
+        assert_eq(q(tf, gp.at("kind", idx=1)), "object", "error is an object branch")
+        assert_eq(q(tf, gp.at("path", idx=2)), "error.attempts", "error.attempts nested array")
+        assert_eq(q(tf, gp.at("kind", idx=2)), "array", "attempts is an array")
+        assert_eq(q(tf, gp.at("depth", idx=2)), 1, "attempts sits one level deep")
         # Expand the nested array -> its 3 elements appear.
         assert_eq(inv(tf, "expand", "error.attempts"), 12, "expanding attempts adds its 3 elements")
-        assert_eq(q(tf, "path.3"), "error.attempts[0]", "first array element path")
-        assert_eq(q(tf, "value.3"), "1", "first attempt value")
-        assert_eq(q(tf, "kind.3"), "int", "array element kind")
-        assert_eq(q(tf, "depth.3"), 2, "array element two levels deep")
+        assert_eq(q(tf, gp.at("path", idx=3)), "error.attempts[0]", "first array element path")
+        assert_eq(q(tf, gp.at("value", idx=3)), "1", "first attempt value")
+        assert_eq(q(tf, gp.at("kind", idx=3)), "int", "array element kind")
+        assert_eq(q(tf, gp.at("depth", idx=3)), 2, "array element two levels deep")
 
         # ── (E) edges: empty array, clear, intervene restore ────────
         # Row 2 has an empty tags[] — a branch with no children (a childless
@@ -160,10 +162,10 @@ def body() -> None:
         assert_eq(inv(tf, "select", 2), 8, "row 2 dissects to 8 visible nodes")
         # Find the tags node (empty array): it is a kind=array with empty value.
         tags_idx = next(
-            i for i in range(8) if q(tf, f"name.{i}") == "tags"
+            i for i in range(8) if q(tf, gp.at("name", idx=i)) == "tags"
         )
-        assert_eq(q(tf, f"kind.{tags_idx}"), "array", "empty tags is still an array")
-        assert_eq(q(tf, f"value.{tags_idx}"), "", "an empty array renders no scalar value")
+        assert_eq(q(tf, gp.at("kind", idx=tags_idx)), "array", "empty tags is still an array")
+        assert_eq(q(tf, gp.at("value", idx=tags_idx)), "", "an empty array renders no scalar value")
         # clear deselects.
         assert_eq(inv(tf, "clear", None), 0, "clear empties the detail tree")
         assert_eq(q(tf, "selected"), None, "no selection after clear")
