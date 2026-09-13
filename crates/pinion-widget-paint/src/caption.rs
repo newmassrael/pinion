@@ -615,6 +615,30 @@ pub enum Pointer {
 /// `lab.palette.protocol.` family went from 5 to 10 and its own gate said so.
 pub const CAPTION_SUFFIX: &str = ".caption";
 
+/// The address of the caption belonging to the box addressed `tag`.
+///
+/// ★★★★★ R2223 §5.2 — **the suffix was published and the composition was not**,
+/// and a const is only half an answer: every reader that wants the ADDRESS
+/// still writes the join itself. Measured at this round: one site in this
+/// module ([`inside`], which [`captioned`] routes through) and **four** outside
+/// it — `stat_tile`'s row census, the node lab's discovery seat, and two of
+/// that screen's paint assertions — each holding `format!("{tag}{CAPTION_SUFFIX}")`.
+///
+/// That is the campaign's retyping one level down, and it is the quieter half:
+/// the letters cannot be wrong, so nothing looks fragile, while the SHAPE is
+/// copied at every reader and moves only if all five are edited together. A
+/// reader asking *where is this box's caption* now asks.
+///
+/// ⚠ The four outside are deliberately left. `stat_tile`'s is inside
+/// `#[cfg(test)]` and spells the expected tag INDEPENDENTLY — converting it
+/// would have the assertion compose from the same function the paint does, so
+/// it would agree with itself (R2219's rule). The other three are another
+/// screen's, and that screen's conversion is its own round.
+#[must_use]
+pub fn caption_tag(tag: &str) -> String {
+    format!("{tag}{CAPTION_SUFFIX}")
+}
+
 /// A caption node **for a box the caller builds themselves**, positioned in
 /// that box's own coordinate space, and where it landed.
 ///
@@ -650,7 +674,7 @@ pub fn inside(tag: &str, box_rect: Rect, caption: &Caption) -> (Scene, Placed) {
         placed.run.h,
     );
     let mut run = text_run(
-        format!("{tag}{CAPTION_SUFFIX}"),
+        caption_tag(tag),
         caption.text.clone(),
         inner,
         // From the PLACEMENT rather than from the caption a second time, so

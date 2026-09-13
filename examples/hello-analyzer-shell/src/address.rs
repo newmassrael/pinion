@@ -548,6 +548,68 @@ pub fn settings_key_row(tag: &str) -> Option<&str> {
     tag.strip_prefix(SETTINGS_KEY)
 }
 
+// --- a collapsed chooser's parts, wherever this screen paints one ----------------
+//
+// ★★★★★ R2223 §5.2 — **this screen paints collapsed choosers under TWO
+// prefixes, and each of them spelled the part words for itself.**
+//
+// `pinion_widget_paint::chooser` composes an OPEN roster's box and options
+// (`chooser::address`), and deliberately does not compose the collapsed
+// control's three parts: R1732 measured that its two consumers disagree —
+// `config_form` addresses the chevron `pick`, this screen addresses it `arrow`
+// — so a rule inside the crate would be a third vocabulary neither caller uses.
+// That judgement is still right, and it leaves the part words as **the
+// screen's** to own.
+//
+// This screen did not own them. The preferences page held them as three
+// prefixes and three composers; the card configuration panel, which paints the
+// same control under `card.{id}.config`, composed `{prefix}.shown.{key}` and
+// `{prefix}.arrow.{key}` inline in `main.rs`. Two spellings of one screen's
+// vocabulary, and the one that is not a composer is the one no reader can ask.
+//
+// So the words live here once, and both prefixes ask. `ChooserPart` rather than
+// three functions taking a prefix, for [`pinion_widget_paint::stat_tile::Row`]'s
+// reason: a caller describing a chooser wants *which parts are there*, and a
+// list of them beside this module is what goes stale when a part is added.
+
+/// One part of a collapsed chooser, as **this screen** addresses it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ChooserPart {
+    /// The control itself — the box a press lands on.
+    Control,
+    /// The word the control is showing.
+    Shown,
+    /// The chevron that says there is a roster behind it.
+    Arrow,
+}
+
+impl ChooserPart {
+    /// Every part, in the order a reader meets them.
+    pub const ALL: &'static [Self] = &[Self::Control, Self::Shown, Self::Arrow];
+
+    /// The word this part's addresses carry.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Control => "choose",
+            Self::Shown => "shown",
+            Self::Arrow => "arrow",
+        }
+    }
+
+    /// The stem every one of this part's addresses shares, under `prefix`.
+    #[must_use]
+    pub fn stem(self, prefix: &str) -> String {
+        format!("{prefix}.{}.", self.word())
+    }
+
+    /// This part's address for the chooser `key`, under `prefix`.
+    #[must_use]
+    pub fn tag(self, prefix: &str, key: &str) -> String {
+        format!("{}{key}", self.stem(prefix))
+    }
+}
+
 /// The prefix every collapsed chooser is painted under.
 pub const SETTINGS_CHOOSE: &str = "shell.settings.choose.";
 
@@ -558,7 +620,7 @@ pub const SETTINGS_CHOOSE_TEMPLATE: &str = "shell.settings.choose.{}";
 /// The address of the collapsed control on the value row `key`.
 #[must_use]
 pub fn settings_choose(key: impl AsRef<str>) -> String {
-    format!("{SETTINGS_CHOOSE}{}", key.as_ref())
+    ChooserPart::Control.tag(SETTINGS, key.as_ref())
 }
 
 /// The prefix the word a collapsed chooser is showing is painted under.
@@ -570,7 +632,7 @@ pub const SETTINGS_SHOWN_TEMPLATE: &str = "shell.settings.shown.{}";
 /// The address of the word the chooser on the value row `key` is showing.
 #[must_use]
 pub fn settings_shown(key: impl AsRef<str>) -> String {
-    format!("{SETTINGS_SHOWN}{}", key.as_ref())
+    ChooserPart::Shown.tag(SETTINGS, key.as_ref())
 }
 
 /// The prefix every chooser's chevron is painted under.
@@ -582,7 +644,7 @@ pub const SETTINGS_ARROW_TEMPLATE: &str = "shell.settings.arrow.{}";
 /// The address of the chevron on the value row `key`.
 #[must_use]
 pub fn settings_arrow(key: impl AsRef<str>) -> String {
-    format!("{SETTINGS_ARROW}{}", key.as_ref())
+    ChooserPart::Arrow.tag(SETTINGS, key.as_ref())
 }
 
 /// The address of the roster the value row `key` opens onto.
@@ -1132,14 +1194,26 @@ pub fn card_stat(id: &str, n: impl std::fmt::Display) -> String {
     format!("{}.stat.{n}", card(id))
 }
 
+/// The prefix a tile's trailing sparkline is tagged under, given the TILE's own
+/// address — inside the tile's trail, which is the crate's composition.
+///
+/// ★ R2223 — the tile-relative form is the primitive and [`card_stat_spark`]
+/// composes it, because a caller enumerating a tile's parts holds the tile and
+/// not the `(card, n)` pair it was built from. Before this the `.spark` word
+/// had one home and the enumeration a second one.
+#[must_use]
+pub fn stat_spark_under(tile: &str) -> String {
+    format!(
+        "{}.spark",
+        pinion_widget_paint::stat_tile::Row::Trail.tag(tile)
+    )
+}
+
 /// The prefix a tile's trailing sparkline is tagged under — inside the tile's
 /// trail, which is the crate's composition.
 #[must_use]
 pub fn card_stat_spark(id: &str, n: impl std::fmt::Display) -> String {
-    format!(
-        "{}.spark",
-        pinion_widget_paint::stat_tile::trail_tag(&card_stat(id, n))
-    )
+    stat_spark_under(&card_stat(id, n))
 }
 
 /// The latency card's distribution chart, as the chart's tag prefix.
@@ -1355,6 +1429,38 @@ fn body_rows() -> Vec<(&'static str, String, String)> {
     ]
 }
 
+/// Every part of a card's configuration chooser, as **one row per part**.
+///
+/// ★★★★★ R2223 §5.2 — a card offers its own settings under `card.{id}.config`,
+/// each one a collapsed chooser, and neither channel said so: the preferences
+/// page publishes its three chooser stems on `settings_addresses` and a card's
+/// were published nowhere at all. A walk driving a card's configuration panel
+/// therefore had to spell `…config.shown.{key}` — the case this round is
+/// named for.
+///
+/// ⚠ **Rows, not `part` rows.** The format's `part` kind means *one word
+/// `{affordance}` can be*, and putting `choose` beside `close` there would make
+/// a reader asking what an affordance can be receive three words that are not
+/// affordances — one name over two populations, which is the shape this
+/// project has paid for repeatedly. A part word that composes a whole address
+/// IS a grammar; that it happens to be one word is not the reader's problem.
+///
+/// Generated from [`ChooserPart::ALL`], so a part added to the vocabulary is
+/// published by adding it and nothing else.
+fn card_setting_rows() -> Vec<(&'static str, String, String)> {
+    let under = card_config(GRAMMAR_ID);
+    ChooserPart::ALL
+        .iter()
+        .map(|part| {
+            (
+                "grammar",
+                format!("card_setting_{}", part.word()),
+                part.tag(&under, "{key}"),
+            )
+        })
+        .collect()
+}
+
 /// Every word `{affordance}` can be, as `part` rows — the kind the format
 /// already has for "one word a placeholder can be".
 fn affordance_rows() -> Vec<(&'static str, String, String)> {
@@ -1396,6 +1502,7 @@ fn affordance_rows() -> Vec<(&'static str, String, String)> {
 pub fn card_grammar_rows() -> Vec<(&'static str, String, String)> {
     let mut rows = chrome_rows();
     rows.extend(body_rows());
+    rows.extend(card_setting_rows());
     rows.extend(affordance_rows());
     rows.sort_unstable();
     rows

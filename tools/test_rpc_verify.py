@@ -616,6 +616,32 @@ def test_painted_address_composes_from_any_screens_grammar() -> None:
         == "chart.series.0",
         "painted_address: the crate artifact reads identically",
     )
+    # ★★★★★ R2223 — the two kinds that had no reader. A `part` row is one word a
+    # placeholder can be, published beside the family it goes into: without a
+    # reader a walk could compose the family and had to spell the word, which
+    # puts the retyping back where the grammar removed it.
+    check(
+        rpc_verify.painted_part(shell, "maximize", id="decode#3")
+        == "card.decode#3.maximize",
+        "painted_part: an affordance word, formatted into its own family",
+    )
+    # ⚠ A card's configuration chooser is a `grammar` row and NOT a `part` one,
+    # deliberately: the format's `part` kind means *one word `{affordance}` can
+    # be*, and `choose` beside `close` there would answer a reader asking what
+    # an affordance can be with three words that are not affordances. A part
+    # word that composes a whole address is a grammar.
+    check(
+        rpc_verify.painted_address(
+            shell, "card_setting_shown", id="decode#3", key="severity"
+        )
+        == "card.decode#3.config.shown.severity",
+        "painted_address: a card's configuration chooser, which nothing "
+        "published until R2223",
+    )
+    check(
+        rpc_verify.painted_const(shell, "CARD") == "card.",
+        "painted_const: a family prefix, already rendered",
+    )
 
 
 def test_painted_address_refuses_in_every_direction() -> None:
@@ -637,6 +663,15 @@ def test_painted_address_refuses_in_every_direction() -> None:
          lambda: rpc_verify.painted_address("hello-menu", "card", id="x")),
         ("an id grammar the screen does not publish",
          lambda: rpc_verify.painted_id(shell, "nope", kind="a", ordinal=1)),
+        # ★★★★★ R2223 — and the two new readers refuse the same way. The first
+        # of these is not hypothetical: `card.{id}.body` is what `r1701` spelled
+        # for its negative control, an address this screen paints nowhere, and
+        # the walk skipped that control every run for 522 rounds rather than
+        # saying so. Asked instead of spelled, it raises on the first run.
+        ("a part word the screen does not publish",
+         lambda: rpc_verify.painted_part(shell, "body", id="x")),
+        ("a const the screen does not publish",
+         lambda: rpc_verify.painted_const(shell, "RAIL")),
     ]
     for label, call in cases:
         try:
@@ -2283,7 +2318,17 @@ def main() -> int:
     print(f"[harness] {len(cases)} case(s): {PASSED} passed, {len(FAILED)} failed")
     if FAILED:
         for label in FAILED:
-            print(f"  - {label}")
+            # ★★★★★ R2223 — the SENTENCE `tools/counterfactual.py` reads, adopted.
+            # R2220 gave that driver a `python case suite` marker and measured
+            # that five suites in this tree spell their failure five ways, none
+            # of them readable: a counterfactual gated on this file went red
+            # with the failing case named and reported UNREADABLE, which does
+            # not count as caught. That round registered the other four as a
+            # debt rather than adopting them blind, on the rule that an
+            # adoption is worth nothing without a mutation under it reporting
+            # CAUGHT. This round has two — it gates its own counterfactuals on
+            # this suite — so this one adopts with the demonstration attached.
+            print(f"[harness] a case failed: {label}")
         return 1
     return 0
 

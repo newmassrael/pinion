@@ -10043,6 +10043,40 @@ fn settings_stems_hang_off_the_page() {
             format!("{}{}.", crate::address::SETTINGS_OPTION, row.key)
         );
     }
+    // ★★★★★ R2223 — the collapsed control's three parts are **one screen
+    // vocabulary under two prefixes**, and this is where the page's `const`
+    // form and that vocabulary are held together. A `const` cannot call, so the
+    // page declares the stems and this drives them; without it the card
+    // configuration panel and this page could come to spell the same part
+    // differently, which is precisely the state R2223 found them in.
+    for (part, stem) in [
+        (
+            crate::address::ChooserPart::Control,
+            crate::address::SETTINGS_CHOOSE,
+        ),
+        (
+            crate::address::ChooserPart::Shown,
+            crate::address::SETTINGS_SHOWN,
+        ),
+        (
+            crate::address::ChooserPart::Arrow,
+            crate::address::SETTINGS_ARROW,
+        ),
+    ] {
+        assert_eq!(
+            part.stem(crate::address::SETTINGS),
+            stem,
+            "★ the page's {stem} is not what {part:?} composes under this page"
+        );
+    }
+    // ★ And every part is covered: an arm added to the vocabulary and left out
+    // of the pairs above would pass a table that only checks what it lists.
+    assert_eq!(
+        crate::address::ChooserPart::ALL.len(),
+        3,
+        "★ a chooser part joined the vocabulary and this page's stems did not \
+         follow it"
+    );
 }
 
 /// ★★★★★ R2119 — **the three inverses this page has refuse everything that is

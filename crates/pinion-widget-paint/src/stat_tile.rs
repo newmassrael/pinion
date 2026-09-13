@@ -396,7 +396,7 @@ impl StatTile {
         let mut y = self.pad_y;
 
         let (label_scene, label) = self.row(
-            &format!("{tag}.label"),
+            &Row::Label.tag(tag),
             &self.label,
             &self.label_style,
             Rect::new(self.pad_x, y, inner_w, row_height(&self.label_style)),
@@ -408,7 +408,7 @@ impl StatTile {
         y += row_height(&self.label_style) + self.gap;
 
         let (value_scene, value) = self.row(
-            &format!("{tag}.value"),
+            &Row::Value.tag(tag),
             &self.value,
             &self.value_style,
             Rect::new(self.pad_x, y, inner_w, row_height(&self.value_style)),
@@ -420,7 +420,7 @@ impl StatTile {
         let delta = self.delta.as_ref().map(|text| {
             y += self.gap;
             let (scene, placed) = self.row(
-                &format!("{tag}.delta"),
+                &Row::Delta.tag(tag),
                 text,
                 &self.delta_style,
                 Rect::new(self.pad_x, y, inner_w, row_height(&self.delta_style)),
@@ -545,15 +545,87 @@ impl Tile {
     }
 }
 
+/// ★★★★★ R2223 §5.2 — **every row this tile paints, as the words its addresses
+/// are composed with.**
+///
+/// R2186 published the TRAIL for one reason — a caller names it — and stopped
+/// there. Measured at entry, the screen that describes these tiles spells the
+/// other three rows and the caption under each of them as literals: nine
+/// strings that are a fact about *this* module's paint, written down one crate
+/// away. A part word retyped across a boundary is this campaign's own defect,
+/// and it is the silent one — a wrong letter compiles, paints nothing, and
+/// reads back to the describing side as *the tile did not draw that row*.
+///
+/// So the vocabulary is a VALUE rather than four more functions. Four functions
+/// answer *what is the label's address*; a value also answers *which rows are
+/// there*, which is the question a describing caller actually has — and a list
+/// of them kept one crate away is the thing that goes stale when a row is
+/// added.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Row {
+    /// What is being measured. Its text is the tile's name.
+    Label,
+    /// The reading itself.
+    Value,
+    /// How the reading moved, when the caller offers one.
+    Delta,
+    /// The seat the caller's trailing figure is built into.
+    Trail,
+}
+
+impl Row {
+    /// Every row, in the order a tile lays them out.
+    ///
+    /// ⚠ Ordered by the PAINT rather than alphabetically: a caller enumerating
+    /// the rows is describing them top to bottom, and a declaration order that
+    /// disagreed with the layout would make every such reader sort.
+    pub const ALL: &'static [Self] = &[Self::Label, Self::Value, Self::Delta, Self::Trail];
+
+    /// The word this row's address ends in.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Label => "label",
+            Self::Value => "value",
+            Self::Delta => "delta",
+            Self::Trail => "trail",
+        }
+    }
+
+    /// This row's address, under a tile addressed `tile_tag`.
+    #[must_use]
+    pub fn tag(self, tile_tag: &str) -> String {
+        format!("{tile_tag}.{}", self.word())
+    }
+
+    /// The caption this row's box carries, or `None` for a row that paints no
+    /// word of its own.
+    ///
+    /// ★ [`Self::Trail`] is that row: it holds a scene the CALLER builds, so a
+    /// caption address there would name a mark nothing paints — which is
+    /// exactly what a spelled one gives, one layer up.
+    #[must_use]
+    pub fn caption_tag(self, tile_tag: &str) -> Option<String> {
+        match self {
+            Self::Trail => None,
+            row => Some(crate::caption::caption_tag(&row.tag(tile_tag))),
+        }
+    }
+}
+
 /// ★★★★★ R2186 — **the trail's address** under a tile's tag.
 ///
 /// Published because a caller names it: the trailing figure is the caller's to
 /// build and is tagged under the trail, and before this the one consumer wrote
 /// `{tile}.trail` for itself — a copy of this crate's composition across its
 /// boundary, which had to agree with the tile to the letter.
+///
+/// ★ R2223 — kept, and now one arm of [`Row`] rather than the only address this
+/// module publishes. A caller holding the row asks [`Row::tag`]; this is for
+/// the one that means *the trail* and says so.
 #[must_use]
 pub fn trail_tag(tile_tag: &str) -> String {
-    format!("{tile_tag}.trail")
+    Row::Trail.tag(tile_tag)
 }
 
 #[cfg(test)]

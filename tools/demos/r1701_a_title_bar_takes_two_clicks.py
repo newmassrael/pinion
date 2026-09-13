@@ -56,9 +56,29 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcSubprocess, abs_rects_of, assert_eq, run_demo  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    RpcSubprocess,
+    abs_rects_of,
+    assert_eq,
+    painted_address,
+    painted_const,
+    painted_part,
+    run_demo,
+)
 
 EXT = "/external"
+#: The screen whose grammar every address below is composed from.
+#:
+#: ★★★★★ R2223 §5.2 — this walk used to spell a card's parts: `f"{card}.grip"`,
+#: `f"{card}.maximize"`, `f"{card}.body"`. The screen publishes every one of
+#: them (`src/painted_grammar.tsv`, emitted from the composers themselves), so
+#: a spelling here was a second copy of the screen's own composition, in another
+#: language, with nothing holding the two together.
+#:
+#: ⚠ And the copy had already gone wrong. `card.{id}.body` is an address this
+#: screen does not paint — see section F, where the negative control it named
+#: had been skipping itself since R1701.
+SCREEN = "hello-analyzer-shell"
 CHECKS: list[str] = []
 
 
@@ -90,13 +110,32 @@ def aim(app: RpcSubprocess, tag: str) -> tuple[float, float]:
     return (x + w / 2, y + h / 2)
 
 
+def card_ids(app: RpcSubprocess) -> list[str]:
+    """Every card the board is showing, by the id the screen addresses it with.
+
+    The family prefix is the screen's own (`const CARD`), and a card's address
+    is that prefix and nothing else after it — which is what `count` states.
+    """
+    prefix = painted_const(SCREEN, "CARD")
+    rects = abs_rects_of(app.snapshot(source="paint"))
+    return sorted(
+        tag[len(prefix) :]
+        for tag in rects
+        if tag.startswith(prefix) and tag.count(".") == 1
+    )
+
+
 def body() -> None:
-    with RpcSubprocess("hello-analyzer-shell") as app:
-        rects = abs_rects_of(app.snapshot(source="paint"))
-        cards = sorted(t for t in rects if t.startswith("card.") and t.count(".") == 1)
-        ok("the board opens with cards to press", len(cards) >= 2)
-        card = cards[0]
-        grip, control = f"{card}.grip", f"{card}.maximize"
+    with RpcSubprocess(SCREEN) as app:
+        ids = card_ids(app)
+        ok("the board opens with cards to press", len(ids) >= 2)
+        cid = ids[0]
+        card = painted_address(SCREEN, "card", id=cid)
+        grip = painted_address(SCREEN, "card_grip", id=cid)
+        # ★ The affordance by the word the screen publishes it under, formatted
+        # into the screen's own family — not `f"{card}.maximize"`, which is this
+        # walk composing the screen's address for it.
+        control = painted_part(SCREEN, "maximize", id=cid)
         opened = state(app)
 
         banner("A — the positive control: the header BUTTON moves the witness")
@@ -190,13 +229,38 @@ def body() -> None:
         # the gesture, and this screen's answer is the same: nothing. Without
         # these two the round would read as "a double-click anywhere maximises",
         # which is a different and worse screen.
+        #
+        # 🟥🟥🟥 ★★★★★ R2223 — **and for 522 rounds only ONE of the two ran.**
+        # The card's arm named `card.{id}.body`, an address this screen paints
+        # nowhere: the loop's own `if elsewhere not in painted: continue` then
+        # skipped it every single run, silently, so the negative control the
+        # comment above calls load-bearing was half absent. That is this
+        # campaign's failure mode exactly — a spelled address names nothing and
+        # the walk reads the absence as a fact about the screen — and it is why
+        # the addresses here are composed from the screen's published grammar
+        # now: `painted_address(SCREEN, "card_body", …)` would have raised on
+        # the first run, naming the parts the screen does paint.
+        #
+        # What a card's body IS, said in terms the screen publishes: the card's
+        # own region, aimed at its centre. The assertion below is what makes
+        # that a body press rather than a hopeful one — the aim has to fall
+        # BELOW the header, and the header's address is published too.
+        body_aim = aim(app, card)
+        grip_rect = abs_rects_of(app.snapshot(source="paint"))[grip]
+        ok(
+            "F: the card's centre is below its header, so aiming there is a "
+            "press on the body",
+            body_aim[1] > grip_rect[1] + grip_rect[3],
+        )
         for elsewhere, what in (
-            (f"{card}.body", "a card's body"),
+            (card, "a card's body"),
             ("shell.rail", "the navigation rail"),
         ):
             painted = abs_rects_of(app.snapshot(source="paint"))
-            if elsewhere not in painted:
-                continue
+            assert elsewhere in painted, (
+                f"F: {what} is not painted under {elsewhere!r} — a negative "
+                f"control that skips itself measures nothing"
+            )
             before = state(app)
             app.double_click(aim(app, elsewhere))
             app.tick_ms(16)
@@ -212,15 +276,16 @@ def body() -> None:
             )
 
         banner("E — every card's header answers, not just the one")
-        for other in cards[1:]:
-            app.double_click(aim(app, f"{other}.grip"))
+        for other in ids[1:]:
+            other_grip = painted_address(SCREEN, "card_grip", id=other)
+            app.double_click(aim(app, other_grip))
             app.tick_ms(16)
             assert_eq(
                 app.query(f"{EXT}/maximized") != "",
                 True,
                 f"E: {other} maximises from its header too",
             )
-            app.double_click(aim(app, f"{other}.grip"))
+            app.double_click(aim(app, other_grip))
             app.tick_ms(16)
             assert_eq(app.query(f"{EXT}/maximized"), "", f"E: and {other} restores")
             assert_eq(
@@ -228,8 +293,8 @@ def body() -> None:
                 opened["layout"],
                 f"E: and {other}'s round trip leaves the board where it was",
             )
-        ok("every card on the board was driven", len(cards) >= 2)
-        print(f"\n[demo] {len(cards)} card header(s) driven, {len(CHECKS)} named check(s)")
+        ok("every card on the board was driven", len(ids) >= 2)
+        print(f"\n[demo] {len(ids)} card header(s) driven, {len(CHECKS)} named check(s)")
 
 
 run_demo("R1701 a title bar takes two clicks", body)

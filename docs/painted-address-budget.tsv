@@ -253,7 +253,7 @@ topology.node	0	2
 topology.wire	0	3
 torn.packet	1	0
 torn.{}	0	1
-trail.spark	0	1
+trail.spark	0	0
 transport.link	0	1
 transport.unicast	0	0
 trend.label	0	2

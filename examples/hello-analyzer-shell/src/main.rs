@@ -9265,8 +9265,8 @@ fn card_config_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
         children.push(chooser::view_collapsed(
             &chooser::ChooserTags {
                 control: valued.control_tag(),
-                shown: format!("{}.shown.{}", valued.tag_prefix(), valued.roster_key()),
-                arrow: format!("{}.arrow.{}", valued.tag_prefix(), valued.roster_key()),
+                shown: valued.part_tag(address::ChooserPart::Shown),
+                arrow: valued.part_tag(address::ChooserPart::Arrow),
             },
             &valued.read(state),
             seat,
@@ -9905,19 +9905,31 @@ impl Valued {
         }
     }
 
+    /// The tag one part of this row's **collapsed** control is addressed by.
+    ///
+    /// ★★★★★ R2223 — the screen's own vocabulary
+    /// ([`address::ChooserPart`]), asked rather than spelled. These three parts
+    /// were written out here as `{prefix}.choose.{key}` and its siblings while
+    /// the preferences page composed the same three through `address::` — one
+    /// screen, one control, two spellings, and the one that could not be asked
+    /// was this one.
+    fn part_tag(&self, part: address::ChooserPart) -> String {
+        part.tag(&self.tag_prefix(), self.roster_key())
+    }
+
     /// The tag the collapsed control is addressed by.
     fn control_tag(&self) -> String {
-        format!("{}.choose.{}", self.tag_prefix(), self.roster_key())
+        self.part_tag(address::ChooserPart::Control)
     }
 
     /// The tag the open roster is addressed by — the framework's own spelling.
     fn roster_tag(&self) -> String {
-        format!("{}.roster.{}", self.tag_prefix(), self.roster_key())
+        chooser::address::roster(&self.tag_prefix(), self.roster_key())
     }
 
     /// The tag one word of the open roster is addressed by.
     fn option_tag(&self, word: &str) -> String {
-        format!("{}.option.{}.{word}", self.tag_prefix(), self.roster_key())
+        chooser::address::option(&self.tag_prefix(), self.roster_key(), word)
     }
 }
 

@@ -26,16 +26,16 @@
 # Rewritten by `tools/painted_addresses.py --write-budget`; do not
 # hand-edit.
 add	1	0
-arrow.{}	0	1
+arrow.{}	0	0
 badge	1	0
-body	1	0
+body	0	0
 caption	11	1
-cell.{}_{}	0	1
+cell.{}_{}	0	0
 checked	0	1
 delta	0	1
 dial	1	0
-grip	4	2
-head	0	2
+grip	1	2
+head	0	1
 id	3	0
 in1	2	0
 issue	2	0
@@ -43,12 +43,12 @@ label	1	1
 legend	2	0
 legend.0	1	0
 legend.{}	1	0
-maximize	1	0
+maximize	0	0
 out0	1	0
 scheme	1	0
-shown.{}	0	1
-stat.{}.{}	0	1
+shown.{}	0	0
+stat.{}.{}	0	0
 strip	1	2
-tiles	0	1
+tiles	0	0
 track	1	0
 value	0	1

@@ -5308,6 +5308,64 @@ def painted_id(package: str, name: str, **fields: Any) -> str:
     return fill_template(ids[name], **fields)
 
 
+def painted_const(package: str, name: str) -> str:
+    """One whole address or family prefix a screen publishes as a `const` row.
+
+    ★ R2223 — the fourth composer, and like [`painted_part`] it is the GENERAL
+    one rather than the first. The chart's own reader takes
+    `chart_grammar()["const"]["DEFAULT_PREFIX"]`; no package-agnostic reader
+    existed, so a walk classifying another screen's snapshot by family spelled
+    the prefix. The shell publishes `card.` as `const CARD`; spelled, it is the
+    same string the grammar exists to hand over.
+
+        painted_const("hello-analyzer-shell", "CARD") -> "card."
+
+    ⚠ No `fields`: a `const` row is already rendered, and a template that still
+    carried a placeholder would be a `grammar` row.
+    """
+    consts = emitted_grammar(package).get("const", {})
+    if name not in consts:
+        raise AssertionError(
+            f"{package!r} publishes no const called {name!r}. It publishes "
+            f"{sorted(consts)}."
+        )
+    return consts[name]
+
+
+def painted_part(package: str, name: str, **fields: Any) -> str:
+    """One address a screen paints for a named PART of a placeholder it
+    publishes — `part` rows, composed the way [`painted_address`] composes
+    `grammar` ones.
+
+    ★★★★★ R2223 §5.2 — the `part` kind has had a reader since R2146 and no
+    general one. [`chart_overlay_address`] reads `grammar["part"]`, but only to
+    REFUSE a part no chart paints, and only for the chart; nothing turned a
+    `part` row into an address the way [`painted_address`] does for a `grammar`
+    row, for any package. So a screen could publish `card.{id}.{affordance}`
+    and the four words `{affordance}` can be, and a walk that wanted the
+    maximize control still had to compose the FAMILY and spell the word into
+    it — the retyping put back exactly where the grammar was meant to remove
+    it. This is R2218's shape one kind over: one reader over every artifact,
+    not one that happens to live inside the chart's own composer.
+
+        painted_part("hello-analyzer-shell", "maximize", id="decode#3")
+            -> "card.decode#3.maximize"
+
+    ⚠ A name the screen does not publish is an `AssertionError` naming the ones
+    it does — [`painted_address`]'s refusal, for its reason. The alternative is
+    a composed guess that names nothing, which every later assertion reads as
+    *the screen did not paint it*.
+    """
+    parts = emitted_grammar(package).get("part", {})
+    if name not in parts:
+        raise AssertionError(
+            f"{package!r} publishes no part called {name!r}. It publishes "
+            f"{sorted(parts)}. A walk cannot call a Rust function, so a part it "
+            "is not handed is one it would have to spell."
+        )
+    return fill_template(parts[name], **fields)
+
+
 def chart_grammar() -> dict[str, dict[str, str]]:
     """The emitted chart grammar, as `kind -> name -> value`.
 

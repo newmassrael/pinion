@@ -3228,7 +3228,7 @@ impl Population {
             Population::TableHeads => TABLE_CARDS
                 .iter()
                 .filter_map(|kind| card_of(kind))
-                .map(|id| format!("{id}.head"))
+                .map(|id| under_card(&crate::address::card_head(&id)))
                 .collect(),
             Population::StreamColumns => under("packet", "head", STREAM_COLUMNS.len()),
             Population::StreamRows => under("packet", "row", STREAM_ROWS.len()),
@@ -3245,19 +3245,30 @@ impl Population {
             Population::Stats => indexes(FILTER_STATS.len()),
             Population::LatencyTiles => indexes(LATENCY_STAT_KEYS.len()),
             Population::HealthTiles => indexes(HEALTH_TILES_SHOWN),
-            Population::HealthStrip => {
-                card_of("health").map_or_else(Vec::new, |id| vec![format!("{id}.tiles")])
+            Population::HealthStrip => card_of("health").map_or_else(Vec::new, |id| {
+                vec![under_card(&crate::address::card_tiles(&id))]
+            }),
+            Population::HealthTileNames => {
+                use pinion_widget_paint::stat_tile::Row;
+                health_tile_parts(&[
+                    |tile| Row::Label.tag(tile),
+                    |tile| tile_caption(Row::Label, tile),
+                ])
             }
-            Population::HealthTileNames => health_tile_parts(&["label", "label.caption"]),
-            Population::HealthTileParts => health_tile_parts(&[
-                "value",
-                "value.caption",
-                "delta",
-                "delta.caption",
-                "trail",
-                "trail.spark",
-                "trail.spark.line",
-            ]),
+            Population::HealthTileParts => {
+                use pinion_widget_paint::stat_tile::Row;
+                health_tile_parts(&[
+                    |tile| Row::Value.tag(tile),
+                    |tile| tile_caption(Row::Value, tile),
+                    |tile| Row::Delta.tag(tile),
+                    |tile| tile_caption(Row::Delta, tile),
+                    |tile| Row::Trail.tag(tile),
+                    crate::address::stat_spark_under,
+                    |tile| {
+                        pinion_chart::address::spark_line(&crate::address::stat_spark_under(tile))
+                    },
+                ])
+            }
             // ★ R1851 — the alarm card's six families answer through one helper.
             // Not for tidiness: `members` is at this crate's line limit, and a
             // family added to one card should not have to argue with the size of
@@ -3338,6 +3349,37 @@ pub const LOCKED: &[(&str, Population, Where)] = &[
 /// The catalogue kinds whose card body is a table with a header strip.
 pub const TABLE_CARDS: &[&str] = &["packet", "keymap"];
 
+/// A card address as the voice, silence and locked tables carry a MEMBER:
+/// relative to the `card.` prefix their own template supplies.
+///
+/// ★★★★★ R2223 §5.2 — **this is the relation that made four sites retype a part
+/// word.** A row in those tables is a template and a population
+/// (`tag: "card.{}"`), so a member is a card address with its family prefix
+/// taken off — and nothing said so. Each computed family therefore avoided the
+/// prefix the only way it could: by composing the tail itself, `format!("{id}.head")`
+/// and `format!("{id}.cell.{r}_{c}")`, which is the painter's part word written
+/// a second time where a wrong letter is silent. The census then asserts a mark
+/// nothing paints and reads the absence as *the screen did not draw it*.
+///
+/// Written as a REMOVAL of the published prefix rather than as a second,
+/// prefix-less spelling: the composer stays the one the painter calls, so a
+/// part word appears in this module exactly zero times, and the relation
+/// between a member and an address is stated once instead of implied four
+/// times.
+///
+/// # Panics
+///
+/// On an address outside the card family. Unreachable: every caller hands it a
+/// `crate::address::card_*` composition, and a composer that stopped returning
+/// one would be a card family that had moved — which this should report rather
+/// than quietly publish as a member of the wrong shape.
+fn under_card(address: &str) -> String {
+    address
+        .strip_prefix(crate::address::CARD)
+        .unwrap_or_else(|| panic!("{address} is not under the card family"))
+        .to_owned()
+}
+
 /// The card identifier a kind is placed under, or `None` when this layout does
 /// not place it.
 #[must_use]
@@ -3348,24 +3390,49 @@ pub fn card_of(kind: &str) -> Option<String> {
         .map(|n| crate::address::card_id(kind, n))
 }
 
-/// `{health card}.stat.{n}.{part}` for every part of every tile the strip draws.
+/// Every named part of every tile the health strip draws, given composers over
+/// ONE tile's address.
 ///
-/// ★ R1846 — the product of [`HEALTH_TILES_SHOWN`] and the suffixes the crate's
-/// tile builds. Written once rather than per suffix, because the suffixes are
-/// one fact — the shape of `pinion_widget_paint::stat_tile` — and nine rows of
-/// it would be nine places to update when that shape moves.
-fn health_tile_parts(parts: &[&str]) -> Vec<String> {
+/// ★ R1846 — the product of [`HEALTH_TILES_SHOWN`] and the parts the crate's
+/// tile builds. Written once rather than per suffix, because the parts are one
+/// fact — the shape of `pinion_widget_paint::stat_tile` — and nine rows of it
+/// would be nine places to update when that shape moves.
+///
+/// ★★★★★ R2223 §5.2 — and until this round those nine rows were **strings**:
+/// `"value"`, `"value.caption"`, `"trail.spark.line"`. Three vocabularies that
+/// belong to three other modules — the tile's rows, the framework's caption
+/// suffix, the chart's spark-line word — retyped a crate away, where a wrong
+/// letter compiles and this census then asserts a mark nothing paints. Each
+/// part is now composed by whoever paints it, so this table states *which*
+/// parts the census covers and nothing whatever about how they are spelled.
+fn health_tile_parts(parts: &[fn(&str) -> String]) -> Vec<String> {
     card_of("health").map_or_else(Vec::new, |id| {
         (0..HEALTH_TILES_SHOWN)
             .flat_map(|n| {
-                let id = id.clone();
+                let tile = crate::address::card_stat(&id, n);
                 parts
                     .iter()
-                    .map(move |part| format!("{id}.stat.{n}.{part}"))
+                    .map(move |part| under_card(&part(&tile)))
                     .collect::<Vec<_>>()
             })
             .collect()
     })
+}
+
+/// The caption one row of a stat tile writes beneath it.
+///
+/// # Panics
+///
+/// On a row that paints no word of its own — `stat_tile::Row::Trail`, which
+/// holds a scene the caller builds. Unreachable from [`health_tile_parts`]'s
+/// callers below, which name the three rows that carry text; and if a row
+/// stopped carrying one, this is the reading worth having. The alternative —
+/// an empty string, or the row's own address — would publish a census entry for
+/// a mark that is no longer painted, which is the failure this whole conversion
+/// exists to stop.
+fn tile_caption(row: pinion_widget_paint::stat_tile::Row, tile: &str) -> String {
+    row.caption_tag(tile)
+        .unwrap_or_else(|| panic!("{row:?} paints no word of its own, so it has no caption"))
 }
 
 /// The members of one of the alarm card's seven families.
@@ -3441,7 +3508,7 @@ fn cell_members(kind: &str, rows: usize, columns: usize) -> Vec<String> {
         (0..rows)
             .flat_map(|r| {
                 let id = id.clone();
-                (0..columns).map(move |c| format!("{id}.cell.{r}_{c}"))
+                (0..columns).map(move |c| under_card(&crate::address::card_cell(&id, r, c)))
             })
             .collect()
     })

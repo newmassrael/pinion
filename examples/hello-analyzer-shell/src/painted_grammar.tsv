@@ -39,6 +39,9 @@ grammar	card_map_row	card.{id}.map.{row}
 grammar	card_query	card.{id}.query
 grammar	card_remedy	card.{id}.remedy
 grammar	card_row	card.{id}.row.{row}
+grammar	card_setting_arrow	card.{id}.config.arrow.{key}
+grammar	card_setting_choose	card.{id}.config.choose.{key}
+grammar	card_setting_shown	card.{id}.config.shown.{key}
 grammar	card_sparkline	card.{id}.sparkline
 grammar	card_stat	card.{id}.stat.{n}
 grammar	card_stat_spark	card.{id}.stat.{n}.trail.spark
