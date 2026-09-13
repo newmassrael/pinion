@@ -629,6 +629,22 @@ impl External for ListBoxExternal {
     }
 }
 
+/// ★★★★★ R2193 — the per-row state path, declared ONCE: [`ListBoxExternal`]'s
+/// schema publishes this field, and a reader composes from it
+/// ([`SchemaField::at`]) instead of spelling `state.<index>` again.
+pub const STATE: SchemaField = SchemaField::parametric(
+    "state.<index>",
+    "string",
+    const { &[SchemaArg::index("index", "count")] },
+);
+
+/// ★★★★★ R2193 — the per-row selected path, declared once; see [`STATE`].
+pub const SELECTED: SchemaField = SchemaField::parametric(
+    "selected.<index>",
+    "bool",
+    const { &[SchemaArg::index("index", "count")] },
+);
+
 impl ExternalIntrospect for ListBoxExternal {
     fn schema(&self) -> IntrospectSchema {
         // Per-item paths use the same `<index>` placeholder
@@ -649,16 +665,8 @@ impl ExternalIntrospect for ListBoxExternal {
                     SchemaField::new("multiselect", "bool"),
                     SchemaField::new("selected_index", "int"),
                     SchemaField::new("focused_index", "int"),
-                    SchemaField::parametric(
-                        "state.<index>",
-                        "string",
-                        const { &[SchemaArg::index("index", "count")] },
-                    ),
-                    SchemaField::parametric(
-                        "selected.<index>",
-                        "bool",
-                        const { &[SchemaArg::index("index", "count")] },
-                    ),
+                    STATE,
+                    SELECTED,
                     SchemaField::send("string"),
                 ]
             },

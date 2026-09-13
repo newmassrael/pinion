@@ -2018,6 +2018,54 @@ impl SchemaField {
         schema_bytes::eq(rest, tmpl)
     }
 
+    /// ★★★★★ R2193 — this field's path with its placeholders filled, in the order
+    /// the template names them: `state.<index>` at `[&3]` is `state.3`.
+    ///
+    /// The composing half of [`addresses`](Self::addresses). A reader that
+    /// spells a declared path again — `format!("state.{i}")` — holds a second,
+    /// unchecked copy of the declaration: a wrong letter compiles, and the query
+    /// asks for a path nothing answers. A reader that names the field and
+    /// composes from it cannot drift from it, because the field IS the
+    /// declaration the surface's [`IntrospectSchema`] publishes, and a misspelled
+    /// field name is a compile error rather than a silent miss. The walks cannot
+    /// name a Rust item, so their door (`rpc_verify.ExternalPaths.at`) looks the
+    /// declaration up by name instead; this is the same composition with the
+    /// stronger check the language allows.
+    ///
+    /// A scalar path composes from no arguments and comes back as declared.
+    ///
+    /// # Panics
+    ///
+    /// When `args` does not hold exactly one value per placeholder in the
+    /// template. That is a reader disagreeing with the declaration it names —
+    /// the defect this exists to rule out — so it is refused at the call, naming
+    /// the template and both counts, rather than composing a path that names
+    /// nothing.
+    #[must_use]
+    #[track_caller]
+    pub fn at(&self, args: &[&dyn fmt::Display]) -> String {
+        let placeholders = self.path.matches('<').count();
+        assert!(
+            args.len() == placeholders,
+            "`{}` declares {placeholders} argument(s) in its path and was composed with {}",
+            self.path,
+            args.len(),
+        );
+        let mut out = String::with_capacity(self.path.len());
+        let mut rest = self.path;
+        let mut values = args.iter();
+        while let Some(open) = rest.find('<') {
+            out.push_str(&rest[..open]);
+            let close = rest[open..].find('>').map_or(rest.len(), |c| open + c + 1);
+            if let Some(value) = values.next() {
+                out.push_str(&value.to_string());
+            }
+            rest = &rest[close..];
+        }
+        out.push_str(rest);
+        out
+    }
+
     /// R1642 — the first way this field's conditional declaration is malformed,
     /// or `None` when a client can follow it unambiguously.
     ///
@@ -5247,6 +5295,63 @@ impl ExternalIntrospect for CountedExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★★★★★ R2193 — a declared path composes from its own template, at any
+    /// position its arguments sit, and what it composes is what the same
+    /// declaration addresses: the composing and the matching half are one rule.
+    #[test]
+    fn r2193_a_declared_path_composes_from_its_own_template() {
+        const STATE: SchemaField = SchemaField::parametric(
+            "state.<index>",
+            "string",
+            const { &[SchemaArg::index("index", "count")] },
+        );
+        const CELL: SchemaField = SchemaField::parametric(
+            "cell.<row>.<col>",
+            "string",
+            const {
+                &[
+                    SchemaArg::index("row", "rows"),
+                    SchemaArg::index("col", "cols"),
+                ]
+            },
+        );
+        const GAIN: SchemaField = SchemaField::parametric(
+            "voice.<id>.gain",
+            "float",
+            const { &[SchemaArg::index("id", "voices")] },
+        );
+        assert_eq!(STATE.at(&[&3]), "state.3");
+        assert_eq!(CELL.at(&[&2, &"b"]), "cell.2.b");
+        assert_eq!(GAIN.at(&[&7]), "voice.7.gain");
+        assert_eq!(SchemaField::new("count", "int").at(&[]), "count");
+        for (field, composed) in [
+            (STATE, STATE.at(&[&3])),
+            (CELL, CELL.at(&[&2, &"b"])),
+            (GAIN, GAIN.at(&[&7])),
+        ] {
+            assert!(
+                field.addresses(&composed),
+                "`{composed}` must be addressed by the `{}` it was composed from",
+                field.path
+            );
+        }
+    }
+
+    /// ★★★★★ R2193 — a reader composing with the wrong number of arguments
+    /// disagrees with the declaration it names, and is refused by name.
+    #[test]
+    #[should_panic(
+        expected = "`state.<index>` declares 1 argument(s) in its path and was composed with 2"
+    )]
+    fn r2193_composing_with_the_wrong_argument_count_is_refused_by_name() {
+        const STATE: SchemaField = SchemaField::parametric(
+            "state.<index>",
+            "string",
+            const { &[SchemaArg::index("index", "count")] },
+        );
+        let _ = STATE.at(&[&1, &2]);
+    }
     use crate::event::WindowEvent;
 
     /// ★★★★★ R1905 — **a window that closed stops answering, because the fact

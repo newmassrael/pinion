@@ -79,7 +79,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::listbox::ListBoxExternal;
+use pinion_core::widgets::listbox::{self, ListBoxExternal};
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
@@ -513,12 +513,12 @@ impl WidgetCore for ListBoxView {
             return out;
         };
         for (i, slot) in out.rows.iter_mut().enumerate() {
-            let state = match intro.query(&format!("state.{i}")) {
+            let state = match intro.query(&listbox::STATE.at(&[&i])) {
                 Ok(IntrospectValue::Text(name)) => ListboxItemState::from_name_or_default(&name),
                 _ => ListboxItemState::Idle,
             };
             let selected = matches!(
-                intro.query(&format!("selected.{i}")),
+                intro.query(&listbox::SELECTED.at(&[&i])),
                 Ok(IntrospectValue::Bool(true)),
             );
             *slot = (state, selected);

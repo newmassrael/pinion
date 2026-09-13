@@ -208,7 +208,7 @@ section_highlight.{}	3	0
 section_position.{}	4	0
 section_selection.{}	10	1
 section_size.{}	11	1
-selected.{}	55	11
+selected.{}	55	9
 selection.{}	1	0
 share.legend	0	5
 share.slice	0	6
@@ -225,7 +225,7 @@ sizes.legend	0	1
 source_at.{}	55	22
 source_len.{}	1	0
 source_name.{}	2	0
-state.{}	2	11
+state.{}	2	9
 struct_modified.struct	0	3
 struct_summary.struct	0	1
 sv.chip	0	0

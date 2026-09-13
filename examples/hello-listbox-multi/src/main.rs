@@ -52,7 +52,7 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::widgets::listbox::ListBoxExternal;
+use pinion_core::widgets::listbox::{self, ListBoxExternal};
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::{Color, Frame, Owner, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::typeahead::{TypeaheadCursor, is_typeahead_char};
@@ -215,14 +215,14 @@ impl WidgetCore for ListBoxMultiView {
             return out;
         };
         for (i, slot) in out.rows.iter_mut().enumerate() {
-            let state = match intro.query(&format!("state.{i}")) {
+            let state = match intro.query(&listbox::STATE.at(&[&i])) {
                 Ok(IntrospectValue::Text(name)) => ListboxItemState::from_name_or_default(&name),
                 _ => ListboxItemState::Idle,
             };
             // Multi-mode: per-row selected bool (selected_index is
             // null because no single index applies).
             let selected = matches!(
-                intro.query(&format!("selected.{i}")),
+                intro.query(&listbox::SELECTED.at(&[&i])),
                 Ok(IntrospectValue::Bool(true)),
             );
             *slot = (state, selected);
