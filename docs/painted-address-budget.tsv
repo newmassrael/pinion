@@ -17,8 +17,9 @@
 # Rewritten by `tools/painted_addresses.py --write-budget`; do not
 # hand-edit.
 admin.permissions	0	0
-array_modified.arr	1	1
-array_modified.struct	0	1
+array_modified.arr	0	0
+array_modified.struct	0	0
+array_modified.{}	1	2
 audio.voice	0	1
 bars.bar	2	5
 bars.xlabel	2	0
@@ -81,9 +82,9 @@ edge.{}	15	14
 effective_resize_mode.{}	0	0
 enabled.{}	3	0
 expanded.arr	0	0
-expanded.cat	0	2
+expanded.cat	0	0
 expanded.struct	0	0
-expanded.{}	0	1
+expanded.{}	0	3
 expanded_at.{}	25	1
 extent.{}	4	0
 feed.head	0	0
@@ -108,15 +109,15 @@ histogram.inspect	0	5
 hit.{}	1	2
 id_at.{}	38	3
 is_dir.{}	5	0
-item.bake	0	1
-item.dark	0	2
-item.ship	0	1
-item.toggle_window	0	2
-item.{}	0	1
+item.bake	0	0
+item.dark	0	0
+item.ship	0	0
+item.toggle_window	0	0
+item.{}	0	7
 item_count.{}	4	0
 item_kind.{}	16	0
-kind.elem	0	1
-kind.{}	4	8
+kind.elem	0	0
+kind.{}	4	9
 kind_at.{}	16	2
 kp.column	0	0
 kp.detail	0	0
@@ -164,10 +165,10 @@ measured_height.{}	3	1
 member_count_at.{}	4	0
 mixed.{}	0	19
 model_height.{}	1	1
-modified.elem	0	5
-modified.{}	26	26
-name.elem	0	1
-name.{}	12	11
+modified.elem	0	0
+modified.{}	26	31
+name.elem	0	0
+name.{}	12	12
 no.such	1	0
 node.{}	168	96
 nodegroups.frame	0	0
@@ -229,8 +230,10 @@ source_at.{}	55	22
 source_len.{}	1	0
 source_name.{}	2	0
 state.{}	1	0
-struct_modified.struct	0	3
-struct_summary.struct	0	1
+struct_modified.struct	0	0
+struct_modified.{}	0	3
+struct_summary.struct	0	0
+struct_summary.{}	0	1
 sv.chip	0	0
 sv.detail	0	0
 sv.list	0	0
@@ -264,8 +267,8 @@ tv.node	0	0
 tv.tip	0	0
 tv.toggle	0	0
 unmapped_bytes.{}	1	0
-value.elem	0	22
-value.{}	244	260
+value.elem	0	0
+value.{}	244	282
 visible_at.{}	10	2
 visual_index.{}	0	1
 vn.sprite	2	0

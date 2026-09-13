@@ -2394,6 +2394,100 @@ def declared_path_family(
     return None
 
 
+@functools.lru_cache(maxsize=1)
+def _declared_by_head() -> dict[str, tuple[tuple[str, str], ...]]:
+    """[`declared_path_templates`] keyed by each declaration's fixed HEAD, so a
+    literal is matched only against the declarations that could own it."""
+    grouped: dict[str, list[tuple[str, str]]] = {}
+    for declared, template in declared_path_templates():
+        grouped.setdefault(declared.split(".")[0], []).append((declared, template))
+    return {head: tuple(pairs) for head, pairs in grouped.items()}
+
+
+def _argument_follows_head(declared: str) -> bool:
+    """Whether `declared`'s second segment is an argument (`expanded.<branch_id>`)
+    rather than a fixed word (`detail.input_default.<port>`)."""
+    segments = declared.split(".")
+    return len(segments) > 1 and segments[1].startswith("<")
+
+
+@functools.lru_cache(maxsize=None)
+def paint_holds(stem: str) -> bool:
+    """Whether a PAINT authority holds `stem`: an emitted grammar composes it or a
+    committed `.pin` covers it.
+
+    ★★★★★ R2204 — the one spelling of that question. [`site_vocabulary`] and the
+    selftest's contested-name invariant each wrote it out, and the ownership
+    rule in [`declared_owner_family`] needed it a third time.
+    """
+    return grammar_pins(stem) or any(
+        covers(address, stem) for address in pin_artifact_addresses()
+    )
+
+
+def declared_owner_family(
+    literal: str,
+    templates: Iterable[tuple[str, str]] | None = None,
+    paint: Callable[[str], bool] | None = None,
+) -> str | None:
+    """The DECLARED family of a literal [`ADDRESS`] anchors as a word family, when
+    a declared parametric path addresses it and no paint authority holds that
+    word family: `expanded.cat.Identity` is `expanded.{}`; or `None`.
+
+    ★★★★★ R2204 — [`family_of`] asked the paint grammar FIRST, and a path whose
+    open argument is itself dotted reads to that grammar as `screen.family.key`:
+    `expanded.<branch_id>` addressed as `expanded.cat.Identity` was charged to
+    `expanded.cat`, and `value.<index>` addressed as `value.elem.1` to
+    `value.elem`. The COUNT was right and the GROUPING was not, and a round that
+    scopes a widget by its declared families lists by that grouping: R2203
+    listed the property grid that way, missed six walk sites filed under
+    `expanded.cat` / `expanded.arr`, and a literal grep after editing is what
+    found them.
+
+    Ownership is asked by the runtime's rule ([`declared_path_addresses`]), and
+    only where the word family has no paint claim: a stem a grammar or a `.pin`
+    holds stays paint (`match.spark`), because a name two vocabularies claim is
+    reported as `both` ([`site_vocabulary`]), not resolved by preference here.
+    ⚠⚠ Only a declaration whose ARGUMENT follows its head can own a word family.
+    `detail.input_default.<port>` names its second segment itself, so
+    `detail.input_default` already IS that declaration's family; charging its
+    spellings to `detail.{}` claimed a template family a paint authority holds.
+    The first implementation did exactly that, and diffing `--check` against a
+    baseline saved before the edit caught it: the contested-name list grew from
+    12 to 13 with `detail.{}`, a finding this rule had manufactured.
+
+    Measured before building (the restricted rule), over every literal: in Rust,
+    45 literals the paint grammar anchors and such a declaration addresses — 44
+    assertions and 1 declaration, no reader — of which 43 (all assertions) move
+    and 2 (`match.spark`) stay; in the walks, 1 (`r936`'s
+    `array_modified.arr.weights`). The queue does not move; the split rows fold
+    into their declared families.
+
+    ⚠ Unlike [`declared_path_family`] this does not require the argument to be a
+    number or a placeholder: a WORD there is exactly the case, and what keeps it
+    from claiming a painted mark is the paint check, not the shape.
+
+    `templates` and `paint` are handed in by a fixture; the tree's are the
+    shipped declarations and [`paint_holds`].
+    """
+    if " " in literal or "/" in literal:
+        return None
+    hit = ADDRESS.match(literal)
+    if hit is None:
+        return None
+    head = literal.split(".")[0]
+    if templates is None:
+        candidates = _declared_by_head().get(head, ())
+    else:
+        candidates = tuple(pair for pair in templates if pair[0].split(".")[0] == head)
+    pool = tuple(pair for pair in candidates if _argument_follows_head(pair[0]))
+    if not pool or (paint_holds if paint is None else paint)(hit.group(1)):
+        return None
+    if any(declared_path_addresses(declared, literal) for declared, _t in pool):
+        return f"{head}.{{}}"
+    return None
+
+
 #: ★★★★★ R2189 — where an External's introspection path begins inside an RPC
 #: path, read from the tree's one declaration of it, as `pinion-rpc`'s parser
 #: reads it (`split_at_external`, R1890).
@@ -2464,11 +2558,14 @@ def family_of(literal: str) -> str | None:
     it is the only rule that asks the tree rather than the text.
     ★★★★★ R2189 — every rule judges the [`address_part`], so a path written
     behind its mount is charged as the path it spells.
+    ★★★★★ R2204 — and a literal the paint grammar anchors is charged to the
+    declaration that addresses it when no paint authority holds its word family
+    (see [`declared_owner_family`]).
     """
     literal = address_part(literal)
     hit = ADDRESS.match(literal)
     if hit:
-        return hit.group(1)
+        return declared_owner_family(literal) or hit.group(1)
     return template_family(literal) or declared_path_family(literal)
 
 
@@ -2822,9 +2919,7 @@ def site_vocabulary(stem: str) -> str:
     derivation needs each SITE's namespace — the reader it is handed to — and
     that is the next instalment, not a preference written here.
     """
-    paints = grammar_pins(stem) or any(
-        covers(address, stem) for address in pin_artifact_addresses()
-    )
+    paints = paint_holds(stem)
     routes = schema_pins(stem)
     if paints and routes:
         return "both"
@@ -3719,8 +3814,7 @@ def selftest() -> int:
     contested = [
         stem
         for stem in set(census()) | set(rust_census())
-        if schema_pins(stem)
-        and (grammar_pins(stem) or any(covers(a, stem) for a in pin_artifact_addresses()))
+        if schema_pins(stem) and paint_holds(stem)
     ]
     mislabelled = [stem for stem in contested if site_vocabulary(stem) != "both"]
     if mislabelled:
@@ -3855,8 +3949,13 @@ def selftest() -> int:
     tree_mount_cases: list[tuple[str, object, object]] = [
         ("★ the tree's separator is read and mounts a path",
          address_part(f"/grid{sep}card.alarms.feed"), "card.alarms.feed"),
-        ("★★ and a family is charged behind it",
-         family_of(f"/panel{sep}expanded.cat.Physics"), "expanded.cat"),
+        # ★★★★★ R2204 — this case pinned `expanded.cat`, the grouping defect
+        # itself: `expanded.<branch_id>` addresses the path and nothing paints
+        # `expanded.cat`, so the family is the declaration's.
+        ("★★ and a family is charged behind it, to the declaration addressing it",
+         family_of(f"/panel{sep}expanded.cat.Physics"), "expanded.{}"),
+        ("★★ while a word family a paint authority holds stays paint on the tree",
+         family_of("match.spark.x"), "match.spark"),
         ("but a composed path behind it is not a spelling", family_of(f"{sep}{{}}"), None),
     ]
     for label, got, want in tree_mount_cases:
@@ -3912,6 +4011,48 @@ def selftest() -> int:
             failed += 1
             print(
                 f"FAIL: {label}: declared_path_family({literal!r}) -> {got!r}, "
+                f"wanted {want!r}",
+                file=sys.stderr,
+            )
+    # ★★★★★ R2204 — a literal the paint grammar anchors belongs to the
+    # declaration that addresses it, unless a paint authority holds its word
+    # family. Declarations and the paint authority are handed in.
+    owner_declared = (
+        ("expanded.<branch_id>", "expanded.{}"),
+        ("value.<index>", "value.{}"),
+        ("item.<id>.checked", "item.{}.checked"),
+        ("match.<i>", "match.{}"),
+        ("detail.input_default.<port>", "detail.input_default.{}"),
+    )
+
+    def painted(stem: str) -> bool:
+        return stem == "match.spark"
+
+    owner_cases: list[tuple[str, str, str | None]] = [
+        ("★★ a dotted argument is the declaration's, not a word family",
+         "expanded.cat.Identity", "expanded.{}"),
+        ("★ an element address is `value.<index>`'s", "value.elem.1", "value.{}"),
+        ("★ a fixed piece after a dotted argument is matched",
+         "item.dark.checked", "item.{}"),
+        ("★★ but a fixed piece the declaration requires is not swallowed",
+         "item.dark.bogus", None),
+        ("★★ a word family a paint authority holds stays paint",
+         "match.spark.x", None),
+        ("★ a word family no declaration addresses stays a word family",
+         "card.alarms.feed", None),
+        ("★★ a fixed word after the head is the declaration's own family, not an "
+         "argument — the first implementation charged it to `detail.{}`",
+         "detail.input_default.0", None),
+        ("a literal the paint grammar does not anchor is not this rule's",
+         "value.3", None),
+        ("a sentence is not one", "expanded cat.Identity", None),
+    ]
+    for label, literal, want in owner_cases:
+        got = declared_owner_family(literal, owner_declared, painted)
+        if got != want:
+            failed += 1
+            print(
+                f"FAIL: {label}: declared_owner_family({literal!r}) -> {got!r}, "
                 f"wanted {want!r}",
                 file=sys.stderr,
             )
