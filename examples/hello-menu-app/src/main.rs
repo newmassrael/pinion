@@ -62,7 +62,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::menu::{MenuBarExternal, MenuItem};
+use pinion_core::widgets::menu::{MenuBarExternal, MenuItem, path_text};
 use pinion_core::{Command, Frame, Scene, WidgetCore, intent_tag};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::barrier::dismiss_barrier;
@@ -304,7 +304,9 @@ fn query_index(intro: &dyn ExternalIntrospect, path: &str) -> Option<usize> {
 /// Read a `checked.<m>.<i>` boolean slot off the menu external.
 fn query_checked(intro: &dyn ExternalIntrospect, menu: usize, item: usize) -> bool {
     matches!(
-        intro.query(&format!("checked.{menu}.{item}")),
+        // R2196 — the declared field composes the path; the parameter named
+        // `menu` is why the widget module is spelled in full here.
+        intro.query(&pinion_core::widgets::menu::CHECKED.at(&[&path_text(&[menu, item])])),
         Ok(IntrospectValue::Bool(true))
     )
 }

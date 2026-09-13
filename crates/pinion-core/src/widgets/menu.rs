@@ -1208,6 +1208,17 @@ impl External for MenuBarExternal {
     }
 }
 
+/// ★★★★★ R2196 — the checked-state path, declared ONCE: [`MenuBarExternal`]'s
+/// schema publishes this field, and a reader composes from it
+/// ([`SchemaField::at`], with the dotted item path from [`path_text`]) instead
+/// of spelling `checked.<path>` again. `path` is a dotted index path —
+/// `"0.1"` is item 1 of menu 0 — see the note beside it in the schema.
+pub const CHECKED: SchemaField = SchemaField::parametric(
+    "checked.<path>",
+    "bool",
+    const { &[SchemaArg::open("path", "string")] },
+);
+
 impl ExternalIntrospect for MenuBarExternal {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(
@@ -1238,11 +1249,7 @@ impl ExternalIntrospect for MenuBarExternal {
                         "string",
                         const { &[SchemaArg::open("path", "string")] },
                     ),
-                    SchemaField::parametric(
-                        "checked.<path>",
-                        "bool",
-                        const { &[SchemaArg::open("path", "string")] },
-                    ),
+                    CHECKED,
                     SchemaField::parametric(
                         "enabled.<path>",
                         "bool",

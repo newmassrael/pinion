@@ -36,7 +36,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
 use pinion_core::theme::{ColorRole, use_theme};
-use pinion_core::widgets::menu::{MenuBarExternal, MenuItem, parse_path, path_text};
+use pinion_core::widgets::menu::{self, MenuBarExternal, MenuItem, parse_path, path_text};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::barrier::dismiss_barrier;
@@ -378,7 +378,7 @@ impl WidgetCore for MenuView {
             let count = MENUS[m].len().min(64);
             for i in 0..count {
                 if matches!(
-                    intro.query(&format!("checked.{m}.{i}")),
+                    intro.query(&menu::CHECKED.at(&[&path_text(&[m, i])])),
                     Ok(IntrospectValue::Bool(true))
                 ) {
                     out.checked |= 1 << i;
