@@ -77,6 +77,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_action_refused,
     assert_rpc_error,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -138,6 +139,7 @@ def _reset(tf, *, cascading: bool = False) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-column-reorder", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) the rule is readable, and off ─────────────────────────
         wait_until(lambda: find_by_tag(_paint(tf), f"{HDR}#0") is not None,
                    desc="the strip paints")
@@ -180,7 +182,7 @@ def body() -> None:
         # ── (D) who pays ──────────────────────────────────────────────
         _reset(tf, cascading=True)
         tf.invoke("/external/set_resize_mode", "1:fixed")
-        wait_until(lambda: _h(tf, "resize_mode.1") == "fixed", desc="Type is fixed")
+        wait_until(lambda: _h(tf, gp.at("resize_mode", logical=1)) == "fixed", desc="Type is fixed")
         tf.invoke("/external/interactive_resize_section", "0:200")
         assert_eq(_h(tf, "sizes"), [200, 90, 50, 130, 100],
                   "the Fixed follower was skipped; the next one paid instead")   # 15
@@ -196,7 +198,7 @@ def body() -> None:
         _reset(tf, cascading=True)
         tf.invoke("/external/set_resize_mode", "1:stretch")
         tf.intervene("/external/available_width", AVAILABLE_W)
-        wait_until(lambda: _h(tf, "resize_mode.1") == "stretch", desc="Type stretches")
+        wait_until(lambda: _h(tf, gp.at("resize_mode", logical=1)) == "stretch", desc="Type stretches")
         tf.invoke("/external/interactive_resize_section", "0:200")
         assert_eq(_h(tf, "sizes"), [200, 90, 50, 130, 100],
                   "a Stretch follower derives its size and has none to give")    # 18

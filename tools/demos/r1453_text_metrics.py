@@ -58,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -84,13 +85,13 @@ def _rect(tf, tag: str):
     return None if node is None else node["rect"]
 
 
-def _visual_of(tf, logical: int) -> int:
-    return _h(tf, f"visual_index.{logical}")
+def _visual_of(tf, gp, logical: int) -> int:
+    return _h(tf, gp.at("visual_index", logical=logical))
 
 
-def _painted_cells(tf, logical: int) -> list[tuple[str, int]]:
+def _painted_cells(tf, gp, logical: int) -> list[tuple[str, int]]:
     """(text, painted width) for every body cell of a logical column."""
-    v = _visual_of(tf, logical)
+    v = _visual_of(tf, gp, logical)
     out = []
     snap = _paint(tf)
     for r in range(NROWS):
@@ -102,6 +103,7 @@ def _painted_cells(tf, logical: int) -> list[tuple[str, int]]:
 
 def body() -> None:
     with RpcSubprocess("hello-column-reorder", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         wait_until(lambda: _rect(tf, f"{HDR}#0") is not None, desc="the strip paints")
         wait_until(lambda: _h(tf, "content_widths")[0] > 0,
                    desc="the view published measured hints")                        # 1
@@ -124,14 +126,14 @@ def body() -> None:
         # the hint is still bounded below by the header — asserted, so a hint
         # that stopped measuring the header at all would still fail here.
         for logical in range(NCOLS):
-            cells = _painted_cells(tf, logical)
+            cells = _painted_cells(tf, gp, logical)
             widest_px = max(w for _, w in cells)
             assert hints[logical] >= widest_px + 2 * CELL_PAD, (
                 f"column {logical}'s hint covers its widest painted CELL: "
                 f"{hints[logical]} vs {widest_px + 2 * CELL_PAD}"
             )                                                                        # 4-8
-            header_box = _rect(tf, f"colhdr_label#{_visual_of(tf, logical)}")
-            section = _rect(tf, f"{HDR}#{_visual_of(tf, logical)}")
+            header_box = _rect(tf, f"colhdr_label#{_visual_of(tf, gp, logical)}")
+            section = _rect(tf, f"{HDR}#{_visual_of(tf, gp, logical)}")
             assert (
                 header_box["x"] >= section["x"]
                 and header_box["x"] + header_box["w"] <= section["x"] + section["w"]
@@ -141,7 +143,7 @@ def body() -> None:
         exact = [
             logical
             for logical in range(NCOLS)
-            if hints[logical] == max(w for _, w in _painted_cells(tf, logical)) + 2 * CELL_PAD
+            if hints[logical] == max(w for _, w in _painted_cells(tf, gp, logical)) + 2 * CELL_PAD
         ]
         assert exact, f"some column's hint is EXACTLY its widest cell: {hints}"      # 8c
         # The hints are not one number: each column measured its own content.
@@ -149,7 +151,7 @@ def body() -> None:
 
         # ── (B) every cell fits inside its own column ─────────────────
         for logical in range(NCOLS):
-            v = _visual_of(tf, logical)
+            v = _visual_of(tf, gp, logical)
             section = _rect(tf, f"{HDR}#{v}")
             for r in range(NROWS):
                 cell = _rect(tf, f"colbody#{r}_{v}")
@@ -170,14 +172,14 @@ def body() -> None:
         # Squeezed to the floor, the text still reports its own width — which is
         # why measuring the painted cell answers "what does this need", not
         # "what did it get".
-        v0 = _visual_of(tf, 0)
+        v0 = _visual_of(tf, gp, 0)
         squeezed = _rect(tf, f"colbody#0_{v0}")["w"]
         assert squeezed + 2 * CELL_PAD > 40, (
             f"the cell needs more than the 40px column it is in ({squeezed})"
         )                                                                            # 42
         # And switching back to contents gives it exactly what it needs again.
         tf.invoke("/external/set_resize_mode", "0:resize_to_contents")
-        wait_until(lambda: _h(tf, "section_size.0") == before[0],
+        wait_until(lambda: _h(tf, gp.at("section_size", logical=0)) == before[0],
                    desc="the column fits its content again")                        # 43
 
         # ── (D) R1454 — the measurement is bounded, and says so ───────
@@ -190,7 +192,7 @@ def body() -> None:
         # a hint that stopped measuring the header would not narrow at all.
         row0_floor = []
         for logical in range(NCOLS):
-            v = _visual_of(tf, logical)
+            v = _visual_of(tf, gp, logical)
             row0_floor.append(_rect(tf, f"colbody#0_{v}")["w"] + 2 * CELL_PAD)
 
         tf.intervene("/external/resize_contents_precision", 1)

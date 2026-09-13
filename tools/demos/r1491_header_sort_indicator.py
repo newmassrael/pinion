@@ -77,6 +77,7 @@ from rpc_verify import (  # noqa: E402
     assert_action_refused,
     assert_out_of_range,
     assert_rpc_error,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -114,8 +115,8 @@ def _rect(tf, tag: str):
     return None if node is None else node["rect"]
 
 
-def _visual_of(tf, logical: int) -> int:
-    return _h(tf, f"visual_index.{logical}")
+def _visual_of(tf, gp, logical: int) -> int:
+    return _h(tf, gp.at("visual_index", logical=logical))
 
 
 def _arrow_visuals(tf) -> list[int]:
@@ -124,10 +125,10 @@ def _arrow_visuals(tf) -> list[int]:
     return [v for v in range(NCOLS) if find_by_tag(scene, f"{SORT}#{v}") is not None]
 
 
-def _column_text(tf, logical: int) -> list[str]:
+def _column_text(tf, gp, logical: int) -> list[str]:
     """The painted cell text of one logical column, top to bottom."""
     scene = _paint(tf)
-    visual = _visual_of(tf, logical)
+    visual = _visual_of(tf, gp, logical)
     out = []
     for slot in range(NROWS):
         node = find_by_tag(scene, f"{BODY}#{slot}_{visual}")
@@ -165,6 +166,7 @@ def _reset(tf) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-column-reorder", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot: sortable, unsorted, no arrow ────────────────────
         wait_until(lambda: _rect(tf, f"{HDR}#0") is not None, desc="the strip paints")
         assert_eq(_h(tf, "sort_indicator"), "none", "boot: nothing is sorted")      # 1
@@ -212,7 +214,7 @@ def body() -> None:
 
         # ── (D) the arrow travels with its column ─────────────────────
         # Size (logical 2) is sorted and now sits at visual 1.
-        v_size = _visual_of(tf, 2)
+        v_size = _visual_of(tf, gp, 2)
         assert_eq(v_size, 1, "Size moved left when Name was dragged past it")       # 18
         assert_eq(_arrow_visuals(tf), [v_size],
                   "the arrow is on Size's NEW position, not on whatever is first")  # 19
@@ -233,10 +235,10 @@ def body() -> None:
 
         # ── (F) the rows follow the indicator ─────────────────────────
         _reset(tf)
-        assert_eq(_column_text(tf, 2), SIZES, "unsorted: the source order")         # 24
+        assert_eq(_column_text(tf, gp, 2), SIZES, "unsorted: the source order")         # 24
         tf.intervene("/external/sort_indicator", "2:ascending")
-        wait_until(lambda: _column_text(tf, 2) != SIZES, desc="the body re-sorts")
-        by_size = _column_text(tf, 2)
+        wait_until(lambda: _column_text(tf, gp, 2) != SIZES, desc="the body re-sorts")
+        by_size = _column_text(tf, gp, 2)
         # The grid's shared comparator (`cell_cmp`) takes its numeric branch only when
         # BOTH cells parse whole as a number; these carry units, so it falls to
         # the documented string compare — the same answer the toolkit's default
@@ -247,16 +249,16 @@ def body() -> None:
         # The discriminator for the direction bit, which #25 alone does not test:
         # an implementation that ignored `ascending` would pass #25 forever.
         tf.intervene("/external/sort_indicator", "2:descending")
-        wait_until(lambda: _column_text(tf, 2) == list(reversed(by_size)),
+        wait_until(lambda: _column_text(tf, gp, 2) == list(reversed(by_size)),
                    desc="descending is the exact reverse")                          # 26
         tf.intervene("/external/sort_indicator", "2:ascending")
-        wait_until(lambda: _column_text(tf, 2) == by_size, desc="and back")
+        wait_until(lambda: _column_text(tf, gp, 2) == by_size, desc="and back")
 
         # A section move re-aims the arrow, NOT the rows: the sort names a
         # column, and that column's values did not change.
         tf.invoke("/external/move_section", "2:0")
-        wait_until(lambda: _visual_of(tf, 2) == 0, desc="Size moves to the front")
-        assert_eq(_column_text(tf, 2), by_size,
+        wait_until(lambda: _visual_of(tf, gp, 2) == 0, desc="Size moves to the front")
+        assert_eq(_column_text(tf, gp, 2), by_size,
                   "moving the sorted column did not re-sort the rows")              # 27
         assert_eq(_arrow_visuals(tf), [0], "the arrow came with it")                # 28
 
@@ -265,7 +267,7 @@ def body() -> None:
         wait_until(lambda: _arrow_visuals(tf) == [], desc="the arrow stops painting")  # 29
         assert_eq(_h(tf, "sort_indicator"), "2:ascending",
                   "hiding the arrow did not unsort the header")                     # 30
-        assert_eq(_column_text(tf, 2), by_size, "and did not move the rows")        # 31
+        assert_eq(_column_text(tf, gp, 2), by_size, "and did not move the rows")        # 31
         tf.intervene("/external/sort_indicator_shown", True)
         wait_until(lambda: _arrow_visuals(tf) == [0], desc="the arrow returns")      # 32
 
@@ -280,7 +282,7 @@ def body() -> None:
         wait_until(lambda: _h(tf, "sort_indicator") == "2:ascending",
                    desc="the snapshot restores the sort")                           # 36
         assert_eq(_h(tf, "order"), saved["order"], "along with the order")          # 37
-        assert_eq(_column_text(tf, 2), by_size, "and the rows it implied")          # 38
+        assert_eq(_column_text(tf, gp, 2), by_size, "and the rows it implied")          # 38
 
         # A snapshot taken before this field existed is an OLDER shape, not a
         # malformed one — the same rule R1452's `modes` established.

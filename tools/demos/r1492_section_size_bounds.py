@@ -68,6 +68,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     assert_rpc_error,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -103,8 +104,8 @@ def _rect(tf, tag: str):
     return None if node is None else node["rect"]
 
 
-def _visual_of(tf, logical: int) -> int:
-    return _h(tf, f"visual_index.{logical}")
+def _visual_of(tf, gp, logical: int) -> int:
+    return _h(tf, gp.at("visual_index", logical=logical))
 
 
 def _reset(tf) -> None:
@@ -130,6 +131,7 @@ def _reset(tf) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-column-reorder", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) the rule is legible ───────────────────────────────────
         wait_until(lambda: _rect(tf, f"{HDR}#0") is not None, desc="the strip paints")
         assert_eq(_h(tf, "min_section_size"), FLOOR,
@@ -143,11 +145,11 @@ def body() -> None:
         assert_eq(tf.invoke("/external/resize_section", "0:99999"), 99_999,
                   "unbounded by default, so the huge width still applies")        # 4
         tf.intervene("/external/max_section_size", 180)
-        wait_until(lambda: _h(tf, "section_size.0") == 180,
+        wait_until(lambda: _h(tf, gp.at("section_size", logical=0)) == 180,
                    desc="the new ceiling reaches the width already stored")       # 5
         assert_eq(tf.invoke("/external/resize_section", "0:99999"), 180,
                   "and the same call now answers the ceiling")                    # 6
-        v0 = _visual_of(tf, 0)
+        v0 = _visual_of(tf, gp, 0)
         assert_eq(_rect(tf, f"{HDR}#{v0}")["w"], 180 - GUTTER,
                   "the PAINT agrees — this is not a model-only bound")            # 7
 
@@ -155,11 +157,11 @@ def body() -> None:
         # A per-path `.max(min)` implementation passes (B) and fails here.
         tf.invoke("/external/set_resize_mode", "1:resize_to_contents")
         tf.intervene("/external/max_section_size", 60)
-        wait_until(lambda: _h(tf, "section_size.1") == 60,
+        wait_until(lambda: _h(tf, gp.at("section_size", logical=1)) == 60,
                    desc="a content-fitted section obeys the ceiling")             # 8
-        assert_eq(_h(tf, "section_size.0"), 60, "so does a stored width")         # 9
+        assert_eq(_h(tf, gp.at("section_size", logical=0)), 60, "so does a stored width")         # 9
         tf.invoke("/external/set_resize_mode", "2:stretch")
-        assert_eq(_h(tf, "section_size.2"), 60,
+        assert_eq(_h(tf, gp.at("section_size", logical=2)), 60,
                   "and so does a stretch share, which no stored width produced")  # 10
         assert_eq(_h(tf, "visible_widths"), [60] * NCOLS,
                   "the whole row is bounded, by one rule")                        # 11
@@ -176,7 +178,7 @@ def body() -> None:
         _reset(tf)
         tf.invoke("/external/resize_section", "0:99999")
         tf.invoke("/external/set_resize_mode", "2:stretch")
-        wait_until(lambda: _h(tf, "resize_mode.2") == "stretch", desc="Size stretches")
+        wait_until(lambda: _h(tf, gp.at("resize_mode", logical=2)) == "stretch", desc="Size stretches")
         derived = tf.invoke("/external/resize_section", "2:300")
         clamped = tf.invoke("/external/resize_section", "0:5")
         assert_eq(derived, FLOOR, "asked 300, got 40 — as before")                # 13
@@ -187,19 +189,19 @@ def body() -> None:
         # says what it was applied to. Cause 1: a request below the floor.
         assert 5 < _h(tf, "min_section_size"), \
             "5 is below the floor"                                                # 16
-        assert_eq(_h(tf, "resize_mode.0"), "interactive",
+        assert_eq(_h(tf, gp.at("resize_mode", logical=0)), "interactive",
                   "and an interactive section STORES its request, so the answer \
 is that request clamped")                                                          # 17
         # Cause 2: the request was inside the bounds, so nothing clamped the
         # REQUEST. The mode derived a share instead, and the share hit the floor.
         assert _h(tf, "min_section_size") < 300 < _h(tf, "max_section_size"), \
             "300 sits inside the bounds, so no bound touched the request"         # 18
-        assert_eq(_h(tf, "resize_mode.2"), "stretch",
+        assert_eq(_h(tf, gp.at("resize_mode", logical=2)), "stretch",
                   "its MODE derives the size — a different cause for one number") # 19
         # The stored value was kept, which is the third fact that separates
         # "clamped" from "derived": switch the mode back and it reappears.
         tf.invoke("/external/set_resize_mode", "2:interactive")
-        wait_until(lambda: _h(tf, "section_size.2") == 300,
+        wait_until(lambda: _h(tf, gp.at("section_size", logical=2)) == 300,
                    desc="the derived section had stored 300 all along")           # 20
 
         # ── (E) bounds are settings, and the snapshot tells the truth ─

@@ -58,6 +58,7 @@ from rpc_verify import (  # noqa: E402
     assert_action_refused,
     assert_out_of_range,
     assert_rpc_error,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -124,6 +125,7 @@ def _colheader_names(tf) -> list[str]:
 
 def body() -> None:
     with RpcSubprocess("hello-column-reorder", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot ─────────────────────────────────────────────────
         wait_until(lambda: _present(_paint(tf), f"{HDR}#0"), desc="the strip paints")
         assert_eq(_h(tf, "count"), NCOLS, "boot: five sections")                        # 1
@@ -162,14 +164,14 @@ def body() -> None:
 
         # ── (D) the toolkit's mapping, both directions
         # ────────────────────────
-        assert_eq(_h(tf, "visual_index.0"), 2, "Name's visual index is 2")              # 18
-        assert_eq(_h(tf, "logical_index.2"), 0, "and position 2 holds Name")            # 19
+        assert_eq(_h(tf, gp.at("visual_index", logical=0)), 2, "Name's visual index is 2")              # 18
+        assert_eq(_h(tf, gp.at("logical_index", visual=2)), 0, "and position 2 holds Name")            # 19
         for logical in range(NCOLS):
-            v = _h(tf, f"visual_index.{logical}")
-            assert_eq(_h(tf, f"logical_index.{v}"), logical,
+            v = _h(tf, gp.at("visual_index", logical=logical))
+            assert_eq(_h(tf, gp.at("logical_index", visual=v)), logical,
                       f"the mapping inverts for column {logical}")                      # 20-24
-        assert_eq(_h(tf, "visual_index.9"), None, "out of range is present-but-empty")  # 25
-        assert_eq(_h(tf, "logical_index.9"), None, "in both directions")                # 26
+        assert_eq(_h(tf, gp.at("visual_index", logical=9)), None, "out of range is present-but-empty")  # 25
+        assert_eq(_h(tf, gp.at("logical_index", visual=9)), None, "in both directions")                # 26
 
         # ── (E) moveSection over the wire ────────────────────────────
         out = tf.invoke(f"/external/move_section", "2:0")

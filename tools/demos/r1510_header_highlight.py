@@ -87,6 +87,7 @@ from rpc_verify import (  # noqa: E402
     assert_action_refused,
     assert_out_of_range,
     assert_rpc_error,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -137,7 +138,7 @@ def _state_without_highlight(tf) -> dict:
     return older
 
 
-def _cycle_selection(tf, logical: int) -> None:
+def _cycle_selection(tf, gp, logical: int) -> None:
     """Drive the binding's own `s` gesture on a LOGICAL column, cursor and all.
 
     The visual index is resolved over the wire rather than assumed: `s` cycles
@@ -145,7 +146,7 @@ def _cycle_selection(tf, logical: int) -> None:
     permutation has been moved, so a hardcoded visual would cycle a different
     column than the one being asserted about.
     """
-    visual = _h(tf, f"visual_index.{logical}")
+    visual = _h(tf, gp.at("visual_index", logical=logical))
     assert visual is not None, f"logical {logical} is painted somewhere"
     tf.key(path=f"{HDR}#{visual}", name="Home")
     for _ in range(visual):
@@ -161,6 +162,7 @@ def body() -> None:
 
 
 def _main(tf: RpcSubprocess) -> None:
+    gp = external_paths(tf)
     wait_until(lambda: find_by_tag(_paint(tf), f"{HDR}#0") is not None,
                desc="the strip paints")
     # ── (A) the rule is readable, and it is the toolkit's ───────────────────
@@ -170,8 +172,8 @@ def _main(tf: RpcSubprocess) -> None:
               "nothing has been published, so nothing is selected")            # 2
     assert_eq(_h(tf, "highlights"), NONE_ROW,
               "and nothing is dressed")                                        # 3
-    assert_eq(_h(tf, "section_selection.0"), "none")                           # 4
-    assert_eq(_h(tf, "section_highlight.0"), "none")                           # 5
+    assert_eq(_h(tf, gp.at("section_selection", logical=0)), "none")                           # 4
+    assert_eq(_h(tf, gp.at("section_highlight", logical=0)), "none")                           # 5
     assert "| highlight off" in _readout(tf), \
         f"the readout names the rule: {_readout(tf)}"                          # 6
 
@@ -231,7 +233,7 @@ def _main(tf: RpcSubprocess) -> None:
     # ── (D) the coverage travels with its column ───────────────────
     tf.invoke("/external/move_section", "2:0")
     wait_until(lambda: _h(tf, "order")[0] == 2, desc="Size dragged to the front")
-    assert_eq(_h(tf, "section_highlight.2"), "full",
+    assert_eq(_h(tf, gp.at("section_highlight", logical=2)), "full",
               "the coverage is keyed by column, so it went along")             # 20
     assert_eq(_h(tf, "highlights"), published,
               "the row is keyed logically and did not change shape")           # 21
@@ -284,19 +286,19 @@ def _main(tf: RpcSubprocess) -> None:
 
     # `s` cycles the CURSOR's column: none -> partial -> full -> none.
     tf.invoke("/external/set_section_selection", "0:none")
-    wait_until(lambda: _h(tf, "section_selection.0") == "none", desc="reset Name")
-    _cycle_selection(tf, 0)
-    wait_until(lambda: _h(tf, "section_selection.0") == "partial",
+    wait_until(lambda: _h(tf, gp.at("section_selection", logical=0)) == "none", desc="reset Name")
+    _cycle_selection(tf, gp, 0)
+    wait_until(lambda: _h(tf, gp.at("section_selection", logical=0)) == "partial",
                desc="s selects part of the cursor's column")
-    assert_eq(_h(tf, "section_selection.0"), "partial")                        # 31
-    _cycle_selection(tf, 0)
-    wait_until(lambda: _h(tf, "section_selection.0") == "full",
+    assert_eq(_h(tf, gp.at("section_selection", logical=0)), "partial")                        # 31
+    _cycle_selection(tf, gp, 0)
+    wait_until(lambda: _h(tf, gp.at("section_selection", logical=0)) == "full",
                desc="s again covers it")
-    assert_eq(_h(tf, "section_selection.0"), "full")                           # 32
-    _cycle_selection(tf, 0)
-    wait_until(lambda: _h(tf, "section_selection.0") == "none",
+    assert_eq(_h(tf, gp.at("section_selection", logical=0)), "full")                           # 32
+    _cycle_selection(tf, gp, 0)
+    wait_until(lambda: _h(tf, gp.at("section_selection", logical=0)) == "none",
                desc="s again clears it")
-    assert_eq(_h(tf, "section_selection.0"), "none",
+    assert_eq(_h(tf, gp.at("section_selection", logical=0)), "none",
               "three presses is a full cycle, so the gesture can undo itself")  # 33
 
     # ── (H) refusals are typed ─────────────────────────────────────
@@ -320,7 +322,7 @@ def _main(tf: RpcSubprocess) -> None:
         lambda: tf.intervene("/external/selections", ["everything"] * NCOLS),
         data="InterveneTypeMismatch",
     )                                                                          # 38
-    assert_eq(_h(tf, "section_selection.0"), "none",
+    assert_eq(_h(tf, gp.at("section_selection", logical=0)), "none",
               "and not one refusal changed anything")                          # 39
     # The whole row IS writable, like the two consumer-published inputs beside
     # it (§2 #2 — an input an agent can read but never move is unexplorable).
@@ -330,8 +332,8 @@ def _main(tf: RpcSubprocess) -> None:
     assert_eq(_h(tf, "highlights"), ["full"] * NCOLS)                          # 40
     # Out of range has no coverage at all — not a plausible "none" from inside
     # the domain (the R1501 defect).
-    assert_eq(_h(tf, f"section_selection.{NCOLS}"), None)                      # 41
-    assert_eq(_h(tf, f"section_highlight.{NCOLS}"), None)                      # 42
+    assert_eq(_h(tf, gp.at("section_selection", logical=NCOLS)), None)                      # 41
+    assert_eq(_h(tf, gp.at("section_highlight", logical=NCOLS)), None)                      # 42
 
     # ── (I) the surface declares all of it ─────────────────────────
     schema = tf.query("/external/$schema")

@@ -43,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -110,6 +111,7 @@ def _surface_aligns(tf) -> list[str]:
 
 def body() -> None:
     with RpcSubprocess("hello-column-reorder", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         wait_until(lambda: find_by_tag(_paint(tf), f"{HDR}#0") is not None,
                   desc="the strip paints")
 
@@ -203,7 +205,7 @@ def body() -> None:
         # per-section exception. In the tree that split has to show up as one
         # node differing and four not.
         tf.invoke("/external/set_section_alignment", "2:End")
-        wait_until(lambda: _h(tf, "section_alignment_override.2") == "End",
+        wait_until(lambda: _h(tf, gp.at("section_alignment_override", logical=2)) == "End",
                    desc="column 2 takes an exception")
         assert_eq(_node_aligns(tf),
                   ["Center", "Center", "End", "Center", "Center"],

@@ -72,6 +72,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     assert_rpc_error,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -135,6 +136,7 @@ def _reset(tf, *, stretch_last: bool = False) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-column-reorder", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) the rule is readable, and off ─────────────────────────
         wait_until(lambda: find_by_tag(_paint(tf), f"{HDR}#0") is not None,
                    desc="the strip paints")
@@ -156,7 +158,7 @@ def body() -> None:
         assert_eq(_h(tf, "visible_total"), AVAILABLE_W, "so the row fills")      # 7
         assert_eq(_h(tf, "sizes"), BOOT_W,
                   "and not one stored width moved to do it")                     # 8
-        assert_eq(_h(tf, "section_position.4"), 470,
+        assert_eq(_h(tf, gp.at("section_position", logical=4)), 470,
                   "the geometry a hit test reads agrees")                        # 9
 
         # ── (C) keyed by position, not by column ──────────────────────
@@ -178,7 +180,7 @@ def body() -> None:
         # The contrast, on the same header: a MODE is keyed to the column.
         _reset(tf)
         tf.invoke("/external/set_resize_mode", "4:stretch")
-        wait_until(lambda: _h(tf, "resize_mode.4") == "stretch", desc="Owner stretches")
+        wait_until(lambda: _h(tf, gp.at("resize_mode", logical=4)) == "stretch", desc="Owner stretches")
         assert_eq(_h(tf, "visible_total"), AVAILABLE_W,
                   "a stretching last column fills the row too")                  # 15
         tf.invoke("/external/set_section_hidden", "4:true")
@@ -197,12 +199,12 @@ def body() -> None:
         # ── (D) it overrides the mode set on the last section ─────────
         _reset(tf, stretch_last=True)
         tf.invoke("/external/set_resize_mode", "4:fixed")
-        wait_until(lambda: _h(tf, "resize_mode.4") == "fixed", desc="Owner is fixed")
+        wait_until(lambda: _h(tf, gp.at("resize_mode", logical=4)) == "fixed", desc="Owner is fixed")
         assert_eq(_h(tf, "section_sizes")[4], 100 + LEFTOVER,
                   "a Fixed last section is filled anyway — the toolkit's own words")      # 18
-        assert_eq(_h(tf, "effective_resize_mode.4"), "stretch",
+        assert_eq(_h(tf, gp.at("effective_resize_mode", logical=4)), "stretch",
                   "the mode the header APPLIES")                                 # 19
-        assert_eq(_h(tf, "resize_mode.4"), "fixed",
+        assert_eq(_h(tf, gp.at("resize_mode", logical=4)), "fixed",
                   "beside the one that was SET, which is unchanged")             # 20
         assert_eq(_h(tf, "effective_resize_modes"),
                   ["interactive"] * 4 + ["stretch"],
@@ -213,7 +215,7 @@ def body() -> None:
         # ── (E) it shares ─────────────────────────────────────────────
         _reset(tf, stretch_last=True)
         tf.invoke("/external/set_resize_mode", "1:stretch")
-        wait_until(lambda: _h(tf, "resize_mode.1") == "stretch", desc="Type stretches")
+        wait_until(lambda: _h(tf, gp.at("resize_mode", logical=1)) == "stretch", desc="Type stretches")
         assert_eq(_h(tf, "section_sizes"), [150, 130, 100, 130, 130],
                   "640 less the 380 the other three take, split two ways")       # 23
         assert_eq(_h(tf, "visible_total"), AVAILABLE_W,

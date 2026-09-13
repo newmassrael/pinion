@@ -58,6 +58,7 @@ from rpc_verify import (  # noqa: E402
     assert_action_refused,
     assert_out_of_range,
     assert_rpc_error,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -98,8 +99,8 @@ def _placements(tf):
     return _h(tf, "placements")
 
 
-def _visual_of(tf, logical: int) -> int:
-    return _h(tf, f"visual_index.{logical}")
+def _visual_of(tf, gp, logical: int) -> int:
+    return _h(tf, gp.at("visual_index", logical=logical))
 
 
 def _reset(tf) -> None:
@@ -116,6 +117,7 @@ def _reset(tf) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-column-reorder", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) the view's publish reaches the external's layout ──────
         wait_until(lambda: _rect(tf, f"{HDR}#0") is not None, desc="the strip paints")
         # If the view fn and the external had resolved two different cached
@@ -169,7 +171,7 @@ def body() -> None:
         tf.invoke("/external/set_all_resize_modes", "resize_to_contents")
         wait_until(lambda: _h(tf, "visible_widths") == hints,
                    desc="every section sized to its content")                       # 15
-        v0 = _visual_of(tf, 0)
+        v0 = _visual_of(tf, gp, 0)
         section = _rect(tf, f"{HDR}#{v0}")
         assert_eq(section["w"], hints[0] - GUTTER, "Name paints at its hint")       # 16
         # The claim an invented hint would fail: the widest cell's laid-out TEXT
@@ -188,7 +190,7 @@ def body() -> None:
         assert_eq(widest["x"], section["x"] + CELL_PAD, "inset by the padding")     # 18
         assert widest["x"] + widest["w"] + CELL_PAD <= section["x"] + hints[0], \
             "and it FITS, padding and all, inside its own column"                    # 19
-        assert_eq(_h(tf, "content_width.3"), hints[3], "per-section read agrees")   # 20
+        assert_eq(_h(tf, gp.at("content_width", logical=3)), hints[3], "per-section read agrees")   # 20
 
         # ── (D) Fixed: the two questions, and their different answers ──
         _reset(tf)
@@ -200,7 +202,7 @@ def body() -> None:
         wait_until(lambda: _h(tf, "sizes")[0] == BOOT_W[0] + STEP,
                    desc="Interactive: the user may size it")                        # 22
         tf.key(path=f"{HDR}#0", name="m")
-        wait_until(lambda: _h(tf, "resize_mode.0") == "fixed", desc="m cycles to Fixed")  # 23
+        wait_until(lambda: _h(tf, gp.at("resize_mode", logical=0)) == "fixed", desc="m cycles to Fixed")  # 23
         tf.key(path=f"{HDR}#0", name="]")
         assert_eq(_h(tf, "sizes")[0], BOOT_W[0] + STEP,
                   "Fixed: the user gesture is refused")                             # 24
@@ -208,12 +210,12 @@ def body() -> None:
                   "but the programmatic call is not — that is what Fixed means")    # 25
         # The rest of the cycle, and back.
         tf.key(path=f"{HDR}#0", name="m")
-        wait_until(lambda: _h(tf, "resize_mode.0") == "stretch", desc="-> Stretch")  # 26
+        wait_until(lambda: _h(tf, gp.at("resize_mode", logical=0)) == "stretch", desc="-> Stretch")  # 26
         tf.key(path=f"{HDR}#0", name="m")
-        wait_until(lambda: _h(tf, "resize_mode.0") == "resize_to_contents",
+        wait_until(lambda: _h(tf, gp.at("resize_mode", logical=0)) == "resize_to_contents",
                    desc="-> ResizeToContents")                                      # 27
         tf.key(path=f"{HDR}#0", name="m")
-        wait_until(lambda: _h(tf, "resize_mode.0") == "interactive", desc="-> back")  # 28
+        wait_until(lambda: _h(tf, gp.at("resize_mode", logical=0)) == "interactive", desc="-> back")  # 28
         assert_eq(_h(tf, "sizes")[0], 300,
                   "and the size the derived modes ignored was kept, not discarded")  # 29
 
@@ -224,10 +226,10 @@ def body() -> None:
                   "Name stretches into the leftover")                               # 30
         tf.invoke("/external/move_section", "0:4")
         wait_until(lambda: _h(tf, "order") == [1, 2, 3, 4, 0], desc="Name to the end")
-        assert_eq(_h(tf, "resize_mode.0"), "stretch", "the mode moved with it")     # 31
+        assert_eq(_h(tf, gp.at("resize_mode", logical=0)), "stretch", "the mode moved with it")     # 31
         assert_eq(_h(tf, "visible_widths"), [90, 100, 130, 100, 220],
                   "and it is still the section taking the leftover")                # 32
-        assert_eq(_h(tf, "section_position.0"), 420, "at its new place")            # 33
+        assert_eq(_h(tf, gp.at("section_position", logical=0)), 420, "at its new place")            # 33
         assert_eq(_h(tf, "visible_total"), AVAILABLE_W, "the row still fills")      # 34
 
         # ── (F) the modes round-trip, and an older snapshot restores ───

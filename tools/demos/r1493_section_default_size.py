@@ -83,6 +83,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_out_of_range,
     assert_rpc_error,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -157,6 +158,7 @@ def _reset(tf) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-column-reorder", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot: one name was enough, here ───────────────────────
         wait_until(lambda: find_by_tag(_paint(tf), f"{HDR}#0") is not None,
                    desc="the strip paints")
@@ -187,7 +189,7 @@ def body() -> None:
 
         # ── (C) singular and plural cannot disagree ───────────────────
         for logical in range(NCOLS):
-            assert_eq(_h(tf, f"section_size.{logical}"), shares[logical],
+            assert_eq(_h(tf, gp.at("section_size", logical=logical)), shares[logical],
                       f"section_size.{logical} reads the plural")               # 12-16
         assert_eq(_h(tf, "visible_widths"), shares,
                   "and the visual-order projection is the same numbers")        # 12

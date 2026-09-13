@@ -58,6 +58,7 @@ from rpc_verify import (  # noqa: E402
     assert_action_refused,
     assert_out_of_range,
     assert_rpc_error,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -186,6 +187,7 @@ def _reset(tf) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-column-reorder", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot: non-uniform sections, and the pixels agree ──────
         wait_until(lambda: _rect(tf, f"{HDR}#0") is not None, desc="the strip paints")
         assert_eq(_h(tf, "count"), NCOLS, "boot: five sections")                        # 1
@@ -231,7 +233,7 @@ def body() -> None:
                   "the body column travelled to the same place")                        # 26
         assert_eq(find_by_tag(_paint(tf), "colbody#0_2")["content"], ROW0[0],
                   "and it is still Name's data underneath")                             # 27
-        assert_eq(_h(tf, "section_position.0"), 190, "sectionPosition agrees")          # 28
+        assert_eq(_h(tf, gp.at("section_position", logical=0)), 190, "sectionPosition agrees")          # 28
         assert_eq(_h(tf, "visible_total"), sum(BOOT_W) + 90, "the strip grew by 90")    # 29
 
         # ── (C) hiding keeps the section, it only stops painting it ───
@@ -246,27 +248,27 @@ def body() -> None:
         assert_eq([p["visual"] for p in _placements(tf)], [1, 2, 3, 4],
                   "the survivors keep the visual indices the permutation knows")        # 34
         assert_eq(_placements(tf)[0]["x"], 0, "and the strip closes the gap")           # 35
-        assert_eq(_h(tf, "visual_index.1"), 0, "Type still holds its place")            # 36
-        assert_eq(_h(tf, "section_size.1"), 90, "and its size")                         # 37
-        assert_eq(_h(tf, "section_position.1"), None, "but it is painted nowhere")      # 38
+        assert_eq(_h(tf, gp.at("visual_index", logical=1)), 0, "Type still holds its place")            # 36
+        assert_eq(_h(tf, gp.at("section_size", logical=1)), 90, "and its size")                         # 37
+        assert_eq(_h(tf, gp.at("section_position", logical=1)), None, "but it is painted nowhere")      # 38
         assert_eq(_h(tf, "visible_total"), sum(BOOT_W), "the strip lost exactly 90")    # 39
 
         # ── (D) logicalIndexAt over non-uniform widths ────────────────
         # Painted now: Size(100) Name(240) Modified(130) Owner(100).
-        assert_eq(_h(tf, "logical_index_at.0"), 2, "x=0 is Size")                       # 40
-        assert_eq(_h(tf, "logical_index_at.99"), 2, "and so is x=99")                   # 41
-        assert_eq(_h(tf, "logical_index_at.100"), 0,
+        assert_eq(_h(tf, gp.at("logical_index_at", x=0)), 2, "x=0 is Size")                       # 40
+        assert_eq(_h(tf, gp.at("logical_index_at", x=99)), 2, "and so is x=99")                   # 41
+        assert_eq(_h(tf, gp.at("logical_index_at", x=100)), 0,
                   "x=100 is Name — a uniform hit test says otherwise")                  # 42
-        assert_eq(_h(tf, "logical_index_at.339"), 0, "Name runs to 339")                # 43
-        assert_eq(_h(tf, "logical_index_at.340"), 3, "then Modified")                   # 44
-        assert_eq(_h(tf, "logical_index_at.9999"), None, "past the last section")       # 45
+        assert_eq(_h(tf, gp.at("logical_index_at", x=339)), 0, "Name runs to 339")                # 43
+        assert_eq(_h(tf, gp.at("logical_index_at", x=340)), 3, "then Modified")                   # 44
+        assert_eq(_h(tf, gp.at("logical_index_at", x=9999)), None, "past the last section")       # 45
 
         # ── (C') showing it puts it back where it was ─────────────────
         tf.invoke("/external/set_section_hidden", "1:false")
         wait_until(lambda: _h(tf, "hidden_count") == 0, desc="Type comes back")
         assert_eq(_h(tf, "labels"), ["Type", "Size", "Name", "Modified", "Owner"],
                   "back in its own place, not appended")                                # 46
-        assert_eq(_h(tf, "section_size.1"), 90, "and at the size it kept")              # 47
+        assert_eq(_h(tf, gp.at("section_size", logical=1)), 90, "and at the size it kept")              # 47
 
         # ── (E) saveState / restoreState, every axis at once ──────────
         tf.invoke("/external/set_section_hidden", "3:true")
@@ -350,7 +352,7 @@ def body() -> None:
         assert_eq(_h(tf, "labels"), ["Type", "Size", "Modified", "Owner"],
                   "and the strip lost it")                                              # 68
         assert _h(tf, "focused_index") != 4, "the cursor left the unpainted section"    # 69
-        assert_eq(_h(tf, "section_size.0"), BOOT_W[0] + STEP,
+        assert_eq(_h(tf, gp.at("section_size", logical=0)), BOOT_W[0] + STEP,
                   "a hidden section still remembers the width the key gave it")         # 70
 
 

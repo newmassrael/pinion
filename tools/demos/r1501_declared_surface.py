@@ -66,6 +66,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     assert_rpc_error,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -147,6 +148,7 @@ def _schema(tf) -> list[dict]:
 
 def body() -> None:
     with RpcSubprocess("hello-column-reorder", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         wait_until(lambda: find_by_tag(_paint(tf), f"{HDR}#0") is not None,
                    desc="the strip paints")
 
@@ -164,7 +166,7 @@ def body() -> None:
         assert_eq(_h(tf, "stretch_last_section"), False)                     # 7
         assert_eq(_h(tf, "effective_resize_modes"), ["interactive"] * NCOLS) # 8
         assert_eq(_h(tf, "resize_contents_precision"), 1000)                 # 9
-        assert_eq(_h(tf, "effective_resize_mode.0"), "interactive")          # 10
+        assert_eq(_h(tf, gp.at("effective_resize_mode", logical=0)), "interactive")          # 10
 
         # And the whole declaration is walked: every non-action field answers
         # at a real address. A family is addressed by its MEMBERS, so the
@@ -214,8 +216,8 @@ def body() -> None:
         # The bound is a path THIS surface publishes, so the client can follow
         # it — the whole promise an `index_of` domain makes.
         assert_eq(_h(tf, "visible_total"), BOOT_TOTAL)                       # 18
-        assert_eq(_h(tf, "logical_index_at.0"), 0, "inside the bound")       # 19
-        assert_eq(_h(tf, f"logical_index_at.{BOOT_TOTAL}"), None,
+        assert_eq(_h(tf, gp.at("logical_index_at", x=0)), 0, "inside the bound")       # 19
+        assert_eq(_h(tf, gp.at("logical_index_at", x=BOOT_TOTAL)), None,
                   "and at the bound the row has no section")                 # 20
 
         # Every section-keyed family names a domain the surface publishes too.
@@ -274,12 +276,12 @@ def body() -> None:
         wait_until(lambda: _h(tf, "order")[2] == 0, desc="Name dragged right")
         assert_eq(_h(tf, "labels"), ["Type", "Size", "Name", "Modified", "Owner"])
                                                                              # 47
-        assert_eq(_h(tf, "section_size.0"), BOOT_W[0],
+        assert_eq(_h(tf, gp.at("section_size", logical=0)), BOOT_W[0],
                   "and its width travelled with it, keyed logically")        # 48
         tf.intervene("/external/stretch_last_section", True)
         wait_until(lambda: _h(tf, "stretch_last_section"), desc="the rule is on")
         assert_eq(_h(tf, "visible_total"), 640, "the R1498 rule still fills") # 49
-        assert_eq(_h(tf, "effective_resize_mode.4"), "stretch",
+        assert_eq(_h(tf, gp.at("effective_resize_mode", logical=4)), "stretch",
                   "and the path that was undeclared reports it")             # 50
         assert find_by_tag(_paint(tf), f"{HDR}#0") is not None, \
             "the strip is still painted"                                     # 51

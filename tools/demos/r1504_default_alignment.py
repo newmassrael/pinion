@@ -75,6 +75,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_action_refused,
     assert_rpc_error,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -134,6 +135,7 @@ def _state_without_alignment(tf) -> dict:
 
 def body() -> None:
     with RpcSubprocess("hello-column-reorder", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) the rule is readable, and it is the toolkit's
         # ──────────────────
         wait_until(lambda: find_by_tag(_paint(tf), f"{HDR}#0") is not None,
@@ -142,8 +144,8 @@ def body() -> None:
                   "the toolkit centres a horizontal header")                              # 1
         assert_eq(_h(tf, "alignments"), ["Center"] * NCOLS,
                   "and with no exceptions every section follows it")              # 2
-        assert_eq(_h(tf, "section_alignment.0"), "Center")                        # 3
-        assert_eq(_h(tf, "section_alignment_override.0"), None,
+        assert_eq(_h(tf, gp.at("section_alignment", logical=0)), "Center")                        # 3
+        assert_eq(_h(tf, gp.at("section_alignment_override", logical=0)), None,
                   "the override is the one that can answer nothing")              # 4
         assert "| align C" in _readout(tf), \
             f"the readout names the rule: {_readout(tf)}"                         # 5
@@ -190,14 +192,14 @@ def body() -> None:
 
         # ── (D) the model's exception is independent ──────────────────
         tf.invoke("/external/set_section_alignment", "2:End")
-        wait_until(lambda: _h(tf, "section_alignment_override.2") == "End",
+        wait_until(lambda: _h(tf, gp.at("section_alignment_override", logical=2)) == "End",
                    desc="Size takes an exception")
-        assert_eq(_h(tf, "section_alignment.2"), "End",
+        assert_eq(_h(tf, gp.at("section_alignment", logical=2)), "End",
                   "the section paints with its own")                              # 19
         assert_eq(_h(tf, "alignments"),
                   ["Start", "Start", "End", "Start", "Start"],
                   "and only that one moved")                                      # 20
-        assert_eq(_h(tf, "section_alignment_override.0"), None,
+        assert_eq(_h(tf, gp.at("section_alignment_override", logical=0)), None,
                   "its neighbours still defer")                                   # 21
         assert f"except {HEADERS[2]}=E" in _readout(tf), \
             f"the readout names the exception: {_readout(tf)}"                    # 22
@@ -221,7 +223,7 @@ def body() -> None:
         # ── (E) the exception travels with its column ─────────────────
         tf.invoke("/external/move_section", "2:0")
         wait_until(lambda: _h(tf, "order")[0] == 2, desc="Size dragged to the front")
-        assert_eq(_h(tf, "section_alignment.2"), "End",
+        assert_eq(_h(tf, gp.at("section_alignment", logical=2)), "End",
                   "the exception is keyed by column, so it went along")           # 26
         assert_eq(_h(tf, "alignments"),
                   ["Center", "Center", "End", "Center", "Center"],
@@ -238,7 +240,7 @@ def body() -> None:
         wait_until(lambda: _h(tf, "order")[0] == 2, desc="the state restores")
         assert_eq(_h(tf, "default_alignment"), "Center",
                   "the rule came back")                                           # 30
-        assert_eq(_h(tf, "section_alignment_override.2"), None,
+        assert_eq(_h(tf, gp.at("section_alignment_override", logical=2)), None,
                   "and the exception did not, because the state never named it")  # 31
         assert_eq(_h(tf, "alignments"), ["Center"] * NCOLS,
                   "so every section defers to the rule")                          # 32
