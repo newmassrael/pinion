@@ -49,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -85,22 +86,23 @@ def _row_painted(tf, index: int) -> bool:
 
 def body() -> None:
     with RpcSubprocess("hello-property-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot taxonomy ────────────────────────────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, GRID) is not None, "grid present"
         assert_eq(tf.query("/external/row_count"), 16, "12 scalars + 4 struct fields")
         assert_eq(tf.query("/external/cursor"), None, "no cursor at boot")
         assert_eq(tf.query("/external/editing"), None, "no row editing at boot")
-        assert_eq(tf.query("/external/name.0"), "Name", "row 0 name")
-        assert_eq(tf.query("/external/name.4"), "Layer", "row 4 name")
-        assert_eq(tf.query("/external/kind.0"), "text", "Name is text")
-        assert_eq(tf.query("/external/kind.2"), "bool", "Visible is bool")
-        assert_eq(tf.query("/external/kind.4"), "int", "Layer is int")
-        assert_eq(tf.query("/external/kind.6"), "float", "Pos X is float")
-        assert_eq(tf.query("/external/value.0"), "Player", "seed Name")
-        assert_eq(tf.query("/external/value.2"), True, "seed Visible")
-        assert_eq(tf.query("/external/value.4"), 3, "seed Layer")
-        assert_eq(tf.query("/external/value.6"), 12.5, "seed Pos X")
+        assert_eq(tf.query(f"/external/{gp.at('name', index=0)}"), "Name", "row 0 name")
+        assert_eq(tf.query(f"/external/{gp.at('name', index=4)}"), "Layer", "row 4 name")
+        assert_eq(tf.query(f"/external/{gp.at('kind', index=0)}"), "text", "Name is text")
+        assert_eq(tf.query(f"/external/{gp.at('kind', index=2)}"), "bool", "Visible is bool")
+        assert_eq(tf.query(f"/external/{gp.at('kind', index=4)}"), "int", "Layer is int")
+        assert_eq(tf.query(f"/external/{gp.at('kind', index=6)}"), "float", "Pos X is float")
+        assert_eq(tf.query(f"/external/{gp.at('value', index=0)}"), "Player", "seed Name")
+        assert_eq(tf.query(f"/external/{gp.at('value', index=2)}"), True, "seed Visible")
+        assert_eq(tf.query(f"/external/{gp.at('value', index=4)}"), 3, "seed Layer")
+        assert_eq(tf.query(f"/external/{gp.at('value', index=6)}"), 12.5, "seed Pos X")
 
         # ── (B) keyboard roving over the flatten (the WAI-ARIA Tree) ─
         # The cursor is an id-keyed node; the tree introspection reports its
@@ -123,14 +125,14 @@ def body() -> None:
 
         # ── (C) bool toggle: Space on the focused bool, then click ───
         tf.intervene("/external/cursor", str(2))  # Visible (bool)
-        assert_eq(tf.query("/external/value.2"), True, "Visible true before")
+        assert_eq(tf.query(f"/external/{gp.at('value', index=2)}"), True, "Visible true before")
         tf.key(path=GRID, name="Space")
-        wait_until(lambda: tf.query("/external/value.2") is False, timeout=4.0,
+        wait_until(lambda: tf.query(f"/external/{gp.at('value', index=2)}") is False, timeout=4.0,
                    interval=0.03, desc="Space toggles the focused bool")
         # Single-click the Locked bool row toggles it (checkbox affordance).
-        assert_eq(tf.query("/external/value.3"), False, "Locked false before click")
+        assert_eq(tf.query(f"/external/{gp.at('value', index=3)}"), False, "Locked false before click")
         tf.click(path=f"{GRID}#3")
-        wait_until(lambda: tf.query("/external/value.3") is True, timeout=4.0,
+        wait_until(lambda: tf.query(f"/external/{gp.at('value', index=3)}") is True, timeout=4.0,
                    interval=0.03, desc="single-click toggles a bool row")
         assert_eq(_cursor_source(tf), 3, "click also moves the cursor onto the row")
 
@@ -150,7 +152,7 @@ def body() -> None:
             tf.key(path=EDIT, name="Backspace")
         tf.text("Enemy", path=EDIT)
         tf.key(path=EDIT, name="Enter")  # commit
-        wait_until(lambda: tf.query("/external/value.0") == "Enemy", timeout=4.0,
+        wait_until(lambda: tf.query(f"/external/{gp.at('value', index=0)}") == "Enemy", timeout=4.0,
                    interval=0.03, desc="Enter commits the typed text")
         assert_eq(tf.query("/external/editing"), None, "edit mode cleared after commit")
 
@@ -167,7 +169,7 @@ def body() -> None:
         tf.key(path=EDIT, name="x")  # gated out
         tf.key(path=EDIT, name="5")
         tf.key(path=EDIT, name="Enter")
-        wait_until(lambda: tf.query("/external/value.4") == 25, timeout=4.0,
+        wait_until(lambda: tf.query(f"/external/{gp.at('value', index=4)}") == 25, timeout=4.0,
                    interval=0.03, desc="int commits 25 (the 'x' was dropped)")
 
         # ── (F) Escape cancels — the value is untouched ─────────────
@@ -183,15 +185,15 @@ def body() -> None:
         tf.key(path=EDIT, name="Escape")
         wait_until(lambda: tf.query("/external/editing") is None, timeout=4.0,
                    interval=0.03, desc="Escape exits edit mode")
-        assert_eq(tf.query("/external/value.0"), "Enemy", "Escape leaves the value untouched")
+        assert_eq(tf.query(f"/external/{gp.at('value', index=0)}"), "Enemy", "Escape leaves the value untouched")
 
         # ── (G) programmatic typed set (the AI driving path) ─────────
-        tf.intervene("/external/value.6", -8.5)  # Pos X (float)
-        assert_eq(tf.query("/external/value.6"), -8.5, "intervene sets a float")
-        tf.intervene("/external/value.4", 7)
-        assert_eq(tf.query("/external/value.4"), 7, "intervene sets an int")
-        tf.intervene("/external/value.2", True)
-        assert_eq(tf.query("/external/value.2"), True, "intervene sets a bool")
+        tf.intervene(f"/external/{gp.at('value', index=6)}", -8.5)  # Pos X (float)
+        assert_eq(tf.query(f"/external/{gp.at('value', index=6)}"), -8.5, "intervene sets a float")
+        tf.intervene(f"/external/{gp.at('value', index=4)}", 7)
+        assert_eq(tf.query(f"/external/{gp.at('value', index=4)}"), 7, "intervene sets an int")
+        tf.intervene(f"/external/{gp.at('value', index=2)}", True)
+        assert_eq(tf.query(f"/external/{gp.at('value', index=2)}"), True, "intervene sets a bool")
 
         # ── (H) double-click enters edit mode on an editable row ─────
         tf.double_click(path=f"{GRID}#0")

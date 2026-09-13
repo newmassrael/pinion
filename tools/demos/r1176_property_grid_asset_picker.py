@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -61,8 +62,8 @@ def modal_open(tf) -> bool:
     return tf.query("/asset_modal/external/open")
 
 
-def mesh(tf) -> str:
-    return tf.query(f"/external/value.{MESH}")
+def mesh(tf, gp) -> str:
+    return tf.query(f"/external/{gp.at('value', index=MESH)}")
 
 
 def open_picker(tf) -> None:
@@ -76,8 +77,9 @@ def open_picker(tf) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-property-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot ─────────────────────────────────────────────────
-        assert_eq(mesh(tf), "/proj/meshes/hero.fbx", "Mesh boots at the seeded path")
+        assert_eq(mesh(tf, gp), "/proj/meshes/hero.fbx", "Mesh boots at the seeded path")
         assert_eq(modal_open(tf), False, "the picker is shut at boot")
 
         # ── (B) open the picker over RPC (invoke begin — AI-driveable) ─
@@ -101,7 +103,7 @@ def body() -> None:
         assert_eq(tf.query(dpath("selected")), None, "still nothing selected")
         tf.click(path=OK)
         assert_eq(modal_open(tf), True, "OK with no selection does not close the modal")
-        assert_eq(mesh(tf), "/proj/meshes/hero.fbx", "OK with no selection wrote nothing")
+        assert_eq(mesh(tf, gp), "/proj/meshes/hero.fbx", "OK with no selection wrote nothing")
 
         # ── (E) select a file — its full path is recorded; OK enables ─
         assert_eq(
@@ -114,9 +116,9 @@ def body() -> None:
         # ── (F) confirm — click OK writes the path + closes ──────────
         tf.click(path=OK)
         wait_until(lambda: not modal_open(tf), timeout=4.0, desc="OK closed the picker")
-        assert_eq(mesh(tf), "/proj/textures/normal.png", "OK wrote the chosen path into Mesh")
+        assert_eq(mesh(tf, gp), "/proj/textures/normal.png", "OK wrote the chosen path into Mesh")
         # The write went through the value SSOT — it is now modified vs default.
-        assert_eq(tf.query(f"/external/modified.{MESH}"), True, "the Mesh slot reads as modified")
+        assert_eq(tf.query(f"/external/{gp.at('modified', addr=MESH)}"), True, "the Mesh slot reads as modified")
 
         # ── (G) cancel — re-open, select, click Cancel: untouched ────
         open_picker(tf)
@@ -128,14 +130,14 @@ def body() -> None:
         )
         tf.click(path=CANCEL)
         wait_until(lambda: not modal_open(tf), timeout=4.0, desc="Cancel closed the picker")
-        assert_eq(mesh(tf), "/proj/textures/normal.png", "Cancel left the path untouched")
+        assert_eq(mesh(tf, gp), "/proj/textures/normal.png", "Cancel left the path untouched")
 
         # ── (H) Escape — re-open, Escape is a cancel ─────────────────
         open_picker(tf)
         assert_eq(modal_open(tf), True, "re-opened")
         tf.key(path=GRID, name="Escape")
         wait_until(lambda: not modal_open(tf), timeout=4.0, desc="Escape closed the picker")
-        assert_eq(mesh(tf), "/proj/textures/normal.png", "Escape did not choose anew")
+        assert_eq(mesh(tf, gp), "/proj/textures/normal.png", "Escape did not choose anew")
 
 
 if __name__ == "__main__":

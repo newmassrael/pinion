@@ -88,7 +88,7 @@ def body() -> None:
         assert_eq(tq(tf, "level_at.0"), 1, "a category is aria-level 1")
         assert_eq(tq(tf, "expanded_at.0"), True, "categories boot expanded")
         assert_eq(gq(tf, "row_count"), 16, "value model = 12 scalars + 4 struct fields")
-        assert_eq(gq(tf, "name.6"), "Position X", "value 6 is the qualified Position X field")
+        assert_eq(gq(tf, gp.at("name", index=6)), "Position X", "value 6 is the qualified Position X field")
 
         # ── (B) the Position struct nests X / Y / Z at level 3 ──────
         assert_eq(tq(tf, "id_at.15"), POS, "the Transform category nests the Position struct")
@@ -104,8 +104,8 @@ def body() -> None:
         assert painted(tf, f"{GRID}#{POS_X}"), "the Position X field row is painted when expanded"
 
         # ── (C) edit a field -> the struct reads modified + paints its arrow ─
-        tf.intervene(f"/{GRID}/external/value.{POS_X}", 99.0)
-        assert_eq(gq(tf, f"value.{POS_X}"), 99.0, "the field edit applied")
+        tf.intervene(f"/{GRID}/external/{gp.at('value', index=POS_X)}", 99.0)
+        assert_eq(gq(tf, gp.at("value", index=POS_X)), 99.0, "the field edit applied")
         assert_eq(gq(tf, gp.at("struct_modified", struct_id="struct.Position")), True, "a modified field makes the struct modified")
         assert_eq(gq(tf, gp.at("struct_modified", struct_id="struct.Scale")), False, "the untouched Scale struct stays clean")
         wait_until(lambda: painted(tf, f"{GRID}#reset{POS}"), timeout=4.0, interval=0.03,
@@ -113,7 +113,7 @@ def body() -> None:
 
         # ── (D) reset_struct restores every field (the shared funnel) ─
         assert_eq(tf.invoke(f"/{GRID}/external/reset_struct", POS), 1, "reset_struct reports the field count reset")
-        assert_eq(gq(tf, f"value.{POS_X}"), 12.5, "Position X restored to its default")
+        assert_eq(gq(tf, gp.at("value", index=POS_X)), 12.5, "Position X restored to its default")
         assert_eq(gq(tf, gp.at("struct_modified", struct_id="struct.Position")), False, "the struct reads clean after reset_struct")
         wait_until(lambda: not painted(tf, f"{GRID}#reset{POS}"), timeout=4.0, interval=0.03,
                    desc="the struct reset arrow disappears once default")
@@ -135,7 +135,7 @@ def body() -> None:
 
         # ── (F) collapse a category hides its leaves ────────────────
         tf.intervene(f"/{GRID}/external/{gp.at('expanded', branch_id=IDENTITY)}", False)
-        assert_eq(gq(tf, f"expanded.{IDENTITY}"), False, "intervene collapsed the Identity category")
+        assert_eq(gq(tf, gp.at("expanded", branch_id=IDENTITY)), False, "intervene collapsed the Identity category")
         assert_eq(tq(tf, "row_count"), 25, "collapsing Identity hides its 3 leaves (28 - 3)")
         wait_until(lambda: not painted(tf, f"{GRID}#0"), timeout=4.0, interval=0.03,
                    desc="the Name leaf is hidden when Identity collapses")

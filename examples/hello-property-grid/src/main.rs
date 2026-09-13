@@ -2331,6 +2331,92 @@ fn outside(what: &str, i: usize, len: usize) -> ReadRefusal {
     ReadRefusal::no_such_member(format!("{what} {i} is outside 0..{len}"))
 }
 
+/// ★★★★★ R2203 — the name of the value at an address, declared ONCE: the grid's
+/// schema lists this field, and a reader composes from it
+/// ([`SchemaField::at`]) instead of spelling `name.<index>` again.
+///
+/// (R1353.1) `index` is an ADDRESS, not a row index: `row_ref` parses either a
+/// scalar row (`3`) or an element address (`elem.2`) — a small grammar with two
+/// shapes. `row_count` bounds only the first, so `IndexOf("row_count")` would
+/// deny every `elem.<k>` address. Declared unknown rather than half-true;
+/// `ArgDomain` cannot express a sum of two domains. The same holds for
+/// [`KIND`], [`VALUE`] and [`RANGE`].
+const NAME: SchemaField = SchemaField::parametric(
+    "name.<index>",
+    "string",
+    const { &[SchemaArg::open("index", "int")] },
+);
+
+/// ★★★★★ R2203 — the kind of the value at an address; see [`NAME`].
+const KIND: SchemaField = SchemaField::parametric(
+    "kind.<index>",
+    "string",
+    const { &[SchemaArg::open("index", "int")] },
+);
+
+/// ★★★★★ R2203 — the value at an address; see [`NAME`].
+const VALUE: SchemaField = SchemaField::parametric(
+    "value.<index>",
+    "json",
+    const { &[SchemaArg::open("index", "int")] },
+);
+
+/// ★★★★★ R2203 — a bounded scalar's `"<lo>..<hi>"` interval ("none" when
+/// unranged); see [`NAME`].
+///
+/// R964 — the AI reads it before a `value.<i>` write. Same wire as the
+/// data-grid R894 `col_range.<col>` sibling.
+const RANGE: SchemaField = SchemaField::parametric(
+    "range.<index>",
+    "string",
+    const { &[SchemaArg::open("index", "int")] },
+);
+
+/// ★★★★★ R2203 — whether the value at an address differs from its default.
+///
+/// R919 / R936 — `modified.<addr>` takes a scalar index ("6") OR an element
+/// address ("elem.2"), the unified `ValueRef` vocabulary; `reset` likewise.
+const MODIFIED: SchemaField = SchemaField::parametric(
+    "modified.<addr>",
+    "bool",
+    const { &[SchemaArg::open("addr", "string")] },
+);
+
+/// ★★★★★ R2203 — the array branch's modified roll-up (length or any element
+/// differs).
+///
+/// R936 — the array peer of [`STRUCT_MODIFIED`] / `reset_struct`.
+const ARRAY_MODIFIED: SchemaField = SchemaField::parametric(
+    "array_modified.<branch_id>",
+    "bool",
+    const { &[SchemaArg::open("branch_id", "string")] },
+);
+
+/// ★★★★★ R2203 — whether a branch is expanded (read + intervene + toggle).
+///
+/// R921 — per-branch collapse.
+const EXPANDED: SchemaField = SchemaField::parametric(
+    "expanded.<branch_id>",
+    "bool",
+    const { &[SchemaArg::open("branch_id", "string")] },
+);
+
+/// ★★★★★ R2203 — a struct's summary tuple of its field values.
+///
+/// R921 — the struct aggregate.
+const STRUCT_SUMMARY: SchemaField = SchemaField::parametric(
+    "struct_summary.<struct_id>",
+    "string",
+    const { &[SchemaArg::open("struct_id", "string")] },
+);
+
+/// ★★★★★ R2203 — a struct's modified roll-up; see [`STRUCT_SUMMARY`].
+const STRUCT_MODIFIED: SchemaField = SchemaField::parametric(
+    "struct_modified.<struct_id>",
+    "bool",
+    const { &[SchemaArg::open("struct_id", "string")] },
+);
+
 impl ExternalIntrospect for PropertyGridExternal {
     fn schema(&self) -> IntrospectSchema {
         // R921 — the *visible-row structure* (the flatten + the roving cursor)
@@ -2343,43 +2429,12 @@ impl ExternalIntrospect for PropertyGridExternal {
                 &[
                     SchemaField::new("row_count", "int"),
                     SchemaField::new("editing", "json"),
-                    // (R1353.1) `index` is an ADDRESS, not a row index: `row_ref`
-                    // parses either a scalar row (`3`) or an element address
-                    // (`elem.2`) — a small grammar with two shapes. `row_count`
-                    // bounds only the first, so `IndexOf("row_count")` would deny
-                    // every `elem.<k>` address. Declared unknown rather than
-                    // half-true; `ArgDomain` cannot express a sum of two domains.
-                    SchemaField::parametric(
-                        "name.<index>",
-                        "string",
-                        const { &[SchemaArg::open("index", "int")] },
-                    ),
-                    SchemaField::parametric(
-                        "kind.<index>",
-                        "string",
-                        const { &[SchemaArg::open("index", "int")] },
-                    ),
-                    SchemaField::parametric(
-                        "value.<index>",
-                        "json",
-                        const { &[SchemaArg::open("index", "int")] },
-                    ),
-                    // R964 — a bounded scalar's `"<lo>..<hi>"` interval ("none" when
-                    // unranged); the AI reads it before a `value.<i>` write. Same wire
-                    // as the data-grid R894 `col_range.<col>` sibling.
-                    SchemaField::parametric(
-                        "range.<index>",
-                        "string",
-                        const { &[SchemaArg::open("index", "int")] },
-                    ),
+                    NAME,
+                    KIND,
+                    VALUE,
+                    RANGE,
                     // R919 / R936 — the modified-from-default reads + the reset writes.
-                    // `modified.<addr>` takes a scalar index ("6") OR an element address
-                    // ("elem.2"), the unified `ValueRef` vocabulary; `reset` likewise.
-                    SchemaField::parametric(
-                        "modified.<addr>",
-                        "bool",
-                        const { &[SchemaArg::open("addr", "string")] },
-                    ),
+                    MODIFIED,
                     SchemaField::new("any_modified", "bool"),
                     SchemaField::action("reset", "int"),
                     SchemaField::action("reset_all", "json"),
@@ -2394,29 +2449,13 @@ impl ExternalIntrospect for PropertyGridExternal {
                     // R936 — the array branch's modified roll-up (length or any element
                     // differs) + its wholesale reset, the array peer of
                     // `struct_modified.<id>` / `reset_struct`.
-                    SchemaField::parametric(
-                        "array_modified.<branch_id>",
-                        "bool",
-                        const { &[SchemaArg::open("branch_id", "string")] },
-                    ),
+                    ARRAY_MODIFIED,
                     SchemaField::action("reset_array", "bool"),
                     // R921 — per-branch collapse (read + intervene + toggle) and the
                     // struct aggregate (summary tuple + modified roll-up + reset-all).
-                    SchemaField::parametric(
-                        "expanded.<branch_id>",
-                        "bool",
-                        const { &[SchemaArg::open("branch_id", "string")] },
-                    ),
-                    SchemaField::parametric(
-                        "struct_summary.<struct_id>",
-                        "string",
-                        const { &[SchemaArg::open("struct_id", "string")] },
-                    ),
-                    SchemaField::parametric(
-                        "struct_modified.<struct_id>",
-                        "bool",
-                        const { &[SchemaArg::open("struct_id", "string")] },
-                    ),
+                    EXPANDED,
+                    STRUCT_SUMMARY,
+                    STRUCT_MODIFIED,
                     SchemaField::action("toggle_branch", "bool"),
                     SchemaField::action("reset_struct", "int"),
                     // R921 — the roving keyboard cursor's node id (read + intervene; a

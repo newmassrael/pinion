@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -65,12 +66,13 @@ def _rows(tf) -> int:
     return tf.query(f"/{TREE}/external/row_count")
 
 
-def _expanded(tf, branch: str):
-    return tf.query(f"/{GRID}/external/expanded.{branch}")
+def _expanded(tf, gp, branch: str):
+    return tf.query(f"/{GRID}/external/{gp.at('expanded', branch_id=branch)}")
 
 
 def body() -> None:
     with RpcSubprocess("hello-property-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf, f"/{GRID}/external")
         # ── (A) boot category taxonomy ───────────────────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, GRID) is not None, "grid present"
@@ -86,12 +88,12 @@ def body() -> None:
         assert_eq(tf.query("/external/cursor"), None, "no cursor at boot")
 
         # ── (B) RPC collapse / expand a category ─────────────────────
-        assert_eq(_expanded(tf, IDENTITY), True, "Identity boots expanded")
+        assert_eq(_expanded(tf, gp, IDENTITY), True, "Identity boots expanded")
         # toggle_branch returns the resulting expanded flag; collapsing Identity
         # hides its 3 leaves (Name / Mesh / Layer).
         assert_eq(tf.invoke(f"/{GRID}/external/toggle_branch", IDENTITY), False, "collapse Identity")
-        assert_eq(_expanded(tf, IDENTITY), False, "Identity collapsed")
-        assert_eq(_expanded(tf, APPEARANCE), True, "Appearance still expanded")
+        assert_eq(_expanded(tf, gp, IDENTITY), False, "Identity collapsed")
+        assert_eq(_expanded(tf, gp, APPEARANCE), True, "Appearance still expanded")
         wait_until(lambda: _rows(tf) == 25, timeout=4.0, interval=0.03,
                    desc="collapsing Identity hides its 3 leaves (28 - 3)")
         # Row 1 is now the Appearance category (the Identity leaves are gone).
@@ -99,34 +101,34 @@ def body() -> None:
         assert_eq(tf.invoke(f"/{GRID}/external/toggle_branch", IDENTITY), True, "re-expand Identity")
         wait_until(lambda: _rows(tf) == 28, timeout=4.0, interval=0.03, desc="re-expanded -> 28")
         # Admin intervene of a collapse flag (the restore path).
-        tf.intervene(f"/{GRID}/external/expanded.{PHYSICS}", False)
-        assert_eq(_expanded(tf, PHYSICS), False, "intervene collapses Physics")
-        tf.intervene(f"/{GRID}/external/expanded.{PHYSICS}", True)
+        tf.intervene(f"/{GRID}/external/{gp.at('expanded', branch_id=PHYSICS)}", False)
+        assert_eq(_expanded(tf, gp, PHYSICS), False, "intervene collapses Physics")
+        tf.intervene(f"/{GRID}/external/{gp.at('expanded', branch_id=PHYSICS)}", True)
         wait_until(lambda: _rows(tf) == 28, timeout=4.0, interval=0.03, desc="all expanded again")
 
         # ── (C) keyboard collapse / expand on a category branch ──────
         _focus_grid(tf)
         tf.intervene("/external/cursor", IDENTITY)
         tf.key(path=GRID, name="ArrowLeft")  # collapse the focused branch
-        wait_until(lambda: _expanded(tf, IDENTITY) is False, timeout=4.0,
+        wait_until(lambda: _expanded(tf, gp, IDENTITY) is False, timeout=4.0,
                    interval=0.03, desc="ArrowLeft collapses the focused category")
         wait_until(lambda: _rows(tf) == 25, timeout=4.0, interval=0.03, desc="Identity rows hidden")
         tf.key(path=GRID, name="ArrowRight")  # expand it again
-        wait_until(lambda: _expanded(tf, IDENTITY) is True, timeout=4.0,
+        wait_until(lambda: _expanded(tf, gp, IDENTITY) is True, timeout=4.0,
                    interval=0.03, desc="ArrowRight expands the focused category")
         tf.key(path=GRID, name="Enter")  # Enter on a branch toggles too
-        wait_until(lambda: _expanded(tf, IDENTITY) is False, timeout=4.0,
+        wait_until(lambda: _expanded(tf, gp, IDENTITY) is False, timeout=4.0,
                    interval=0.03, desc="Enter on a branch collapses")
         tf.key(path=GRID, name="ArrowRight")  # restore
-        wait_until(lambda: _expanded(tf, IDENTITY) is True, timeout=4.0,
+        wait_until(lambda: _expanded(tf, gp, IDENTITY) is True, timeout=4.0,
                    interval=0.03, desc="restored expanded")
 
         # ── (D) pointer: clicking a category header toggles collapse ─
         tf.click(path=f"{GRID}#{APPEARANCE}")
-        wait_until(lambda: _expanded(tf, APPEARANCE) is False, timeout=4.0,
+        wait_until(lambda: _expanded(tf, gp, APPEARANCE) is False, timeout=4.0,
                    interval=0.03, desc="header click collapses Appearance")
         tf.click(path=f"{GRID}#{APPEARANCE}")
-        wait_until(lambda: _expanded(tf, APPEARANCE) is True, timeout=4.0,
+        wait_until(lambda: _expanded(tf, gp, APPEARANCE) is True, timeout=4.0,
                    interval=0.03, desc="header click re-expands Appearance")
 
         # ── (E) cursor roving over the flatten, clamped ──────────────
@@ -147,9 +149,9 @@ def body() -> None:
         assert_eq(tf.query(f"/{TREE}/external/cursor_index"), last, "ArrowDown at bottom clamps")
 
         # ── (F) editing inside a category still works ────────────────
-        assert_eq(tf.query("/external/value.2"), True, "Visible true before")
+        assert_eq(tf.query(f"/external/{gp.at('value', index=2)}"), True, "Visible true before")
         assert_eq(tf.invoke("/external/toggle", 2), True, "toggle value 2 toggled a bool")
-        assert_eq(tf.query("/external/value.2"), False, "Visible toggled to false")
+        assert_eq(tf.query(f"/external/{gp.at('value', index=2)}"), False, "Visible toggled to false")
         _focus_grid(tf)
         # R1176 — slot 1 is now the Mesh asset picker (not inline text); the
         # edit-a-leaf-inside-a-category check uses the Name text leaf (slot 0).
@@ -163,14 +165,14 @@ def body() -> None:
             tf.key(path=EDIT, name="Backspace")
         tf.text("boss", path=EDIT)
         tf.key(path=EDIT, name="Enter")
-        wait_until(lambda: tf.query("/external/value.0") == "boss", timeout=4.0,
+        wait_until(lambda: tf.query(f"/external/{gp.at('value', index=0)}") == "boss", timeout=4.0,
                    interval=0.03, desc="commit the edited Name inside the category")
 
         # ── (G) paint: collapse hides rows, keeps the header ─────────
         expanded = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(expanded, f"{GRID}#0") is not None, "Name row painted when expanded"
         assert find_by_tag(expanded, f"{GRID}#{IDENTITY}") is not None, "Identity header painted"
-        tf.intervene(f"/{GRID}/external/expanded.{IDENTITY}", False)
+        tf.intervene(f"/{GRID}/external/{gp.at('expanded', branch_id=IDENTITY)}", False)
         wait_until(
             lambda: find_by_tag(tf.snapshot(source="paint", viewport=VIEWPORT), f"{GRID}#0") is None,
             timeout=4.0, interval=0.05, desc="Name row hidden when Identity collapses")

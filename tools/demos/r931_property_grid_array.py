@@ -150,19 +150,19 @@ def body() -> None:
         assert_eq(gq(tf, "editing"), None, "removing an element cancels the in-flight edit (R930.1)")
 
         # ── (G) scalar addresses are permanent across array mutation ─
-        before = gq(tf, "value.6")  # Position X scalar
+        before = gq(tf, gp.at("value", index=6))  # Position X scalar
         tf.invoke(f"/{GRID}/external/add_elem", None)
         tf.invoke(f"/{GRID}/external/remove_elem", 0)
-        assert_eq(gq(tf, "value.6"), before, "the scalar value.6 is unchanged by array add/remove")
+        assert_eq(gq(tf, gp.at("value", index=6)), before, "the scalar at index 6 is unchanged by array add/remove")
         assert_eq(gq(tf, "row_count"), 16, "the flat value-model length is permanent")
 
         # ── (H) collapsing the array branch hides its element rows ──
-        assert_eq(gq(tf, f"expanded.{ARR}"), True, "the array branch boots expanded")
+        assert_eq(gq(tf, gp.at("expanded", branch_id=ARR)), True, "the array branch boots expanded")
         assert_eq(tf.invoke(f"/{GRID}/external/toggle_branch", ARR), False, "toggle_branch collapses it")
         wait_until(lambda: not painted(tf, f"{GRID}#elem.0"), timeout=4.0, interval=0.03,
                    desc="the element rows are hidden when the array collapses")
         assert painted(tf, f"{GRID}#{ARR}"), "the array header stays painted when collapsed"
-        tf.intervene(f"/{GRID}/external/expanded.{ARR}", True)
+        tf.intervene(f"/{GRID}/external/{gp.at('expanded', branch_id=ARR)}", True)
         wait_until(lambda: painted(tf, f"{GRID}#elem.0"), timeout=4.0, interval=0.03,
                    desc="the elements reappear on re-expand")
 

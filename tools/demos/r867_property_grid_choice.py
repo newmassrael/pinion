@@ -45,6 +45,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -70,8 +71,8 @@ def _focus_grid(tf) -> None:
     )
 
 
-def _label(tf, row: int) -> str:
-    return tf.query(f"/external/value.{row}")["label"]
+def _label(tf, gp,row: int) -> str:
+    return tf.query(f"/external/{gp.at('value', index=row)}")["label"]
 
 
 def _editing(tf):
@@ -84,11 +85,12 @@ def _editing(tf):
 
 def body() -> None:
     with RpcSubprocess("hello-property-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot taxonomy ────────────────────────────────────────
         assert_eq(tf.query("/external/row_count"), 16, "16 value slots (incl. struct fields)")
-        assert_eq(tf.query("/external/kind.9"), "choice", "Blend is a choice")
-        assert_eq(tf.query("/external/kind.10"), "choice", "Body is a choice")
-        blend = tf.query("/external/value.9")
+        assert_eq(tf.query(f"/external/{gp.at('kind', index=9)}"), "choice", "Blend is a choice")
+        assert_eq(tf.query(f"/external/{gp.at('kind', index=10)}"), "choice", "Body is a choice")
+        blend = tf.query(f"/external/{gp.at('value', index=9)}")
         assert_eq(blend["selected"], 0, "Blend boots at Normal")
         assert_eq(blend["label"], "Normal", "Blend label")
         assert_eq(
@@ -96,7 +98,7 @@ def body() -> None:
             ["Normal", "Additive", "Multiply", "Screen"],
             "Blend option list",
         )
-        assert_eq(_label(tf, BODY), "Solid", "Body boots at Solid")
+        assert_eq(_label(tf, gp,BODY), "Solid", "Body boots at Solid")
         assert_eq(tf.query("/external/popup_cursor"), None, "no popup at boot")
         assert_eq(_editing(tf), None, "nothing editing at boot")
 
@@ -116,7 +118,7 @@ def body() -> None:
         wait_until(lambda: tf.query("/external/popup_cursor") == 3, timeout=4.0,
                    interval=0.03, desc="cursor clamps at the last option")
         tf.key(path=GRID, name="Enter")  # commit the cursor (Screen)
-        wait_until(lambda: _label(tf, BLEND) == "Screen", timeout=4.0,
+        wait_until(lambda: _label(tf, gp,BLEND) == "Screen", timeout=4.0,
                    interval=0.03, desc="Enter commits the cursor")
         assert_eq(_editing(tf), None, "popup closed after commit")
         assert_eq(tf.query("/external/popup_cursor"), None, "cursor cleared after commit")
@@ -130,7 +132,7 @@ def body() -> None:
         tf.key(path=GRID, name="Escape")
         wait_until(lambda: _editing(tf) is None, timeout=4.0, interval=0.03,
                    desc="Escape dismisses")
-        assert_eq(_label(tf, BODY), "Solid", "Escape leaves Body untouched")
+        assert_eq(_label(tf, gp,BODY), "Solid", "Escape leaves Body untouched")
 
         # ── (D) mouse: click cell opens, click option commits ────────
         tf.click(path=f"{GRID}#{BLEND}")  # single-click opens
@@ -139,7 +141,7 @@ def body() -> None:
         assert find_by_tag(tf.snapshot(source="paint", viewport=VIEWPORT), POPUP) is not None, \
             "popup panel painted"
         tf.click(path=f"{GRID}#opt1")  # commit Additive
-        wait_until(lambda: _label(tf, BLEND) == "Additive", timeout=4.0,
+        wait_until(lambda: _label(tf, gp,BLEND) == "Additive", timeout=4.0,
                    interval=0.03, desc="clicking an option commits it")
         assert_eq(_editing(tf), None, "popup closed after option click")
 
@@ -150,25 +152,25 @@ def body() -> None:
         tf.click(at=(8.0, 8.0))  # the dismiss barrier corner, clear of the panel
         wait_until(lambda: _editing(tf) is None, timeout=4.0, interval=0.03,
                    desc="clicking outside dismisses")
-        assert_eq(_label(tf, BODY), "Solid", "dismiss leaves Body untouched")
+        assert_eq(_label(tf, gp,BODY), "Solid", "dismiss leaves Body untouched")
 
         # ── (F) RPC (AI-first) ───────────────────────────────────────
         assert_eq(tf.invoke("/external/begin", BLEND), True, "RPC begin opens")
         assert_eq(_editing(tf), BLEND, "popup open via RPC")
         assert_eq(tf.invoke("/external/choose", 2), True, "RPC choose commits")
-        assert_eq(_label(tf, BLEND), "Multiply", "choose 2 -> Multiply")
+        assert_eq(_label(tf, gp,BLEND), "Multiply", "choose 2 -> Multiply")
         assert_eq(_editing(tf), None, "choose closed the popup")
         # close_popup dismisses without committing.
         tf.invoke("/external/begin", BODY)
         assert_eq(_editing(tf), BODY, "Body popup open")
         tf.invoke("/external/close_popup", None)
         assert_eq(_editing(tf), None, "close_popup dismissed")
-        assert_eq(_label(tf, BODY), "Solid", "close_popup did not commit")
+        assert_eq(_label(tf, gp,BODY), "Solid", "close_popup did not commit")
         # intervene-by-index sets the value directly (no popup needed).
-        tf.intervene("/external/value.9", 3)
-        assert_eq(_label(tf, BLEND), "Screen", "intervene sets the option by index")
-        tf.intervene("/external/value.10", 1)
-        assert_eq(_label(tf, BODY), "Trigger", "intervene sets Body to Trigger")
+        tf.intervene(f"/external/{gp.at('value', index=9)}", 3)
+        assert_eq(_label(tf, gp,BLEND), "Screen", "intervene sets the option by index")
+        tf.intervene(f"/external/{gp.at('value', index=10)}", 1)
+        assert_eq(_label(tf, gp,BODY), "Trigger", "intervene sets Body to Trigger")
 
         # ── (G) paint: popup + options + barrier only while open ─────
         closed = tf.snapshot(source="paint", viewport=VIEWPORT)

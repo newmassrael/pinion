@@ -80,10 +80,10 @@ echo.demo	0	0
 edge.{}	15	14
 effective_resize_mode.{}	0	0
 enabled.{}	3	0
-expanded.arr	2	0
-expanded.cat	4	2
+expanded.arr	0	0
+expanded.cat	0	2
 expanded.struct	0	0
-expanded.{}	1	1
+expanded.{}	0	1
 expanded_at.{}	25	1
 extent.{}	4	0
 feed.head	0	0
@@ -116,7 +116,7 @@ item.{}	0	1
 item_count.{}	4	0
 item_kind.{}	16	0
 kind.elem	0	1
-kind.{}	11	8
+kind.{}	4	8
 kind_at.{}	16	2
 kp.column	0	0
 kp.detail	0	0
@@ -165,9 +165,9 @@ member_count_at.{}	4	0
 mixed.{}	0	19
 model_height.{}	1	1
 modified.elem	0	5
-modified.{}	27	26
+modified.{}	26	26
 name.elem	0	1
-name.{}	15	11
+name.{}	12	11
 no.such	1	0
 node.{}	168	96
 nodegroups.frame	0	0
@@ -265,7 +265,7 @@ tv.tip	0	0
 tv.toggle	0	0
 unmapped_bytes.{}	1	0
 value.elem	0	22
-value.{}	277	260
+value.{}	244	260
 visible_at.{}	10	2
 visual_index.{}	0	1
 vn.sprite	2	0

@@ -48,6 +48,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -73,8 +74,8 @@ def _focus_grid(tf) -> None:
     )
 
 
-def _hex(tf) -> str:
-    return tf.query(f"/external/value.{TINT}")["hex"]
+def _hex(tf, gp) -> str:
+    return tf.query(f"/external/{gp.at('value', index=TINT)}")["hex"]
 
 
 def _editing(tf):
@@ -87,10 +88,11 @@ def _editing(tf):
 
 def body() -> None:
     with RpcSubprocess("hello-property-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot taxonomy ────────────────────────────────────────
         assert_eq(tf.query("/external/row_count"), 16, "16 value slots (incl. struct fields)")
-        assert_eq(tf.query("/external/kind.11"), "color", "Tint is a colour")
-        tint = tf.query("/external/value.11")
+        assert_eq(tf.query(f"/external/{gp.at('kind', index=11)}"), "color", "Tint is a colour")
+        tint = tf.query(f"/external/{gp.at('value', index=11)}")
         assert_eq(tint["hex"], "#1e88e5", "Tint boots Blue")
         assert_eq(tint["r"], 0x1E, "Blue red byte")
         assert_eq(tint["b"], 0xE5, "Blue blue byte")
@@ -107,7 +109,7 @@ def body() -> None:
         wait_until(lambda: tf.query("/external/popup_cursor") == 5, timeout=4.0,
                    interval=0.03, desc="ArrowRight roves the swatch cursor")
         tf.key(path=GRID, name="Enter")  # commit Yellow
-        wait_until(lambda: _hex(tf) == "#fdd835", timeout=4.0,
+        wait_until(lambda: _hex(tf, gp) == "#fdd835", timeout=4.0,
                    interval=0.03, desc="Enter commits the swatch cursor (Yellow)")
         assert_eq(_editing(tf), None, "popup closed after commit")
 
@@ -119,7 +121,7 @@ def body() -> None:
         tf.key(path=GRID, name="Escape")
         wait_until(lambda: _editing(tf) is None, timeout=4.0, interval=0.03,
                    desc="Escape dismisses")
-        assert_eq(_hex(tf), "#fdd835", "Escape leaves the committed Yellow")
+        assert_eq(_hex(tf, gp), "#fdd835", "Escape leaves the committed Yellow")
 
         # ── (D) mouse: click cell opens, click swatch commits ────────
         tf.click(path=f"{GRID}#{TINT}")
@@ -128,23 +130,23 @@ def body() -> None:
         assert find_by_tag(tf.snapshot(source="paint", viewport=VIEWPORT), POPUP) is not None, \
             "swatch panel painted"
         tf.click(path=f"{GRID}#sw2")  # Red
-        wait_until(lambda: _hex(tf) == "#e53935", timeout=4.0,
+        wait_until(lambda: _hex(tf, gp) == "#e53935", timeout=4.0,
                    interval=0.03, desc="clicking a swatch commits it (Red)")
         assert_eq(_editing(tf), None, "popup closed after swatch click")
 
         # ── (E) RPC ──────────────────────────────────────────────────
         assert_eq(tf.invoke("/external/begin", TINT), True, "RPC begin opens")
         assert_eq(tf.invoke("/external/pick_color", 0), True, "RPC pick_color commits")
-        assert_eq(_hex(tf), "#ffffff", "pick_color 0 -> White")
+        assert_eq(_hex(tf, gp), "#ffffff", "pick_color 0 -> White")
         assert_eq(_editing(tf), None, "pick_color closed the popup")
         # close_popup dismisses without committing.
         tf.invoke("/external/begin", TINT)
         tf.invoke("/external/close_popup", None)
         assert_eq(_editing(tf), None, "close_popup dismissed")
-        assert_eq(_hex(tf), "#ffffff", "close_popup did not commit")
+        assert_eq(_hex(tf, gp), "#ffffff", "close_popup did not commit")
         # intervene sets an arbitrary colour by hex (the AI-first path).
-        tf.intervene("/external/value.11", "#abcdef")
-        assert_eq(_hex(tf), "#abcdef", "intervene sets an arbitrary hex colour")
+        tf.intervene(f"/external/{gp.at('value', index=11)}", "#abcdef")
+        assert_eq(_hex(tf, gp), "#abcdef", "intervene sets an arbitrary hex colour")
 
         # ── (E2) GUI hex field: type an arbitrary colour + Enter ─────
         tf.invoke("/external/begin", TINT)  # open the popup (seeds the hex field)
@@ -157,7 +159,7 @@ def body() -> None:
             tf.key(path=EDIT, name="Backspace")
         tf.text("#123456", path=EDIT)
         tf.key(path=EDIT, name="Enter")
-        wait_until(lambda: _hex(tf) == "#123456", timeout=4.0, interval=0.03,
+        wait_until(lambda: _hex(tf, gp) == "#123456", timeout=4.0, interval=0.03,
                    desc="hex field commits an arbitrary colour")
         assert_eq(_editing(tf), None, "hex commit closed the popup")
 
@@ -168,7 +170,7 @@ def body() -> None:
         tf.click(at=(8.0, 8.0))  # the dismiss barrier corner, clear of the panel
         wait_until(lambda: _editing(tf) is None, timeout=4.0, interval=0.03,
                    desc="clicking outside dismisses")
-        assert_eq(_hex(tf), "#123456", "dismiss leaves the value untouched")
+        assert_eq(_hex(tf, gp), "#123456", "dismiss leaves the value untouched")
 
         # ── (G) paint: panel + swatches + barrier only while open ────
         closed = tf.snapshot(source="paint", viewport=VIEWPORT)
