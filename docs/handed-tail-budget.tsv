@@ -1,0 +1,54 @@
+# R2222 — how many sites retype a painted address's PART after a
+# prefix handed to them (`f"{tag}.caption"`), by part.
+#
+#   column 2 `walk` — sites in tools/demos/ and the modules they import
+#   column 3 `rust` — reader sites in examples/*/src/
+#
+# WHY A SECOND BUDGET. These sites have no family in the text: the
+# prefix is a runtime value, so `{}.caption` can compose 110 pinned
+# addresses across 18 families. Charging them to a family would count
+# one retyping eighteen times, and putting a part in
+# `unpinned-families.tsv` would put a non-family in a list of
+# families. The part is what the site retypes, and it is its own row.
+#
+# A file name has this shape too (`f"{name}.png"`), which is why this
+# went uncharged until R2222. It is excluded by the namespace that
+# actually divides the corpus: a path is built with `/`. See
+# `_path_joined`.
+#
+# The fix at a site is for the screen to PUBLISH its part vocabulary,
+# the way it already publishes its family grammar — then the caller
+# that holds the prefix asks for the part instead of spelling it.
+#
+# The gate allows a count to FALL or hold, refuses a rise, and refuses
+# a part it has never seen.
+#
+# Rewritten by `tools/painted_addresses.py --write-budget`; do not
+# hand-edit.
+add	1	0
+arrow.{}	0	1
+badge	1	0
+body	1	0
+caption	11	1
+cell.{}_{}	0	1
+checked	0	1
+delta	0	1
+dial	1	0
+grip	4	2
+head	0	2
+id	3	0
+in1	2	0
+issue	2	0
+label	1	1
+legend	2	0
+legend.0	1	0
+legend.{}	1	0
+maximize	1	0
+out0	1	0
+scheme	1	0
+shown.{}	0	1
+stat.{}.{}	0	1
+strip	1	2
+tiles	0	1
+track	1	0
+value	0	1

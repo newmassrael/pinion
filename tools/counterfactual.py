@@ -221,9 +221,17 @@ FAILURE_MARKERS_BY_HARNESS = {
     # reached zero spellers with nothing holding its address to a value — and a
     # different refusal is a different sentence. Measured the way the first one
     # was: three counterfactuals really caught, all three UNREADABLE.
+    # ⚠ R2222 — a THIRD sentence, and it joined the same way the second did.
+    # That round gave this tool a ratchet over a population the family budget
+    # cannot hold (a site handed its prefix, retyping only the PART), and its
+    # refusal says *a part retyped after a handed prefix rose* — which holds
+    # none of the two sentences above, no `FAIL`, no `----` and no `[demo]`.
+    # Measured the way R2147 measured its own: counterfactuals that really
+    # caught, reported UNREADABLE until this line existed.
     "painted-addresses ratchet": (
         "spells a painted address it could ask for",
         "reached zero spellers with nothing pinning their value",
+        "a part retyped after a handed prefix rose",
     ),
     # ★ R2129 — the second ratchet of that shape, and it needed its own entry
     # for the reason the one above did: `read_path_shapes.py --check` refuses

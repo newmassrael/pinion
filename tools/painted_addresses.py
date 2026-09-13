@@ -102,6 +102,7 @@ from __future__ import annotations
 import argparse
 import ast
 import bisect
+import collections
 import functools
 import json
 import re
@@ -119,6 +120,19 @@ BUDGET = ROOT / "docs" / "painted-address-budget.tsv"
 #: The families that were converted and whose value nothing pins — see
 #: [`deleted_checks`]. Tracked, so the list only shrinks by a reviewable diff.
 UNPINNED = ROOT / "docs" / "unpinned-families.tsv"
+
+#: ★★★★★ R2222 — the retyping the family budget CANNOT hold, by PART rather
+#: than by family. A site handed its prefix (`f"{tag}.caption"`) retypes the
+#: part word `caption`, and its family is whatever the caller passed, which no
+#: text here names — `{}.caption` can compose 110 pinned addresses across 18
+#: families, so charging it to a family would count one retyping eighteen
+#: times (the unit error R2179 removed).
+#:
+#: A part is therefore its own row, and this is a SECOND budget rather than
+#: more rows in the first for the reason the two ratchets already differ:
+#: `docs/unpinned-families.tsv` answers "is this FAMILY's value held", and a
+#: part is not a family. Mixing them would put `caption` in a list of families.
+HANDED_BUDGET = ROOT / "docs" / "handed-tail-budget.tsv"
 
 #: A painted address, anchored at the start of a string literal.
 #:
@@ -1220,6 +1234,10 @@ def write_budget(
     # round that re-pins one and forgets the other leaves the pair disagreeing
     # about the tree they both describe.
     write_unpinned(deleted_checks(counts, rust_counts, kept))
+    # ★ R2222 — and the THIRD, for the same reason stated once. Three ratchets
+    # over one tree that can be re-pinned separately are three chances for two
+    # of them to describe different trees.
+    write_handed_budget(handed_tail_counts())
 
 
 def _risen(
@@ -1342,13 +1360,22 @@ def check() -> int:
     walk_loose = sum(1 for corpus, _where, _literal in loose if corpus == "walk")
     # ★★★★★ R2184 — narrowed to the HANDED prefix. A runtime value in the family
     # segment is a template family now and is in the queue above.
+    # ★★★★★ R2222 — CHARGED now, by part rather than by family, and the
+    # sentence says which budget holds it. What kept this printed-only was one
+    # stated reason — a file name has the same shape — and the namespace that
+    # divides them is measurable: a path is built with `/`. Nine `{}.png` sites
+    # left the population when that landed, and all 52 that remain are
+    # addresses. ⚠ `held` stays in the sentence because it says something the
+    # budget cannot: how much of this is certainly paint on the evidence of a
+    # pin, independent of the criterion above.
+    _tail_refusals, tail_sites, tail_parts = handed_tail_breaches()
     print(
-        f"painted-addresses: and {len(loose)} reader site(s) the queue does NOT "
-        f"count (walk {walk_loose} / rust {len(loose) - walk_loose}) spell an "
-        f"address after a HANDED prefix, whose family no text names — {held} of "
-        "them can compose an address a `.pin` artifact holds, so the queue is a "
-        "floor under the retyping by at least that much; telling the rest from "
-        "file names needs each site's namespace"
+        f"painted-addresses: and {len(loose)} reader site(s) the family budget "
+        f"cannot hold (walk {walk_loose} / rust {len(loose) - walk_loose}) spell "
+        f"an address after a HANDED prefix, whose family no text names — {held} "
+        f"of them can compose an address a `.pin` artifact holds. Charged by "
+        f"PART instead: {tail_sites} site(s) over {tail_parts} part(s) in "
+        f"{HANDED_BUDGET.relative_to(ROOT)}"
     )
     # ★★★★★ R2147 — and WHETHER EACH FAMILY'S VALUE IS HELD AT ALL, which
     # neither line above can say. Converting a family's last speller removes
@@ -1505,6 +1532,28 @@ def check() -> int:
             "            that emits its grammar — then convert. If the family is\n"
             "            genuinely pinned by something this does not know about,\n"
             "            teach `pin_sources` and re-run --write-budget.",
+            file=sys.stderr,
+        )
+        return 1
+    # ★★★★★ R2222 — the part ratchet. Computed at the top so its totals could
+    # go in the sentence beside the population they qualify; refused here, with
+    # the rest, so one run reports every breach rather than the first.
+    if _tail_refusals:
+        print(
+            "painted-addresses: a part retyped after a handed prefix rose",
+            file=sys.stderr,
+        )
+        for line in _tail_refusals:
+            print(f"  {line}", file=sys.stderr)
+        print(
+            f"painted-addresses: the population is {tail_sites} site(s) over\n"
+            f"            {tail_parts} part(s) — the number above is a share of\n"
+            "            that, not of the family queue. A site here holds its\n"
+            "            prefix and spells the PART, so the repayment is for the\n"
+            "            screen to publish its part vocabulary the way it\n"
+            "            already publishes its family grammar; then the caller\n"
+            "            asks. Re-pin with --write-budget in the round that\n"
+            "            deliberately adds one.",
             file=sys.stderr,
         )
         return 1
@@ -2705,6 +2754,152 @@ def unanchored_reader_sites() -> tuple[tuple[str, str, str], ...]:
     return tuple(found)
 
 
+def handed_tail(literal: str) -> str:
+    """The PART a handed-prefix site retypes: everything after the prefix, with
+    every placeholder normalised and an instance key's `#` suffix dropped.
+
+    ★★★★★ R2222 — this is the unit, and choosing it was the round's judgement.
+    The alternative was the family, and it is wrong by measurement rather than
+    by taste: `{}.caption` composes 110 pinned addresses over 18 families, so a
+    family unit counts one retyping eighteen times — [`may_denote_same`]'s unit
+    error, one shape over. What the site actually retypes is the part word, and
+    the text says that exactly once.
+
+    The normalisation is [`template_family`]'s, applied to every segment rather
+    than to the second one, because a tail can be several segments deep
+    (`{id}.stat.{n}.{part}`).
+    """
+    head, _, tail = literal.partition(".")
+    if not tail or not _PLACEHOLDER.fullmatch(head):
+        return ""
+    return ".".join(
+        re.sub(r"#.*$", "", _PLACEHOLDER.sub("{}", segment))
+        for segment in tail.split(".")
+    )
+
+
+def handed_tail_counts() -> dict[str, Pinned]:
+    """How many sites retype each part, in the two populations.
+
+    Drawn from [`unanchored_reader_sites`], so it counts exactly what that line
+    reports and the selftest holds the totals together — two walks over the
+    corpus that nothing joined is how R2175's four reports came to answer from
+    a population that was not the one they qualified.
+    """
+    out: dict[str, list[int]] = {}
+    for corpus, _where, literal in unanchored_reader_sites():
+        tail = handed_tail(literal)
+        if not tail:
+            continue
+        row = out.setdefault(tail, [0, 0])
+        row[0 if corpus == "walk" else 1] += 1
+    return {tail: Pinned(pair[0], pair[1]) for tail, pair in sorted(out.items())}
+
+
+def read_handed_budget() -> dict[str, Pinned]:
+    """The pinned pair per PART. Same format as [`read_budget`], same reasons."""
+    if not HANDED_BUDGET.exists():
+        return {}
+    out: dict[str, Pinned] = {}
+    for line in HANDED_BUDGET.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        walk = int(parts[1]) if len(parts) > 1 and parts[1] else 0
+        rust = int(parts[2]) if len(parts) > 2 and parts[2] else 0
+        out[parts[0]] = Pinned(walk, rust)
+    return out
+
+
+def write_handed_budget(counts: dict[str, Pinned]) -> None:
+    """Pin what stands. A part the scan no longer finds is carried at zero, for
+    [`write_budget`]'s reason: dropping the row would let it be re-acquired and
+    read as new."""
+    kept = dict(read_handed_budget())
+    for tail in kept:
+        kept[tail] = Pinned(0, 0)
+    kept.update(counts)
+    lines = [
+        "# R2222 — how many sites retype a painted address's PART after a",
+        "# prefix handed to them (`f\"{tag}.caption\"`), by part.",
+        "#",
+        "#   column 2 `walk` — sites in tools/demos/ and the modules they import",
+        "#   column 3 `rust` — reader sites in examples/*/src/",
+        "#",
+        "# WHY A SECOND BUDGET. These sites have no family in the text: the",
+        "# prefix is a runtime value, so `{}.caption` can compose 110 pinned",
+        "# addresses across 18 families. Charging them to a family would count",
+        "# one retyping eighteen times, and putting a part in",
+        "# `unpinned-families.tsv` would put a non-family in a list of",
+        "# families. The part is what the site retypes, and it is its own row.",
+        "#",
+        "# A file name has this shape too (`f\"{name}.png\"`), which is why this",
+        "# went uncharged until R2222. It is excluded by the namespace that",
+        "# actually divides the corpus: a path is built with `/`. See",
+        "# `_path_joined`.",
+        "#",
+        "# The fix at a site is for the screen to PUBLISH its part vocabulary,",
+        "# the way it already publishes its family grammar — then the caller",
+        "# that holds the prefix asks for the part instead of spelling it.",
+        "#",
+        "# The gate allows a count to FALL or hold, refuses a rise, and refuses",
+        "# a part it has never seen.",
+        "#",
+        "# Rewritten by `tools/painted_addresses.py --write-budget`; do not",
+        "# hand-edit.",
+    ]
+    lines += [f"{tail}\t{n.walk}\t{n.rust}" for tail, n in sorted(kept.items())]
+    HANDED_BUDGET.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def handed_tail_breaches(
+    now: dict[str, Pinned] | None = None,
+    before: dict[str, Pinned] | None = None,
+) -> tuple[list[str], int, int]:
+    """`(refusals, sites, parts)` — what rose, and the POPULATION it rose in.
+
+    ⚠ The totals travel with the refusals deliberately. A gate that names a
+    numerator and not its denominator cannot be read: "2 rose" says nothing
+    about whether the scan found two sites or two hundred, and this census has
+    been wrong about its own population twice (R2175, R2181).
+
+    ★★★★★ R2222 — PURE in both arguments, and that is a repair the round's own
+    counterfactual demanded rather than a style. The first draft read the tree
+    here, so the RISE arm had no reachable case: this round pinned the budget to
+    what stands, nothing was above it, and breaking `is_now > was` left the gate
+    green. Three counterfactuals caught and that one PASSED, which is the shape
+    [[an-assertion-that-cannot-stand-moves-rather-than-dies]] names — an arm
+    that cannot fail is not a check. Taking the two dicts as arguments is what
+    lets the selftest put a rise in front of it.
+    """
+    if now is None:
+        now = handed_tail_counts()
+    if before is None:
+        before = read_handed_budget()
+    sites = sum(pair.walk + pair.rust for pair in now.values())
+    refusals: list[str] = []
+    for tail, pair in sorted(now.items()):
+        if tail not in before:
+            refusals.append(
+                f"painted-addresses: a part nothing has budgeted retypes an "
+                f"address: {tail!r} at {pair.walk} walk / {pair.rust} rust "
+                f"site(s). Re-pin with `--write-budget` in the round that "
+                f"introduces it, or publish the part so nobody spells it"
+            )
+            continue
+        pinned = before[tail]
+        for column in ("walk", "rust"):
+            was, is_now = getattr(pinned, column), getattr(pair, column)
+            if is_now > was:
+                refusals.append(
+                    f"painted-addresses: {tail!r} is retyped in {is_now} "
+                    f"{column} site(s), up from {was} — `--list` has no view of "
+                    f"a handed prefix, so ask "
+                    f"`grep -rn '\\.{tail.split('.')[0]}' tools/demos examples`"
+                )
+    return refusals, sites, len(now)
+
+
 def _walk_literals(path: Path) -> list[tuple[int, str]]:
     """`(line, whole address)` for every address literal a walk spells.
 
@@ -2723,13 +2918,93 @@ def _walk_literals(path: Path) -> list[tuple[int, str]]:
     ]
 
 
+def _path_joined(tree: ast.AST) -> collections.Counter[tuple[int, str]]:
+    """`(line, literal) -> how many times` a walk string is built into a PATH.
+
+    ★★★★★ R2222 — the one namespace this census was missing, and the whole of
+    it. [`unanchored_shape`] holds a file name as readily as an address
+    (`f"{name}.png"` beside `f"{tag}.caption"`), which is the reason
+    [`unanchored_reader_sites`] was printed and never charged: charging it
+    would have written file names into a ratchet about painted marks.
+
+    A path is built with `/`, because that is what `pathlib` made the operator
+    mean. So the discriminator is not a spelling rule about the literal — it is
+    the OPERATOR the literal is handed to, which is the site's namespace in the
+    smallest form that actually divides this corpus.
+
+    ⚠ Counted rather than collected, because one `(line, literal)` pair can
+    occur twice on a line in two different roles; subtracting a count keeps the
+    other occurrence, where subtracting a set would drop both.
+    """
+    parent: dict[int, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent[id(child)] = node
+    found: collections.Counter[tuple[int, str]] = collections.Counter()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Constant, ast.JoinedStr)):
+            continue
+        if isinstance(node, ast.Constant) and not isinstance(node.value, str):
+            continue
+        cursor: ast.AST = node
+        for _ in range(_PATH_JOIN_DEPTH):
+            up = parent.get(id(cursor))
+            if up is None:
+                break
+            if isinstance(up, ast.BinOp) and isinstance(up.op, ast.Div):
+                text = (
+                    node.value
+                    if isinstance(node, ast.Constant)
+                    else "".join(
+                        part.value
+                        if isinstance(part, ast.Constant)
+                        and isinstance(part.value, str)
+                        else "{}"
+                        for part in node.values
+                    )
+                )
+                found[(node.lineno, text)] += 1
+                break
+            cursor = up
+    return found
+
+
+#: How far up from a literal a path join may sit.
+#:
+#: ★★★★★ R2222 — ONE, and that is a measurement rather than a margin. The first
+#: draft said four "to cover an f-string's halves and a parenthesised chain",
+#: which sounded careful and was a number nobody had checked: an f-string is a
+#: single `JoinedStr` node and parentheses leave no node at all, so every path
+#: join in this corpus is the literal's DIRECT parent. Driven at 1, 2, 3, 4 and
+#: 6 over the whole tree, the population is 52 at every one — the extra hops
+#: buy nothing.
+#:
+#: They are not free, either, and the direction matters. A larger bound lets a
+#: `/` several levels up capture a literal that has nothing to do with it,
+#: which would drop a real address from a census about addresses; a smaller one
+#: at worst lets a file name be charged, which shows up as a budgeted part
+#: somebody can see and remove. So the error direction is set toward keeping
+#: addresses, and the bound is the smallest one the evidence supports.
+_PATH_JOIN_DEPTH = 1
+
+
 def _walk_unanchored(path: Path) -> list[tuple[int, str]]:
-    """`(line, literal)` for every walk literal of [`unanchored_shape`]."""
-    return [
-        (line, literal)
-        for line, literal in python_literals(path.read_text(encoding="utf-8"))
-        if unanchored_shape(literal)
-    ]
+    """`(line, literal)` for every walk literal of [`unanchored_shape`] that is
+    not built into a filesystem path — see [`_path_joined`]."""
+    source = path.read_text(encoding="utf-8")
+    try:
+        joined = _path_joined(ast.parse(source))
+    except SyntaxError:
+        joined = collections.Counter()
+    out: list[tuple[int, str]] = []
+    for line, literal in python_literals(source):
+        if not unanchored_shape(literal):
+            continue
+        if joined[(line, literal)]:
+            joined[(line, literal)] -= 1
+            continue
+        out.append((line, literal))
+    return out
 
 
 def _module_constants(tree: ast.Module) -> dict[str, str]:
@@ -4191,6 +4466,144 @@ def selftest() -> int:
             failed += 1
             print(
                 f"FAIL: {label}: unanchored_shape({literal!r}) -> {not want}",
+                file=sys.stderr,
+            )
+    # ★★★★★ R2222 — the PART a handed-prefix site retypes, which is the unit
+    # the third ratchet charges. PURE, so every case is a fixture.
+    tail_cases: list[tuple[str, str, str]] = [
+        ("one member is the part", "{tag}.caption", "caption"),
+        ("★ the placeholder is normalised, not kept", "{}.arrow.{n}", "arrow.{}"),
+        ("a deep tail keeps every segment", "{id}.stat.{n}.{part}", "stat.{}.{}"),
+        ("★ an instance key's suffix is dropped", "{id}.feed#0.row", "feed.row"),
+        ("two placeholders in one segment stay two", "{id}.cell.{r}_{c}",
+         "cell.{}_{}"),
+        ("an anchored address has no handed part", "card.alarms.feed", ""),
+        ("a head that is not ONE placeholder has none", "{a}{b}.row", ""),
+        ("a prefix with no tail has none", "{tag}", ""),
+    ]
+    for label, literal, want in tail_cases:
+        got = handed_tail(literal)
+        if got != want:
+            failed += 1
+            print(
+                f"FAIL: {label}: handed_tail({literal!r}) -> {got!r}, "
+                f"wanted {want!r}",
+                file=sys.stderr,
+            )
+    # ★★★★★ R2222 — the NAMESPACE that divides a file name from an address,
+    # and the reason this population could finally be charged. Driven through
+    # the walk scan rather than through the helper, because what must hold is
+    # that the site LEAVES the population, not that a predicate answers.
+    join_cases: list[tuple[str, str, list[str]]] = [
+        ("★ a literal built into a path is not an address",
+         'out = tmp / f"{name}.png"\n', []),
+        ("★ nor is one further up the same expression",
+         'out = Path(base) / "x" / f"{name}.png"\n', []),
+        ("but the same shape handed anywhere else is",
+         'node = find_by_tag(snap, f"{tag}.caption")\n', ["{}.caption"]),
+        ("★★ and a `/` elsewhere on the line does not excuse it",
+         'a = w / 2\nnode = find_by_tag(snap, f"{tag}.caption")\n', ["{}.caption"]),
+        ("a divide that is not a path still only takes its own literal",
+         'out = tmp / f"{n}.png"\nb = find_by_tag(s, f"{t}.grip")\n', ["{}.grip"]),
+        # ★★★★★ R2222 — ON THE SAME LINE, which is the case the round's own
+        # counterfactual found missing. Keying the exclusion by line number
+        # alone passes every case above and loses the address here, so the two
+        # cases below are what hold the key to `(line, literal)`.
+        ("★★★ a path and an address on ONE line: the address survives",
+         'f(tmp / f"{n}.png", find_by_tag(s, f"{t}.caption"))\n', ["{}.caption"]),
+        ("★★★ and the same literal twice on one line, once each way",
+         'f(tmp / f"{n}.grip", find_by_tag(s, f"{t}.grip"))\n', ["{}.grip"]),
+    ]
+    import tempfile  # noqa: PLC0415 — the selftest's own fixture writer
+
+    for label, source, want in join_cases:
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".py", delete=False, encoding="utf-8"
+        ) as handle:
+            handle.write(source)
+            probe = Path(handle.name)
+        try:
+            got = [literal for _line, literal in _walk_unanchored(probe)]
+        finally:
+            probe.unlink(missing_ok=True)
+        if got != want:
+            failed += 1
+            print(
+                f"FAIL: {label}: _walk_unanchored -> {got!r}, wanted {want!r}",
+                file=sys.stderr,
+            )
+    # ★★★★★ R2222 — and the two derivations must describe ONE population.
+    # R2175 is the case this arm exists for: the queue total and the per-family
+    # questions came from two walks over the corpus that nothing joined, so a
+    # report could qualify a population it was not drawn from.
+    loose_sites = unanchored_reader_sites()
+    charged = sum(pair.walk + pair.rust for pair in handed_tail_counts().values())
+    tailed = sum(1 for _corpus, _where, literal in loose_sites if handed_tail(literal))
+    if charged != tailed:
+        failed += 1
+        print(
+            f"FAIL: the part budget charges {charged} site(s) and the loose "
+            f"population has {tailed} with a part — one derivation, two answers",
+            file=sys.stderr,
+        )
+    # ★★★★★ R2222 — the RATCHET's arms, each with a case. This block exists
+    # because the round's own counterfactual PASSED: with the budget pinned to
+    # what stands, nothing was above it, so breaking the rise comparison left
+    # the gate green and no test anywhere said otherwise. An arm with no
+    # reachable failing case is not a check, and the repair was to make the
+    # judgement take its two facts as ARGUMENTS rather than read the tree.
+    #
+    # ⚠ Each case asserts the DENOMINATOR as well as the count. A gate that
+    # names a numerator alone cannot be read, and this census has twice been
+    # wrong about the population its own sentence qualified (R2175, R2181).
+    breach_cases: list[
+        tuple[str, dict[str, Pinned], dict[str, Pinned], int, int, int]
+    ] = [
+        (
+            "★ a part retyped once more than the budget pins is refused",
+            {"caption": Pinned(12, 0)},
+            {"caption": Pinned(11, 0)},
+            1, 12, 1,
+        ),
+        (
+            "★ and in the RUST column too, which is a separate pin",
+            {"strip": Pinned(1, 3)},
+            {"strip": Pinned(1, 2)},
+            1, 4, 1,
+        ),
+        (
+            "★★ a rise in BOTH columns of one part is two refusals",
+            {"grip": Pinned(7, 1)},
+            {"grip": Pinned(6, 0)},
+            2, 8, 1,
+        ),
+        (
+            "a part nothing has budgeted is refused on sight",
+            {"png": Pinned(9, 0)},
+            {},
+            1, 9, 1,
+        ),
+        ("holding is allowed", {"caption": Pinned(11, 0)},
+         {"caption": Pinned(11, 0)}, 0, 11, 1),
+        ("falling is allowed", {"caption": Pinned(4, 0)},
+         {"caption": Pinned(11, 0)}, 0, 4, 1),
+        ("a part that fell to zero and is gone is not a breach", {},
+         {"caption": Pinned(11, 0)}, 0, 0, 0),
+        (
+            "★ the denominator counts every part, not only the risen one",
+            {"caption": Pinned(12, 0), "grip": Pinned(6, 0), "head": Pinned(0, 2)},
+            {"caption": Pinned(11, 0), "grip": Pinned(6, 0), "head": Pinned(0, 2)},
+            1, 20, 3,
+        ),
+    ]
+    for label, now_counts, pinned, want_n, want_sites, want_parts in breach_cases:
+        refusals, sites, parts = handed_tail_breaches(now_counts, pinned)
+        got = (len(refusals), sites, parts)
+        if got != (want_n, want_sites, want_parts):
+            failed += 1
+            print(
+                f"FAIL: {label}: handed_tail_breaches -> {got!r}, wanted "
+                f"{(want_n, want_sites, want_parts)!r}",
                 file=sys.stderr,
             )
     compose_cases: list[tuple[str, tuple[str, str], bool]] = [
