@@ -2272,6 +2272,58 @@ def declared_path_templates() -> tuple[tuple[str, str], ...]:
     return tuple(sorted((d, _DECLARED_ARG.sub("{}", d)) for d in found))
 
 
+def declared_path_addresses(declared: str, literal: str) -> bool:
+    """Whether the DECLARED path `declared` addresses `literal`, by the rule the
+    runtime answers with — `SchemaField::addresses`, step for step.
+
+    ★★★★★ R2195 — each fixed piece of the declaration must lead what is left of
+    the literal, and an argument runs to the declaration's NEXT fixed piece (or
+    to the end). [`template_denotes`] gives a non-head placeholder exactly one
+    segment, which is right for a paint template and wrong for a declared path:
+    `menu` declares `checked.<path>` and answers `checked.2.0` (item 0 of menu
+    2), because its query reads the whole remainder as the path. The census
+    asked the one-segment rule and called 41 walk spellings undeclared —
+    `checked.2.0`, `item_kind.2.1`, `item_count.0.2`, `enabled.1.1` — which
+    R2189 then registered as screens answering paths they do not declare. Two
+    implementations of one matching rule disagreed, and this one was wrong.
+
+    Measured before building: over every shipped parametric declaration, the
+    two rules agree on every one-segment argument (0 disagreements), so this is
+    a strict widening. A dry run with every cache cleared: walk 1433 -> 1474
+    (all 41 in `r805_menu_stateful`, `r832_menu_app` and `r985_menu_nested`);
+    the Rust half, roles, retyped, the handed-prefix remainder, BLOCKED, the
+    unpinned families and the deleted check unchanged; three new rows
+    (`item_kind.{}`, `item_count.{}`, `enabled.{}`), each held by a declared
+    schema head; `checked.{}` walk 0 -> 18; none fallen.
+
+    ⚠ Ownership, not validity, as the runtime's own documentation says:
+    `node.2.0.op` belongs to `node.<id>.op` with the id `2.0`; whether that id
+    is well formed is the surface's answer, not the census's.
+    """
+    rest, template, first = literal, declared, True
+    while "<" in template:
+        opening = template.index("<")
+        fixed = template[:opening]
+        if not rest.startswith(fixed) or (not first and not fixed):
+            return False
+        rest = rest[len(fixed) :]
+        closing = template.find(">", opening)
+        if closing < 0:
+            return False
+        template = template[closing + 1 :]
+        after = template.find("<")
+        next_fixed = template if after < 0 else template[:after]
+        if next_fixed:
+            at = rest.find(next_fixed)
+            if at < 0:
+                return False
+            rest = rest[at:]
+        else:
+            rest = ""
+        first = False
+    return rest == template
+
+
 def declared_path_family(
     literal: str, templates: Iterable[tuple[str, str]] | None = None
 ) -> str | None:
@@ -2326,13 +2378,18 @@ def declared_path_family(
     eight new budget rows, each held by a declared schema head or an artifact;
     36 risen; none fallen.
 
+    ★★★★★ R2195 — and the literal is matched against the DECLARED path by the
+    runtime's rule ([`declared_path_addresses`]), not against its `{}` template
+    by the paint grammar's one-segment rule: a menu's `checked.2.0` is a
+    spelling of `checked.<path>`.
+
     `templates` is handed in by a fixture; the tree's are
     [`declared_path_templates`].
     """
     if " " in literal or "/" in literal or not _ARGUMENT_ID.match(literal):
         return None
     pool = declared_path_templates() if templates is None else templates
-    if any(template_denotes(template, literal) for _declared, template in pool):
+    if any(declared_path_addresses(declared, literal) for declared, _template in pool):
         return f"{literal.split('.')[0]}.{{}}"
     return None
 
@@ -3812,6 +3869,7 @@ def selftest() -> int:
         ("value.<index>", "value.{}"),
         ("node.<id>.op", "node.{}.op"),
         ("node.<id>.resolved_input.<port>", "node.{}.resolved_input.{}"),
+        ("checked.<path>", "checked.{}"),
     )
     declared_cases: list[tuple[str, str, str | None]] = [
         ("a two-segment path with a numeric argument", "value.3", "value.{}"),
@@ -3839,6 +3897,14 @@ def selftest() -> int:
         ("★★ a runtime argument on a head nothing declares composes nothing",
          "elem.{i}", None),
         ("text beside a placeholder is not an argument segment", "value.x{i}", None),
+        # ★★★★★ R2195 — an argument runs to the declaration's next fixed piece,
+        # as the runtime reads it.
+        ("★★ a trailing argument may hold a dot: a menu path", "checked.2.0", "checked.{}"),
+        ("★ and may be written with runtime values", "checked.{}.{}", "checked.{}"),
+        ("★ a mid-path argument still stops at the fixed piece after it",
+         "node.2.0.op", "node.{}"),
+        ("★★ but an argument cannot swallow a fixed piece the declaration requires",
+         "node.2.0.bogus", None),
     ]
     for label, literal, want in declared_cases:
         got = declared_path_family(literal, declared)
@@ -3849,6 +3915,26 @@ def selftest() -> int:
                 f"wanted {want!r}",
                 file=sys.stderr,
             )
+    # ★★★★★ R2195 — the runtime rule is a WIDENING of the one-segment rule, held
+    # over the tree's own declarations: wherever an argument is one segment the
+    # two answer alike, so switching changed only dotted arguments.
+    one_segment = [
+        declared
+        for declared, template in declared_path_templates()
+        if template_denotes(template, template.replace("{}", "7"))
+        != declared_path_addresses(declared, template.replace("{}", "7"))
+    ]
+    rule_agreement_cases: list[tuple[str, object, object]] = [
+        ("★★ the runtime rule and the one-segment rule agree on every shipped "
+         "declaration wherever an argument is one segment",
+         one_segment, []),
+        ("and the tree has declarations for that to be asked of",
+         bool(declared_path_templates()), True),
+    ]
+    for label, got, want in rule_agreement_cases:
+        if got != want:
+            failed += 1
+            print(f"FAIL: {label}: {got!r}, wanted {want!r}", file=sys.stderr)
     template_stem_cases: list[tuple[str, object, object]] = [
         ("★ a template family is held by an address in any of its families",
          covers("card.alarms.feed", "card.{}"), True),

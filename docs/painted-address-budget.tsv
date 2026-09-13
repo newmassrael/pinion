@@ -57,7 +57,7 @@ chart.violin	0	3
 chart.whisker	0	1
 chart.wick	0	1
 chart.xlabel	0	3
-checked.{}	0	3
+checked.{}	18	3
 chrome.header	0	1
 col_kind.{}	24	8
 col_modified.{}	10	7
@@ -79,6 +79,7 @@ dissolve_severs.{}	0	1
 echo.demo	0	0
 edge.{}	15	14
 effective_resize_mode.{}	3	1
+enabled.{}	3	0
 expanded.arr	2	0
 expanded.cat	4	2
 expanded.struct	0	0
@@ -112,6 +113,8 @@ item.dark	0	2
 item.ship	0	1
 item.toggle_window	0	2
 item.{}	0	1
+item_count.{}	4	0
+item_kind.{}	16	0
 kind.elem	0	1
 kind.{}	39	9
 kind_at.{}	16	2
