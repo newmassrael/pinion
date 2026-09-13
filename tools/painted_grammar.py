@@ -86,7 +86,26 @@ SEPARATOR = "."
 #: `grammar` a template taking `prefix` and the composer's own arguments
 #: `overlay` a template taking `part` as well
 #: `part`    one name `part` can be
-KINDS = ("const", "grammar", "overlay", "part")
+#: Every row kind a committed artifact may carry.
+#:
+#: ★★★★★ R2217 — `id` joined them, and the reason is worth the line: the
+#: analyzer shell's `card_id` composes `{kind}#{ordinal}`, which is an ARGUMENT
+#: for an address rather than an address. The separator rule below is right to
+#: refuse it as a template and wrong to refuse it as a row, so the format grew
+#: a word for "a template that is not an address" instead of the artifact
+#: dropping a grammar its readers need.
+KINDS = ("const", "grammar", "id", "overlay", "part")
+
+#: The one kind every artifact must carry — what this reader exists to read.
+#:
+#: ⚠ R2217 — this used to be all of [`KINDS`], asserted of EVERY artifact, and
+#: that held only while there was exactly one: `pinion-chart`'s, whose vocabulary
+#: the rule had quietly become. The second artifact (a screen, not a reusable
+#: crate) carries no `overlay` and no `{prefix}` at all, because a screen paints
+#: one board and its addresses are absolute. Demanding the first artifact's
+#: shape of the second is the defect this project keeps meeting: one name, two
+#: populations.
+REQUIRED_KIND = "grammar"
 
 
 @functools.lru_cache(maxsize=1)
@@ -300,10 +319,22 @@ def selftest() -> int:
             file=sys.stderr,
         )
     for path in artifacts():
-        missing = sorted(set(KINDS) - set(table(path)))
-        if missing:
+        kinds = set(table(path))
+        if REQUIRED_KIND not in kinds:
             failed += 1
-            print(f"FAIL: {path} carries no {missing} row", file=sys.stderr)
+            print(
+                f"FAIL: {path} carries no {REQUIRED_KIND!r} row — an artifact "
+                "with no template is one this reader cannot compose from",
+                file=sys.stderr,
+            )
+        unknown = sorted(kinds - set(KINDS))
+        if unknown:
+            failed += 1
+            print(
+                f"FAIL: {path} carries {unknown} row(s) this reader does not "
+                "know — a kind nobody taught it is read as nothing, silently",
+                file=sys.stderr,
+            )
 
     print(f"painted_grammar selftest: {'FAILED' if failed else 'OK'} ({failed} failure(s))")
     return 1 if failed else 0

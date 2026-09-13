@@ -963,7 +963,7 @@ pub const CARD: &str = "card.";
 /// The kind so the definition is recoverable without a side table; the ordinal
 /// so one kind can be placed more than once.
 #[must_use]
-pub fn card_id(kind: &str, ordinal: usize) -> String {
+pub fn card_id(kind: &str, ordinal: impl std::fmt::Display) -> String {
     format!("{kind}#{ordinal}")
 }
 
@@ -1039,7 +1039,7 @@ pub fn card_chip_prefix(id: &str) -> String {
 
 /// The card's chip `n`.
 #[must_use]
-pub fn card_chip(id: &str, n: usize) -> String {
+pub fn card_chip(id: &str, n: impl std::fmt::Display) -> String {
     format!("{}{n}", card_chip_prefix(id))
 }
 
@@ -1231,3 +1231,265 @@ pub const CARD_BODY_ROOTS: &[fn(&str) -> String] = &[
     card_tiles,
     card_bins,
 ];
+
+// --- the emitted grammar --------------------------------------------------------
+
+/// The committed artifact's body: every CARD address grammar this screen
+/// paints, as text.
+///
+/// ★★★★★ R2217 §5.2 — **a walk is Python and cannot call any of the above.**
+/// Everything under this heading composes an address the walks then RETYPE:
+/// measured at entry, 85 sites across 12 walks spell `card.{id}.grip` and its
+/// siblings as literals, which is the campaign's own defect one language out.
+/// `pinion-chart` answered the same question at R2146 by EMITTING its grammar
+/// as a tracked file, and `tools/painted_grammar.py` already globs
+/// `examples/*/src/painted_grammar.tsv` — a reader waiting for an artifact no
+/// example had ever written.
+///
+/// ⚠ The templates are **DERIVED, not restated**: each row is what the
+/// composer itself returns when handed `{id}` (and `{n}`, `{row}`, …) instead
+/// of a value. A table of literals beside the composers would be a second
+/// spelling that can drift; calling them cannot. That is also why two
+/// composers widened to `impl Display` in this round — a `usize` parameter
+/// cannot carry a placeholder, and the signature that can is the one its
+/// siblings already had.
+///
+/// The rows are `kind<TAB>name<TAB>value`, sorted, so a diff of the artifact
+/// is a diff of the grammar.
+///
+/// ⚠ `cfg(test)`, unlike `pinion_chart::address::render_grammar`, and the
+/// difference is the target: that one is a LIBRARY whose callers are outside
+/// it, this one is a BINARY, where a function nobody in the binary calls is
+/// dead code the workspace lints refuse. What renders the artifact is the test
+/// that regenerates and compares it, so that is where the renderer lives.
+/// The placeholder a template carries where a card id goes.
+#[cfg(test)]
+const GRAMMAR_ID: &str = "{id}";
+
+/// The chrome a card paints: its own address and everything in its header.
+#[cfg(test)]
+fn chrome_rows() -> Vec<(&'static str, String, String)> {
+    let id = GRAMMAR_ID;
+    vec![
+        ("const", "CARD".to_owned(), CARD.to_owned()),
+        // ⚠ `id`, not `grammar`: this composes an ARGUMENT for an address
+        // (`decode#3`), not an address, so the reader's separator rule is
+        // right to refuse it as a template — see `painted_grammar.KINDS`.
+        ("id", "card_id".to_owned(), card_id("{kind}", "{ordinal}")),
+        ("grammar", "card".to_owned(), card(id)),
+        ("grammar", "card_grip".to_owned(), card_grip(id)),
+        (
+            "grammar",
+            "card_affordance".to_owned(),
+            format!("{}.{{affordance}}", card(id)),
+        ),
+        ("grammar", "card_tab".to_owned(), card_tab(id)),
+        ("grammar", "card_tabs".to_owned(), card_tabs(id)),
+        ("grammar", "card_config".to_owned(), card_config(id)),
+        ("grammar", "card_remedy".to_owned(), card_remedy(id)),
+        ("grammar", "card_edit_bar".to_owned(), card_edit_bar(id)),
+        (
+            "grammar",
+            "card_stepper".to_owned(),
+            card_stepper(id, "{verb}"),
+        ),
+        (
+            "grammar",
+            "card_chip_prefix".to_owned(),
+            card_chip_prefix(id),
+        ),
+        ("grammar", "card_chip".to_owned(), card_chip(id, "{n}")),
+        ("grammar", "card_chips".to_owned(), card_chips(id)),
+    ]
+}
+
+/// The parts a card's BODY paints — the R2186 half of the declaration.
+#[cfg(test)]
+fn body_rows() -> Vec<(&'static str, String, String)> {
+    let id = GRAMMAR_ID;
+    vec![
+        ("grammar", "card_head".to_owned(), card_head(id)),
+        (
+            "grammar",
+            "card_head_cell_stem".to_owned(),
+            card_head_cell_stem(id),
+        ),
+        (
+            "grammar",
+            "card_head_cell".to_owned(),
+            card_head_cell(id, "{column}"),
+        ),
+        ("grammar", "card_cell_stem".to_owned(), card_cell_stem(id)),
+        (
+            "grammar",
+            "card_cell".to_owned(),
+            card_cell(id, "{row}", "{column}"),
+        ),
+        ("grammar", "card_grid".to_owned(), card_grid(id)),
+        ("grammar", "card_row".to_owned(), card_row(id, "{row}")),
+        (
+            "grammar",
+            "card_map_row".to_owned(),
+            card_map_row(id, "{row}"),
+        ),
+        ("grammar", "card_tiles".to_owned(), card_tiles(id)),
+        ("grammar", "card_stat".to_owned(), card_stat(id, "{n}")),
+        (
+            "grammar",
+            "card_stat_spark".to_owned(),
+            card_stat_spark(id, "{n}"),
+        ),
+        ("grammar", "card_dist".to_owned(), card_dist(id)),
+        ("grammar", "card_bins".to_owned(), card_bins(id)),
+        ("grammar", "card_caption".to_owned(), card_caption(id)),
+        ("grammar", "card_query".to_owned(), card_query(id)),
+        ("grammar", "card_counts".to_owned(), card_counts(id)),
+        ("grammar", "card_sparkline".to_owned(), card_sparkline(id)),
+        ("grammar", "card_tree".to_owned(), card_tree(id)),
+        (
+            "grammar",
+            "card_tree_row".to_owned(),
+            card_tree_row(id, "{n}"),
+        ),
+        ("grammar", "card_bytegrid".to_owned(), card_bytegrid(id)),
+        ("grammar", "card_bytes".to_owned(), card_bytes(id, "{line}")),
+        ("grammar", "card_byte".to_owned(), card_byte(id, "{index}")),
+        ("grammar", "card_code".to_owned(), card_code(id)),
+    ]
+}
+
+/// Every word `{affordance}` can be, as `part` rows — the kind the format
+/// already has for "one word a placeholder can be".
+#[cfg(test)]
+fn affordance_rows() -> Vec<(&'static str, String, String)> {
+    use pinion_core::widgets::card::CardAffordance;
+
+    [
+        CardAffordance::Settings,
+        CardAffordance::TearOff,
+        CardAffordance::Maximize,
+        CardAffordance::Close,
+    ]
+    .into_iter()
+    .map(|affordance| {
+        (
+            "part",
+            affordance.wire().to_owned(),
+            card_affordance(GRAMMAR_ID, affordance),
+        )
+    })
+    .collect()
+}
+
+#[cfg(test)]
+#[must_use]
+fn render_grammar() -> String {
+    let mut rows = chrome_rows();
+    rows.extend(body_rows());
+    rows.extend(affordance_rows());
+    rows.sort_unstable();
+
+    let mut out = String::from(
+        "# Every CARD address grammar this screen paints, emitted from the\n\
+         # composers in `src/address.rs` by handing each one a placeholder.\n\
+         # Rewritten by setting PINION_REGEN_ADDRESS_PIN and running this\n\
+         # example's `the_committed_grammar_is_what_the_composers_compose`\n\
+         # test; do not hand-edit.\n\
+         #\n\
+         # kind<TAB>name<TAB>value -- const | grammar | id | part.\n\
+         # A `grammar` value is a template: format it with the placeholders it\n\
+         # carries. A `part` row is one word `{affordance}` can be. The `id`\n\
+         # row composes an ARGUMENT for an address, not an address.\n\
+         #\n\
+         # ⚠ The CARD family only. This screen's rail, palette, settings,\n\
+         # float and torn-off grammars are the next instalments; their absence\n\
+         # here is unemitted, not unpainted.\n",
+    );
+    for (kind, name, value) in rows {
+        out.push_str(kind);
+        out.push('\t');
+        out.push_str(&name);
+        out.push('\t');
+        out.push_str(&value);
+        out.push('\n');
+    }
+    out
+}
+
+#[cfg(test)]
+mod grammar_tests {
+    use super::render_grammar;
+
+    /// ★★★★★ R2217 — the committed artifact is what the composers compose.
+    ///
+    /// Regenerate with `PINION_REGEN_ADDRESS_PIN=1 cargo test -p
+    /// hello-analyzer-shell`, the workspace's one regeneration flag.
+    ///
+    /// ⚠ **LOCALLY** — R2146 measured that the remote build wrapper forwards
+    /// no environment variable of its caller's, so a regeneration through it
+    /// does not regenerate, and the variable reaching the far side would write
+    /// the artifact where the next sync cannot see it.
+    #[test]
+    fn the_committed_grammar_is_what_the_composers_compose() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/painted_grammar.tsv");
+        let rendered = render_grammar();
+        // ★ A floor, not decoration: an empty render would agree with an empty
+        // artifact, which is a gate green for having asked nothing.
+        assert!(
+            rendered.lines().filter(|l| !l.starts_with('#')).count() >= 35,
+            "the render holds too few rows to be this screen's card grammar"
+        );
+        if std::env::var_os(pinion_core::REGEN_ADDRESS_PIN).is_some() {
+            std::fs::write(path, &rendered).expect("the artifact is writable");
+            return;
+        }
+        let committed = std::fs::read_to_string(path).expect("the artifact is committed");
+        assert_eq!(
+            committed, rendered,
+            "★★★★★ this screen's painted card grammar changed. A reader outside \
+             Rust formats these templates instead of spelling an address, so a \
+             change here is a PUBLISHED change. If it is intended, set \
+             PINION_REGEN_ADDRESS_PIN and re-run this test."
+        );
+    }
+
+    /// ★★★★★ Every card composer this module publishes is IN the grammar.
+    ///
+    /// Derived from this file's own source rather than from a list beside it:
+    /// R2145 measured that a list of needles is what goes stale, and the
+    /// composer added tomorrow is exactly the row nobody would remember to
+    /// add. The rule is `pub fn card…() -> String` — a composer returns an
+    /// address; `card_kind` returns a borrowed slice and is a PARSER, which is
+    /// why the return type is the discriminator rather than the name.
+    #[test]
+    fn every_card_composer_appears_in_the_grammar() {
+        let source = include_str!("address.rs");
+        let rendered = render_grammar();
+        let named: Vec<&str> = rendered
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .filter_map(|line| line.split('\t').nth(1))
+            .collect();
+        let mut composers = 0;
+        for line in source.lines() {
+            let Some(rest) = line.strip_prefix("pub fn card") else {
+                continue;
+            };
+            if !line.ends_with("-> String {") {
+                continue;
+            }
+            let name = format!("card{}", rest.split('(').next().unwrap_or_default());
+            composers += 1;
+            assert!(
+                named.contains(&name.as_str()),
+                "{name} composes an address and is not in the emitted grammar — \
+                 a reader outside Rust cannot format what this does not publish"
+            );
+        }
+        assert!(
+            composers >= 35,
+            "only {composers} card composer(s) found; this scan is not reading \
+             this module"
+        );
+    }
+}

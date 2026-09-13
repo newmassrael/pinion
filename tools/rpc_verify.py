@@ -5208,7 +5208,13 @@ def chart_grammar() -> dict[str, dict[str, str]]:
     if _CHART_GRAMMAR_CACHE:
         return _CHART_GRAMMAR_CACHE
     _CHART_GRAMMAR_CACHE.update(painted_grammar.table(_CHART_GRAMMAR_PATH))
-    missing = set(painted_grammar.KINDS) - set(_CHART_GRAMMAR_CACHE)
+    # ★★★★★ R2217 — the kinds THIS composer reads, not every kind the FORMAT
+    # knows. Those were the same set while one artifact existed, and this asked
+    # for `painted_grammar.KINDS`; the moment a second artifact taught the
+    # format a word the chart does not use (`id`), the demand became "the chart
+    # must carry another screen's vocabulary" and `r1722` went red. The format's
+    # vocabulary is open by design — what a reader needs is its own.
+    missing = {"const", "grammar", "overlay", "part"} - set(_CHART_GRAMMAR_CACHE)
     if missing:
         raise AssertionError(
             f"{_CHART_GRAMMAR_PATH} carries no {sorted(missing)} row. A walk "
