@@ -107,7 +107,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 
 #: Setting this sets aside THIS rule and nothing else — the idiom this tree
@@ -123,6 +123,33 @@ SOCKET_DIR = "/tmp/.X11-unix"
 #: walk that passed there passes here.
 GEOMETRY_ENV = "PINION_OFFSCREEN_GEOMETRY"
 DEFAULT_GEOMETRY = "1920x1200x24"
+
+
+def chosen_geometry(explicit: str | None, env: Mapping[str, str]) -> str:
+    """Which screen a throwaway server gets: the CALLER's, else the
+    environment's, else [`DEFAULT_GEOMETRY`].
+
+    ★★★★★ R2224 — **this decision had no name, and that is why nothing tested
+    it.** It lived as `geometry or os.environ.get(...) or DEFAULT_GEOMETRY`
+    inside [`offscreen_display`], one line among a context manager's setup, so
+    the fact that a caller's environment can MOVE the screen was invisible to
+    every case in `tools/test_display_seat.py` — while `.github/workflows/ci.yml`
+    sets `PINION_OFFSCREEN_GEOMETRY: "1600x1200x24"` as a job-level variable
+    that every step of that job inherits, the seat-rule tests included.
+
+    The facility case then asserted the literal `1920x1200`, which is the
+    DEFAULT, and was red in CI for eleven rounds' worth of pushes while passing
+    on every developer machine — because no developer machine sets that
+    variable. Measured R2224: exporting it locally reproduces CI's failure
+    exactly, with the machine's stray `:98` still present, which is what refuted
+    the standing diagnosis that the case depended on `:98`.
+
+    ⚠ PURE, and taking its environment as an argument rather than reading the
+    process's. A decision that reads a global cannot be driven through its own
+    branches, and a branch a test cannot reach is a branch nothing holds — the
+    shape R2222 removed from this tree's address ratchet one round earlier.
+    """
+    return explicit or env.get(GEOMETRY_ENV) or DEFAULT_GEOMETRY
 
 #: Where the search for a free display number starts, and how far it goes. High,
 #: because low numbers are where session managers put seats — not because a low
@@ -635,7 +662,7 @@ def offscreen_display(
     through `classify` like any other, and a server that somehow answers with a
     seat's signs is refused instead of painted on.
     """
-    geometry = geometry or os.environ.get(GEOMETRY_ENV) or DEFAULT_GEOMETRY
+    geometry = chosen_geometry(geometry, os.environ)
     if not shutil.which("Xvfb"):
         raise OffscreenUnavailable(
             "Xvfb is not installed, so no offscreen display can be made "

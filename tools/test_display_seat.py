@@ -58,6 +58,7 @@ from display_seat import (  # noqa: E402
 
 PASSED = 0
 FAILED: list[str] = []
+SKIPPED: list[str] = []
 CURRENT = ""
 
 
@@ -67,6 +68,25 @@ def check(condition: bool, label: str) -> None:
         PASSED += 1
     else:
         FAILED.append(f"{CURRENT}: {label}")
+
+
+def skip(reason: str) -> None:
+    """This case asserted NOTHING, and why — named, so the summary can say so.
+
+    ★★★★★ R2224 — **the denominator was invisible, and that is how the red this
+    round repaid stayed unexplained.** Four cases here return early when a
+    dependency is absent (`Xvfb`, a live display), and they did it silently. So
+    the suite printed `92 passed` on a developer machine and `85 passed, 1
+    failed` in CI, and nothing said the six missing assertions were missing
+    rather than removed: a case that quietly stops asserting is indistinguishable
+    from a case that quietly stops existing.
+
+    `tools/sweep_headless.sh` already draws this distinction for demos — it
+    tallies SKIP separately and prints *"env dep absent, coverage NOT
+    exercised"*, on R1333's reasoning that a vacuous pass must not read as a
+    green. This is that discipline, one harness over.
+    """
+    SKIPPED.append(f"{CURRENT}: {reason}")
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +511,75 @@ def test_the_number_the_server_reports_is_the_one_we_asked_for() -> None:
         )
 
 
+#: The screen THIS case asks for — deliberately neither `DEFAULT_GEOMETRY`
+#: (1920x1200) nor the value CI pins (1600x1200), so that a pass proves the
+#: request actually reached the server rather than coinciding with whatever
+#: the environment would have supplied anyway.
+WANT_W, WANT_H = 1400, 1050
+
+
+def test_a_skipped_case_is_named_rather_than_silent() -> None:
+    """The skip ACCOUNTING, driven — because on this host nothing skips.
+
+    ★★★★★ R2224 — this machine has `Xvfb` and a live display, so all four skip
+    branches are unreachable here and the tally would read `0 skipped` whether
+    the accounting worked or not. R2222 met exactly that shape in this tree's
+    address ratchet — a freshly pinned gate whose rise branch no case could
+    reach, so its green said nothing — and the answer is the same: drive the
+    decision directly instead of hoping an environment reaches it.
+
+    ⚠ The `pop` is deliberate and is why this is honest: this case did not
+    actually skip anything, so it must not leave a row claiming coverage was
+    not exercised. Without it the suite would report a skip that never happened,
+    which is the reporting defect this round is repaying, inverted.
+    """
+    before = len(SKIPPED)
+    skip("a reason this case invents")
+    check(len(SKIPPED) == before + 1, "a skip is recorded rather than dropped")
+    check(SKIPPED[-1].endswith("a reason this case invents"), "carrying its reason")
+    check(CURRENT in SKIPPED[-1], "and naming the case that skipped")
+    SKIPPED.pop()
+    check(len(SKIPPED) == before, "and this case leaves no row of its own")
+
+
+def test_the_geometry_is_the_argument_then_the_environment_then_the_default() -> None:
+    """Pure: who decides a throwaway server's screen, in order.
+
+    ★★★★★ R2224 — **the branch that was red in CI and green everywhere else.**
+    `.github/workflows/ci.yml` sets `PINION_OFFSCREEN_GEOMETRY` as a JOB-level
+    variable, so every step of the sweep job inherits it — the seat-rule tests
+    included. No developer machine sets it. The facility case below therefore
+    asserted the default's literal size and passed here forever while failing
+    there, and nothing in this file said the environment could move that value
+    at all.
+
+    ⚠ The standing diagnosis for that red was that the case depended on the
+    machine's borrowed `:98`. Measured R2224 and REFUTED: exporting the
+    variable reproduces the failure exactly with `:98` still present, and
+    unsetting it passes with `:98` still present. `:98` is not in the causal
+    path; this decision is.
+    """
+    check(
+        display_seat.chosen_geometry(None, {}) == display_seat.DEFAULT_GEOMETRY,
+        "with nothing said, the default",
+    )
+    check(
+        display_seat.chosen_geometry(None, {display_seat.GEOMETRY_ENV: "800x600x24"})
+        == "800x600x24",
+        "the environment beats the default — the branch CI takes",
+    )
+    check(
+        display_seat.chosen_geometry("640x480x24", {display_seat.GEOMETRY_ENV: "800x600x24"})
+        == "640x480x24",
+        "an explicit argument beats the environment — the branch a test takes",
+    )
+    check(
+        display_seat.chosen_geometry("", {display_seat.GEOMETRY_ENV: "800x600x24"})
+        == "800x600x24",
+        "an empty argument is not a choice, so the environment still wins",
+    )
+
+
 def test_a_display_is_started_proven_offscreen_and_then_gone() -> None:
     """The whole facility, for real — and the reap is the half that rots.
 
@@ -502,9 +591,11 @@ def test_a_display_is_started_proven_offscreen_and_then_gone() -> None:
     stray `:98` that leak already produced).
     """
     if not shutil.which("Xvfb"):
-        print("[display] no Xvfb here — the facility cases assert nothing")
+        skip("Xvfb is not installed, so the facility cannot be exercised")
         return
-    with display_seat.offscreen_display(start=140) as display:
+    with display_seat.offscreen_display(
+        start=140, geometry=f"{WANT_W}x{WANT_H}x24"
+    ) as display:
         number = display[1:]
         check(display.startswith(":"), f"a display was handed out: {display}")
         check(
@@ -522,8 +613,9 @@ def test_a_display_is_started_proven_offscreen_and_then_gone() -> None:
         )
         check(probed.returncode == 0, "and a real X client can connect to it")
         check(
-            "1920x1200" in probed.stdout,
-            "with the geometry the borrowed :98 had, so a walk carries over",
+            f"{WANT_W}x{WANT_H}" in probed.stdout,
+            f"with the geometry THIS CASE asked for ({WANT_W}x{WANT_H}), "
+            f"whatever the environment pins",
         )
     check(
         not os.path.exists(f"{display_seat.SOCKET_DIR}/X{number}"),
@@ -542,6 +634,7 @@ def test_a_number_already_bound_is_stepped_over() -> None:
     move past it because the *bind* failed.
     """
     if not shutil.which("Xvfb"):
+        skip("Xvfb is not installed, so no occupant can be put in the way")
         return
     occupant = display_seat.start_offscreen(":150", geometry="640x480x24")
     check(occupant is not None, "an occupant was started on :150")
@@ -573,6 +666,7 @@ def test_a_server_that_answers_like_a_seat_is_not_handed_out() -> None:
     facility refuses and still takes the server away.
     """
     if not shutil.which("Xvfb"):
+        skip("Xvfb is not installed, so the refusal path cannot be driven")
         return
     seen: list[str] = []
 
@@ -612,6 +706,7 @@ def test_the_wrapper_runs_a_command_there_and_forwards_its_verdict() -> None:
     sweep green, and nothing else in this tree would notice.
     """
     if not shutil.which("Xvfb"):
+        skip("Xvfb is not installed, so the wrapper cannot be run end to end")
         return
     tool = str(Path(display_seat.__file__).resolve())
     ok = subprocess.run(  # noqa: S603 — argv, no shell
@@ -657,7 +752,7 @@ def test_the_probe_agrees_with_itself_on_this_machine() -> None:
     """
     displays = display_seat.live_displays()
     if not displays:
-        print("[display] no live display here — the probe case asserts nothing")
+        skip("no live display on this host, so the probe has nothing to read")
         return
     for name in displays:
         verdict = display_seat.classify(name, refresh=True)
@@ -692,7 +787,16 @@ def main() -> int:
         except BaseException as exc:  # noqa: BLE001 — a raise IS the verdict
             check(False, f"raised {exc!r}")
     CURRENT = ""
-    print(f"[display] {len(cases)} case(s): {PASSED} passed, {len(FAILED)} failed")
+    # ★★★★★ R2224 — the SKIPPED tally is the denominator, printed whether or
+    # not anything failed. CI ran six fewer assertions than a developer machine
+    # and the summary said only `85 passed`, so the gap read as normal. A count
+    # that cannot say what it did not do is not a measurement.
+    print(
+        f"[display] {len(cases)} case(s): {PASSED} passed, {len(FAILED)} failed, "
+        f"{len(SKIPPED)} skipped"
+    )
+    for reason in SKIPPED:
+        print(f"[display] SKIPPED (dep absent, coverage NOT exercised): {reason}")
     if FAILED:
         # ★★★★★ R2220 — this exact SENTENCE is what makes a red here readable to
         # `tools/counterfactual.py`. Measured this round: five counterfactuals
