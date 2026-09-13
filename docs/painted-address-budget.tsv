@@ -60,9 +60,9 @@ chart.wick	0	1
 chart.xlabel	0	3
 checked.{}	18	0
 chrome.header	0	1
-col_kind.{}	22	8
+col_kind.{}	11	8
 col_modified.{}	10	7
-col_name.{}	5	3
+col_name.{}	2	3
 col_range.{}	0	4
 collapsed.{}	21	9
 collapsed_at.{}	3	0
@@ -226,7 +226,7 @@ shell.status	1	4
 shell.subbar	0	0
 shell.toast	0	3
 sizes.legend	0	1
-source_at.{}	51	22
+source_at.{}	49	22
 source_len.{}	1	0
 source_name.{}	2	0
 state.{}	1	0
@@ -268,7 +268,7 @@ tv.tip	0	0
 tv.toggle	0	0
 unmapped_bytes.{}	1	0
 value.elem	0	0
-value.{}	142	282
+value.{}	82	282
 visible_at.{}	10	2
 visual_index.{}	0	1
 vn.sprite	2	0

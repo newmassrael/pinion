@@ -53,6 +53,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_snap,
@@ -124,16 +125,17 @@ def expected_float_delta(gw: int, dx: int) -> float:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot: numeric kinds + seeded values ─────────────────
         gw = grid_width(tf)
         assert abs(gw - REF_W) <= 4, f"grid paints at ~{REF_W}px (the scrub basis), got {gw}"
         assert_eq(gq(tf, "row_count"), 4, "4 rows")
         assert_eq(gq(tf, "col_count"), 6, "6 columns")
-        assert_eq(gq(tf, "col_kind.2"), "int", "Count (col 2) is an int")
-        assert_eq(gq(tf, "col_kind.3"), "float", "Scale (col 3) is a float")
-        assert_eq(gq(tf, "col_kind.4"), "bool", "Active (col 4) is a bool")
-        assert_eq(gq(tf, "value.0.2"), 1, "Count (0,2) boots at 1")
-        assert_eq(gq(tf, "value.0.3"), 1.0, "Scale (0,3) boots at 1.0")
+        assert_eq(gq(tf, gp.at("col_kind", col=2)), "int", "Count (col 2) is an int")
+        assert_eq(gq(tf, gp.at("col_kind", col=3)), "float", "Scale (col 3) is a float")
+        assert_eq(gq(tf, gp.at("col_kind", col=4)), "bool", "Active (col 4) is a bool")
+        assert_eq(gq(tf, gp.at("value", row=0, col=2)), 1, "Count (0,2) boots at 1")
+        assert_eq(gq(tf, gp.at("value", row=0, col=3)), 1.0, "Scale (0,3) boots at 1.0")
         assert_eq(gq(tf, "scrubbing"), False, "not scrubbing at boot")
 
         # ── (B) reveal: scroll the Count / Scale columns into view ──
@@ -144,7 +146,7 @@ def body() -> None:
 
         # ── (C) float scrub right: Scale up over +60px ──────────────
         scrub(tf, 0, 3, 60)
-        v03 = gq(tf, "value.0.3")
+        v03 = gq(tf, gp.at("value", row=0, col=3))
         exp = 1.0 + expected_float_delta(gw, 60)
         assert isinstance(v03, float) and abs(v03 - exp) < 0.05, \
             f"Scale scrubbed to ~{exp:.3f}, got {v03}"
@@ -154,39 +156,39 @@ def body() -> None:
 
         # ── (D) float scrub left: signed — drags back toward 1.0 ────
         scrub(tf, 0, 3, -60)
-        v03b = gq(tf, "value.0.3")
+        v03b = gq(tf, gp.at("value", row=0, col=3))
         assert v03b < v03, "a leftward drag decreases the value"
         assert abs(v03b - 1.0) < 0.05, f"-60px returns Scale to ~1.0, got {v03b}"
 
         # ── (E) int scrub: Count steps in whole units (8px/step) ────
         scrub(tf, 0, 2, 64)
         steps = round((64 / gw) * REF_W / INT_PX_PER_STEP)
-        assert_eq(gq(tf, "value.0.2"), 1 + steps, f"Count steps +{steps} over +64px")
-        assert isinstance(gq(tf, "value.0.2"), int), "an int scrub stays an int"
+        assert_eq(gq(tf, gp.at("value", row=0, col=2)), 1 + steps, f"Count steps +{steps} over +64px")
+        assert isinstance(gq(tf, gp.at("value", row=0, col=2)), int), "an int scrub stays an int"
 
         # ── (F) clamp: the scrub commits through the clamped set_cell ─
         # funnel — the same gate the AI `value` write runs (R894), so a drag
         # cannot exceed a bound a keyboard / RPC edit cannot. Seed the cell
         # near each bound, then a modest scrub overshoots it.
-        tf.intervene("/external/value.0.2", 990)  # near the 0..1000 max
+        tf.intervene(f"/external/{gp.at('value', row=0, col=2)}", 990)  # near the 0..1000 max
         scrub(tf, 0, 2, 160)  # +160px ~ +20 steps overshoots 1000
-        assert_eq(gq(tf, "value.0.2"), 1000, "rightward scrub clamps to the column max")
-        tf.intervene("/external/value.0.2", 10)  # near the min
+        assert_eq(gq(tf, gp.at("value", row=0, col=2)), 1000, "rightward scrub clamps to the column max")
+        tf.intervene(f"/external/{gp.at('value', row=0, col=2)}", 10)  # near the min
         scrub(tf, 0, 2, -160)  # -160px ~ -20 steps undershoots 0
-        assert_eq(gq(tf, "value.0.2"), 0, "leftward scrub clamps to the column min")
+        assert_eq(gq(tf, gp.at("value", row=0, col=2)), 0, "leftward scrub clamps to the column min")
 
         # ── (G) isolation: a scrub touches only its own cell ────────
-        assert abs(gq(tf, "value.0.3") - 1.0) < 0.05, "Scale untouched by the Count scrubs"
-        assert_eq(gq(tf, "value.1.2"), 24, "Count of row 1 untouched")
+        assert abs(gq(tf, gp.at("value", row=0, col=3)) - 1.0) < 0.05, "Scale untouched by the Count scrubs"
+        assert_eq(gq(tf, gp.at("value", row=1, col=2)), 24, "Count of row 1 untouched")
 
         # ── (H) a click on a numeric cell FOCUSES it (R915) ─────────
         # A press within DRAG_CLICK_THRESHOLD_PX is a click, not a scrub: it
         # focuses the cell (value unchanged, no scrub, no edit). Only a drag past
         # the threshold scrubs (sections C-F). R915 fixed the R914 absorption.
-        before = gq(tf, "value.1.2")
+        before = gq(tf, gp.at("value", row=1, col=2))
         tf.click(path=f"{GRID}#1_2")
         # No-op verification: the dispatch commits before the RPC response.
-        assert_eq(gq(tf, "value.1.2"), before, "a click leaves the numeric value unchanged")
+        assert_eq(gq(tf, gp.at("value", row=1, col=2)), before, "a click leaves the numeric value unchanged")
         assert_eq(gq(tf, "scrubbing"), False, "a click leaves no scrub live")
         assert_eq(gq(tf, "editing_row"), None, "a single click on a numeric cell does not edit")
         assert_eq(gq(tf, "focused_row"), 1, "R915: the click focuses the numeric cell's row")
@@ -195,9 +197,9 @@ def body() -> None:
         # ── (I) a click on a non-numeric (bool) cell still toggles ──
         # The bool column never arms a scrub, so its click falls through to the
         # focus + toggle action (the R837 click path is intact under capture).
-        assert_eq(gq(tf, "value.2.4"), False, "Active (2,4) boots false")
+        assert_eq(gq(tf, gp.at("value", row=2, col=4)), False, "Active (2,4) boots false")
         tf.click(path=f"{GRID}#2_4")
-        assert_eq(gq(tf, "value.2.4"), True, "the bool toggles on click (never armed a scrub)")
+        assert_eq(gq(tf, gp.at("value", row=2, col=4)), True, "the bool toggles on click (never armed a scrub)")
         assert_eq(gq(tf, "focused_row"), 2, "the bool click focuses its cell")
         assert_eq(gq(tf, "scrubbing"), False, "a non-numeric click never scrubs")
 

@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
 )
 
@@ -54,11 +55,12 @@ def cursor(tf, row: int, col: int) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-data-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot ─────────────────────────────────────────────────
         assert_eq(q(tf, "row_count"), 4, "4 seed rows")
-        assert_eq(q(tf, "col_kind.2"), "int", "col 2 (Count) is int")
-        assert_eq(q(tf, "col_kind.3"), "float", "col 3 (Scale) is float")
-        base_anchor = q(tf, "value.3.2")  # the last row's Count, before any paste
+        assert_eq(q(tf, gp.at("col_kind", col=2)), "int", "col 2 (Count) is int")
+        assert_eq(q(tf, gp.at("col_kind", col=3)), "float", "col 3 (Scale) is float")
+        base_anchor = q(tf, gp.at("value", row=3, col=2))  # the last row's Count, before any paste
 
         # ── (B) a 3-row block at the last row grows to 6 rows ────────
         cursor(tf, 3, 2)  # last row, Count column
@@ -66,25 +68,25 @@ def body() -> None:
         assert_eq(q(tf, "row_count"), 6, "the grid grew from 4 to 6 rows")
 
         # ── (C) every landed row is typed by its column ──────────────
-        assert_eq(q(tf, "value.3.2"), 11, "anchor row Count = 11")
-        assert_eq(q(tf, "value.3.3"), 1.5, "anchor row Scale = 1.5")
-        assert_eq(q(tf, "value.4.2"), 22, "grown row 4 Count = 22")
-        assert_eq(q(tf, "value.4.3"), 2.5, "grown row 4 Scale = 2.5")
-        assert_eq(q(tf, "value.5.2"), 33, "grown row 5 Count = 33")
-        assert_eq(q(tf, "value.5.3"), 3.5, "grown row 5 Scale = 3.5")
+        assert_eq(q(tf, gp.at("value", row=3, col=2)), 11, "anchor row Count = 11")
+        assert_eq(q(tf, gp.at("value", row=3, col=3)), 1.5, "anchor row Scale = 1.5")
+        assert_eq(q(tf, gp.at("value", row=4, col=2)), 22, "grown row 4 Count = 22")
+        assert_eq(q(tf, gp.at("value", row=4, col=3)), 2.5, "grown row 4 Scale = 2.5")
+        assert_eq(q(tf, gp.at("value", row=5, col=2)), 33, "grown row 5 Count = 33")
+        assert_eq(q(tf, gp.at("value", row=5, col=3)), 3.5, "grown row 5 Scale = 3.5")
         # A column NOT in the block keeps the appended row's typed default.
-        assert_eq(q(tf, "value.5.0"), "", "grown row's Asset is the empty default")
+        assert_eq(q(tf, gp.at("value", row=5, col=0)), "", "grown row's Asset is the empty default")
 
         # ── (D) ONE undo reverts the whole paste (rows + cells) ──────
         assert_eq(tf.query(f"{UNDO}/undo_label"), "Paste", "the whole paste is one step")
         assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "one undo")
         assert_eq(q(tf, "row_count"), 4, "the two grown rows are gone (row 4/5 removed)")
-        assert_eq(q(tf, "value.3.2"), base_anchor, "the anchor row's Count reverted too")
+        assert_eq(q(tf, gp.at("value", row=3, col=2)), base_anchor, "the anchor row's Count reverted too")
 
         # ── (E) redo re-grows; a 2nd undo settles to baseline ────────
         assert_eq(tf.invoke(f"{UNDO}/redo", None), True, "redo re-applies")
         assert_eq(q(tf, "row_count"), 6, "redo re-grows to 6 rows")
-        assert_eq(q(tf, "value.5.2"), 33, "redo re-writes the grown cell")
+        assert_eq(q(tf, gp.at("value", row=5, col=2)), 33, "redo re-writes the grown cell")
         assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo back to baseline")
         assert_eq(q(tf, "row_count"), 4, "back to the 4-row baseline")
 
@@ -98,11 +100,11 @@ def body() -> None:
         cursor(tf, 0, 2)  # room for 2 rows below (rows 0,1)
         assert_eq(inv(tf, "paste", "7\n8"), 2, "both rows are in range")
         assert_eq(q(tf, "row_count"), 4, "an in-range paste grows nothing")
-        assert_eq(q(tf, "value.0.2"), 7, "row 0 Count = 7")
-        assert_eq(q(tf, "value.1.2"), 8, "row 1 Count = 8")
+        assert_eq(q(tf, gp.at("value", row=0, col=2)), 7, "row 0 Count = 7")
+        assert_eq(q(tf, gp.at("value", row=1, col=2)), 8, "row 1 Count = 8")
         assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo the in-range paste")
-        assert_eq(q(tf, "value.0.2"), 1, "row 0 Count restored")
-        assert_eq(q(tf, "value.1.2"), 24, "row 1 Count restored (both in-range rows revert)")
+        assert_eq(q(tf, gp.at("value", row=0, col=2)), 1, "row 0 Count restored")
+        assert_eq(q(tf, gp.at("value", row=1, col=2)), 24, "row 1 Count restored (both in-range rows revert)")
 
         # ── (H) R1247 — an all-unparseable overrun line grows NO phantom row ──
         # A text label over the Int column (the real spreadsheet case): the
@@ -111,9 +113,9 @@ def body() -> None:
         cursor(tf, 3, 2)  # last row, Int column
         assert_eq(inv(tf, "paste", "55\nTotal"), 1, "only the anchor cell lands")
         assert_eq(q(tf, "row_count"), 4, "the unparseable overrun grew NO phantom row")
-        assert_eq(q(tf, "value.3.2"), 55, "the anchor row got 55")
+        assert_eq(q(tf, gp.at("value", row=3, col=2)), 55, "the anchor row got 55")
         assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo the anchor write")
-        assert_eq(q(tf, "value.3.2"), base_anchor, "the anchor Count restored")
+        assert_eq(q(tf, gp.at("value", row=3, col=2)), base_anchor, "the anchor Count restored")
 
 
 if __name__ == "__main__":

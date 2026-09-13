@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
 )
@@ -51,48 +52,49 @@ def inv(tf, verb: str, arg=None):
 
 def body() -> None:
     with RpcSubprocess("hello-data-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot taxonomy ────────────────────────────────────────
         assert find_by_tag(tf.snapshot(source="paint", viewport=VIEWPORT), GRID) is not None, "grid present"
         assert_eq(q(tf, "row_count"), 4, "4 seed rows")
         assert_eq(q(tf, "col_count"), 6, "6 columns")
-        assert_eq(q(tf, "col_name.2"), "Count", "col 2 is Count")
-        assert_eq(q(tf, "col_kind.2"), "int", "Count is an int column")
-        assert_eq(q(tf, "col_kind.4"), "bool", "Active is a bool column")
-        assert_eq(q(tf, "value.0.0"), "Hero", "row 0 Asset")
-        assert_eq(q(tf, "value.1.0"), "Tree", "row 1 Asset")
-        assert_eq(q(tf, "value.3.0"), "Boss", "row 3 Asset")
+        assert_eq(q(tf, gp.at("col_name", col=2)), "Count", "col 2 is Count")
+        assert_eq(q(tf, gp.at("col_kind", col=2)), "int", "Count is an int column")
+        assert_eq(q(tf, gp.at("col_kind", col=4)), "bool", "Active is a bool column")
+        assert_eq(q(tf, gp.at("value", row=0, col=0)), "Hero", "row 0 Asset")
+        assert_eq(q(tf, gp.at("value", row=1, col=0)), "Tree", "row 1 Asset")
+        assert_eq(q(tf, gp.at("value", row=3, col=0)), "Boss", "row 3 Asset")
 
         # ── (B) add_row appends a typed-empty row + moves the cursor ──
         assert_eq(inv(tf, "add_row"), 4, "add_row returns the new source index")
         assert_eq(q(tf, "row_count"), 5, "one row added")
-        assert_eq(q(tf, "value.4.0"), "", "new Asset cell is the empty Text default")
-        assert_eq(q(tf, "value.4.2"), 0, "new Count cell is the Int default 0")
-        assert_eq(q(tf, "value.4.3"), 0.0, "new Scale cell is the Float default 0.0")
-        assert_eq(q(tf, "value.4.4"), False, "new Active cell is the Bool default false")
+        assert_eq(q(tf, gp.at("value", row=4, col=0)), "", "new Asset cell is the empty Text default")
+        assert_eq(q(tf, gp.at("value", row=4, col=2)), 0, "new Count cell is the Int default 0")
+        assert_eq(q(tf, gp.at("value", row=4, col=3)), 0.0, "new Scale cell is the Float default 0.0")
+        assert_eq(q(tf, gp.at("value", row=4, col=4)), False, "new Active cell is the Bool default false")
         assert_eq(q(tf, "focused_row"), 4, "the cursor moved onto the new row")
         # The appended row edits exactly like a seeded cell (no parallel path).
-        tf.intervene("/external/value.4.0", "Sword")
-        assert_eq(q(tf, "value.4.0"), "Sword", "the appended row edits like a seeded one")
-        tf.intervene("/external/value.4.4", True)
-        assert_eq(q(tf, "value.4.4"), True, "and toggles its bool")
+        tf.intervene(f"/external/{gp.at('value', row=4, col=0)}", "Sword")
+        assert_eq(q(tf, gp.at("value", row=4, col=0)), "Sword", "the appended row edits like a seeded one")
+        tf.intervene(f"/external/{gp.at('value', row=4, col=4)}", True)
+        assert_eq(q(tf, gp.at("value", row=4, col=4)), True, "and toggles its bool")
 
         # ── (C) the added row participates in sort ───────────────────
         # New row's Count is the default 0 — below every seed Count (1/24/99/1),
         # so an ascending Count sort puts it first.
         inv(tf, "cycle_sort", 2)  # unsorted -> ascending by Count (col 2)
         assert_eq(q(tf, "visible_len"), 5, "all five rows are visible (no filter)")
-        assert_eq(q(tf, "source_at.0"), 4, "the added row (Count 0) sorts to the front")
+        assert_eq(q(tf, gp.at("source_at", pos=0)), 4, "the added row (Count 0) sorts to the front")
         inv(tf, "cycle_sort", 2)  # ascending -> descending
         inv(tf, "cycle_sort", 2)  # descending -> unsorted (clear for the remove phase)
-        assert_eq(q(tf, "source_at.0"), 0, "back to source order (Hero first)")
+        assert_eq(q(tf, gp.at("source_at", pos=0)), 0, "back to source order (Hero first)")
 
         # ── (D) remove_row drops a source row + shifts indices down ──
         # Source rows now: 0 Hero, 1 Tree, 2 Coin, 3 Boss, 4 Sword.
         assert_eq(inv(tf, "remove_row", 1), True, "remove source row 1 (Tree)")
         assert_eq(q(tf, "row_count"), 4, "one row removed")
-        assert_eq(q(tf, "value.1.0"), "Coin", "old row 2 (Coin) shifted down to index 1")
-        assert_eq(q(tf, "value.2.0"), "Boss", "and Boss to index 2")
-        assert_eq(q(tf, "value.3.0"), "Sword", "and the added Sword to index 3")
+        assert_eq(q(tf, gp.at("value", row=1, col=0)), "Coin", "old row 2 (Coin) shifted down to index 1")
+        assert_eq(q(tf, gp.at("value", row=2, col=0)), "Boss", "and Boss to index 2")
+        assert_eq(q(tf, gp.at("value", row=3, col=0)), "Sword", "and the added Sword to index 3")
 
         # ── (E) rejects — out-of-range + keep at least one row ───────
         assert_eq(inv(tf, "remove_row", 99), False, "out-of-range row rejected")
