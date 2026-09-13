@@ -41,6 +41,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_query,
@@ -51,7 +52,7 @@ WIN = (560, 640)
 EXT = "/external"
 GRID = "property_grid"
 FILL = f"{GRID}#gauge8"   # the Opacity gauge's active-fill tag
-OPACITY = "value.8"
+OPACITY_INDEX = 8         # the Opacity leaf's value index
 TRACK_W = 230             # VALUE_COL_W(250) - 2 * CELL_PAD(10)
 
 
@@ -60,20 +61,23 @@ def _fill_w(snap: Any) -> int:
     return rect[2] if rect else 0
 
 
-def _set_opacity(g: RpcSubprocess, v: float) -> Any:
-    g.intervene(f"{EXT}/{OPACITY}", v)
-    return wait_query(g, f"{EXT}/{OPACITY}", v, desc=f"Opacity set to {v}")
+def _set_opacity(g: RpcSubprocess, opacity: str, v: float) -> Any:
+    g.intervene(f"{EXT}/{opacity}", v)
+    return wait_query(g, f"{EXT}/{opacity}", v, desc=f"Opacity set to {v}")
 
 
 def body() -> None:
     with RpcSubprocess("hello-property-grid", request_timeout=12.0) as g:
+        gp = external_paths(g)
+        opacity = gp.at("value", index=OPACITY_INDEX)
         # ── (A) range introspection: only the bounded leaf reports an interval.
         # The wire is the data-grid R894 `col_range` sibling format ("lo..hi" /
         # "none"), so one range format reads across both DCC widgets.
-        assert_eq(g.query(f"{EXT}/{OPACITY}"), 1.0, "Opacity boots at 1.0")
-        assert_eq(g.query(f"{EXT}/range.8"), "0..1", "Opacity range is 0..1")
-        for unranged in ("range.6", "range.7", "range.4", "range.2"):
-            assert_eq(g.query(f"{EXT}/{unranged}"), "none", f"{unranged} is unbounded")
+        assert_eq(g.query(f"{EXT}/{opacity}"), 1.0, "Opacity boots at 1.0")
+        assert_eq(g.query(f"{EXT}/{gp.at('range', index=OPACITY_INDEX)}"), "0..1", "Opacity range is 0..1")
+        for index in (6, 7, 4, 2):
+            assert_eq(g.query(f"{EXT}/{gp.at('range', index=index)}"), "none",
+                      f"row {index} is unbounded")
 
         # The gauge is painted at boot (full fill at 1.0).
         snap = wait_snap(
@@ -87,7 +91,7 @@ def body() -> None:
         # ── (C) the fill width is exactly frac · track_width, for several values
         prev_w = -1
         for v in [0.1, 0.25, 0.5, 0.75, 1.0]:
-            _set_opacity(g, v)
+            _set_opacity(g, opacity,v)
             snap = wait_snap(
                 g,
                 lambda s, vv=v: abs(_fill_w(s) - round(vv * TRACK_W)) <= 1,
@@ -100,17 +104,17 @@ def body() -> None:
             prev_w = w
 
         # ── (B) the clamp funnels every writer: out-of-range RPC writes clamp
-        g.intervene(f"{EXT}/{OPACITY}", 2.5)
-        wait_query(g, f"{EXT}/{OPACITY}", 1.0, desc="above-max write clamps to 1.0")
+        g.intervene(f"{EXT}/{opacity}", 2.5)
+        wait_query(g, f"{EXT}/{opacity}", 1.0, desc="above-max write clamps to 1.0")
         snap = g.snapshot(source="paint", viewport=WIN)
         assert_eq(_fill_w(snap), TRACK_W, "clamped-to-max value fills the whole track")
-        g.intervene(f"{EXT}/{OPACITY}", -3.0)
-        wait_query(g, f"{EXT}/{OPACITY}", 0.0, desc="below-min write clamps to 0.0")
+        g.intervene(f"{EXT}/{opacity}", -3.0)
+        wait_query(g, f"{EXT}/{opacity}", 0.0, desc="below-min write clamps to 0.0")
         snap = g.snapshot(source="paint", viewport=WIN)
         assert _fill_w(snap) <= 1, "clamped-to-min value leaves an empty fill"
 
         # ── (D) a live pointer scrub past the top clamps to the interval ────
-        _set_opacity(g, 0.9)
+        _set_opacity(g, opacity,0.9)
         snap = g.snapshot(source="paint", viewport=WIN)
         rx, ry, rw, rh = abs_rects_of(snap)[f"{GRID}#8"]
         cx, cy = rx + int(rw * 0.6), ry + rh // 2
@@ -118,16 +122,16 @@ def body() -> None:
         # gauge fill is pointer_transparent, so the press falls through to the
         # row's scrub (it does not intercept the drag).
         g.drag(from_at=(float(cx), float(cy)), to_at=(float(cx + 60), float(cy)), steps=10)
-        wait_query(g, f"{EXT}/{OPACITY}", 1.0, desc="a live scrub past the top clamps to 1.0")
+        wait_query(g, f"{EXT}/{opacity}", 1.0, desc="a live scrub past the top clamps to 1.0")
         snap = g.snapshot(source="paint", viewport=WIN)
         assert_eq(_fill_w(snap), TRACK_W, "the clamped scrub fills the whole track")
 
         # ── reset restores the class default (1.0), in range ────────────────
-        _set_opacity(g, 0.3)
-        assert_eq(g.query(f"{EXT}/modified.8"), True, "Opacity 0.3 differs from its 1.0 default")
+        _set_opacity(g, opacity,0.3)
+        assert_eq(g.query(f"{EXT}/{gp.at('modified', addr=OPACITY_INDEX)}"), True, "Opacity 0.3 differs from its 1.0 default")
         g.invoke(f"{EXT}/reset", 8)
-        wait_query(g, f"{EXT}/{OPACITY}", 1.0, desc="reset restores Opacity to its 1.0 default")
-        assert_eq(g.query(f"{EXT}/modified.8"), False, "reset clears the modified flag")
+        wait_query(g, f"{EXT}/{opacity}", 1.0, desc="reset restores Opacity to its 1.0 default")
+        assert_eq(g.query(f"{EXT}/{gp.at('modified', addr=OPACITY_INDEX)}"), False, "reset clears the modified flag")
         snap = g.snapshot(source="paint", viewport=WIN)
         assert_eq(_fill_w(snap), TRACK_W, "the reset value fills the whole track")
 

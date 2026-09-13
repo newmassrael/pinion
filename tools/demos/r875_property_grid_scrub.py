@@ -41,6 +41,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -95,21 +96,22 @@ def expected_float_delta(gw: int, dx: int) -> float:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf, f"/{GRID}/external")
         # ── (A) boot: numeric kinds + seeded values ─────────────────
         gw = grid_width(tf)
         assert abs(gw - REF_W) <= 4, f"grid paints at ~{REF_W}px (the scrub basis), got {gw}"
-        assert_eq(gq(tf, "kind.4"), "int", "Layer (source 4) is an int")
-        assert_eq(gq(tf, "kind.5"), "int", "Health (source 5) is an int")
-        assert_eq(gq(tf, "kind.6"), "float", "Pos X (source 6) is a float")
-        assert_eq(gq(tf, "kind.2"), "bool", "Visible (source 2) is a bool")
-        assert_eq(gq(tf, "value.4"), 3, "Layer boots at 3")
-        assert_eq(gq(tf, "value.5"), 100, "Health boots at 100")
-        assert_eq(gq(tf, "value.6"), 12.5, "Pos X boots at 12.5")
+        assert_eq(gq(tf, gp.at("kind", index=4)), "int", "Layer (source 4) is an int")
+        assert_eq(gq(tf, gp.at("kind", index=5)), "int", "Health (source 5) is an int")
+        assert_eq(gq(tf, gp.at("kind", index=6)), "float", "Pos X (source 6) is a float")
+        assert_eq(gq(tf, gp.at("kind", index=2)), "bool", "Visible (source 2) is a bool")
+        assert_eq(gq(tf, gp.at("value", index=4)), 3, "Layer boots at 3")
+        assert_eq(gq(tf, gp.at("value", index=5)), 100, "Health boots at 100")
+        assert_eq(gq(tf, gp.at("value", index=6)), 12.5, "Pos X boots at 12.5")
         assert_eq(gq(tf, "scrubbing"), False, "not scrubbing at boot")
 
         # ── (B) float scrub right: Pos X up by ~+1.0 over +100px ─────
         scrub(tf, 6, 100)
-        v6 = gq(tf, "value.6")
+        v6 = gq(tf, gp.at("value", index=6))
         exp = 12.5 + expected_float_delta(gw, 100)
         assert isinstance(v6, float) and abs(v6 - exp) < 0.05, \
             f"Pos X scrubbed to ~{exp:.3f}, got {v6}"
@@ -119,39 +121,39 @@ def body() -> None:
 
         # ── (C) float scrub left: signed — drags back toward 12.5 ───
         scrub(tf, 6, -100)
-        v6b = gq(tf, "value.6")
+        v6b = gq(tf, gp.at("value", index=6))
         assert v6b < v6, "a leftward drag decreases the value"
         assert abs(v6b - 12.5) < 0.05, f"-100px returns Pos X to ~12.5, got {v6b}"
 
         # ── (D) int scrub: Layer steps in whole units (8px/step) ────
         scrub(tf, 4, 80)
         steps = round((80 / gw) * REF_W / INT_PX_PER_STEP)
-        assert_eq(gq(tf, "value.4"), 3 + steps, f"Layer steps +{steps} over +80px")
-        assert isinstance(gq(tf, "value.4"), int), "an int scrub stays an int"
+        assert_eq(gq(tf, gp.at("value", index=4)), 3 + steps, f"Layer steps +{steps} over +80px")
+        assert isinstance(gq(tf, gp.at("value", index=4)), int), "an int scrub stays an int"
 
         # ── (E) int scrub left: steps back down ─────────────────────
-        layer_hi = gq(tf, "value.4")
+        layer_hi = gq(tf, gp.at("value", index=4))
         scrub(tf, 4, -40)
         back = round((40 / gw) * REF_W / INT_PX_PER_STEP)
-        assert_eq(gq(tf, "value.4"), layer_hi - back, f"Layer steps -{back} over -40px")
+        assert_eq(gq(tf, gp.at("value", index=4)), layer_hi - back, f"Layer steps -{back} over -40px")
 
         # ── (F) isolation: a scrub touches only its own row ─────────
-        assert_eq(gq(tf, "value.5"), 100, "Health untouched by the Layer / Pos X scrubs")
-        assert abs(gq(tf, "value.6") - 12.5) < 0.05, "Pos X back at its (C) value"
+        assert_eq(gq(tf, gp.at("value", index=5)), 100, "Health untouched by the Layer / Pos X scrubs")
+        assert abs(gq(tf, gp.at("value", index=6)) - 12.5) < 0.05, "Pos X back at its (C) value"
 
         # ── (G) a click (no move) does not scrub and does not edit ──
-        before = gq(tf, "value.5")
+        before = gq(tf, gp.at("value", index=5))
         tf.click(path=f"{GRID}#5")
         # No-op verification: the dispatch commits before the RPC
         # response, so a plain read after the click IS the post-click state.
-        assert_eq(gq(tf, "value.5"), before, "a click leaves the value unchanged")
+        assert_eq(gq(tf, gp.at("value", index=5)), before, "a click leaves the value unchanged")
         assert_eq(gq(tf, "scrubbing"), False, "a click never calibrates a scrub")
         assert_eq(gq(tf, "editing"), None, "a single click on a numeric row does not edit")
 
         # ── (H) a drag on a non-numeric row never scrubs ────────────
-        assert_eq(gq(tf, "value.2"), True, "Visible boots true")
+        assert_eq(gq(tf, gp.at("value", index=2)), True, "Visible boots true")
         scrub(tf, 2, 70)  # drag the bool row
-        assert_eq(gq(tf, "value.2"), False, "the bool toggles on release (the drag did not scrub)")
+        assert_eq(gq(tf, gp.at("value", index=2)), False, "the bool toggles on release (the drag did not scrub)")
         assert_eq(gq(tf, "scrubbing"), False, "a non-numeric drag never scrubs")
 
         # ── (I) double-click still opens the inline editor ──────────

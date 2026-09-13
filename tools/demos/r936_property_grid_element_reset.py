@@ -54,7 +54,6 @@ GRID = "property_grid"
 VIEWPORT = (460, 900)
 
 ARR = "arr.weights"
-ARR_MODIFIED = f"array_modified.{ARR}"
 
 
 def gq(tf, slot):
@@ -73,6 +72,7 @@ def body() -> None:
         # (`value.<index>`, `modified.<addr>`), and the walk had been re-typing
         # the declaration. Asked for once, composed at every site.
         gp = external_paths(tf, f"/{GRID}/external")
+        arr_modified = gp.at("array_modified", branch_id=ARR)
 
         # The array branch sits at the bottom of the tall (non-scrolling) grid, so
         # collapse the categories above it up front to lift the array's element
@@ -87,7 +87,7 @@ def body() -> None:
         assert_eq(gq(tf, "elem_count"), 3, "the array boots with 3 elements [1.0, 0.5, 0.25]")
         assert_eq(gq(tf, gp.at("modified", addr="elem.0")), False, "boot: element 0 is at its default")
         assert_eq(gq(tf, gp.at("modified", addr="elem.2")), False, "boot: element 2 is at its default")
-        assert_eq(gq(tf, ARR_MODIFIED), False, "boot: the array branch is clean")
+        assert_eq(gq(tf, arr_modified), False, "boot: the array branch is clean")
         assert_eq(gq(tf, "any_modified"), False, "boot: the whole object is clean")
         assert not painted(tf, f"{GRID}#resetelem.0"), "no element reset arrow while clean"
         assert not painted(tf, f"{GRID}#reset{ARR}"), "no array-branch reset arrow while clean"
@@ -96,7 +96,7 @@ def body() -> None:
         tf.intervene(f"/{GRID}/external/{gp.at('value', index='elem.0')}", 9.0)
         assert_eq(gq(tf, gp.at("modified", addr="elem.0")), True, "the edited element is modified")
         assert_eq(gq(tf, gp.at("modified", addr="elem.1")), False, "a sibling element stays clean")
-        assert_eq(gq(tf, ARR_MODIFIED), True, "the array branch rolls up the element edit")
+        assert_eq(gq(tf, arr_modified), True, "the array branch rolls up the element edit")
         assert_eq(gq(tf, "any_modified"), True, "the object is now dirty")
         wait_until(lambda: painted(tf, f"{GRID}#resetelem.0"), timeout=4.0, interval=0.03,
                    desc="the modified element paints its reset arrow")
@@ -108,7 +108,7 @@ def body() -> None:
         assert_eq(tf.invoke(f"/{GRID}/external/reset", "elem.0"), True, "reset restored the element")
         assert_eq(gq(tf, gp.at("value", index="elem.0")), 1.0, "the element is back at its default")
         assert_eq(gq(tf, gp.at("modified", addr="elem.0")), False, "the element is clean again")
-        assert_eq(gq(tf, ARR_MODIFIED), False, "the array roll-up clears")
+        assert_eq(gq(tf, arr_modified), False, "the array roll-up clears")
         assert_eq(gq(tf, "any_modified"), False, "the object is clean again")
         assert_eq(tf.invoke(f"/{GRID}/external/reset", "elem.0"), False, "reset of a clean element is a no-op")
         wait_until(lambda: not painted(tf, f"{GRID}#resetelem.0"), timeout=4.0, interval=0.03,
@@ -126,7 +126,7 @@ def body() -> None:
         # ── (E) a length change + the added-element rule + reset_array ─
         assert_eq(tf.invoke(f"/{GRID}/external/add_elem", None), 3, "add_elem appends a 4th element")
         assert_eq(gq(tf, "elem_count"), 4, "the list grew to 4")
-        assert_eq(gq(tf, ARR_MODIFIED), True, "a longer list is array-modified")
+        assert_eq(gq(tf, arr_modified), True, "a longer list is array-modified")
         assert_eq(gq(tf, "any_modified"), True, "the longer list dirties the object")
         assert_eq(gq(tf, gp.at("modified", addr="elem.3")), False, "an added element has no class default -> not per-element modified")
         wait_until(lambda: painted(tf, f"{GRID}#reset{ARR}"), timeout=4.0, interval=0.03,
@@ -137,7 +137,7 @@ def body() -> None:
         assert_eq(tf.invoke(f"/{GRID}/external/reset_array", None), True, "reset_array restored the whole list")
         assert_eq(gq(tf, "elem_count"), 3, "reset_array restored the length")
         assert_eq(gq(tf, gp.at("value", index="elem.1")), 0.5, "reset_array restored the content")
-        assert_eq(gq(tf, ARR_MODIFIED), False, "the array is clean after reset_array")
+        assert_eq(gq(tf, arr_modified), False, "the array is clean after reset_array")
         assert_eq(tf.invoke(f"/{GRID}/external/reset_array", None), False, "reset_array on a default list is a no-op")
         # The GUI twin: a length change, then a click on the branch reset arrow.
         tf.invoke(f"/{GRID}/external/add_elem", None)

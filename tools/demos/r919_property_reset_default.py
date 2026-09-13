@@ -35,6 +35,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -54,63 +55,64 @@ def arrow_painted(tf, source: int) -> bool:
     return find_by_tag(snap, f"{GRID}#reset{source}") is not None
 
 
-def edit_int(tf, source: int, value: int) -> None:
-    tf.intervene(f"/{GRID}/external/value.{source}", value)
+def edit_int(tf, gp, source: int, value: int) -> None:
+    tf.intervene(f"/{GRID}/external/{gp.at('value', index=source)}", value)
 
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf, f"/{GRID}/external")
         # ── (A) boot — clean ────────────────────────────────────────
         assert_eq(gq(tf, "any_modified"), False, "boot: nothing modified")
-        assert_eq(gq(tf, "modified.4"), False, "Layer is at its default")
-        assert_eq(gq(tf, "modified.6"), False, "Pos X is at its default")
-        assert_eq(gq(tf, "value.4"), 3, "Layer default is 3")
+        assert_eq(gq(tf, gp.at("modified", addr=4)), False, "Layer is at its default")
+        assert_eq(gq(tf, gp.at("modified", addr=6)), False, "Pos X is at its default")
+        assert_eq(gq(tf, gp.at("value", index=4)), 3, "Layer default is 3")
         assert not arrow_painted(tf, 4), "no reset arrow on a clean row"
 
         # ── (B) edit a value -> modified + reset arrow paints ───────
-        edit_int(tf, 4, 17)
-        assert_eq(gq(tf, "value.4"), 17, "the edit applied")
-        assert_eq(gq(tf, "modified.4"), True, "an edited value reads modified")
+        edit_int(tf, gp, 4,17)
+        assert_eq(gq(tf, gp.at("value", index=4)), 17, "the edit applied")
+        assert_eq(gq(tf, gp.at("modified", addr=4)), True, "an edited value reads modified")
         assert_eq(gq(tf, "any_modified"), True, "the grid is now dirty")
-        assert_eq(gq(tf, "modified.6"), False, "an untouched row stays clean")
+        assert_eq(gq(tf, gp.at("modified", addr=6)), False, "an untouched row stays clean")
         wait_until(lambda: arrow_painted(tf, 4), timeout=4.0, interval=0.03,
                    desc="the modified row paints its reset arrow")
         assert not arrow_painted(tf, 6), "a clean row paints no arrow"
 
         # ── (C) reset over RPC -> default returns, arrow disappears ──
         assert_eq(tf.invoke(f"/{GRID}/external/reset", 4), True, "reset changed the modified row")
-        assert_eq(gq(tf, "value.4"), 3, "reset restored the default")
-        assert_eq(gq(tf, "modified.4"), False, "the row reads clean again")
+        assert_eq(gq(tf, gp.at("value", index=4)), 3, "reset restored the default")
+        assert_eq(gq(tf, gp.at("modified", addr=4)), False, "the row reads clean again")
         assert_eq(gq(tf, "any_modified"), False, "the grid is clean again")
         wait_until(lambda: not arrow_painted(tf, 4), timeout=4.0, interval=0.03,
                    desc="the reset arrow disappears once default")
 
         # ── (D) reset by CLICKING the arrow (the same funnel) ───────
-        edit_int(tf, 4, 99)
+        edit_int(tf, gp, 4,99)
         wait_until(lambda: arrow_painted(tf, 4), timeout=4.0, interval=0.03,
                    desc="the arrow returns after a fresh edit")
         tf.click(path=f"{GRID}#reset4")
-        wait_until(lambda: gq(tf, "value.4") == 3, timeout=4.0, interval=0.03,
+        wait_until(lambda: gq(tf, gp.at("value", index=4)) == 3, timeout=4.0, interval=0.03,
                    desc="clicking the arrow reset the value")
-        assert_eq(gq(tf, "modified.4"), False, "the arrow click cleared modified")
+        assert_eq(gq(tf, gp.at("modified", addr=4)), False, "the arrow click cleared modified")
         wait_until(lambda: not arrow_painted(tf, 4), timeout=4.0, interval=0.03,
                    desc="the arrow disappears after the click reset")
 
         # ── (E) reset_all restores every modified property ──────────
-        edit_int(tf, 4, 50)
-        tf.intervene(f"/{GRID}/external/value.6", 88.0)  # Pos X float
-        assert_eq(gq(tf, "modified.4"), True, "Layer modified")
-        assert_eq(gq(tf, "modified.6"), True, "Pos X modified")
+        edit_int(tf, gp, 4,50)
+        tf.intervene(f"/{GRID}/external/{gp.at('value', index=6)}", 88.0)  # Pos X float
+        assert_eq(gq(tf, gp.at("modified", addr=4)), True, "Layer modified")
+        assert_eq(gq(tf, gp.at("modified", addr=6)), True, "Pos X modified")
         assert_eq(tf.invoke(f"/{GRID}/external/reset_all", None), 2, "reset_all reports the count reset")
-        assert_eq(gq(tf, "value.4"), 3, "Layer restored")
-        assert_eq(gq(tf, "value.6"), 12.5, "Pos X restored")
+        assert_eq(gq(tf, gp.at("value", index=4)), 3, "Layer restored")
+        assert_eq(gq(tf, gp.at("value", index=6)), 12.5, "Pos X restored")
         assert_eq(gq(tf, "any_modified"), False, "the grid is clean after reset_all")
 
         # ── (F) no-op + honest out-of-range ─────────────────────────
         assert_eq(tf.invoke(f"/{GRID}/external/reset", 4), False, "reset of an already-default row is a no-op")
         assert_eq(tf.invoke(f"/{GRID}/external/reset_all", None), 0, "reset_all on a clean grid resets nothing")
         try:
-            gq(tf, "modified.99")
+            gq(tf, gp.at("modified", addr=99))
             raise AssertionError("an out-of-range modified read should be an UnknownPath error")
         except RpcError:
             pass

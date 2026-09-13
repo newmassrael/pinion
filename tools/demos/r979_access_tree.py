@@ -52,6 +52,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     access_node_by_tag,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -86,6 +87,7 @@ def tree_query(tf, slot):
 
 def property_grid_body() -> None:
     with RpcSubprocess("hello-property-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf, f"/{GRID}/external")
         # ── (A) boot: force a paint so names enrich + bounds resolve ──
         snap = tf.snapshot(source="paint", viewport=PG_VIEWPORT)
         assert find_by_tag(snap, GRID) is not None, "grid painted"
@@ -139,10 +141,10 @@ def property_grid_body() -> None:
         reset_tag = f"{GRID}#reset{POS_X}"
         assert access_node_by_tag(acc, reset_tag) is None, "a clean row advertises no reset button"
 
-        boot_val = pg_query(tf, f"value.{POS_X}")
-        pg_name = pg_query(tf, f"name.{POS_X}")
-        tf.intervene(f"/{GRID}/external/value.{POS_X}", 99.0)
-        assert_eq(pg_query(tf, f"value.{POS_X}"), 99.0, "the field edit applied")
+        boot_val = pg_query(tf, gp.at("value", index=POS_X))
+        pg_name = pg_query(tf, gp.at("name", index=POS_X))
+        tf.intervene(f"/{GRID}/external/{gp.at('value', index=POS_X)}", 99.0)
+        assert_eq(pg_query(tf, gp.at("value", index=POS_X)), 99.0, "the field edit applied")
 
         wait_until(lambda: access_node_by_tag(access_nodes(tf), reset_tag) is not None,
                    timeout=4.0, interval=0.03,
@@ -155,11 +157,11 @@ def property_grid_body() -> None:
         assert reset_tag in row.get("children", []), "the reset button is the row's child"
 
         # Restoring the default removes the reset button (one gate: paint + a11y).
-        tf.intervene(f"/{GRID}/external/value.{POS_X}", boot_val)
+        tf.intervene(f"/{GRID}/external/{gp.at('value', index=POS_X)}", boot_val)
         wait_until(lambda: access_node_by_tag(access_nodes(tf), reset_tag) is None,
                    timeout=4.0, interval=0.03,
                    desc="the reset button disappears once the row is default again")
-        assert_eq(pg_query(tf, f"value.{POS_X}"), boot_val, "the field restored to default")
+        assert_eq(pg_query(tf, gp.at("value", index=POS_X)), boot_val, "the field restored to default")
 
 
 def slider_body() -> None:

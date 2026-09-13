@@ -19,7 +19,7 @@
 admin.permissions	0	0
 array_modified.arr	0	0
 array_modified.struct	0	0
-array_modified.{}	1	2
+array_modified.{}	0	2
 audio.voice	0	1
 bars.bar	2	5
 bars.xlabel	2	0
@@ -117,7 +117,7 @@ item.{}	0	7
 item_count.{}	4	0
 item_kind.{}	16	0
 kind.elem	0	0
-kind.{}	4	9
+kind.{}	0	9
 kind_at.{}	16	2
 kp.column	0	0
 kp.detail	0	0
@@ -166,9 +166,9 @@ member_count_at.{}	4	0
 mixed.{}	0	19
 model_height.{}	1	1
 modified.elem	0	0
-modified.{}	26	31
+modified.{}	13	31
 name.elem	0	0
-name.{}	12	12
+name.{}	11	12
 no.such	1	0
 node.{}	168	96
 nodegroups.frame	0	0
@@ -194,7 +194,7 @@ pv.filter	0	0
 pv.list	0	0
 pv.reassembly	0	0
 pv.tree	0	0
-range.{}	5	2
+range.{}	0	2
 records.row	2	4
 resize_mode.{}	0	0
 result.{}	5	0
@@ -268,7 +268,7 @@ tv.tip	0	0
 tv.toggle	0	0
 unmapped_bytes.{}	1	0
 value.elem	0	0
-value.{}	244	282
+value.{}	205	282
 visible_at.{}	10	2
 visual_index.{}	0	1
 vn.sprite	2	0

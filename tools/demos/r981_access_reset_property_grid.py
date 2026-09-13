@@ -38,6 +38,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     access_node_by_tag,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -76,6 +77,7 @@ def gq(tf, slot):
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf, EXT)
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, GRID) is not None, "grid painted"
         assert_eq(gq(tf, "elem_count"), 3, "the array sub-model boots with 3 elements")
@@ -96,8 +98,8 @@ def body() -> None:
             "a clean grid advertises no reset buttons"
 
         # ── (B) a modified row advertises a reset button child ───────
-        tf.intervene(f"{EXT}/value.4", 17)  # "Layer" (Int, default 3)
-        assert_eq(gq(tf, "modified.4"), True, "the edit marked row 4 modified")
+        tf.intervene(f"{EXT}/{gp.at('value', index=4)}", 17)  # "Layer" (Int, default 3)
+        assert_eq(gq(tf, gp.at("modified", addr=4)), True, "the edit marked row 4 modified")
         wait_until(lambda: child_button_named(access(tf), f"{GRID}#4", "Reset ") is not None,
                    timeout=4.0, interval=0.03, desc="the modified row advertises a reset button")
         acc = access(tf)
@@ -108,9 +110,9 @@ def body() -> None:
         # ── (C) an AT Click on the reset button restores the row ─────
         reset_sub = reset_btn["tag"].split("#", 1)[1]  # "reset4"
         tf.invoke(f"{EXT}/send", f"{reset_sub}:PointerUp")
-        wait_until(lambda: gq(tf, "modified.4") is False,
+        wait_until(lambda: gq(tf, gp.at("modified", addr=4)) is False,
                    timeout=4.0, interval=0.03, desc="the AT reset restored the row")
-        assert_eq(gq(tf, "value.4"), 3, "row 4 is back to its Int default")
+        assert_eq(gq(tf, gp.at("value", index=4)), 3, "row 4 is back to its Int default")
         acc = access(tf)
         assert child_button_named(acc, f"{GRID}#4", "Reset ") is None, \
             "the reset button leaves the access tree once the row is default"
