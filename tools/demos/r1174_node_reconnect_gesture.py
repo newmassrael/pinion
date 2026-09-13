@@ -47,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -66,18 +67,18 @@ def edge_ids(tf) -> list[int]:
     return [int(x) for x in csv.split(",")] if csv else []
 
 
-def conns(tf) -> dict[int, str]:
+def conns(tf, gp) -> dict[int, str]:
     """Live edge id -> "from:fp->to:tp" connection string."""
-    return {eid: tf.query(f"/external/edge.{eid}") for eid in edge_ids(tf)}
+    return {eid: tf.query(f"/external/{gp.at('edge', id=eid)}") for eid in edge_ids(tf)}
 
 
-def edge_id_of(tf, conn: str) -> int | None:
+def edge_id_of(tf, gp, conn: str) -> int | None:
     """The stable id of the edge with connection `conn` (robust to id minting)."""
-    return next((eid for eid, c in conns(tf).items() if c == conn), None)
+    return next((eid for eid, c in conns(tf, gp).items() if c == conn), None)
 
 
-def has_conn(tf, conn: str) -> bool:
-    return conn in conns(tf).values()
+def has_conn(tf, gp, conn: str) -> bool:
+    return conn in conns(tf, gp).values()
 
 
 def remove_edge(tf, edge: int) -> bool:
@@ -108,13 +109,14 @@ def reconnect_drag(tf, from_port: str, to_port: str, steps: int = 12) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot taxonomy ────────────────────────────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, G) is not None, "graph canvas present"
         assert_eq(tf.query("/external/node_count"), 4, "4 nodes")
         assert_eq(edge_count(tf), 3, "3 seed edges")
-        assert_eq(tf.query("/external/edge.0"), "0:0->2:0", "Texture -> Multiply.in0")
-        assert_eq(tf.query("/external/edge.1"), "1:0->2:1", "Color -> Multiply.in1")
+        assert_eq(tf.query(f"/external/{gp.at('edge', id=0)}"), "0:0->2:0", "Texture -> Multiply.in0")
+        assert_eq(tf.query(f"/external/{gp.at('edge', id=1)}"), "1:0->2:1", "Color -> Multiply.in1")
         assert_eq(count(tf), 0, "empty undo history at boot")
 
         # ── (B) free Multiply.in1 so a clean reconnect can land there ─
@@ -123,49 +125,50 @@ def body() -> None:
         assert_eq(count(tf), 1, "the disconnect is one undo step")
 
         # ── (C) the headline GESTURE — drag Multiply.in0's wire to in1 ─
-        assert has_conn(tf, "0:0->2:0"), "Multiply.in0 is wired (grab target)"
+        assert has_conn(tf, gp, "0:0->2:0"), "Multiply.in0 is wired (grab target)"
         reconnect_drag(tf, "iport_2_0", "iport_2_1")
-        wait_until(lambda: has_conn(tf, "0:0->2:1"), timeout=4.0,
+        wait_until(lambda: has_conn(tf, gp, "0:0->2:1"), timeout=4.0,
                    desc="the dragged wire lands on Multiply.in1")
         assert_eq(edge_count(tf), 2, "a rewire keeps the edge count (not an add)")
-        assert not has_conn(tf, "0:0->2:0"), "the wire left Multiply.in0"
-        assert has_conn(tf, "0:0->2:1"), "source preserved, target moved to in1"
-        assert edge_id_of(tf, "0:0->2:1") != 0, "the reconnected wire minted a fresh id"
+        assert not has_conn(tf, gp, "0:0->2:0"), "the wire left Multiply.in0"
+        assert has_conn(tf, gp, "0:0->2:1"), "source preserved, target moved to in1"
+        assert edge_id_of(tf, gp, "0:0->2:1") != 0, "the reconnected wire minted a fresh id"
         assert_eq(count(tf), 2, "the gesture added exactly one undo step")
         assert_eq(tf.query(f"{UNDO}/undo_label"), "Reconnect",
                   "the gesture journals the same 'Reconnect' step the verb does")
 
         # ── (D) undo restores the original wiring; redo re-wires it ───
         assert_eq(undo(tf), True, "undo the gesture")
-        assert has_conn(tf, "0:0->2:0"), "one undo restored the original target"
-        assert not has_conn(tf, "0:0->2:1"), "the reconnected wire is gone"
-        assert_eq(tf.query("/external/edge.0"), "0:0->2:0", "edge 0 restored verbatim (stable id)")
+        assert has_conn(tf, gp, "0:0->2:0"), "one undo restored the original target"
+        assert not has_conn(tf, gp, "0:0->2:1"), "the reconnected wire is gone"
+        assert_eq(tf.query(f"/external/{gp.at('edge', id=0)}"), "0:0->2:0",
+                  "edge 0 restored verbatim (stable id)")
         assert_eq(redo(tf), True, "redo re-wires it")
-        assert has_conn(tf, "0:0->2:1"), "redo re-applied the reconnect"
+        assert has_conn(tf, gp, "0:0->2:1"), "redo re-applied the reconnect"
         # State now: 0:0->2:1 and 2:0->3:0; Multiply.in0 is unwired.
 
         # ── (E) an UNWIRED input arms no drag (inert, not a reconnect) ─
-        assert not has_conn(tf, "0:0->2:0"), "Multiply.in0 is now unwired"
-        before = conns(tf)
+        assert not has_conn(tf, gp, "0:0->2:0"), "Multiply.in0 is now unwired"
+        before = conns(tf, gp)
         steps = count(tf)
         reconnect_drag(tf, "iport_2_0", "iport_3_0")  # grab an empty input
-        assert_eq(conns(tf), before, "dragging an unwired input changes no wiring")
+        assert_eq(conns(tf, gp), before, "dragging an unwired input changes no wiring")
         assert_eq(count(tf), steps, "an inert input drag adds no undo step")
 
         # ── (F) dropping on a non-input (an OUTPUT port) cancels ───────
-        before = conns(tf)
+        before = conns(tf, gp)
         steps = count(tf)
         reconnect_drag(tf, "iport_2_1", "oport_0_0")  # drop on Texture's output
-        assert_eq(conns(tf), before, "a drop off any input port leaves the wire untouched")
+        assert_eq(conns(tf, gp), before, "a drop off any input port leaves the wire untouched")
         assert_eq(count(tf), steps, "a cancelled reconnect adds no undo step")
 
         # ── (G) re-dropping a wire on its OWN input is a no-op success ─
-        eid = edge_id_of(tf, "0:0->2:1")
+        eid = edge_id_of(tf, gp, "0:0->2:1")
         assert eid is not None, "the live reconnected edge id"
         steps = count(tf)
         reconnect_drag(tf, "iport_2_1", "iport_2_1")  # same input
-        assert has_conn(tf, "0:0->2:1"), "still the same wire after the no-op"
-        assert_eq(edge_id_of(tf, "0:0->2:1"), eid, "a same-input no-op mints no fresh id")
+        assert has_conn(tf, gp, "0:0->2:1"), "still the same wire after the no-op"
+        assert_eq(edge_id_of(tf, gp, "0:0->2:1"), eid, "a same-input no-op mints no fresh id")
         assert_eq(count(tf), steps, "the no-op reconnect added no undo step")
 
         # ── (H) GESTURE onto an OCCUPIED input displaces the resident ──
@@ -174,14 +177,14 @@ def body() -> None:
         assert_eq(add_edge(tf, "1,0,2,0"), True, "Color -> Multiply.in0 (re-occupy in0)")
         assert_eq(edge_count(tf), 3, "three edges before the displacing gesture")
         reconnect_drag(tf, "iport_2_1", "iport_2_0")
-        wait_until(lambda: has_conn(tf, "0:0->2:0"), timeout=4.0,
+        wait_until(lambda: has_conn(tf, gp, "0:0->2:0"), timeout=4.0,
                    desc="node 0 wire moved to Multiply.in0")
-        assert not has_conn(tf, "1:0->2:0"), "the resident Color wire was displaced"
-        assert not has_conn(tf, "0:0->2:1"), "the dragged wire left Multiply.in1"
+        assert not has_conn(tf, gp, "1:0->2:0"), "the resident Color wire was displaced"
+        assert not has_conn(tf, gp, "0:0->2:1"), "the dragged wire left Multiply.in1"
         assert_eq(edge_count(tf), 2, "one removed-target + one displaced, one added")
         assert_eq(undo(tf), True, "one undo reverses the whole displacing gesture")
-        assert has_conn(tf, "0:0->2:1"), "node 0's wire restored to Multiply.in1"
-        assert has_conn(tf, "1:0->2:0"), "the displaced Color wire is restored too"
+        assert has_conn(tf, gp, "0:0->2:1"), "node 0's wire restored to Multiply.in1"
+        assert has_conn(tf, gp, "1:0->2:0"), "the displaced Color wire is restored too"
         assert_eq(edge_count(tf), 3, "both wires are back")
 
 

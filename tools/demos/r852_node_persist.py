@@ -28,6 +28,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     isolated_storage_dir,
     run_demo,
 )
@@ -74,13 +75,15 @@ def body() -> None:
         # A fresh process, same storage dir: boot is the seed (no auto-load),
         # then `load` restores the saved 6-node / 4-edge graph.
         with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+            gp = external_paths(tf)
             assert_eq(ncount(tf), 4, "launch 2 boot: fresh seed (no surprise auto-load)")
             assert_eq(tf.invoke("/external/load", None), True, "load the persisted graph")
             assert_eq(ncount(tf), 6, "the 6-node graph survived the relaunch")
             assert_eq(ecount(tf), 4, "the persisted edge survived too")
             ids = node_ids(tf)
             assert a in ids and b in ids, "the added stable ids survived the relaunch"
-            assert_eq(tf.query(f"/external/node.{a}.title"), "Multiply", "node identity persisted")
+            assert_eq(tf.query(f"/external/{gp.at('node.title', id=a)}"), "Multiply",
+                      "node identity persisted")
             # The id counter resumed: a fresh add never reuses a persisted id.
             reborn = tf.invoke("/external/add_node", "Add")
             assert reborn not in ids, f"minted id {reborn} resumes past the persisted ids"

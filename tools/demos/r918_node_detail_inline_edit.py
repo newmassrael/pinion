@@ -38,6 +38,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -107,6 +108,7 @@ def commit(tf, value: str) -> None:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) select node 2 (Multiply, at 250,110) — rows paint ────
         assert_eq(editing(tf), None, "boot: no edit in flight")
         tf.intervene("/external/selected_ids", "2")
@@ -133,7 +135,8 @@ def body() -> None:
         # ── (C) type + Enter — move through the shared funnel ────────
         commit(tf, "400")
         assert_eq(detail(tf, "x"), 400, "the panel edit moved the node")
-        assert_eq(tf.query("/external/node.2.x"), 400, "node.2.x == detail.x (the selection alias)")
+        assert_eq(tf.query(f"/external/{gp.at('node.x', id=2)}"), 400,
+                  "node.2.x == detail.x (the selection alias)")
         assert_eq(tf.query(f"{UNDO}/undo_label"), "Move node", "the panel move is one undoable step")
         assert field_rect(tf) is None, "the field unpaints after the commit"
         assert_eq(tf.request("focus/get").result.get("focused"), G, "focus returns to the canvas")
@@ -144,15 +147,17 @@ def body() -> None:
         commit(tf, "180")
         assert_eq(detail(tf, "y"), 180, "the panel edit moved the node in y")
         assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo the coalesced move")
-        assert_eq(tf.query("/external/node.2.x"), 250, "x reverted")
-        assert_eq(tf.query("/external/node.2.y"), 110, "y reverted in the SAME undo step (coalesced)")
+        assert_eq(tf.query(f"/external/{gp.at('node.x', id=2)}"), 250, "x reverted")
+        assert_eq(tf.query(f"/external/{gp.at('node.y', id=2)}"), 110,
+                  "y reverted in the SAME undo step (coalesced)")
 
         # ── (D) the panel edits the Title row ───────────────────────
         open_row(tf, "title", {"kind": "title", "node": 2, "surface": "panel"})
         assert_eq(editor_text(tf), "Multiply", "the title field is seeded from node.title")
         commit(tf, "Albedo")
         assert_eq(detail(tf, "title"), "Albedo", "the panel renamed the node")
-        assert_eq(tf.query("/external/node.2.title"), "Albedo", "node.2.title == detail.title")
+        assert_eq(tf.query(f"/external/{gp.at('node.title', id=2)}"), "Albedo",
+                  "node.2.title == detail.title")
 
         # ── (E) the panel edits a WIRED port default the card refuses ─
         assert_eq(tf.invoke("/external/begin_edit_default", "2.0"), False,
@@ -161,7 +166,7 @@ def body() -> None:
         ri = field_rect(tf)[0]
         assert ri >= PANEL_X0, "the wired-port edit also paints in the panel"
         commit(tf, "#3366cc")
-        d = tf.query("/external/node.2.input_default.0")
+        d = tf.query(f"/external/{gp.at('node.input_default', id=2, port=0)}")
         assert_eq(d["r"], 0x33, "the typed hex parsed into the wired port's colour default (r)")
         assert_eq(d["b"], 0xCC, "the typed hex parsed into the wired port's colour default (b)")
 

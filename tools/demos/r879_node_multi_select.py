@@ -37,6 +37,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -51,8 +52,11 @@ def ids(tf) -> str:
     return tf.query("/external/selected_ids")
 
 
-def pos(tf, i: int) -> tuple[int, int]:
-    return (tf.query(f"/external/node.{i}.x"), tf.query(f"/external/node.{i}.y"))
+def pos(tf, gp, i: int) -> tuple[int, int]:
+    return (
+        tf.query(f"/external/{gp.at('node.x', id=i)}"),
+        tf.query(f"/external/{gp.at('node.y', id=i)}"),
+    )
 
 
 def node_tag(i: int) -> str:
@@ -88,6 +92,7 @@ def texts_of(snap) -> list[str]:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot ────────────────────────────────────────────────
         assert_eq(tf.query("/external/selected"), None, "boot: no single selection")
         assert_eq(ids(tf), "", "boot: empty selected_ids")
@@ -133,45 +138,45 @@ def body() -> None:
         assert_eq(ids(tf), "0,2", "and the selection")
 
         # ── (E) group nudge = one coalescing undo step ──────────────
-        p0, p2 = pos(tf, 0), pos(tf, 2)
+        p0, p2 = pos(tf, gp, 0), pos(tf, gp, 2)
         tf.request("focus/set", {"tag": G})
         tf.key(path=G, name="ArrowRight")
         tf.key(path=G, name="ArrowRight")
-        wait_until(lambda: pos(tf, 0)[0] == p0[0] + 2 * NUDGE, timeout=4.0, interval=0.03,
+        wait_until(lambda: pos(tf, gp, 0)[0] == p0[0] + 2 * NUDGE, timeout=4.0, interval=0.03,
                    desc="two nudges move member 0")
-        assert_eq(pos(tf, 2)[0], p2[0] + 2 * NUDGE, "member 2 moved with it")
+        assert_eq(pos(tf, gp, 2)[0], p2[0] + 2 * NUDGE, "member 2 moved with it")
         assert_eq(tf.query("/node_undo/external/undo_label"), "Move 2 nodes",
                   "the group nudge journals as a multi-move")
         assert_eq(tf.invoke("/node_undo/external/undo", None), True, "one undo")
-        assert_eq(pos(tf, 0), list(p0) if isinstance(p0, list) else p0,
+        assert_eq(pos(tf, gp, 0), list(p0) if isinstance(p0, list) else p0,
                   "one undo restores member 0 across the burst")
-        assert_eq(pos(tf, 2), p2, "and member 2")
+        assert_eq(pos(tf, gp, 2), p2, "and member 2")
 
         # ── (F) dragging a selected member moves the group ──────────
-        p0, p2 = pos(tf, 0), pos(tf, 2)
+        p0, p2 = pos(tf, gp, 0), pos(tf, gp, 2)
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         x, y, w, h = abs_rects_of(snap)[node_tag(0)]
         tf.drag(from_at=(x + w / 2, y + h / 2), to_at=(x + w / 2 + 60, y + h / 2 + 25))
-        wait_until(lambda: pos(tf, 0) != p0, timeout=4.0, interval=0.03,
+        wait_until(lambda: pos(tf, gp, 0) != p0, timeout=4.0, interval=0.03,
                    desc="the drag moved the grabbed member")
-        d0 = (pos(tf, 0)[0] - p0[0], pos(tf, 0)[1] - p0[1])
-        d2 = (pos(tf, 2)[0] - p2[0], pos(tf, 2)[1] - p2[1])
+        d0 = (pos(tf, gp, 0)[0] - p0[0], pos(tf, gp, 0)[1] - p0[1])
+        d2 = (pos(tf, gp, 2)[0] - p2[0], pos(tf, gp, 2)[1] - p2[1])
         assert_eq(d2, d0, "the unselected-axis member moved by the same delta (rigid)")
         assert_eq(ids(tf), "0,2", "a group drag never collapses the selection")
         assert_eq(tf.query("/node_undo/external/undo_label"), "Move 2 nodes",
                   "the whole group drag is ONE journal entry")
         assert_eq(tf.invoke("/node_undo/external/undo", None), True, "undo the drag")
-        assert_eq(pos(tf, 0), p0, "undo restores the grabbed member")
-        assert_eq(pos(tf, 2), p2, "and the co-dragged member")
+        assert_eq(pos(tf, gp, 0), p0, "undo restores the grabbed member")
+        assert_eq(pos(tf, gp, 2), p2, "and the co-dragged member")
 
         # ── (G) dragging an unselected node moves only it ───────────
-        p1, p0 = pos(tf, 1), pos(tf, 0)
+        p1, p0 = pos(tf, gp, 1), pos(tf, gp, 0)
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         x, y, w, h = abs_rects_of(snap)[node_tag(1)]
         tf.drag(from_at=(x + w / 2, y + h / 2), to_at=(x + w / 2 + 40, y + h / 2))
-        wait_until(lambda: pos(tf, 1) != p1, timeout=4.0, interval=0.03,
+        wait_until(lambda: pos(tf, gp, 1) != p1, timeout=4.0, interval=0.03,
                    desc="the unselected node dragged")
-        assert_eq(pos(tf, 0), p0, "selection members stayed put")
+        assert_eq(pos(tf, gp, 0), p0, "selection members stayed put")
         assert_eq(ids(tf), "0,2", "the selection itself is untouched")
         assert_eq(tf.query("/node_undo/external/undo_label"), "Move node",
                   "a single-node drag keeps the single label")

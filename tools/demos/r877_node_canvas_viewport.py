@@ -43,6 +43,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -89,6 +90,7 @@ def _focus_graph(tf) -> None:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot: viewport at origin, 100% zoom ─────────────────
         assert_eq(viewport(tf), (0.0, 0.0, 1.0), "boot viewport = origin @ 100%")
         assert_eq(tf.query("/external/node_count"), 4, "seed graph intact")
@@ -190,17 +192,17 @@ def body() -> None:
         tf.intervene("/external/viewport.zoom", 2.0)
         tf.intervene("/external/viewport.x", 0.0)
         tf.intervene("/external/viewport.y", 0.0)
-        tf.intervene("/external/node.0.x", 40)
-        tf.intervene("/external/node.0.y", 70)
+        tf.intervene(f"/external/{gp.at('node.x', id=0)}", 40)
+        tf.intervene(f"/external/{gp.at('node.y', id=0)}", 70)
         rects = abs_rects_of(tf.snapshot(source="paint", viewport=VIEWPORT))
         nx, ny, nw, nh = rects[f"{G}#node_0"]
         # Grab the header centre, drag +80 screen px right.
         grab = (nx + nw / 2.0, ny + 12.0)
         tf.drag(from_at=grab, to_at=(grab[0] + 80.0, grab[1]), steps=8)
-        wait_until(lambda: tf.query("/external/node.0.x") == 80, timeout=4.0, interval=0.03,
+        wait_until(lambda: tf.query(f"/external/{gp.at('node.x', id=0)}") == 80, timeout=4.0, interval=0.03,
                    desc="80 screen px / 2x zoom = 40 graph units")
-        assert_eq(tf.query("/external/node.0.y"), 70, "a horizontal drag leaves y alone")
-        tf.intervene("/external/node.0.x", 40)
+        assert_eq(tf.query(f"/external/{gp.at('node.y', id=0)}"), 70, "a horizontal drag leaves y alone")
+        tf.intervene(f"/external/{gp.at('node.x', id=0)}", 40)
 
         # ── (J) selection still works panned + zoomed ───────────────
         tf.click(path=f"{G}#node_2")
@@ -219,8 +221,8 @@ def body() -> None:
         tf.intervene("/external/viewport.x", 900.0)
         tf.intervene("/external/viewport.y", 700.0)
         new_id = tf.invoke("/external/add_node", "Color")
-        sx = tf.query(f"/external/node.{new_id}.x")
-        sy = tf.query(f"/external/node.{new_id}.y")
+        sx = tf.query(f"/external/{gp.at('node.x', id=new_id)}")
+        sy = tf.query(f"/external/{gp.at('node.y', id=new_id)}")
         assert sx >= 900 and sy >= 700, f"spawn follows the viewport, got ({sx}, {sy})"
 
 

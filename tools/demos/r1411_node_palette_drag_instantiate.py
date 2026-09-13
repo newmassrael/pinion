@@ -54,6 +54,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -84,12 +85,15 @@ def selected(tf):
     return tf.query("/external/selected")
 
 
-def node_pos(tf, nid) -> tuple[int, int]:
-    return (tf.query(f"/external/node.{nid}.x"), tf.query(f"/external/node.{nid}.y"))
+def node_pos(tf, gp, nid) -> tuple[int, int]:
+    return (
+        tf.query(f"/external/{gp.at('node.x', id=nid)}"),
+        tf.query(f"/external/{gp.at('node.y', id=nid)}"),
+    )
 
 
-def node_title(tf, nid) -> str:
-    return tf.query(f"/external/node.{nid}.title")
+def node_title(tf, gp, nid) -> str:
+    return tf.query(f"/external/{gp.at('node.title', id=nid)}")
 
 
 def undo(tf) -> bool:
@@ -107,6 +111,7 @@ def chip_labels(node) -> list[str]:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot taxonomy ────────────────────────────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, G) is not None, "graph canvas present"
@@ -139,8 +144,8 @@ def body() -> None:
         assert_eq(edge_count(tf), 3, "a palette drop wires nothing (unlike a pin drop)")
         new_id = selected(tf)
         assert isinstance(new_id, int), "the dropped node is selected (its id reads back)"
-        assert_eq(node_title(tf, new_id), "Scalar", "the dropped kind is the pressed card")
-        assert_eq(node_pos(tf, new_id), DROP1_GRAPH,
+        assert_eq(node_title(tf, gp, new_id), "Scalar", "the dropped kind is the pressed card")
+        assert_eq(node_pos(tf, gp, new_id), DROP1_GRAPH,
                   "the node lands at the DROP point, not the fixed spawn point")
         # The follower chip is gone once the drag released.
         after = tf.snapshot(source="paint", viewport=VIEWPORT)
@@ -155,9 +160,9 @@ def body() -> None:
         wait_until(lambda: node_count(tf) == 5, timeout=4.0,
                    desc="the second drop instantiated its node")
         d2 = selected(tf)
-        assert_eq(node_title(tf, d2), "Lerp", "the second drop is the Lerp card")
-        assert_eq(node_pos(tf, d2), DROP2_GRAPH, "it lands at ITS drop point")
-        assert node_pos(tf, d2) != DROP1_GRAPH, "a different drop point yields a different position"
+        assert_eq(node_title(tf, gp, d2), "Lerp", "the second drop is the Lerp card")
+        assert_eq(node_pos(tf, gp, d2), DROP2_GRAPH, "it lands at ITS drop point")
+        assert node_pos(tf, gp, d2) != DROP1_GRAPH, "a different drop point yields a different position"
         assert_eq(undo(tf), True, "undo the second drop")
         assert_eq(node_count(tf), 4, "back to the seed graph")
 
@@ -166,8 +171,8 @@ def body() -> None:
         tf.click(path=f"{G}#palette_5")
         wait_until(lambda: node_count(tf) == 5, timeout=4.0, desc="the click added a node")
         clicked = selected(tf)
-        assert_eq(node_title(tf, clicked), "Scalar", "the clicked kind")
-        cx, cy = node_pos(tf, clicked)
+        assert_eq(node_title(tf, gp, clicked), "Scalar", "the clicked kind")
+        cx, cy = node_pos(tf, gp, clicked)
         # The spawn point is the fixed SPAWN_X/SPAWN_Y (300, 44) projection + a
         # small fan-out cascade — its y is far above any drop y used here, so a
         # click is unmistakably NOT a drop.

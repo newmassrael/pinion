@@ -48,6 +48,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -71,9 +72,9 @@ def edge_ids(tf) -> list[int]:
     return [int(x) for x in csv.split(",")] if csv else []
 
 
-def conns(tf) -> set[str]:
+def conns(tf, gp) -> set[str]:
     """The live set of "from:fp->to:tp" connection strings."""
-    return {tf.query(f"/external/edge.{eid}") for eid in edge_ids(tf)}
+    return {tf.query(f"/external/{gp.at('edge', id=eid)}") for eid in edge_ids(tf)}
 
 
 def menu(tf):
@@ -96,6 +97,7 @@ def undo(tf) -> bool:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot taxonomy ────────────────────────────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, G) is not None, "graph canvas present"
@@ -150,7 +152,7 @@ def body() -> None:
         wait_until(lambda: menu(tf) is None, timeout=4.0, desc="the click committed + closed the menu")
         assert_eq(node_count(tf), 5, "a Multiply node was created")
         assert_eq(edge_count(tf), before + 1, "and auto-wired (one new edge)")
-        assert "0:0->4:0" in conns(tf), "wired Texture.out -> the new node's first input"
+        assert "0:0->4:0" in conns(tf, gp), "wired Texture.out -> the new node's first input"
         assert_eq(tf.query("/external/selected"), 4, "the new node is selected")
         assert_eq(tf.query(f"{UNDO}/undo_label"), "Add Multiply + wire", "one labelled step")
         assert_eq(undo_count(tf), steps + 1, "the create+wire is exactly ONE undo step")
@@ -165,7 +167,7 @@ def body() -> None:
         assert isinstance(new_id, int), "commit-by-name returns the new node id"
         assert_eq(menu(tf), None, "the menu closed on commit")
         assert_eq(edge_count(tf), before + 1, "auto-wired")
-        assert f"1:0->{new_id}:0" in conns(tf), "wired Color.out -> the new Output node"
+        assert f"1:0->{new_id}:0" in conns(tf, gp), "wired Color.out -> the new Output node"
         assert_eq(undo(tf), True, "undo it (leave the graph clean for the next case)")
 
         # ── (G) KEYBOARD: type-to-filter + Enter, and Escape cancels ──

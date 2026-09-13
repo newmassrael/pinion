@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -56,18 +57,18 @@ def edge_ids(tf) -> list[int]:
     return [int(x) for x in csv.split(",")] if csv else []
 
 
-def conns(tf) -> dict[int, str]:
+def conns(tf, gp) -> dict[int, str]:
     """Live edge id -> "from:fp->to:tp" connection string."""
-    return {eid: tf.query(f"/external/edge.{eid}") for eid in edge_ids(tf)}
+    return {eid: tf.query(f"/external/{gp.at('edge', id=eid)}") for eid in edge_ids(tf)}
 
 
-def edge_id_of(tf, conn: str) -> int | None:
+def edge_id_of(tf, gp, conn: str) -> int | None:
     """The stable id of the edge with connection `conn` (robust to id minting)."""
-    return next((eid for eid, c in conns(tf).items() if c == conn), None)
+    return next((eid for eid, c in conns(tf, gp).items() if c == conn), None)
 
 
-def has_conn(tf, conn: str) -> bool:
-    return conn in conns(tf).values()
+def has_conn(tf, gp, conn: str) -> bool:
+    return conn in conns(tf, gp).values()
 
 
 def reconnect(tf, edge: int, to_node: int, to_port: int) -> bool:
@@ -96,13 +97,14 @@ def redo(tf) -> bool:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot taxonomy ────────────────────────────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, G) is not None, "graph canvas present"
         assert_eq(tf.query("/external/node_count"), 4, "4 nodes")
         assert_eq(edge_count(tf), 3, "3 seed edges")
-        assert_eq(tf.query("/external/edge.0"), "0:0->2:0", "Texture -> Multiply.in0")
-        assert_eq(tf.query("/external/edge.1"), "1:0->2:1", "Color -> Multiply.in1")
+        assert_eq(tf.query(f"/external/{gp.at('edge', id=0)}"), "0:0->2:0", "Texture -> Multiply.in0")
+        assert_eq(tf.query(f"/external/{gp.at('edge', id=1)}"), "1:0->2:1", "Color -> Multiply.in1")
         assert_eq(count(tf), 0, "empty undo history at boot")
 
         # ── (B) free Multiply.in1 so a clean reconnect can land there ─
@@ -113,43 +115,44 @@ def body() -> None:
         # ── (C) reconnect edge 0's target 2:0 -> 2:1 (the headline) ───
         assert_eq(reconnect(tf, 0, 2, 1), True, "reconnect edge 0 to Multiply.in1")
         assert_eq(edge_count(tf), 2, "a rewire keeps the edge count (not an add)")
-        assert not has_conn(tf, "0:0->2:0"), "the old target is gone"
-        assert has_conn(tf, "0:0->2:1"), "the wire now lands on Multiply.in1, source preserved"
-        assert edge_id_of(tf, "0:0->2:1") != 0, "the reconnected wire minted a fresh edge id"
+        assert not has_conn(tf, gp, "0:0->2:0"), "the old target is gone"
+        assert has_conn(tf, gp, "0:0->2:1"), "the wire now lands on Multiply.in1, source preserved"
+        assert edge_id_of(tf, gp, "0:0->2:1") != 0, "the reconnected wire minted a fresh edge id"
         assert_eq(count(tf), 2, "the reconnect added exactly one undo step")
 
         # ── (D) undo restores the original wiring; redo re-wires it ───
         assert_eq(undo(tf), True, "undo the reconnect")
-        assert has_conn(tf, "0:0->2:0"), "one undo restored the original target"
-        assert not has_conn(tf, "0:0->2:1"), "the reconnected wire is gone"
-        assert_eq(tf.query("/external/edge.0"), "0:0->2:0", "edge 0 restored verbatim (stable id)")
+        assert has_conn(tf, gp, "0:0->2:0"), "one undo restored the original target"
+        assert not has_conn(tf, gp, "0:0->2:1"), "the reconnected wire is gone"
+        assert_eq(tf.query(f"/external/{gp.at('edge', id=0)}"), "0:0->2:0",
+                  "edge 0 restored verbatim (stable id)")
         assert_eq(redo(tf), True, "redo re-wires it")
-        assert has_conn(tf, "0:0->2:1"), "redo re-applied the reconnect"
+        assert has_conn(tf, gp, "0:0->2:1"), "redo re-applied the reconnect"
 
         # ── (E) rejects + same-target no-op ──────────────────────────
-        eid = edge_id_of(tf, "0:0->2:1")
+        eid = edge_id_of(tf, gp, "0:0->2:1")
         assert eid is not None, "the live reconnected edge id"
         steps = count(tf)
         assert_eq(reconnect(tf, eid, 0, 0), False, "self-loop (target on the source node) rejected")
         assert_eq(reconnect(tf, 999, 2, 0), False, "unknown edge id rejected")
-        assert has_conn(tf, "0:0->2:1"), "a rejected reconnect leaves the wire unchanged"
+        assert has_conn(tf, gp, "0:0->2:1"), "a rejected reconnect leaves the wire unchanged"
         assert_eq(reconnect(tf, eid, 2, 1), True, "re-drop on its own input is a no-op success")
         assert_eq(count(tf), steps, "the no-op reconnect added no undo step")
-        assert has_conn(tf, "0:0->2:1"), "still the same wire after the no-op"
+        assert has_conn(tf, gp, "0:0->2:1"), "still the same wire after the no-op"
 
         # ── (F) reconnect onto an OCCUPIED input displaces the resident ─
         # Re-occupy Multiply.in0 with Color (node 1), then reconnect the node-0
         # wire onto it -> displaces the Color wire; one undo restores both.
         assert_eq(add_edge(tf, "1,0,2,0"), True, "Color -> Multiply.in0 (re-occupy in0)")
         assert_eq(edge_count(tf), 3, "three edges before the displacing reconnect")
-        eid = edge_id_of(tf, "0:0->2:1")
+        eid = edge_id_of(tf, gp, "0:0->2:1")
         assert_eq(reconnect(tf, eid, 2, 0), True, "reconnect node 0's wire onto the occupied in0")
-        assert has_conn(tf, "0:0->2:0"), "node 0's wire moved to Multiply.in0"
-        assert not has_conn(tf, "1:0->2:0"), "the resident Color wire was displaced"
+        assert has_conn(tf, gp, "0:0->2:0"), "node 0's wire moved to Multiply.in0"
+        assert not has_conn(tf, gp, "1:0->2:0"), "the resident Color wire was displaced"
         assert_eq(edge_count(tf), 2, "one removed-target + one displaced, one added")
         assert_eq(undo(tf), True, "one undo reverses the whole displacing reconnect")
-        assert has_conn(tf, "0:0->2:1"), "node 0's wire restored to Multiply.in1"
-        assert has_conn(tf, "1:0->2:0"), "the displaced Color wire is restored too"
+        assert has_conn(tf, gp, "0:0->2:1"), "node 0's wire restored to Multiply.in1"
+        assert has_conn(tf, gp, "1:0->2:0"), "the displaced Color wire is restored too"
         assert_eq(edge_count(tf), 3, "both wires are back")
 
 

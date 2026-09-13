@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -90,6 +91,7 @@ def texts_of(snap) -> list[str]:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot ────────────────────────────────────────────────
         assert_eq(ids(tf), "", "boot: empty selected_ids")
         assert_eq(tf.query("/external/selected"), None, "boot: no single selection")
@@ -161,13 +163,16 @@ def body() -> None:
 
         # ── (I) marquee-built selection group-drags rigidly ─────────
         tf.intervene("/external/selected_ids", "0,1")
-        x0, y0 = tf.query("/external/node.0.x"), tf.query("/external/node.0.y")
-        x1, y1 = tf.query("/external/node.1.x"), tf.query("/external/node.1.y")
+        x0, y0 = (tf.query(f"/external/{gp.at('node.x', id=0)}"),
+                  tf.query(f"/external/{gp.at('node.y', id=0)}"))
+        x1, y1 = (tf.query(f"/external/{gp.at('node.x', id=1)}"),
+                  tf.query(f"/external/{gp.at('node.y', id=1)}"))
         tf.drag(from_at=W(x0 + 65, y0 + 15), to_at=W(x0 + 105, y0 + 35))
-        wait_until(lambda: tf.query("/external/node.0.x") == x0 + 40,
+        wait_until(lambda: tf.query(f"/external/{gp.at('node.x', id=0)}") == x0 + 40,
                    timeout=4.0, interval=0.03, desc="grabbed member moved +40")
-        assert_eq(tf.query("/external/node.0.y"), y0 + 20, "grabbed member moved +20")
-        assert_eq((tf.query("/external/node.1.x"), tf.query("/external/node.1.y")),
+        assert_eq(tf.query(f"/external/{gp.at('node.y', id=0)}"), y0 + 20, "grabbed member moved +20")
+        assert_eq((tf.query(f"/external/{gp.at('node.x', id=1)}"),
+                   tf.query(f"/external/{gp.at('node.y', id=1)}")),
                   (x1 + 40, y1 + 20), "the other member moved rigidly")
         assert_eq(ids(tf), "0,1", "the moved release kept the set intact")
 

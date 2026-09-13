@@ -41,6 +41,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -62,8 +63,8 @@ def renaming(tf):
     return tf.query("/external/renaming")
 
 
-def pin_default(tf, node_id: int, port: int):
-    return tf.query(f"/external/node.{node_id}.input_default.{port}")
+def pin_default(tf, gp, node_id: int, port: int):
+    return tf.query(f"/external/{gp.at('node.input_default', id=node_id, port=port)}")
 
 
 def editor_text(tf):
@@ -109,6 +110,7 @@ def open_pin(tf, node_id: int, port: int) -> None:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot — idle ─────────────────────────────────────────
         assert_eq(editing(tf), None, "boot: no edit in flight")
         assert_eq(renaming(tf), None, "boot: no rename in flight")
@@ -120,8 +122,8 @@ def body() -> None:
         # Park the Lerp in clear canvas space (the seed nodes sit at y<=210), so
         # a geometric `double_click(path=...)` on its pins (or on a seed card,
         # for the migration step) lands without an overlapping card on top.
-        tf.intervene(f"/external/node.{lerp}.x", 300)
-        tf.intervene(f"/external/node.{lerp}.y", 260)
+        tf.intervene(f"/external/{gp.at('node.x', id=lerp)}", 300)
+        tf.intervene(f"/external/{gp.at('node.y', id=lerp)}", 260)
         assert_eq(default_label(tf, f"idefault_{lerp}_2"), "0", "the Float pin default paints as 0")
 
         # ── (B) double-click opens the seeded editor ────────────────
@@ -143,15 +145,15 @@ def body() -> None:
         tf.key(path=EDIT, name="Enter")
         wait_until(lambda: editing(tf) is None, timeout=4.0, interval=0.03,
                    desc="Enter leaves edit mode")
-        assert_eq(pin_default(tf, lerp, 2), 0.75, "the commit applied the typed default")
+        assert_eq(pin_default(tf, gp, lerp, 2), 0.75, "the commit applied the typed default")
         assert not field_painted(tf), "the field unpaints after the commit"
         assert_eq(tf.request("focus/get").result.get("focused"), G, "focus returns to the canvas")
         assert_eq(default_label(tf, f"idefault_{lerp}_2"), "0.75", "the paint reflects the new default")
         assert_eq(tf.query(f"{UNDO}/undo_label"), "Set port default", "journaled undoably")
         assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo the default change")
-        assert_eq(pin_default(tf, lerp, 2), 0.0, "undo restored the prior default")
+        assert_eq(pin_default(tf, gp, lerp, 2), 0.0, "undo restored the prior default")
         assert_eq(tf.invoke(f"{UNDO}/redo", None), True, "redo the default change")
-        assert_eq(pin_default(tf, lerp, 2), 0.75, "redo re-applied it")
+        assert_eq(pin_default(tf, gp, lerp, 2), 0.75, "redo re-applied it")
 
         # ── (D) the keystroke gate is the port's type; Escape cancels ─
         open_pin(tf, lerp, 2)  # a Float pin
@@ -160,7 +162,7 @@ def body() -> None:
         retype(tf, "9.9")
         tf.key(path=EDIT, name="Escape")
         wait_until(lambda: editing(tf) is None, timeout=4.0, interval=0.03, desc="Escape leaves edit mode")
-        assert_eq(pin_default(tf, lerp, 2), 0.75, "a cancel never touches the default")
+        assert_eq(pin_default(tf, gp, lerp, 2), 0.75, "a cancel never touches the default")
 
         # ── (E) a Vector pin edits as a hex through the same field ──
         assert_eq(default_label(tf, f"idefault_{lerp}_0"), "#808080", "Vector pin default paints as hex")
@@ -169,7 +171,7 @@ def body() -> None:
         retype(tf, "#3366cc")
         tf.key(path=EDIT, name="Enter")
         wait_until(lambda: editing(tf) is None, timeout=4.0, interval=0.03, desc="hex commit leaves edit mode")
-        d = pin_default(tf, lerp, 0)
+        d = pin_default(tf, gp, lerp, 0)
         assert_eq(d["r"], 0x33, "the typed hex parsed into the colour default (r)")
         assert_eq(d["b"], 0xCC, "the typed hex parsed into the colour default (b)")
         assert_eq(default_label(tf, f"idefault_{lerp}_0"), "#3366cc", "paint reflects the written colour")
@@ -194,7 +196,7 @@ def body() -> None:
         tf.double_click(path=f"{G}#node_2")  # opening a title rename migrates
         wait_until(lambda: editing(tf) == {"kind": "title", "node": 2, "surface": "card"}, timeout=4.0, interval=0.03,
                    desc="the editor migrated to the title target")
-        assert_eq(pin_default(tf, lerp, 2), 2.5, "opening the title editor committed the in-flight pin default")
+        assert_eq(pin_default(tf, gp, lerp, 2), 2.5, "opening the title editor committed the in-flight pin default")
         assert_eq(editor_text(tf), "Multiply", "the editor reseeded from the title target")
         tf.key(path=EDIT, name="Escape")
         wait_until(lambda: editing(tf) is None, timeout=4.0, interval=0.03, desc="cleanup: Escape")
@@ -209,7 +211,7 @@ def body() -> None:
         tf.click(at=(gx + gw - 12, gy + gh - 12))  # empty canvas -> blur -> commit
         wait_until(lambda: editing(tf) is None, timeout=4.0, interval=0.03,
                    desc="the blur committed and left edit mode")
-        assert_eq(pin_default(tf, lerp, 1)["r"], 0x11, "the click-away committed the typed colour")
+        assert_eq(pin_default(tf, gp, lerp, 1)["r"], 0x11, "the click-away committed the typed colour")
 
         # ── (I) the editor works on a zoomed canvas (R877) ──────────
         tf.intervene("/external/viewport.zoom", 1.5)
@@ -220,7 +222,7 @@ def body() -> None:
         retype(tf, "3.5")
         tf.key(path=EDIT, name="Enter")
         wait_until(lambda: editing(tf) is None, timeout=4.0, interval=0.03, desc="zoomed commit leaves edit mode")
-        assert_eq(pin_default(tf, lerp, 2), 3.5, "a port-default edit at 150% commits identically")
+        assert_eq(pin_default(tf, gp, lerp, 2), 3.5, "a port-default edit at 150% commits identically")
 
 
 if __name__ == "__main__":

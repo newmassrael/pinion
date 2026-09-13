@@ -38,6 +38,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -54,8 +55,8 @@ def renaming(tf):
     return tf.query("/external/renaming")
 
 
-def title(tf, node_id: int):
-    return tf.query(f"/external/node.{node_id}.title")
+def title(tf, gp, node_id: int):
+    return tf.query(f"/external/{gp.at('node.title', id=node_id)}")
 
 
 def editor_text(tf):
@@ -86,9 +87,10 @@ def retype(tf, new_text: str) -> None:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot — idle ─────────────────────────────────────────
         assert_eq(renaming(tf), None, "boot: no rename in flight")
-        assert_eq(title(tf, 2), "Multiply", "seed title intact")
+        assert_eq(title(tf, gp, 2), "Multiply", "seed title intact")
         assert not field_painted(tf), "the shared field is unpainted while idle"
 
         # ── (B) double-click opens the seeded editor ────────────────
@@ -105,7 +107,7 @@ def body() -> None:
                    desc="keystrokes reach the shared field")
         tf.key(path=RENAME, name="Enter")
         wait_renaming(tf, None, "Enter leaves rename mode")
-        assert_eq(title(tf, 2), "Mix", "the commit renamed the node")
+        assert_eq(title(tf, gp, 2), "Mix", "the commit renamed the node")
         assert not field_painted(tf), "the field unpaints after the commit"
         assert_eq(tf.request("focus/get").result.get("focused"), G,
                   "focus returns to the canvas")
@@ -116,12 +118,12 @@ def body() -> None:
         tf.modifiers(ctrl=True)
         tf.key(path=G, name="z")
         tf.modifiers()
-        wait_until(lambda: title(tf, 2) == "Multiply", timeout=4.0, interval=0.03,
+        wait_until(lambda: title(tf, gp, 2) == "Multiply", timeout=4.0, interval=0.03,
                    desc="Ctrl+Z restores the old title")
         tf.modifiers(ctrl=True, shift=True)
         tf.key(path=G, name="z")
         tf.modifiers()
-        wait_until(lambda: title(tf, 2) == "Mix", timeout=4.0, interval=0.03,
+        wait_until(lambda: title(tf, gp, 2) == "Mix", timeout=4.0, interval=0.03,
                    desc="Ctrl+Shift+Z re-applies the rename")
 
         # ── (E) Escape cancels ──────────────────────────────────────
@@ -129,7 +131,7 @@ def body() -> None:
         retype(tf, "Scrap")
         tf.key(path=RENAME, name="Escape")
         wait_renaming(tf, None, "Escape leaves rename mode")
-        assert_eq(title(tf, 0), "Texture", "a cancel never touches the title")
+        assert_eq(title(tf, gp, 0), "Texture", "a cancel never touches the title")
 
         # ── (F) a click-away commits (R793 blur intent) ─────────────
         begin_via_double_click(tf, 0)
@@ -141,7 +143,7 @@ def body() -> None:
         gx, gy, gw, gh = abs_rects_of(snap)[G]
         tf.click(at=(gx + gw - 12, gy + gh - 12))
         wait_renaming(tf, None, "the blur committed and left rename mode")
-        assert_eq(title(tf, 0), "Albedo", "the click-away committed the typed title")
+        assert_eq(title(tf, gp, 0), "Albedo", "the click-away committed the typed title")
 
         # ── (G) F2 renames the selection ────────────────────────────
         tf.request("focus/set", {"tag": G})
@@ -165,18 +167,18 @@ def body() -> None:
                   "Null with no selection is a no-op")
 
         # ── (I) intervene node.<id>.title — the undoable write-twin ─
-        tf.intervene("/external/node.3.title", "  Sum  ")
-        assert_eq(title(tf, 3), "Sum", "the RPC rename applies trimmed")
+        tf.intervene(f"/external/{gp.at('node.title', id=3)}", "  Sum  ")
+        assert_eq(title(tf, gp, 3), "Sum", "the RPC rename applies trimmed")
         assert_eq(tf.query("/node_undo/external/undo_label"), "Rename node",
                   "the RPC rename journals the same undo step")
         try:
-            tf.intervene("/external/node.3.title", "   ")
+            tf.intervene(f"/external/{gp.at('node.title', id=3)}", "   ")
             raise AssertionError("an empty title must be rejected")
         except RpcError:
             pass
-        assert_eq(title(tf, 3), "Sum", "the rejected write left the title alone")
+        assert_eq(title(tf, gp, 3), "Sum", "the rejected write left the title alone")
         try:
-            tf.intervene("/external/node.3.title", 7)
+            tf.intervene(f"/external/{gp.at('node.title', id=3)}", 7)
             raise AssertionError("a non-Text title must be a type mismatch")
         except RpcError:
             pass
@@ -187,7 +189,7 @@ def body() -> None:
         wait_until(lambda: editor_text(tf) == "Blend", timeout=4.0, interval=0.03,
                    desc="typed the migration candidate")
         begin_via_double_click(tf, 1)
-        assert_eq(title(tf, 2), "Blend", "opening node 1's editor committed node 2's text")
+        assert_eq(title(tf, gp, 2), "Blend", "opening node 1's editor committed node 2's text")
         assert_eq(editor_text(tf), "Color", "the editor reseeded from the new target")
         tf.key(path=RENAME, name="Escape")
         wait_renaming(tf, None, "cleanup: Escape")
@@ -201,16 +203,16 @@ def body() -> None:
         retype(tf, "Tint")
         tf.key(path=RENAME, name="Enter")
         wait_renaming(tf, None, "zoomed commit leaves rename mode")
-        assert_eq(title(tf, 1), "Tint", "a rename at 200% commits identically")
+        assert_eq(title(tf, gp, 1), "Tint", "a rename at 200% commits identically")
         tf.intervene("/external/viewport.zoom", 1.0)
 
         # ── (L) save / load round-trips the renamed titles ──────────
         assert_eq(tf.invoke("/external/save", None), True, "save snapshots the graph")
-        tf.intervene("/external/node.1.title", "Scratch")
-        assert_eq(title(tf, 1), "Scratch", "post-save scratch rename applied")
+        tf.intervene(f"/external/{gp.at('node.title', id=1)}", "Scratch")
+        assert_eq(title(tf, gp, 1), "Scratch", "post-save scratch rename applied")
         assert_eq(tf.invoke("/external/load", None), True, "load restores the snapshot")
-        assert_eq(title(tf, 1), "Tint", "the persisted title round-trips")
-        assert_eq(title(tf, 2), "Blend", "every committed rename persisted")
+        assert_eq(title(tf, gp, 1), "Tint", "the persisted title round-trips")
+        assert_eq(title(tf, gp, 2), "Blend", "every committed rename persisted")
         assert_eq(renaming(tf), None, "no rename in flight after the load")
 
 

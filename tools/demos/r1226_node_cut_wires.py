@@ -42,6 +42,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
 )
 
@@ -61,8 +62,8 @@ def edge_ids(tf: RpcSubprocess) -> list[int]:
     return [int(x) for x in csv.split(",")] if csv else []
 
 
-def conn(tf: RpcSubprocess, eid: int) -> Any:
-    return tf.query(f"/external/edge.{eid}")
+def conn(tf: RpcSubprocess, gp, eid: int) -> Any:
+    return tf.query(f"/external/{gp.at('edge', id=eid)}")
 
 
 def cut(tf: RpcSubprocess, spec: str) -> str:
@@ -85,19 +86,20 @@ def redo(tf: RpcSubprocess) -> bool:
 
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot ─────────────────────────────────────────────────
         assert_eq(edge_count(tf), 3, "3 seed wires")
         assert_eq(node_count(tf), 4, "4 seed nodes")
         assert_eq(sorted(edge_ids(tf)), [0, 1, 2], "stable ids 0,1,2")
         assert_eq(undo_depth(tf), 0, "clean undo history at boot")
         # Capture the connection strings so the survivors can be checked by wiring.
-        e2_conn = conn(tf, 2)
+        e2_conn = conn(tf, gp, 2)
 
         # ── (B) knife at x=200 cuts the two wires INTO Multiply ──────
         assert_eq(cut(tf, "200,20,200,380"), "0,1", "cut returns the cut-edge CSV")
         assert_eq(edge_count(tf), 1, "two wires gone")
         assert_eq(sorted(edge_ids(tf)), [2], "only Multiply -> Output survives")
-        assert_eq(conn(tf, 2), e2_conn, "the surviving wire is unchanged")
+        assert_eq(conn(tf, gp, 2), e2_conn, "the surviving wire is unchanged")
         assert_eq(undo_depth(tf), 1, "the whole cut is ONE undo step")
         assert_eq(node_count(tf), 4, "a cut removes wires, never nodes")
 

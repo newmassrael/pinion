@@ -33,6 +33,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     run_demo,
     wait_until,
 )
@@ -81,6 +82,7 @@ def card_present(tf, node_id: int) -> bool:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot — clean history ────────────────────────────────
         assert_eq(ncount(tf), 4, "boot: 4 seed nodes")
         assert_eq(ecount(tf), 3, "boot: 3 seed edges")
@@ -107,7 +109,8 @@ def body() -> None:
 
         assert_eq(tf.invoke(f"{UNDO}/redo", None), True, "redo stepped")
         assert_eq(ncount(tf), 5, "redo restored the node")
-        assert_eq(tf.query(f"/external/node.{new_id}.title"), "Multiply", "same id, same node")
+        assert_eq(tf.query(f"/external/{gp.at('node.title', id=new_id)}"), "Multiply",
+                  "same id, same node")
         assert_eq(tf.query("/external/selected"), new_id, "redo re-selected it")
         assert new_id in node_ids(tf), "the restored id enumerates again"
 
@@ -132,7 +135,8 @@ def body() -> None:
         assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo the delete")
         assert_eq(ncount(tf), n_before, "the node is restored")
         assert_eq(ecount(tf), ed_before, "every incident edge is restored")
-        assert_eq(tf.query("/external/edge.0"), "0:0->2:0", "a restored edge keeps its id + endpoints")
+        assert_eq(tf.query(f"/external/{gp.at('edge', id=0)}"), "0:0->2:0",
+                  "a restored edge keeps its id + endpoints")
         assert_eq(tf.invoke(f"{UNDO}/redo", None), True, "redo the delete")
         assert_eq(ncount(tf), n_before - 1, "redo removed the node again")
 

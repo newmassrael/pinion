@@ -39,6 +39,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_until,
@@ -55,8 +56,8 @@ def editing(tf):
     return tf.query("/external/editing")
 
 
-def value(tf, node_id: int):
-    return tf.query(f"/external/node.{node_id}.value")
+def value(tf, gp, node_id: int):
+    return tf.query(f"/external/{gp.at('node.value', id=node_id)}")
 
 
 def editor_text(tf):
@@ -102,6 +103,7 @@ def open_value(tf, node_id: int) -> None:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot — source cards paint their constant labels ──────
         assert_eq(editing(tf), None, "boot: no edit in flight")
         assert not field_painted(tf), "the shared field is unpainted while idle"
@@ -109,10 +111,11 @@ def body() -> None:
         assert_eq(const_label(tf, 1), "#808080", "the Color source paints its grey constant")
         assert_eq(const_label(tf, 2), None, "the Multiply compute op paints no constant label")
         assert_eq(const_label(tf, 3), None, "the Output sink paints no constant label")
-        assert_eq(tf.query("/external/node.1.is_source"), True, "node 1 is an authorable source")
+        assert_eq(tf.query(f"/external/{gp.at('node.is_source', id=1)}"), True,
+                  "node 1 is an authorable source")
 
         # ── (B) begin_edit_value opens the seeded field ──────────────
-        open_value(tf, 1)  # the Color source
+        open_value(tf,1)  # the Color source
         wait_until(lambda: field_painted(tf), timeout=4.0, interval=0.03,
                    desc="the shared field paints over the source constant")
         assert_eq(editor_text(tf), "#808080", "seeded with the current constant's hex")
@@ -126,7 +129,7 @@ def body() -> None:
         tf.key(path=EDIT, name="Enter")
         wait_until(lambda: editing(tf) is None, timeout=4.0, interval=0.03,
                    desc="Enter leaves edit mode")
-        v = value(tf, 1)
+        v = value(tf, gp, 1)
         assert_eq(v["r"], 0x33, "the commit authored the constant (r)")
         assert_eq(v["g"], 0x66, "the commit authored the constant (g)")
         assert_eq(v["b"], 0xCC, "the commit authored the constant (b)")
@@ -139,10 +142,10 @@ def body() -> None:
         assert_eq(tf.query("/external/eval.acyclic"), True, "still a DAG after the source edit")
         assert_eq(tf.query(f"{UNDO}/undo_label"), "Set source value", "journaled undoably")
         assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo the source edit")
-        assert_eq(value(tf, 1)["r"], 0x80, "undo restored the prior grey constant")
+        assert_eq(value(tf, gp, 1)["r"], 0x80, "undo restored the prior grey constant")
         assert_eq(const_label(tf, 1), "#808080", "the paint reverted with the undo")
         assert_eq(tf.invoke(f"{UNDO}/redo", None), True, "redo re-applies the authored constant")
-        assert_eq(value(tf, 1)["r"], 0x33, "redo re-authored the constant")
+        assert_eq(value(tf, gp, 1)["r"], 0x33, "redo re-authored the constant")
 
         # ── (D) double-click re-opens; the keystroke gate is the type ─
         tf.double_click(path=f"{G}#oconst_1")
@@ -156,21 +159,22 @@ def body() -> None:
         retype(tf, "#999999")
         tf.key(path=EDIT, name="Escape")
         wait_until(lambda: editing(tf) is None, timeout=4.0, interval=0.03, desc="Escape leaves edit mode")
-        assert_eq(value(tf, 1)["r"], 0x33, "a cancel never touches the constant")
+        assert_eq(value(tf, gp, 1)["r"], 0x33, "a cancel never touches the constant")
 
         # ── (E) a Scalar (Float) source authors with a number ────────
         scalar = tf.invoke("/external/add_node", "Scalar")
         assert_eq(scalar, 4, "add Scalar -> node 4")
-        assert_eq(tf.query("/external/node.4.is_source"), True, "the Scalar is a source")
+        assert_eq(tf.query(f"/external/{gp.at('node.is_source', id=4)}"), True,
+                  "the Scalar is a source")
         assert_eq(const_label(tf, 4), "0", "the Scalar source paints its 0 constant")
-        open_value(tf, 4)
+        open_value(tf,4)
         assert_eq(editor_text(tf), "0", "seeded with the Scalar's current value")
         tf.key(path=EDIT, name="x")  # a letter is gated out of a Float field
         assert_eq(editor_text(tf), "0", "a non-numeric keystroke never reaches a Float source")
         retype(tf, "0.5")
         tf.key(path=EDIT, name="Enter")
         wait_until(lambda: editing(tf) is None, timeout=4.0, interval=0.03, desc="Scalar commit leaves edit mode")
-        assert_eq(value(tf, 4), 0.5, "the typed number authored the Scalar source")
+        assert_eq(value(tf, gp, 4), 0.5, "the typed number authored the Scalar source")
         assert_eq(const_label(tf, 4), "0.5", "the Scalar label reflects the authored value")
 
         # ── (F) the reject cases ─────────────────────────────────────
