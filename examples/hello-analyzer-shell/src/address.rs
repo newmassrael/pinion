@@ -1263,11 +1263,9 @@ pub const CARD_BODY_ROOTS: &[fn(&str) -> String] = &[
 /// dead code the workspace lints refuse. What renders the artifact is the test
 /// that regenerates and compares it, so that is where the renderer lives.
 /// The placeholder a template carries where a card id goes.
-#[cfg(test)]
 const GRAMMAR_ID: &str = "{id}";
 
 /// The chrome a card paints: its own address and everything in its header.
-#[cfg(test)]
 fn chrome_rows() -> Vec<(&'static str, String, String)> {
     let id = GRAMMAR_ID;
     vec![
@@ -1304,7 +1302,6 @@ fn chrome_rows() -> Vec<(&'static str, String, String)> {
 }
 
 /// The parts a card's BODY paints — the R2186 half of the declaration.
-#[cfg(test)]
 fn body_rows() -> Vec<(&'static str, String, String)> {
     let id = GRAMMAR_ID;
     vec![
@@ -1360,7 +1357,6 @@ fn body_rows() -> Vec<(&'static str, String, String)> {
 
 /// Every word `{affordance}` can be, as `part` rows — the kind the format
 /// already has for "one word a placeholder can be".
-#[cfg(test)]
 fn affordance_rows() -> Vec<(&'static str, String, String)> {
     use pinion_core::widgets::card::CardAffordance;
 
@@ -1381,13 +1377,49 @@ fn affordance_rows() -> Vec<(&'static str, String, String)> {
     .collect()
 }
 
-#[cfg(test)]
+/// Every card grammar row this screen publishes, sorted — the ONE table both
+/// channels read.
+///
+/// ★★★★★ R2219 §5.2 — **one fact, two publications, and until this round they
+/// could disagree.** A screen here can publish what it paints two ways: over
+/// the WIRE, in `spec["declared_addresses"]` (R2171, read by
+/// `rpc_verify.declared_address`), and as an EMITTED artifact (R2217, read by
+/// `rpc_verify.painted_address`). Nothing joined them, and the gap is not
+/// hypothetical: the wire row carried one family (`carry`, nine keys hand-
+/// listed in `main.rs`) while the card family — 85 retyped walk sites — was in
+/// neither channel until R2217 put it in one.
+///
+/// So the rows are built ONCE here. The artifact renders them; the wire
+/// publishes them; a test asserts the two carry the same table. A hand-written
+/// second copy could drift, and the copy that drifts is the one nobody reads.
 #[must_use]
-fn render_grammar() -> String {
+pub fn card_grammar_rows() -> Vec<(&'static str, String, String)> {
     let mut rows = chrome_rows();
     rows.extend(body_rows());
     rows.extend(affordance_rows());
     rows.sort_unstable();
+    rows
+}
+
+/// The same table, as the wire publishes it: `kind -> name -> value`.
+#[must_use]
+pub fn card_grammar_json() -> serde_json::Value {
+    let mut out = serde_json::Map::new();
+    for (kind, name, value) in card_grammar_rows() {
+        let entry = out
+            .entry(kind.to_owned())
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        if let Some(map) = entry.as_object_mut() {
+            map.insert(name, serde_json::Value::String(value));
+        }
+    }
+    serde_json::Value::Object(out)
+}
+
+#[cfg(test)]
+#[must_use]
+fn render_grammar() -> String {
+    let rows = card_grammar_rows();
 
     let mut out = String::from(
         "# Every CARD address grammar this screen paints, emitted from the\n\
@@ -1450,6 +1482,81 @@ mod grammar_tests {
              Rust formats these templates instead of spelling an address, so a \
              change here is a PUBLISHED change. If it is intended, set \
              PINION_REGEN_ADDRESS_PIN and re-run this test."
+        );
+    }
+
+    /// ★★★★★ R2219 — the WIRE and the ARTIFACT carry the same table.
+    ///
+    /// This screen publishes what it paints twice: `spec["declared_addresses"]`
+    /// for a reader driving the live app, and the committed artifact for one
+    /// reading the tree. Both are worth having — an agent mid-session cannot
+    /// read a file, and a walk composing before launch cannot ask a process —
+    /// but two publications of one fact that nothing joins is a divergence
+    /// waiting to happen, and this campaign has paid for that shape twice
+    /// already (R2129's two populations, R2217's two kind-vocabularies).
+    ///
+    /// The join is that both render `card_grammar_rows`. This asserts it in
+    /// both directions: every row reaches the JSON under its own kind, the JSON
+    /// carries nothing the rows do not, and the artifact's text carries each
+    /// row verbatim.
+    #[test]
+    fn the_wire_and_the_artifact_publish_one_table() {
+        let rows = super::card_grammar_rows();
+        // ⚠ The WIRE ROW ITSELF, not this module's view of it. Comparing
+        // `card_grammar_json` with `card_grammar_rows` would be two readings of
+        // one function agreeing with itself; what can actually regress is
+        // `declared_addresses_json` going back to a hand-written list, which is
+        // the shape it had for the `carry` family. So the assertion reaches for
+        // what the screen publishes.
+        let published_row = crate::declared_addresses_json();
+        let json = published_row
+            .get("card")
+            .cloned()
+            .expect("the screen publishes its card grammar on the wire");
+        assert_eq!(
+            json,
+            super::card_grammar_json(),
+            "the published row is not the table this module builds — a second \
+             hand-written copy is exactly what R2219 removed"
+        );
+        let rendered = super::render_grammar();
+        assert!(
+            rows.len() >= 40,
+            "{} rows is not this screen's card grammar",
+            rows.len()
+        );
+        for (kind, name, value) in &rows {
+            let published = json
+                .get(kind)
+                .and_then(|by_name| by_name.get(name))
+                .and_then(serde_json::Value::as_str);
+            assert_eq!(
+                published,
+                Some(value.as_str()),
+                "the wire does not publish {kind}/{name}, which the artifact does"
+            );
+            assert!(
+                rendered.contains(&format!("{kind}\t{name}\t{value}\n")),
+                "the artifact does not carry {kind}/{name}, which the wire does"
+            );
+        }
+        let published: usize = json
+            .as_object()
+            .map(|kinds| {
+                kinds
+                    .values()
+                    .filter_map(serde_json::Value::as_object)
+                    .map(serde_json::Map::len)
+                    .sum()
+            })
+            .unwrap_or_default();
+        assert_eq!(
+            published,
+            rows.len(),
+            "the wire publishes {published} row(s) and the table holds {} — a \
+             channel carrying what the other does not is the divergence this \
+             round removed",
+            rows.len()
         );
     }
 

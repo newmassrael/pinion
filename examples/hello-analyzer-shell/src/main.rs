@@ -13321,6 +13321,14 @@ fn gestures_json() -> Vec<serde_json::Value> {
 /// beside the members.
 fn declared_addresses_json() -> serde_json::Value {
     serde_json::json!({
+        // ★★★★★ R2219 — the CARD grammar, from the same table the emitted
+        // artifact renders (`address::card_grammar_rows`). Until this round a
+        // screen could publish a fact on one channel and not the other, and
+        // that is exactly what happened: this row carried `carry` alone while
+        // the card family — 85 retyped walk sites — was published nowhere, then
+        // (R2217) in the artifact only. One table, both channels, one test that
+        // they agree.
+        "card": crate::address::card_grammar_json(),
         "carry": {
             "seat": crate::address::CARRY,
             "chip": crate::address::CARRY_CHIP,
