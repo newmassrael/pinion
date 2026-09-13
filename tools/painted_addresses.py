@@ -2746,6 +2746,23 @@ def _module_constants(tree: ast.Module) -> dict[str, str]:
     which value an f-string captures a scoping question, and this answers it by
     not substituting. That errs towards NOT anchoring, which the unanchored
     count still sees.
+
+    ★★★★★ R2206 — **and a module f-string COMPOSED of such names is its value
+    too**, read in file order as Python binds it. `GRID = "property_grid"` and
+    then `EXT = f"/{GRID}/external"` is a brace-free string at runtime, but the
+    brace in its SOURCE kept it out of this map, so `f"{EXT}/value.4"` read as
+    `{}/value.4`, anchored nowhere, and the ratchet could not see the spelling —
+    nor refuse a new one written the same way. R2205 converted the one such
+    site by reading (`r981`); the census had not counted it. Measured before
+    building, with a dry run over every walk literal: 32 composed constants in
+    24 walks resolve, and on the current tree 0 literals change family (the
+    only spelling behind one was converted in R2205); on `r981` as it stood
+    before R2205 the same run turns `{}/value.4` into
+    `/property_grid/external/value.4`, charged to `value.{}`. So this moves no
+    count today and closes the door a future spelling would walk through.
+    A part that is not a resolved name or a plain string (a call, an attribute,
+    a conversion, a format spec, a name bound later or twice) leaves the whole
+    constant unresolved, and a result that still holds a brace is not taken.
     """
     bindings: dict[str, int] = {}
 
@@ -2779,15 +2796,37 @@ def _module_constants(tree: ast.Module) -> dict[str, str]:
             target, value = node.target, node.value
         else:
             continue
-        if (
-            isinstance(target, ast.Name)
-            and isinstance(value, ast.Constant)
-            and isinstance(value.value, str)
-            and not {"{", "}"} & set(value.value)
-            and bindings.get(target.id) == 1
-        ):
-            found[target.id] = value.value
+        if not isinstance(target, ast.Name) or bindings.get(target.id) != 1:
+            continue
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            text: str | None = value.value
+        elif isinstance(value, ast.JoinedStr):
+            text = _composed_constant(value, found)
+        else:
+            text = None
+        if text is not None and not {"{", "}"} & set(text):
+            found[target.id] = text
     return found
+
+
+def _composed_constant(joined: ast.JoinedStr, known: dict[str, str]) -> str | None:
+    """The value of a module f-string built only from plain strings and names
+    already in `known`, or `None` — see [`_module_constants`] (R2206)."""
+    out: list[str] = []
+    for part in joined.values:
+        if isinstance(part, ast.Constant) and isinstance(part.value, str):
+            out.append(part.value)
+        elif (
+            isinstance(part, ast.FormattedValue)
+            and isinstance(part.value, ast.Name)
+            and part.conversion == -1
+            and part.format_spec is None
+            and part.value.id in known
+        ):
+            out.append(known[part.value.id])
+        else:
+            return None
+    return "".join(out)
 
 
 @functools.lru_cache(maxsize=None)
@@ -3407,6 +3446,39 @@ def selftest() -> int:
         (
             "★★ nor through a conversion, which changes the text",
             'VIEW = "nodeflow"\na = f"{VIEW!r}.node.x"\n',
+            [],
+        ),
+        (
+            "★★★★★ R2206 — a module f-string composed of resolved names IS its "
+            "value, so a path spelled behind a composed mount is charged",
+            'GRID = "grid"\nEXT = f"/{GRID}/external"\na = f"{EXT}/nodeflow.node.x"\n',
+            ["nodeflow.node"],
+        ),
+        (
+            "★★ and a composition of a composition, in file order",
+            'ROOT = "grid"\nMOUNT = f"/{ROOT}"\nEXT = f"{MOUNT}/external"\n'
+            'a = f"{EXT}/nodeflow.node.x"\n',
+            ["nodeflow.node"],
+        ),
+        (
+            "★★ but not when a part is a call",
+            'EXT = f"/{grid()}/external"\na = f"{EXT}/nodeflow.node.x"\n',
+            [],
+        ),
+        (
+            "★★ nor when a part names something bound LATER in the file",
+            'EXT = f"/{GRID}/external"\nGRID = "grid"\na = f"{EXT}/nodeflow.node.x"\n',
+            [],
+        ),
+        (
+            "★★ nor when the composed name is bound twice",
+            'GRID = "grid"\nEXT = f"/{GRID}/external"\nEXT = "/x/external"\n'
+            'a = f"{EXT}/nodeflow.node.x"\n',
+            [],
+        ),
+        (
+            "★ nor when the composed text still holds a brace",
+            'GRID = "grid"\nEXT = f"/{GRID}/{{external}}"\na = f"{EXT}/nodeflow.node.x"\n',
             [],
         ),
         (
