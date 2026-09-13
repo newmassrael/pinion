@@ -431,6 +431,16 @@ def test_the_advice_names_a_display_that_is_actually_free() -> None:
     spare = display_seat.free_display()
     check(spare not in live, f"{spare} is not one of the live displays {live}")
     check(spare.startswith(":"), "and it is spelled as a display")
+    # ★ R2221.1 — the falsifiable form of "these are the same walk". The two
+    # assertions above pass under two INDEPENDENT walks, which is how a second
+    # spelling survived the round that added the general one; this one goes red
+    # the moment they can disagree.
+    first_candidate = display_seat.offscreen_candidates(live, tries=1)[0]
+    check(
+        spare == first_candidate,
+        f"free_display agrees with the facility's first candidate "
+        f"({spare} vs {first_candidate})",
+    )
     lines = "\n".join(display_seat.advice())
     check(display_seat.ALLOW_ENV in lines, "the advice carries the override")
     # ★ R2221 — and it names the FACILITY, not an `Xvfb ... &` the reader has to

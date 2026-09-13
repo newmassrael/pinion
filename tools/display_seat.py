@@ -422,13 +422,17 @@ def live_displays() -> tuple[str, ...]:
     return tuple(f":{n}" for n in numbers)
 
 
-def free_display(start: int = 90) -> str:
-    """The lowest display number at or above `start` that nothing is using."""
-    taken = {d for d in live_displays()}
-    n = start
-    while f":{n}" in taken:
-        n += 1
-    return f":{n}"
+def free_display(start: int = CANDIDATE_START) -> str:
+    """The lowest display number at or above `start` that nothing is using.
+
+    ⚠ R2221.1 — this had its OWN walk over the live displays until the round
+    that added `offscreen_candidates` was audited against its own diff. The two
+    loops sat eleven lines apart and neither could fail while both were right,
+    which is exactly why a second spelling is treated here as a defect rather
+    than as untidiness: it comes due on the day one of them is changed. The
+    general form is the facility's; this is that form asked for one answer.
+    """
+    return offscreen_candidates(live_displays(), start=start, tries=1)[0]
 
 
 def offscreen_here() -> tuple[str, ...]:
