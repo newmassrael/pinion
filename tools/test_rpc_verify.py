@@ -1045,6 +1045,50 @@ def test_a_name_carrying_two_paths_is_told_apart_by_its_arguments() -> None:
           f"declared_paths: rows with no usable path are skipped: {sorted(collected)}")
 
 
+def test_the_app_holds_the_declared_paths_and_asks_once() -> None:
+    """★★★★★ R2227 — the app holds the door, one ask per External.
+
+    Holding it was every walk's own errand: an import, a call and a variable to
+    keep. Measured on the walks spelling the census's largest family, ALL ELEVEN
+    import the reader zero times — none declined it, none was offered it. The
+    104 that do use it are the ones a conversion round reached by hand.
+
+    ⚠ Driven against a FAKE that counts its schema round trips rather than a
+    live screen, because what is asserted is the number of asks — and a test
+    that launched a process could only ever assert that an answer came back.
+    The suite has no process and finishes in under a second (R1580).
+    """
+
+    class FakeApp(rpc_verify.RpcSubprocess):
+        def __init__(self) -> None:  # noqa: D107 — a fixture, not the real boot
+            self.asked: list[str] = []
+            self._declared_paths = {}
+
+        def query(self, path, *, with_origin=False):  # noqa: D102
+            self.asked.append(path)
+            return [{"path": "selected"}, {"path": "selected.<day>"}]
+
+    app = FakeApp()
+    first = app.paths_at()
+    again = app.paths_at()
+    through_fn = rpc_verify.external_paths(app)
+    check(len(app.asked) == 1,
+          f"paths_at: three asks, one schema round trip: {app.asked}")
+    check(first is again, "paths_at: the same table, not a second read")
+    check(first is through_fn,
+          "paths_at: ★ the free function shares the cache, so a walk mixing the "
+          "two forms still asks once")
+    check(first.at("selected", day=15) == "selected.15",
+          "paths_at: and the table composes")
+
+    # ⚠ A mounted External is a DIFFERENT screen's vocabulary. One table would
+    # answer the wrong screen's question, so the cache is keyed by External.
+    mounted = app.paths_at("/grid/external")
+    check(mounted is not first, "paths_at: ★ a mounted External is its own table")
+    check(len(app.asked) == 2 and app.asked[-1].startswith("/grid/external"),
+          f"paths_at: and asking for it is a second round trip: {app.asked}")
+
+
 def test_no_composer_shadows_the_vocabulary_it_composes_from() -> None:
     """★★★★★ R2226 — **a composer's own parameter must not be a word the
     declaration can use.**

@@ -48,7 +48,33 @@ DP = "datepicker"
 VIEWPORT = (360, 420)
 
 
-def _q(d, slot: str):
+def _q(d, slot: str, **args):
+    """One declared slot of this screen, ASKED FOR rather than spelled.
+
+    ★★★★★ R2227 — the composition goes through what the screen DECLARES
+    (`d.paths_at()`, R2227's door held by the app itself), so `selected.15` is
+    `_q(d, "selected", day=15)` and this walk names no address. Two things come
+    with that and neither was asked for: a slot the screen does not declare is
+    refused HERE rather than becoming a question the screen answers with an
+    error, and the argument name is the screen's (`<day>`), so renaming it
+    fails loudly instead of composing a path that names nothing.
+
+    ⚠ This screen declares both `selected` and `selected.<day>` — which of the
+    two is meant is decided by whether a `day` is handed over (R2226). Before
+    that round the reader refused this screen outright for declaring both.
+    """
+    return d.query(f"/external/{d.paths_at().at(slot, **args)}")
+
+
+def _q_raw(d, slot: str):
+    """One slot spelled DELIBERATELY, for asking what the screen refuses.
+
+    ⚠ Its own function so the asymmetry is visible rather than incidental: the
+    negative control below asks for a slot this screen does not declare, and
+    `_q` would refuse it at composition time — the walk would then be testing
+    this file's reader instead of the screen's router. R2223 met the same shape
+    in `r1701`, where a guarded negative arm had skipped silently for 522 rounds.
+    """
     return d.query(f"/external/{slot}")
 
 
@@ -94,8 +120,8 @@ def body() -> None:
             assert_eq(_q(d, "selected_year"), 2026, "selected_year == 2026")
             assert_eq(_q(d, "selected_month"), 5, "selected_month == 5")
             assert_eq(_q(d, "selected_day"), 15, "selected_day == 15")
-            assert_eq(_q(d, "selected.15"), True, "selected.15 true")
-            assert_eq(_q(d, "selected.14"), False, "selected.14 false")
+            assert_eq(_q(d, "selected", day=15), True, "day 15 is selected")
+            assert_eq(_q(d, "selected", day=14), False, "day 14 is not")
 
             # ── 3. prev → April 2026 (30 days); next ×2 → June ──────
             d.click(path=f"{DP}#prev")
@@ -209,7 +235,11 @@ def body() -> None:
             assert raised, "out-of-range day index must be rejected"
             raised = False
             try:
-                _q(d, "no_such_slot")
+                # ★ R2227 — spelled on purpose, through `_q_raw`. The subject
+                # here is the SCREEN's refusal of an undeclared slot, so the
+                # path must reach it; composing through the declaration would
+                # refuse one step earlier and test this file instead.
+                _q_raw(d, "no_such_slot")
             except RpcError:
                 raised = True
             assert raised, "unknown introspect slot must raise, not silently pass"

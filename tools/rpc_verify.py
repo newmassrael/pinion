@@ -867,6 +867,10 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         )
         self.boot_grace = boot_grace
         self.request_timeout = request_timeout
+        # ★★★★★ R2227 — this screen's declared path vocabulary, per External,
+        # read at most once each. See [`RpcSubprocess.paths_at`] for why the app
+        # holds it rather than each walk.
+        self._declared_paths: dict[str, "ExternalPaths"] = {}
         # R881.1 CI fix — deadline for the FIRST request only (the R719
         # boot-baseline `pointer_leave`, which doubles as the readiness
         # handshake). The very first pinion process on a runner with a
@@ -2546,6 +2550,48 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         resp = self.request("scene/query", params)
         assert resp is not None
         return resp.result
+
+    def paths_at(self, external: str = "/external") -> "ExternalPaths":
+        """This screen's DECLARED introspection paths under `external`, ready to
+        compose — read at most once per External, by the app that can be asked.
+
+        ★★★★★ R2227 §5.7 — **the app holds the door, because holding it was
+        every walk's own errand and most walks never ran it.**
+
+        R2166 gave this tree a reader for the `$schema` vocabulary and R2198-R2215
+        converted 104 walks through it. Measured this round on the walks that
+        spell the census's largest family (`selected.{}`, 63 sites): ALL ELEVEN
+        of them import the reader zero times. Not one declined it — none was
+        offered it, because reaching it costs an import, a call and a variable to
+        keep, and a walk that skips those three steps is a walk that spells. The
+        104 that do use it are the ones a conversion round reached by hand.
+
+        An app can be asked what it declares; that is the one thing this object
+        is for. So `d.paths_at().at("selected", day=15)` needs no import and no
+        bookkeeping, which is the difference between a door that exists and a
+        door that is used.
+
+        ⚠ Per External rather than one table, and that is not tidiness: a host
+        here mounts guests, and `/grid/external` is a different screen's
+        vocabulary from `/external`. Nine call sites in this tree already ask
+        for a mounted one. One table would answer the wrong screen's question.
+
+        ⚠⚠ Cached because the schema is a WIRE round trip and a walk asks per
+        site — `ChartAddresses`'s reason (R2165), which `external_paths` states
+        as *a walk that re-read it per site would put a round trip behind every
+        address and make its own trace a record of how often it asked*. The
+        cache lives as long as this process does, which is exactly as long as
+        the declaration it holds.
+        """
+        held = self._declared_paths.get(external)
+        if held is None:
+            declared = declared_paths(external_schema(self, external))
+            assert declared, (
+                f"{external}/$schema carried no `path` row this reader could use"
+            )
+            held = ExternalPaths(external=external, declared=declared)
+            self._declared_paths[external] = held
+        return held
 
     def invoke(self, path: str, args: Any, *, with_origin: bool = False) -> Any:
         """`scene/invoke` typed wrapper (§5.12 item 8).
@@ -7994,10 +8040,13 @@ def external_paths(app: "RpcSubprocess", external: str = "/external") -> Externa
     back the path whose arguments are exactly those, or refuses. What stays
     refused, at [`ExternalPaths.at`], is the case where arguments do NOT
     separate them: one name, one argument set, two paths.
+
+    ⚠ R2227 — the free-function form of [`RpcSubprocess.paths_at`], kept because
+    104 walks call it and because a reader is easier to name in a `from … import`
+    line than a method is. It shares that method's cache, so a walk mixing the
+    two forms still asks the screen once.
     """
-    declared = declared_paths(external_schema(app, external))
-    assert declared, f"{external}/$schema carried no `path` row this reader could use"
-    return ExternalPaths(external=external, declared=declared)
+    return app.paths_at(external)
 
 
 def declared_paths(rows: Iterable[Any]) -> dict[str, tuple[str, ...]]:

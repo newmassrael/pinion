@@ -69,7 +69,6 @@ from rpc_verify import (  # noqa: E402
     assert_declared_channels_are_true,
     assert_eq,
     assert_router_press_moves,
-    external_paths,
     find_by_tag,
     painted_address,
     painted_part,
@@ -159,8 +158,21 @@ LATENCY_TILES = {"p50": "3.2 ms", "p95": "11.4 ms", "max": "72.0 ms"}
 LATENCY_BUCKETS = ["<1", "1-2", "2-4", "4-8", "8-16", "16-32", "32-64", ">64"]
 
 
-def q(tf: RpcSubprocess, path: str):
-    return tf.query(f"{EXT}/{path}")
+def q(tf: RpcSubprocess, path: str, **args):
+    """One declared slot of the analyzer shell, ASKED FOR rather than spelled.
+
+    ★★★★★ R2227 — every query this walk makes now goes through what the screen
+    DECLARES (`tf.paths_at`, the door the app itself holds). Measured before the
+    change: all 30 slots this walk asks for are declared, so nothing here was a
+    dead question — but nothing was CHECKING that either, and a slot renamed on
+    the screen would have surfaced as an error from the screen rather than as a
+    refusal here naming what it does declare.
+
+    ⚠ The shell declares `hit` and `hit.<x>.<y>` under one name, which is the
+    pair R2226's reader learned to tell apart by arguments; `q(tf, "hit")` and
+    `q(tf, "hit", x=…, y=…)` are both this function now.
+    """
+    return tf.query(f"{EXT}/{tf.paths_at(EXT).at(path, **args)}")
 
 
 def inv(tf: RpcSubprocess, path: str, args):
@@ -875,11 +887,13 @@ def body() -> None:
         # onto one name and `external_paths` refused this screen ENTIRELY — all
         # 87 of its declared paths, which is why this line typed one out. The
         # arguments are what tell the two apart now.
-        paths = external_paths(tf, EXT)
+        # ★ R2227 — and `q` itself composes through the declaration, so the
+        # arguments go straight to it rather than through a table this walk
+        # holds.
         probed, named = 0, 0
         for py in range(4, 900, 44):
             for px in range(4, 1440, 52):
-                where = q(tf, paths.at("hit", x=px, y=py))
+                where = q(tf, "hit", x=px, y=py)
                 probed += 1
                 if where == "nothing":
                     continue
