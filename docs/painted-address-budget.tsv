@@ -60,11 +60,11 @@ chart.wick	0	1
 chart.xlabel	0	3
 checked.{}	18	0
 chrome.header	0	1
-col_kind.{}	7	8
+col_kind.{}	2	8
 col_modified.{}	5	7
 col_name.{}	2	3
 col_range.{}	0	4
-collapsed.{}	20	9
+collapsed.{}	17	9
 collapsed_at.{}	3	0
 completion.{}	4	0
 connect.endpoints	2	0
@@ -118,7 +118,7 @@ item_count.{}	4	0
 item_kind.{}	16	0
 kind.elem	0	0
 kind.{}	0	9
-kind_at.{}	13	2
+kind_at.{}	11	2
 kp.column	0	0
 kp.detail	0	0
 kp.filter	0	0
@@ -144,7 +144,7 @@ lab.scenario	0	11
 lab.toast	0	0
 lab.toolbar	0	0
 lab.wire	0	1
-label_at.{}	32	6
+label_at.{}	29	6
 layers.{}	1	0
 level_at.{}	19	2
 line.area	0	0
@@ -166,7 +166,7 @@ member_count_at.{}	4	0
 mixed.{}	0	19
 model_height.{}	1	1
 modified.elem	0	0
-modified.{}	13	31
+modified.{}	5	31
 name.elem	0	0
 name.{}	11	12
 no.such	1	0
@@ -226,7 +226,7 @@ shell.status	1	4
 shell.subbar	0	0
 shell.toast	0	3
 sizes.legend	0	1
-source_at.{}	42	22
+source_at.{}	22	22
 source_len.{}	1	0
 source_name.{}	2	0
 state.{}	1	0
@@ -268,7 +268,7 @@ tv.tip	0	0
 tv.toggle	0	0
 unmapped_bytes.{}	1	0
 value.elem	0	0
-value.{}	49	282
+value.{}	18	282
 visible_at.{}	10	2
 visual_index.{}	0	1
 vn.sprite	2	0

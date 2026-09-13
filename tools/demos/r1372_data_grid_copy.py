@@ -43,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
 )
 
@@ -64,10 +65,11 @@ def cursor(tf, row: int, col: int) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-data-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot — no range ──────────────────────────────────────
         assert_eq(q(tf, "row_count"), 4, "4 seed rows")
-        assert_eq(q(tf, "value.0.0"), "Hero", "row0 Asset seed")
-        assert_eq(q(tf, "value.2.0"), "Coin", "row2 Asset seed")
+        assert_eq(q(tf, gp.at("value", row=0, col=0)), "Hero", "row0 Asset seed")
+        assert_eq(q(tf, gp.at("value", row=2, col=0)), "Coin", "row2 Asset seed")
         assert_eq(q(tf, "cell_selection"), None, "no range at boot")
         assert_eq(q(tf, "cell_selection_count"), 0, "no cells selected")
         assert_eq(q(tf, "cell_selection_tsv"), None, "no TSV without a range")
@@ -103,11 +105,11 @@ def body() -> None:
         assert_eq(col_copy, "Hero\nTree", "copied the Asset column top pair")
         cursor(tf, 2, 0)
         assert_eq(inv(tf, "paste", col_copy), 2, "the copied block pastes 2 cells")
-        assert_eq(q(tf, "value.2.0"), "Hero", "row 2 Asset now Hero (pasted)")
-        assert_eq(q(tf, "value.3.0"), "Tree", "row 3 Asset now Tree (pasted)")
+        assert_eq(q(tf, gp.at("value", row=2, col=0)), "Hero", "row 2 Asset now Hero (pasted)")
+        assert_eq(q(tf, gp.at("value", row=3, col=0)), "Tree", "row 3 Asset now Tree (pasted)")
         assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo the round-trip paste")
-        assert_eq(q(tf, "value.2.0"), "Coin", "row 2 Asset restored")
-        assert_eq(q(tf, "value.3.0"), "Boss", "row 3 Asset restored")
+        assert_eq(q(tf, gp.at("value", row=2, col=0)), "Coin", "row 2 Asset restored")
+        assert_eq(q(tf, gp.at("value", row=3, col=0)), "Boss", "row 3 Asset restored")
 
         # ── (E) guards — out-of-range no-op, malformed reject ────────
         inv(tf, "clear-cell-selection")
@@ -116,8 +118,8 @@ def body() -> None:
 
         # ── (F) the selection + copy follow the active sort ──────────
         inv(tf, "cycle_sort", 0)  # sort col 0 (Asset) ascending: Boss/Coin/Hero/Tree
-        s0 = q(tf, "source_at.0")  # source row shown at visual position 0
-        s1 = q(tf, "source_at.1")
+        s0 = q(tf, gp.at("source_at", pos=0))  # source row shown at visual position 0
+        s1 = q(tf, gp.at("source_at", pos=1))
         assert s0 != 0, "the sort reorders (visual row 0 is not source row 0)"
         assert_eq(inv(tf, "select-cell", f"{s0},0"), True, "anchor at visual row 0's source")
         assert_eq(inv(tf, "extend-cell", f"{s1},0"), True, "extend to visual row 1's source")

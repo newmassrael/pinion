@@ -37,6 +37,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_snap,
@@ -83,14 +84,15 @@ def drag_px(tf, row: int, col: int, dx: int) -> None:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot + reveal ────────────────────────────────────────
         assert_eq(gq(tf, "row_count"), 4, "4 rows")
         assert_eq(gq(tf, "col_count"), 6, "6 columns")
-        assert_eq(gq(tf, "col_kind.2"), "int", "Count (col 2) is an int")
-        assert_eq(gq(tf, "col_kind.3"), "float", "Scale (col 3) is a float")
-        assert_eq(gq(tf, "col_kind.4"), "bool", "Active (col 4) is a bool")
-        assert_eq(gq(tf, "value.0.2"), 1, "Count (0,2) boots at 1")
-        assert_eq(gq(tf, "value.0.3"), 1.0, "Scale (0,3) boots at 1.0")
+        assert_eq(gq(tf, gp.at("col_kind", col=2)), "int", "Count (col 2) is an int")
+        assert_eq(gq(tf, gp.at("col_kind", col=3)), "float", "Scale (col 3) is a float")
+        assert_eq(gq(tf, gp.at("col_kind", col=4)), "bool", "Active (col 4) is a bool")
+        assert_eq(gq(tf, gp.at("value", row=0, col=2)), 1, "Count (0,2) boots at 1")
+        assert_eq(gq(tf, gp.at("value", row=0, col=3)), 1.0, "Scale (0,3) boots at 1.0")
         assert_eq(gq(tf, "scrubbing"), False, "not scrubbing at boot")
         tf.scroll(H_SCROLL, to=(1000, 0))  # reveal Count / Scale / Active
         wait_snap(tf, lambda s: cell_on_screen(s, f"{GRID}#0_3"),
@@ -101,7 +103,7 @@ def body() -> None:
         tf.click(path=f"{GRID}#0_2")
         assert_eq(gq(tf, "focused_row"), 0, "click focuses the cell row")
         assert_eq(gq(tf, "focused_col"), 2, "click focuses the cell column")
-        assert_eq(gq(tf, "value.0.2"), 1, "the click did not change the Count value")
+        assert_eq(gq(tf, gp.at("value", row=0, col=2)), 1, "the click did not change the Count value")
         assert_eq(gq(tf, "scrubbing"), False, "a click leaves no scrub live")
         assert_eq(gq(tf, "editing_row"), None, "a single click does not edit")
 
@@ -109,20 +111,20 @@ def body() -> None:
         tf.click(path=f"{GRID}#2_3")
         assert_eq(gq(tf, "focused_row"), 2, "focus follows the click to row 2")
         assert_eq(gq(tf, "focused_col"), 3, "focus follows the click to col 3")
-        assert_eq(gq(tf, "value.2.3"), 0.5, "the click did not change the Scale value")
+        assert_eq(gq(tf, gp.at("value", row=2, col=3)), 0.5, "the click did not change the Scale value")
 
         # ── (D) a dead-zone drag (< threshold) is still a click ──────
         # 2px stray < DRAG_CLICK_THRESHOLD_PX (4px): focuses, never scrubs.
-        before_03 = gq(tf, "value.0.3")
+        before_03 = gq(tf, gp.at("value", row=0, col=3))
         drag_px(tf, 0, 3, 2)
-        assert_eq(gq(tf, "value.0.3"), before_03, "a 2px stray stays within the click dead zone")
+        assert_eq(gq(tf, gp.at("value", row=0, col=3)), before_03, "a 2px stray stays within the click dead zone")
         assert_eq(gq(tf, "scrubbing"), False, "the dead-zone press never scrubs")
         assert_eq(gq(tf, "focused_row"), 0, "the dead-zone click focuses row 0")
         assert_eq(gq(tf, "focused_col"), 3, "the dead-zone click focuses col 3")
 
         # ── (E) a real drag (> threshold) scrubs the value ───────────
         drag_px(tf, 0, 3, 60)
-        v03 = gq(tf, "value.0.3")
+        v03 = gq(tf, gp.at("value", row=0, col=3))
         assert isinstance(v03, float) and v03 > before_03, \
             f"a 60px rightward drag scrubs Scale up (was {before_03}, now {v03})"
         assert_eq(gq(tf, "scrubbing"), False, "scrub cleared after release")
@@ -133,16 +135,16 @@ def body() -> None:
         tf.click(path=f"{GRID}#0_2")
         assert_eq(gq(tf, "focused_row"), 0, "focus parked on (0,2)")
         assert_eq(gq(tf, "focused_col"), 2, "focus parked on (0,2)")
-        before_12 = gq(tf, "value.1.2")
+        before_12 = gq(tf, gp.at("value", row=1, col=2))
         drag_px(tf, 1, 2, 80)  # real drag-scrub on (1,2)
-        assert gq(tf, "value.1.2") != before_12, "the drag scrubbed Count of row 1"
+        assert gq(tf, gp.at("value", row=1, col=2)) != before_12, "the drag scrubbed Count of row 1"
         assert_eq(gq(tf, "focused_row"), 0, "the scrub did NOT move focus to the scrubbed row")
         assert_eq(gq(tf, "focused_col"), 2, "the scrub did NOT move focus to the scrubbed col")
 
         # ── (G) a click on a bool cell toggles + focuses ─────────────
-        assert_eq(gq(tf, "value.2.4"), False, "Active (2,4) boots false")
+        assert_eq(gq(tf, gp.at("value", row=2, col=4)), False, "Active (2,4) boots false")
         tf.click(path=f"{GRID}#2_4")
-        assert_eq(gq(tf, "value.2.4"), True, "the bool toggles on click")
+        assert_eq(gq(tf, gp.at("value", row=2, col=4)), True, "the bool toggles on click")
         assert_eq(gq(tf, "focused_row"), 2, "the bool click focuses its row")
         assert_eq(gq(tf, "focused_col"), 4, "the bool click focuses its col")
         assert_eq(gq(tf, "scrubbing"), False, "a bool click never scrubs")

@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_query,
     wait_snap,
@@ -92,6 +93,7 @@ def _scan(snap) -> dict:
 
 def body() -> None:
     with RpcSubprocess("hello-data-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot: ungrouped ─────────────────────────────────────
         assert_eq(tf.query("/external/group"), "none", "boot: ungrouped")
         assert_eq(tf.query("/external/group_count"), 0, "no groups")
@@ -102,18 +104,18 @@ def body() -> None:
                   "set_group returns the group count in one round-trip")
         wait_query(tf, "/external/group", "1", desc="grouped by Type")
         assert_eq(tf.query("/external/visible_len"), 6, "2 headers + 4 data rows")
-        assert_eq(tf.query("/external/kind_at.0"), "header", "position 0 is a header")
-        assert_eq(tf.query("/external/kind_at.1"), "data", "position 1 is a data row")
-        assert_eq(tf.query("/external/source_at.0"), None, "header reports Null source")
-        assert_eq(tf.query("/external/source_at.1"), 0, "sprite group: Hero")
-        assert_eq(tf.query("/external/source_at.2"), 2, "sprite group: Coin")
-        assert_eq(tf.query("/external/label_at.0"), "sprite", "first group label")
-        assert_eq(tf.query("/external/label_at.3"), "mesh", "second group label")
+        assert_eq(tf.query(f"/external/{gp.at('kind_at', pos=0)}"), "header", "position 0 is a header")
+        assert_eq(tf.query(f"/external/{gp.at('kind_at', pos=1)}"), "data", "position 1 is a data row")
+        assert_eq(tf.query(f"/external/{gp.at('source_at', pos=0)}"), None, "header reports Null source")
+        assert_eq(tf.query(f"/external/{gp.at('source_at', pos=1)}"), 0, "sprite group: Hero")
+        assert_eq(tf.query(f"/external/{gp.at('source_at', pos=2)}"), 2, "sprite group: Coin")
+        assert_eq(tf.query(f"/external/{gp.at('label_at', pos=0)}"), "sprite", "first group label")
+        assert_eq(tf.query(f"/external/{gp.at('label_at', pos=3)}"), "mesh", "second group label")
 
         # ── (C) collapse hides members + re-anchors the cursor ──────
         tf.request("scene/intervene", {"path": "/external/focused_row", "value": 0})
         assert_eq(tf.invoke("/external/toggle_group", 0), True, "collapse the sprite group")
-        wait_query(tf, "/external/collapsed.0", True, desc="group 0 collapsed")
+        wait_query(tf, f"/external/{gp.at('collapsed', group=0)}", True, desc="group 0 collapsed")
         assert_eq(tf.query("/external/visible_len"), 4, "2 headers + 2 mesh rows")
         # Hero (row 0) was the cursor and is now hidden -> re-anchors to the
         # first visible row (the mesh group's Tree, source 1).
@@ -128,8 +130,8 @@ def body() -> None:
         wait_query(tf, "/external/visible_len", 6, desc="expand_all restores members")
 
         # ── (E) group wire round-trip + Null clear ──────────────────
-        tf.request("scene/intervene", {"path": "/external/collapsed.1", "value": True})
-        assert_eq(tf.query("/external/collapsed.1"), True, "collapsed.<g> is writable")
+        tf.request("scene/intervene", {"path": f"/external/{gp.at('collapsed', group=1)}", "value": True})
+        assert_eq(tf.query(f"/external/{gp.at('collapsed', group=1)}"), True, "collapsed.<g> is writable")
         tf.request("scene/intervene", {"path": "/external/group", "value": None})
         wait_query(tf, "/external/group", "none", desc="Null clears the group-by")
         assert_eq(tf.query("/external/group_count"), 0, "ungrouped reports 0 groups")
@@ -147,15 +149,15 @@ def body() -> None:
         tf.invoke("/external/begin", None)  # Type is a choice column -> opens the dropdown
         wait_query(tf, "/external/editing_row", 1, desc="editing Tree's Type cell (dropdown open)")
         tf.invoke("/external/choose", 0)  # pick option 0 = sprite
-        wait_query(tf, "/external/value.1.1",
+        wait_query(tf, f"/external/{gp.at('value', row=1, col=1)}",
                    {"selected": 0, "label": "sprite",
                     "options": ["sprite", "mesh", "material", "audio", "script"]},
                    desc="the dropdown pick writes the source cell")
         # Tree now joins the sprite group (which leads): [H(sprite), 0, 1, 2,
         # H(mesh), 3]. Group count stays 2; Tree sits among the sprites.
         assert_eq(tf.query("/external/group_count"), 2, "still two Type values")
-        assert_eq(tf.query("/external/label_at.0"), "sprite", "sprite group leads")
-        assert_eq(tf.query("/external/source_at.2"), 1, "Tree re-grouped into sprite")
+        assert_eq(tf.query(f"/external/{gp.at('label_at', pos=0)}"), "sprite", "sprite group leads")
+        assert_eq(tf.query(f"/external/{gp.at('source_at', pos=2)}"), 1, "Tree re-grouped into sprite")
 
         # ── (G) keyboard nav skips group headers ────────────────────
         tf.invoke("/external/set_group", None)  # back to flat for a clean walk

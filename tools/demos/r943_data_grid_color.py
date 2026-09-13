@@ -46,6 +46,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_query,
@@ -76,14 +77,14 @@ def inv(tf, verb: str, arg):
     return tf.invoke(f"/external/{verb}", arg)
 
 
-def cell_hex(tf, row: int) -> str:
-    return q(tf, f"value.{row}.{TINT}")["hex"]
+def cell_hex(tf, gp, row: int) -> str:
+    return q(tf, gp.at("value", row=row, col=TINT))["hex"]
 
 
-def wait_hex(tf, row: int, expected: str, desc: str) -> None:
+def wait_hex(tf, gp, row: int, expected: str, desc: str) -> None:
     """Poll a Tint cell's hex (the colour query returns {r,g,b,a,hex}) until it
     reaches `expected` — the ZERO-FLAKE gate for an async undo / redo."""
-    wait_until(lambda: cell_hex(tf, row) == expected, desc=desc)
+    wait_until(lambda: cell_hex(tf, gp, row) == expected, desc=desc)
 
 
 def painted(tf, tag: str) -> bool:
@@ -118,12 +119,13 @@ def reveal_tint(tf) -> None:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot — Tint is a Color column; closed cells show their hex ──
         assert_eq(q(tf, "col_count"), 6, "6 columns (R943 added Tint)")
-        assert_eq(q(tf, "col_kind.4"), "bool", "Active stays bool")
-        assert_eq(q(tf, "col_kind.5"), "color", "Tint is a colour column")
+        assert_eq(q(tf, gp.at("col_kind", col=4)), "bool", "Active stays bool")
+        assert_eq(q(tf, gp.at("col_kind", col=TINT)), "color", "Tint is a colour column")
         for r, sw in enumerate(SEED_SWATCH):
-            assert_eq(cell_hex(tf, r), SWATCH_HEX[sw], f"seed Tint row {r} = swatch {sw}")
+            assert_eq(cell_hex(tf, gp, r), SWATCH_HEX[sw], f"seed Tint row {r} = swatch {sw}")
         assert_eq(q(tf, "popup_open"), False, "no popup open at boot")
         assert not painted(tf, POPUP), "no swatch palette painted at boot"
 
@@ -169,20 +171,20 @@ def body() -> None:
         wait_query(tf, "/external/popup_cursor", 5, desc="ArrowRight steps to swatch 5 (Yellow)")
         tf.key(path=GRID, name="Enter")
         wait_query(tf, "/external/popup_open", False, desc="Enter committed + closed")
-        assert_eq(cell_hex(tf, 0), SWATCH_HEX[5], "Enter committed Yellow")
+        assert_eq(cell_hex(tf, gp, 0), SWATCH_HEX[5], "Enter committed Yellow")
         # The keyboard pick journals exactly one cell edit.
         tf.invoke(f"{UNDO}/undo", None)
-        wait_hex(tf, 0, SWATCH_HEX[4], "undo reverts the swatch pick in one step (back to Blue)")
+        wait_hex(tf, gp, 0, SWATCH_HEX[4], "undo reverts the swatch pick in one step (back to Blue)")
 
         # ── (D) swatch click commits; dismiss does not ──────────────────
         assert_eq(open_color_rpc(tf, 1), True, "open row 1's Tint (Green / swatch 3)")
         inv(tf, "send", "sw2:PointerUp")  # click Red (swatch 2)
         wait_query(tf, "/external/popup_open", False, desc="swatch click committed + closed")
-        assert_eq(cell_hex(tf, 1), SWATCH_HEX[2], "the swatch click committed Red")
+        assert_eq(cell_hex(tf, gp, 1), SWATCH_HEX[2], "the swatch click committed Red")
         assert_eq(open_color_rpc(tf, 1), True, "re-open row 1")
         inv(tf, "send", "dismiss:PointerUp")
         wait_query(tf, "/external/popup_open", False, desc="dismiss closed the palette")
-        assert_eq(cell_hex(tf, 1), SWATCH_HEX[2], "dismiss kept the prior value (no commit)")
+        assert_eq(cell_hex(tf, gp, 1), SWATCH_HEX[2], "dismiss kept the prior value (no commit)")
 
         # ── (E) RPC pick_color + undo/redo; rejections ──────────────────
         # open_color rejects a non-colour focused cell (the Active bool column).
@@ -192,20 +194,20 @@ def body() -> None:
         assert_eq(open_color_rpc(tf, 2), True, "open row 2's Tint (Yellow / swatch 5)")
         assert_eq(inv(tf, "pick_color", 6), True, "pick_color committed swatch 6 (Cyan)")
         assert_eq(q(tf, "popup_open"), False, "pick_color closed the palette")
-        assert_eq(cell_hex(tf, 2), SWATCH_HEX[6], "row 2 Tint = Cyan")
+        assert_eq(cell_hex(tf, gp, 2), SWATCH_HEX[6], "row 2 Tint = Cyan")
         tf.invoke(f"{UNDO}/undo", None)
-        wait_hex(tf, 2, SWATCH_HEX[5], "undo restored row 2's Yellow")
+        wait_hex(tf, gp, 2, SWATCH_HEX[5], "undo restored row 2's Yellow")
         tf.invoke(f"{UNDO}/redo", None)
-        wait_hex(tf, 2, SWATCH_HEX[6], "redo re-applied Cyan")
+        wait_hex(tf, gp, 2, SWATCH_HEX[6], "redo re-applied Cyan")
         # An out-of-range pick_color with the popup open commits nothing.
         assert_eq(open_color_rpc(tf, 2), True, "re-open row 2's Tint")
         assert_eq(inv(tf, "pick_color", 99), False, "an out-of-range pick_color is a no-op")
-        assert_eq(cell_hex(tf, 2), SWATCH_HEX[6], "the value is unchanged")
+        assert_eq(cell_hex(tf, gp, 2), SWATCH_HEX[6], "the value is unchanged")
 
         # ── (F) the arbitrary-colour path: intervene value with a hex ───
-        assert_eq(tf.intervene(f"/external/value.3.{TINT}", "#123456"), None,
+        assert_eq(tf.intervene(f"/external/{gp.at('value', row=3, col=TINT)}", "#123456"), None,
                   "intervene accepts an off-palette hex")
-        assert_eq(cell_hex(tf, 3), "#123456", "an arbitrary colour is set via intervene value")
+        assert_eq(cell_hex(tf, gp, 3), "#123456", "an arbitrary colour is set via intervene value")
 
         # ── (G) the open popup is a listbox of swatches (a11y) ──────────
         assert_eq(open_color_rpc(tf, 0), True, "re-open row 0's Tint")
@@ -223,10 +225,10 @@ def body() -> None:
         # colours: row0 #1e88e5, row1 #e53935, row2 #00acc1, row3 #123456.
         assert_eq(inv(tf, "cycle_sort", TINT), "5:ascending", "first cycle sorts Tint ascending")
         # Ascending: #00acc1 (row2) < #123456 (row3) < #1e88e5 (row0) < #e53935 (row1).
-        assert_eq(q(tf, "source_at.0"), 2, "row 2 (#00acc1) sorts first")
-        assert_eq(q(tf, "source_at.3"), 1, "row 1 (#e53935) sorts last")
+        assert_eq(q(tf, gp.at("source_at", pos=0)), 2, "row 2 (#00acc1) sorts first")
+        assert_eq(q(tf, gp.at("source_at", pos=3)), 1, "row 1 (#e53935) sorts last")
         assert_eq(inv(tf, "cycle_sort", TINT), "5:descending", "second cycle flips to descending")
-        assert_eq(q(tf, "source_at.0"), 1, "descending puts #e53935 first")
+        assert_eq(q(tf, gp.at("source_at", pos=0)), 1, "descending puts #e53935 first")
         inv(tf, "cycle_sort", TINT)  # third cycle -> back to source order
 
 

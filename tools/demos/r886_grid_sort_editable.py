@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_query,
     wait_snap,
@@ -58,8 +59,8 @@ ASC = [0, 3, 1, 2]
 DESC = [2, 1, 0, 3]
 
 
-def order(tf) -> list:
-    return [tf.query(f"/external/source_at.{p}") for p in range(4)]
+def order(tf, gp) -> list:
+    return [tf.query(f"/external/{gp.at('source_at', pos=p)}") for p in range(4)]
 
 
 def _focus_grid(tf) -> None:
@@ -85,31 +86,32 @@ def _walk_texts(node, out) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-data-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot: unsorted identity ─────────────────────────────
         assert_eq(tf.query("/external/sort"), "none", "boot: unsorted")
-        assert_eq(order(tf), [0, 1, 2, 3], "boot: identity order")
-        assert_eq(tf.query("/external/value.0.2"), 1, "Hero Count = 1")
-        assert_eq(tf.query("/external/value.2.2"), 99, "Coin Count = 99")
+        assert_eq(order(tf, gp), [0, 1, 2, 3], "boot: identity order")
+        assert_eq(tf.query(f"/external/{gp.at('value', row=0, col=2)}"), 1, "Hero Count = 1")
+        assert_eq(tf.query(f"/external/{gp.at('value', row=2, col=2)}"), 99, "Coin Count = 99")
         assert_eq(tf.query("/external/focused_row"), 0, "cursor at source 0")
 
         # ── (B) clicking the Count header cycles the sort ───────────
         tf.click(path=f"{GRID}#h2")
         wait_query(tf, "/external/sort", "2:ascending",
                    desc="header click sorts ascending")
-        assert_eq(order(tf), ASC, "stable ascending permutation")
+        assert_eq(order(tf, gp), ASC, "stable ascending permutation")
         tf.click(path=f"{GRID}#h2")
         wait_query(tf, "/external/sort", "2:descending",
                    desc="second click flips to descending")
-        assert_eq(order(tf), DESC, "descending permutation")
+        assert_eq(order(tf, gp), DESC, "descending permutation")
         tf.click(path=f"{GRID}#h2")
         wait_query(tf, "/external/sort", "none",
                    desc="third click returns to source order")
-        assert_eq(order(tf), [0, 1, 2, 3], "unsorted = identity again")
+        assert_eq(order(tf, gp), [0, 1, 2, 3], "unsorted = identity again")
         # A different column jumps straight to ascending.
         tf.click(path=f"{GRID}#h0")
         wait_query(tf, "/external/sort", "0:ascending",
                    desc="different header jumps to ascending")
-        assert_eq(tf.query("/external/source_at.0"), 3,
+        assert_eq(tf.query(f"/external/{gp.at('source_at', pos=0)}"), 3,
                   "Asset ascending: Boss first")
         tf.request("scene/intervene",
                    {"path": "/external/sort", "value": "none"})
@@ -140,11 +142,11 @@ def body() -> None:
         for ch in "500":
             tf.key(path="data_grid_edit", name=ch)
         tf.key(path="data_grid_edit", name="Enter")
-        wait_query(tf, "/external/value.0.2", 500,
+        wait_query(tf, f"/external/{gp.at('value', row=0, col=2)}", 500,
                    desc="commit writes the source cell")
-        assert_eq(tf.query("/external/source_at.3"), 0,
+        assert_eq(tf.query(f"/external/{gp.at('source_at', pos=3)}"), 0,
                   "edited row re-sorted to the visual bottom")
-        assert_eq(order(tf), [3, 1, 2, 0], "full re-sorted permutation")
+        assert_eq(order(tf, gp), [3, 1, 2, 0], "full re-sorted permutation")
         assert_eq(tf.query("/external/focused_row"), 0,
                   "source-keyed cursor follows the moved row")
         assert_eq(tf.query("/external/editing_row"), None, "edit latch closed")
@@ -154,7 +156,7 @@ def body() -> None:
                    {"path": "/external/sort", "value": "3:descending"})
         wait_query(tf, "/external/sort", "3:descending",
                    desc="intervene decode = inverse of query encode")
-        assert_eq(tf.query("/external/source_at.0"), 3,
+        assert_eq(tf.query(f"/external/{gp.at('source_at', pos=0)}"), 3,
                   "Scale descending: Boss (4.0) first")
         tf.request("scene/intervene",
                    {"path": "/external/sort", "value": "9:ascending"})

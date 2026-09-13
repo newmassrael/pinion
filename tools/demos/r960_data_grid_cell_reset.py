@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_query,
@@ -69,6 +70,7 @@ def dot_present(tf: RpcSubprocess, row: int, col: int) -> bool:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, request_timeout=12.0) as tf:
+        gp = external_paths(tf, EXT)
         wait_snap(
             tf,
             lambda s: find_by_tag(s, f"{GRID}#0_{ASSET_COL}") is not None,
@@ -78,17 +80,21 @@ def body() -> None:
 
         # ── (A) the modified dot paints on a non-default cell, not a default one
         # Row-0 Asset is the seed "Hero" (column default "") -> modified.
-        assert_eq(tf.query(f"{EXT}/value.0.{ASSET_COL}"), "Hero", "seed row-0 Asset is Hero")
-        assert_eq(tf.query(f"{EXT}/modified.0.{ASSET_COL}"), True, "Asset differs from default \"\"")
+        assert_eq(tf.query(f"{EXT}/{gp.at('value', row=0, col=ASSET_COL)}"), "Hero", "seed row-0 Asset is Hero")
+        assert_eq(tf.query(f"{EXT}/{gp.at('modified', row=0, col=ASSET_COL)}"), True,
+                  "Asset differs from default \"\"")
         assert dot_present(tf, 0, ASSET_COL), "a modified cell paints its reset dot"
         # Row-0 Type is the seed's option 0 == the column default -> NOT modified.
-        assert_eq(tf.query(f"{EXT}/modified.0.{TYPE_COL}"), False, "row-0 Type sits at its column default")
+        assert_eq(tf.query(f"{EXT}/{gp.at('modified', row=0, col=TYPE_COL)}"), False,
+                  "row-0 Type sits at its column default")
         assert not dot_present(tf, 0, TYPE_COL), "a cell at its column default has no reset dot"
 
         # ── (B) click the reset dot -> the cell collapses to its column default
         tf.click(path=reset_tag(0, ASSET_COL))
-        wait_query(tf, f"{EXT}/value.0.{ASSET_COL}", "", desc="dot click reset Asset to default \"\"")
-        wait_query(tf, f"{EXT}/modified.0.{ASSET_COL}", False, desc="the cell is no longer modified")
+        wait_query(tf, f"{EXT}/{gp.at('value', row=0, col=ASSET_COL)}", "",
+                   desc="dot click reset Asset to default \"\"")
+        wait_query(tf, f"{EXT}/{gp.at('modified', row=0, col=ASSET_COL)}", False,
+                   desc="the cell is no longer modified")
         wait_snap(
             tf,
             lambda s: find_by_tag(s, reset_tag(0, ASSET_COL)) is None,
@@ -97,21 +103,26 @@ def body() -> None:
         )
 
         # ── (C) RPC reset peer: reset an off-screen Float cell, then reset_all
-        assert_eq(tf.query(f"{EXT}/value.0.{SCALE_COL}"), 1.0, "seed row-0 Scale is 1.0")
-        assert_eq(tf.query(f"{EXT}/modified.0.{SCALE_COL}"), True, "Scale differs from default 0.0")
+        assert_eq(tf.query(f"{EXT}/{gp.at('value', row=0, col=SCALE_COL)}"), 1.0, "seed row-0 Scale is 1.0")
+        assert_eq(tf.query(f"{EXT}/{gp.at('modified', row=0, col=SCALE_COL)}"), True,
+                  "Scale differs from default 0.0")
         assert_eq(tf.invoke(f"{EXT}/reset", f"0_{SCALE_COL}"), True, "RPC reset returns was-modified=true")
-        wait_query(tf, f"{EXT}/value.0.{SCALE_COL}", 0.0, desc="RPC reset Scale to column default 0.0")
-        assert_eq(tf.query(f"{EXT}/modified.0.{SCALE_COL}"), False, "Scale no longer modified")
+        wait_query(tf, f"{EXT}/{gp.at('value', row=0, col=SCALE_COL)}", 0.0,
+                   desc="RPC reset Scale to column default 0.0")
+        assert_eq(tf.query(f"{EXT}/{gp.at('modified', row=0, col=SCALE_COL)}"), False, "Scale no longer modified")
         # A re-reset of an already-default cell is an idempotent false no-op.
         assert_eq(tf.invoke(f"{EXT}/reset", f"0_{SCALE_COL}"), False, "re-reset is a false no-op")
 
         # ── (D) editing a cell TO its column default clears the indicator
-        assert_eq(tf.query(f"{EXT}/modified.1.{ASSET_COL}"), True, "row-1 Asset (Tree) is modified")
-        tf.intervene(f"{EXT}/value.1.{ASSET_COL}", "")
-        wait_query(tf, f"{EXT}/modified.1.{ASSET_COL}", False, desc="editing to the default clears modified")
+        assert_eq(tf.query(f"{EXT}/{gp.at('modified', row=1, col=ASSET_COL)}"), True,
+                  "row-1 Asset (Tree) is modified")
+        tf.intervene(f"{EXT}/{gp.at('value', row=1, col=ASSET_COL)}", "")
+        wait_query(tf, f"{EXT}/{gp.at('modified', row=1, col=ASSET_COL)}", False,
+                   desc="editing to the default clears modified")
         assert not dot_present(tf, 1, ASSET_COL), "no dot once the edit lands on the default"
-        tf.intervene(f"{EXT}/value.1.{ASSET_COL}", "Box")
-        wait_query(tf, f"{EXT}/modified.1.{ASSET_COL}", True, desc="editing away from default sets it again")
+        tf.intervene(f"{EXT}/{gp.at('value', row=1, col=ASSET_COL)}", "Box")
+        wait_query(tf, f"{EXT}/{gp.at('modified', row=1, col=ASSET_COL)}", True,
+                   desc="editing away from default sets it again")
         assert dot_present(tf, 1, ASSET_COL), "the dot returns when the cell leaves the default"
 
         # ── (C) reset_all clears every remaining modified cell

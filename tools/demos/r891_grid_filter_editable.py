@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_query,
     wait_snap,
@@ -62,8 +63,8 @@ GRID = "data_grid"
 # Count column (col 2) source values: 1, 24, 99, 1.
 
 
-def order(tf) -> list:
-    return [tf.query(f"/external/source_at.{p}") for p in range(4)]
+def order(tf, gp) -> list:
+    return [tf.query(f"/external/{gp.at('source_at', pos=p)}") for p in range(4)]
 
 
 def _focus_grid(tf) -> None:
@@ -103,11 +104,12 @@ def _row_tags(snap) -> list:
 
 def body() -> None:
     with RpcSubprocess("hello-data-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot: unfiltered, full view ─────────────────────────
         assert_eq(tf.query("/external/filter"), "none", "boot: unfiltered")
         assert_eq(tf.query("/external/view_len"), 4, "boot: view_len = NROWS")
-        assert_eq(order(tf), [0, 1, 2, 3], "boot: identity order")
-        assert_eq(tf.query("/external/value.0.2"), 1, "Hero Count = 1")
+        assert_eq(order(tf, gp), [0, 1, 2, 3], "boot: identity order")
+        assert_eq(tf.query(f"/external/{gp.at('value', row=0, col=2)}"), 1, "Hero Count = 1")
         assert_eq(tf.query("/external/focused_row"), 0, "cursor at source 0")
 
         # ── (B) set_filter shrinks the view, reports view_len ───────
@@ -115,23 +117,23 @@ def body() -> None:
                   "set_filter returns the new view_len in one round-trip")
         wait_query(tf, "/external/view_len", 2, desc="two rows carry Type=mesh")
         assert_eq(tf.query("/external/filter"), "1=mesh", "filter readout")
-        assert_eq(tf.query("/external/source_at.0"), 1, "Tree first")
-        assert_eq(tf.query("/external/source_at.1"), 3, "Boss second")
-        assert_eq(tf.query("/external/source_at.2"), None, "view shrank to 2")
+        assert_eq(tf.query(f"/external/{gp.at('source_at', pos=0)}"), 1, "Tree first")
+        assert_eq(tf.query(f"/external/{gp.at('source_at', pos=1)}"), 3, "Boss second")
+        assert_eq(tf.query(f"/external/{gp.at('source_at', pos=2)}"), None, "view shrank to 2")
 
         # ── (C) filter composes with sort (filter-then-sort) ────────
         tf.invoke("/external/cycle_sort", 2)  # Count ascending over survivors
         wait_query(tf, "/external/sort", "2:ascending", desc="sort the survivors")
         assert_eq(tf.query("/external/view_len"), 2, "filter survives the sort")
-        assert_eq(tf.query("/external/source_at.0"), 3, "Boss (Count 1) sorts first")
-        assert_eq(tf.query("/external/source_at.1"), 1, "Tree (Count 24) second")
+        assert_eq(tf.query(f"/external/{gp.at('source_at', pos=0)}"), 3, "Boss (Count 1) sorts first")
+        assert_eq(tf.query(f"/external/{gp.at('source_at', pos=1)}"), 1, "Tree (Count 24) second")
 
         # ── (D) clearing restores the full grid ─────────────────────
         tf.request("scene/intervene", {"path": "/external/sort", "value": "none"})
         assert_eq(tf.invoke("/external/set_filter", None), 4,
                   "clearing the filter restores all rows")
         wait_query(tf, "/external/filter", "none", desc="filter cleared")
-        assert_eq(order(tf), [0, 1, 2, 3], "full identity order again")
+        assert_eq(order(tf, gp), [0, 1, 2, 3], "full identity order again")
 
         # ── (E) intervene filter round-trip + Null clear ────────────
         tf.request("scene/intervene", {"path": "/external/filter", "value": "1=sprite"})
@@ -170,9 +172,9 @@ def body() -> None:
         tf.key(path="data_grid_edit", name="Backspace")
         tf.key(path="data_grid_edit", name="5")
         tf.key(path="data_grid_edit", name="Enter")
-        wait_query(tf, "/external/value.0.2", 5, desc="commit writes the source cell")
+        wait_query(tf, f"/external/{gp.at('value', row=0, col=2)}", 5, desc="commit writes the source cell")
         assert_eq(tf.query("/external/view_len"), 1, "Hero dropped from the filtered view")
-        assert_eq(tf.query("/external/source_at.0"), 3, "only Boss remains")
+        assert_eq(tf.query(f"/external/{gp.at('source_at', pos=0)}"), 3, "only Boss remains")
         assert_eq(tf.query("/external/focused_row"), 3,
                   "source-keyed cursor re-anchored from the filtered-out row to Boss")
         assert_eq(tf.query("/external/editing_row"), None, "edit latch closed")
