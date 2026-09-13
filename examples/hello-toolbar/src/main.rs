@@ -79,7 +79,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
 use pinion_core::theme::{ColorRole, use_theme};
-use pinion_core::widgets::toolbar::{ToolItem, ToolbarExternal, read_roving_focus};
+use pinion_core::widgets::toolbar::{self, ToolItem, ToolbarExternal, read_roving_focus};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::toolbar::{ToolbarStyle, composite_item_tag, view_toolbar};
@@ -225,7 +225,7 @@ impl WidgetCore for ToolbarView {
         (out.focus, out.group_focused) = read_roving_focus(intro);
         for (i, slot) in out.pressed.iter_mut().enumerate() {
             *slot = matches!(
-                intro.query(&format!("pressed.{i}")),
+                intro.query(&toolbar::PRESSED.at(&[&i])),
                 Ok(IntrospectValue::Bool(true))
             );
         }

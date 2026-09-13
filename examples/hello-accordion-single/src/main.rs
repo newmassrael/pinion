@@ -72,7 +72,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::disclosure::DisclosureState;
-use pinion_core::widgets::disclosure_group::DisclosureGroupExternal;
+use pinion_core::widgets::disclosure_group::{self, DisclosureGroupExternal};
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{WidgetView, vello_renderer_impl};
 use pinion_widget_paint::disclosure::{DisclosureStyle, view_disclosure};
@@ -242,12 +242,12 @@ impl WidgetCore for AccordionSingleView {
         // client running `scene/query /accordion_single/external/state.0`
         // sees exactly the value the view fn renders.
         for (i, slot) in out.iter_mut().enumerate() {
-            let state = match intro.query(&format!("state.{i}")) {
+            let state = match intro.query(&disclosure_group::STATE.at(&[&i])) {
                 Ok(IntrospectValue::Text(name)) => DisclosureState::from_name_or_default(&name),
                 _ => DisclosureState::Idle,
             };
             let expanded = matches!(
-                intro.query(&format!("expanded.{i}")),
+                intro.query(&disclosure_group::EXPANDED.at(&[&i])),
                 Ok(IntrospectValue::Bool(true)),
             );
             *slot = (state, expanded);

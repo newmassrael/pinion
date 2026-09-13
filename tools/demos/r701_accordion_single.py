@@ -41,6 +41,7 @@ from rpc_verify import (
     RpcError,
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     rect_of,
     run_demo,
@@ -61,12 +62,12 @@ def _q(d, slot: str):
     return d.query(f"/external/{slot}")
 
 
-def _state(d, i: int) -> str:
-    return _q(d, f"state.{i}")
+def _state(d, gp, i: int) -> str:
+    return _q(d, gp.at("state", index=i))
 
 
-def _expanded(d, i: int) -> bool:
-    return _q(d, f"expanded.{i}")
+def _expanded(d, gp, i: int) -> bool:
+    return _q(d, gp.at("expanded", index=i))
 
 
 def _expanded_index(d):
@@ -88,12 +89,13 @@ def _focused(d) -> str:
 
 def body() -> None:
     with RpcSubprocess("hello-accordion-single") as d:
+        gp = external_paths(d)
         # ── (A) initial: N collapsed Idle sections, nothing open ──────
         assert_eq(_q(d, "count"), N, "coordinator wraps N sections")
         assert_eq(_expanded_index(d), None, "initial: no section open")
         for i in range(N):
-            assert_eq(_state(d, i), "Idle", f"initial state sec {i}")
-            assert_eq(_expanded(d, i), False, f"initial collapsed sec {i}")
+            assert_eq(_state(d, gp, i), "Idle", f"initial state sec {i}")
+            assert_eq(_expanded(d, gp, i), False, f"initial collapsed sec {i}")
             assert_eq(_body_present(d, i), False, f"collapsed sec {i} hides body")
             head = find_by_tag(d.snapshot(source="paint", viewport=VIEWPORT), ROW[i])
             assert head is not None, f"header {i} present in paint scene"
@@ -101,9 +103,9 @@ def body() -> None:
         # ── (B) click section 1 → only section 1 opens ────────────────
         d.click(path=ROW[1])
         assert_eq(_expanded_index(d), 1, "click sec 1 -> expanded_index = 1")
-        assert_eq(_expanded(d, 1), True, "sec 1 open")
-        assert_eq(_expanded(d, 0), False, "sec 0 closed")
-        assert_eq(_expanded(d, 2), False, "sec 2 closed")
+        assert_eq(_expanded(d, gp, 1), True, "sec 1 open")
+        assert_eq(_expanded(d, gp, 0), False, "sec 0 closed")
+        assert_eq(_expanded(d, gp, 2), False, "sec 2 closed")
         assert_eq(_body_present(d, 1), True, "open sec 1 shows body")
         assert_eq(_body_present(d, 0), False, "closed sec 0 hides body")
         body_node = find_by_tag(d.snapshot(source="paint", viewport=VIEWPORT), BODY[1])
@@ -113,36 +115,36 @@ def body() -> None:
         # The whole point vs multi-open: opening one closes the other.
         d.click(path=ROW[0])
         assert_eq(_expanded_index(d), 0, "open-switch: expanded_index 1 -> 0")
-        assert_eq(_expanded(d, 0), True, "sec 0 now open")
-        assert_eq(_expanded(d, 1), False, "sec 1 COLLAPSED by single-open exclusion")
+        assert_eq(_expanded(d, gp, 0), True, "sec 0 now open")
+        assert_eq(_expanded(d, gp, 1), False, "sec 1 COLLAPSED by single-open exclusion")
         assert_eq(_body_present(d, 0), True, "sec 0 body present")
         assert_eq(_body_present(d, 1), False, "sec 1 body gone after switch")
 
         # ── (D) re-click the open section → collapse to none ──────────
         d.click(path=ROW[0])
         assert_eq(_expanded_index(d), None, "re-click open sec collapses to none")
-        assert_eq(_expanded(d, 0), False, "sec 0 closed")
+        assert_eq(_expanded(d, gp, 0), False, "sec 0 closed")
         for i in range(N):
             assert_eq(_body_present(d, i), False, f"no body painted sec {i}")
 
         # ── (E) invoke send pointer arc drives the statechart ─────────
         assert_eq(_send(d, 2, "PointerEnter"), None, "Enter alone does not open")
-        assert_eq(_state(d, 2), "Hover", "sec2 Enter -> Hover")
+        assert_eq(_state(d, gp, 2), "Hover", "sec2 Enter -> Hover")
         _send(d, 2, "PointerDown")
-        assert_eq(_state(d, 2), "Pressed", "sec2 Down -> Pressed")
+        assert_eq(_state(d, gp, 2), "Pressed", "sec2 Down -> Pressed")
         assert_eq(_send(d, 2, "PointerUp"), 2, "sec2 Up activates -> expanded_index 2")
-        assert_eq(_expanded(d, 2), True, "sec2 open via pointer arc")
+        assert_eq(_expanded(d, gp, 2), True, "sec2 open via pointer arc")
         _send(d, 2, "PointerLeave")
         # switch to sec 0 via send — single-open enforced through RPC
         for ev in ("PointerEnter", "PointerDown", "PointerUp", "PointerLeave"):
             _send(d, 0, ev)
         assert_eq(_expanded_index(d), 0, "send-driven open-switch -> 0")
-        assert_eq(_expanded(d, 2), False, "sec 2 collapsed by RPC-driven switch")
+        assert_eq(_expanded(d, gp, 2), False, "sec 2 collapsed by RPC-driven switch")
 
         # ── (F) model-driven intervene expanded_index (restore path) ──
         d.intervene("/external/expanded_index", 2)
         assert_eq(_expanded_index(d), 2, "intervene Int restores open section 2")
-        assert_eq(_expanded(d, 0), False, "intervene collapses the others")
+        assert_eq(_expanded(d, gp, 0), False, "intervene collapses the others")
         d.intervene("/external/expanded_index", None)
         assert_eq(_expanded_index(d), None, "intervene Null collapses all")
 
@@ -161,7 +163,7 @@ def body() -> None:
         d.request("focus/set", {"tag": ROW[2]})
         d.key(path=ROW[2], name="Enter")
         assert_eq(_expanded_index(d), 2, "open sec 2 ...")
-        assert_eq(_expanded(d, 1), False, "... collapses sec 1 (single-open via keyboard)")
+        assert_eq(_expanded(d, gp, 1), False, "... collapses sec 1 (single-open via keyboard)")
         # reset
         d.key(path=ROW[2], name="Space")
         assert_eq(_expanded_index(d), None, "reset: all collapsed")

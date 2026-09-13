@@ -319,6 +319,23 @@ impl External for DisclosureGroupExternal {
     }
 }
 
+/// ★★★★★ R2199 — the interaction state of one section, declared ONCE:
+/// [`DisclosureGroupExternal`]'s schema lists this field, and a reader composes
+/// from it ([`SchemaField::at`]) instead of spelling `state.<index>` again.
+pub const STATE: SchemaField = SchemaField::parametric(
+    "state.<index>",
+    "string",
+    const { &[SchemaArg::index("index", "count")] },
+);
+
+/// ★★★★★ R2199 — whether one section is expanded, declared once; see
+/// [`STATE`].
+pub const EXPANDED: SchemaField = SchemaField::parametric(
+    "expanded.<index>",
+    "bool",
+    const { &[SchemaArg::index("index", "count")] },
+);
+
 impl ExternalIntrospect for DisclosureGroupExternal {
     fn schema(&self) -> IntrospectSchema {
         // Per-section paths advertise their `<index>` placeholder the
@@ -330,16 +347,8 @@ impl ExternalIntrospect for DisclosureGroupExternal {
                 &[
                     SchemaField::new("count", "int"),
                     SchemaField::new("expanded_index", "int"),
-                    SchemaField::parametric(
-                        "state.<index>",
-                        "string",
-                        const { &[SchemaArg::index("index", "count")] },
-                    ),
-                    SchemaField::parametric(
-                        "expanded.<index>",
-                        "bool",
-                        const { &[SchemaArg::index("index", "count")] },
-                    ),
+                    STATE,
+                    EXPANDED,
                     SchemaField::send("string"),
                 ]
             },

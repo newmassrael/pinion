@@ -83,7 +83,7 @@ enabled.{}	3	0
 expanded.arr	2	0
 expanded.cat	4	2
 expanded.struct	0	0
-expanded.{}	2	2
+expanded.{}	1	1
 expanded_at.{}	25	1
 extent.{}	4	0
 feed.head	0	0
@@ -116,7 +116,7 @@ item.{}	0	1
 item_count.{}	4	0
 item_kind.{}	16	0
 kind.elem	0	1
-kind.{}	39	9
+kind.{}	37	9
 kind_at.{}	16	2
 kp.column	0	0
 kp.detail	0	0
@@ -183,7 +183,7 @@ palette.role	0	1
 palette.swatch	0	1
 parent_of.{}	1	0
 path.{}	4	0
-pressed.{}	8	2
+pressed.{}	0	1
 profile.legend	0	3
 profile.series	0	2
 pv.appbar	0	0
@@ -228,7 +228,7 @@ sizes.legend	0	1
 source_at.{}	55	22
 source_len.{}	1	0
 source_name.{}	2	0
-state.{}	2	1
+state.{}	1	0
 struct_modified.struct	0	3
 struct_summary.struct	0	1
 sv.chip	0	0

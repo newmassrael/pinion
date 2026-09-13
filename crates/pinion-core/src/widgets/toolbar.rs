@@ -489,6 +489,23 @@ impl External for ToolbarExternal {
     }
 }
 
+/// ★★★★★ R2199 — the control class at a toolbar position, declared ONCE:
+/// [`ToolbarExternal`]'s schema lists this field, and a reader composes from it
+/// ([`SchemaField::at`]) instead of spelling `kind.<i>` again.
+pub const KIND: SchemaField = SchemaField::parametric(
+    "kind.<i>",
+    "string",
+    const { &[SchemaArg::index("i", "count")] },
+);
+
+/// ★★★★★ R2199 — whether the control at a toolbar position is pressed,
+/// declared once; see [`KIND`].
+pub const PRESSED: SchemaField = SchemaField::parametric(
+    "pressed.<i>",
+    "bool",
+    const { &[SchemaArg::index("i", "count")] },
+);
+
 impl ExternalIntrospect for ToolbarExternal {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(
@@ -497,16 +514,8 @@ impl ExternalIntrospect for ToolbarExternal {
                     SchemaField::new("count", "int"),
                     SchemaField::new("focus", "int"),
                     SchemaField::new("focused", "bool"),
-                    SchemaField::parametric(
-                        "kind.<i>",
-                        "string",
-                        const { &[SchemaArg::index("i", "count")] },
-                    ),
-                    SchemaField::parametric(
-                        "pressed.<i>",
-                        "bool",
-                        const { &[SchemaArg::index("i", "count")] },
-                    ),
+                    KIND,
+                    PRESSED,
                     SchemaField::send("string"),
                     SchemaField::action("key", "string"),
                 ]

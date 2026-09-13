@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_query,
@@ -112,6 +113,7 @@ def _assert_intent(tf, kind: str, payload: str, label: str) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-toolbar", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) substrate shape + initial state ─────────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert _find(snap, "toolbar") is not None, "toolbar must carry the toolbar tag"
@@ -120,9 +122,9 @@ def body() -> None:
 
         assert_eq(tf.query("/external/count"), 5, "count")
         assert_eq(tf.query("/external/focus"), 0, "initial focus = 0")
-        assert_eq(tf.query("/external/kind.0"), "toggle", "control 0 is a toggle")
-        assert_eq(tf.query("/external/kind.3"), "command", "control 3 is a command")
-        assert_eq(tf.query("/external/pressed.0"), False, "Bold starts unpressed")
+        assert_eq(tf.query(f"/external/{gp.at('kind', i=0)}"), "toggle", "control 0 is a toggle")
+        assert_eq(tf.query(f"/external/{gp.at('kind', i=3)}"), "command", "control 3 is a command")
+        assert_eq(tf.query(f"/external/{gp.at('pressed', i=0)}"), False, "Bold starts unpressed")
 
         bar_text = _all_text(_find(snap, "toolbar"))
         for label in LABELS:
@@ -132,31 +134,31 @@ def body() -> None:
 
         # ── (B) click Bold toggles its pressed bit ──────────────────
         tf.click(path="toolbar#0")
-        wait_query(tf, "/external/pressed.0", True, desc="click Bold -> pressed")
+        wait_query(tf, f"/external/{gp.at('pressed', i=0)}", True, desc="click Bold -> pressed")
         assert_eq(tf.query("/external/focus"), 0, "click focuses the control")
         _assert_intent(tf, "toggle", "0.true", "Bold on")
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert _is_filled(snap, "toolbar#0"), "pressed Bold paints the tonal fill"
 
         tf.click(path="toolbar#0")
-        wait_query(tf, "/external/pressed.0", False, desc="re-click Bold -> unpressed")
+        wait_query(tf, f"/external/{gp.at('pressed', i=0)}", False, desc="re-click Bold -> unpressed")
         _assert_intent(tf, "toggle", "0.false", "Bold off")
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert not _is_filled(snap, "toolbar#0"), "unpressed Bold paints transparent"
 
         # ── (C) toggles are independent ─────────────────────────────
         tf.click(path="toolbar#1")
-        wait_query(tf, "/external/pressed.1", True, desc="click Italic -> pressed")
-        assert_eq(tf.query("/external/pressed.0"), False, "Italic does not disturb Bold")
+        wait_query(tf, f"/external/{gp.at('pressed', i=1)}", True, desc="click Italic -> pressed")
+        assert_eq(tf.query(f"/external/{gp.at('pressed', i=0)}"), False, "Italic does not disturb Bold")
         _assert_intent(tf, "toggle", "1.true", "Italic on")
         # Reset Italic for a clean keyboard section.
         tf.click(path="toolbar#1")
-        wait_query(tf, "/external/pressed.1", False, desc="re-click Italic -> unpressed")
+        wait_query(tf, f"/external/{gp.at('pressed', i=1)}", False, desc="re-click Italic -> unpressed")
 
         # ── (D) command click fires command, no pressed change ──────
         tf.click(path="toolbar#3")
         wait_query(tf, "/external/focus", 3, desc="click Undo -> focus 3")
-        assert_eq(tf.query("/external/pressed.3"), False, "command has no pressed state")
+        assert_eq(tf.query(f"/external/{gp.at('pressed', i=3)}"), False, "command has no pressed state")
         _assert_intent(tf, "command", "3", "Undo click")
 
         # ── (E) WAI-ARIA §3.4 keyboard roving ───────────────────────
@@ -185,7 +187,7 @@ def body() -> None:
         tf.key(path="toolbar", name="Home")
         wait_query(tf, "/external/focus", 0, desc="back to Bold")
         tf.key(path="toolbar", name="Enter")
-        wait_query(tf, "/external/pressed.0", True, desc="Enter activates focused toggle")
+        wait_query(tf, f"/external/{gp.at('pressed', i=0)}", True, desc="Enter activates focused toggle")
         _assert_intent(tf, "toggle", "0.true", "keyboard Bold on")
         tf.key(path="toolbar", name="End")
         wait_query(tf, "/external/focus", 4, desc="End -> Redo before Space")
