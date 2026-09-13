@@ -78,6 +78,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     access_node_by_tag,
+    painted_address,
     run_demo,
     shell_address,
 )
@@ -87,6 +88,18 @@ EXT = "/external"
 #: The card this walk carries, and the one it is dropped onto.
 GUEST = "packet#0"
 HOST = "decode#1"
+
+#: ★★★★★ R2218 — composed from the grammar the screen EMITS
+#: (`examples/hello-analyzer-shell/src/painted_grammar.tsv`), not spelled.
+#: R2217 measured why this walk had to spell them: the screen composes every
+#: one of these in `address.rs` and published none of it, so seventeen sites
+#: here re-typed what Rust already held.
+GUEST_CARD = painted_address(SHELL, "card", id=GUEST)
+HOST_CARD = painted_address(SHELL, "card", id=HOST)
+GUEST_GRIP = painted_address(SHELL, "card_grip", id=GUEST)
+GUEST_TAB = painted_address(SHELL, "card_tab", id=GUEST)
+HOST_TAB = painted_address(SHELL, "card_tab", id=HOST)
+GUEST_TABS = painted_address(SHELL, "card_tabs", id=GUEST)
 
 CHECKS: list[str] = []
 
@@ -156,7 +169,7 @@ def header_of(app: RpcSubprocess, card: str) -> tuple[float, float]:
     from, and the affordance slots are right-aligned, so the space between them
     is the header's own.
     """
-    grip = rects(app)[f"card.{card}.grip"]
+    grip = rects(app)[painted_address(SHELL, "card_grip", id=card)]
     return (grip[0] + grip[2] + 12, grip[1] + grip[3] / 2)
 
 
@@ -177,15 +190,15 @@ def section_a(app: RpcSubprocess) -> None:
     )
     ok(
         "A: and the cells are two different rectangles",
-        shot[f"card.{GUEST}"] != shot[f"card.{HOST}"],
+        shot[GUEST_CARD] != shot[HOST_CARD],
     )
 
 
 def section_b(app: RpcSubprocess) -> None:
     banner("B — a card let go on another card's header joins its place")
-    grip = centre(rects(app)[f"card.{GUEST}.grip"])
+    grip = centre(rects(app)[GUEST_GRIP])
     onto = header_of(app, HOST)
-    was = rects(app)[f"card.{HOST}"]
+    was = rects(app)[HOST_CARD]
 
     app.drag(from_at=grip, to_at=onto, steps=8, phase="begin")
     held = rects(app)
@@ -233,22 +246,22 @@ def section_b(app: RpcSubprocess) -> None:
     )
     ok(
         "B: ★★★★★ and the place is the HOST's rectangle: a join moves into a "
-        f"place, it does not make a new one — now {rects(app)[f'card.{GUEST}']}, "
+        f"place, it does not make a new one — now {rects(app)[GUEST_CARD]}, "
         f"the host was {was}",
-        rects(app)[f"card.{GUEST}"] == was,
+        rects(app)[GUEST_CARD] == was,
     )
     ok(
         "B: ★ the card behind is not painted at all — it is not built, which is "
         "what makes the strip the only way to reach it",
-        f"card.{HOST}" not in rects(app),
+        HOST_CARD not in rects(app),
     )
     shot = rects(app)
     for member in (HOST, GUEST):
         ok(
-            f"B: ★★ a tab is drawn for {member} — {shot.get(f'card.{member}.tab')}",
-            f"card.{member}.tab" in shot,
+            f"B: ★★ a tab is drawn for {member} — {shot.get(painted_address(SHELL, "card_tab", id=member))}",
+            painted_address(SHELL, "card_tab", id=member) in shot,
         )
-    first, second = shot[f"card.{HOST}.tab"], shot[f"card.{GUEST}.tab"]
+    first, second = shot[HOST_TAB], shot[GUEST_TAB]
     ok(
         "B: ★★★★★ the tabs are CONTIGUOUS and share a baseline, so no press "
         f"lands between two of them — {first} then {second}",
@@ -258,7 +271,7 @@ def section_b(app: RpcSubprocess) -> None:
         "B: ★★★★★ and the rectangle a reader is given is the SAME rectangle — "
         "drawn, announced and pressed are one box rather than three claims "
         "about one tab",
-        [_bounds(access(app), f"card.{member}.tab") for member in (HOST, GUEST)]
+        [_bounds(access(app), painted_address(SHELL, "card_tab", id=member)) for member in (HOST, GUEST)]
         == [first, second],
     )
 
@@ -266,14 +279,14 @@ def section_b(app: RpcSubprocess) -> None:
 def section_c(app: RpcSubprocess) -> None:
     banner("C — a reader meets the strip as a tab list")
     tree = access(app)
-    strip = access_node_by_tag(tree, f"card.{GUEST}.tabs")
+    strip = access_node_by_tag(tree, GUEST_TABS)
     ok(f"C: ★★ the shared place publishes a tab list — {strip!r}", strip is not None)
     ok(
         f"C: ★ its children are the occupants' tabs — {strip.get('children')}",
-        strip.get("children") == [f"card.{HOST}.tab", f"card.{GUEST}.tab"],
+        strip.get("children") == [HOST_TAB, GUEST_TAB],
     )
-    front = access_node_by_tag(tree, f"card.{GUEST}.tab")
-    behind = access_node_by_tag(tree, f"card.{HOST}.tab")
+    front = access_node_by_tag(tree, GUEST_TAB)
+    behind = access_node_by_tag(tree, HOST_TAB)
     ok(
         "C: ★★★★★ exactly one tab is selected, and it is the one in front — "
         f"{GUEST}={front.get('selected')}, "
@@ -289,15 +302,15 @@ def section_c(app: RpcSubprocess) -> None:
         "C: ★★★★★ the card BEHIND the tab has no region of its own — it is not "
         "on the screen, so announcing its rows would be telling a reader about "
         "something nobody can reach; the tab is what carries its name",
-        access_node_by_tag(tree, f"card.{HOST}") is None
-        and access_node_by_tag(tree, f"card.{GUEST}") is not None,
+        access_node_by_tag(tree, HOST_CARD) is None
+        and access_node_by_tag(tree, GUEST_CARD) is not None,
     )
 
 
 def section_d(app: RpcSubprocess) -> None:
     banner("D — pressing the other tab brings it forward, and nothing moves")
-    before = rects(app)[f"card.{GUEST}"]
-    app.click(centre(rects(app)[f"card.{HOST}.tab"]))
+    before = rects(app)[GUEST_CARD]
+    app.click(centre(rects(app)[HOST_TAB]))
     settle(app)
 
     board = tiles(app)
@@ -310,16 +323,16 @@ def section_d(app: RpcSubprocess) -> None:
         occupants(app, HOST) == [HOST, GUEST],
     )
     ok(
-        f"D: ★★★★★ the place did not move — {rects(app)[f'card.{HOST}']} vs "
+        f"D: ★★★★★ the place did not move — {rects(app)[HOST_CARD]} vs "
         f"{before}",
-        rects(app)[f"card.{HOST}"] == before,
+        rects(app)[HOST_CARD] == before,
     )
     ok(
         "D: ★ the strip is drawn on whichever card is in front, so both tabs "
         "are still reachable",
-        f"card.{HOST}.tab" in rects(app) and f"card.{GUEST}.tab" in rects(app),
+        HOST_TAB in rects(app) and GUEST_TAB in rects(app),
     )
-    selected = access_node_by_tag(access(app), f"card.{HOST}.tab")
+    selected = access_node_by_tag(access(app), HOST_TAB)
     ok(
         "D: ★★ and a reader is told which one moved forward",
         selected.get("selected") is True,
@@ -328,13 +341,13 @@ def section_d(app: RpcSubprocess) -> None:
 
 def section_e(app: RpcSubprocess) -> None:
     banner("E — a tab dragged out onto the board gets a place of its own")
-    shared = rects(app)[f"card.{HOST}"]
+    shared = rects(app)[HOST_CARD]
     # The board's OWN units, because that is what "the size it was sharing"
     # means: the painted rectangle of a card near the foot of the canvas is
     # clipped by the viewport, so a pixel comparison would be asking about the
     # scroll position rather than about the cell.
     span = tiles(app)[HOST]
-    tab = centre(rects(app)[f"card.{GUEST}.tab"])
+    tab = centre(rects(app)[GUEST_TAB])
     # An empty row below everything placed: the board grows by three rows while
     # a drag is in flight, so there is somewhere to let go that is not occupied.
     below = (shared[0] + 30, shared[1] + shared[3] + 200)

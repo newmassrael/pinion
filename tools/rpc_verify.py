@@ -27,6 +27,7 @@ root so `cargo run -p <example>` resolves.
 from __future__ import annotations
 
 import collections
+import functools
 import json
 import queue
 import re
@@ -5194,6 +5195,96 @@ _CHART_GRAMMAR_PATH = WORKSPACE_ROOT / "crates" / "pinion-chart" / "src" / "pain
 _CHART_GRAMMAR_CACHE: dict[str, dict[str, str]] = {}
 
 
+@functools.lru_cache(maxsize=None)
+def emitted_grammar(package: str) -> dict[str, dict[str, str]]:
+    """The address grammar `package` EMITS, as `kind -> name -> value`.
+
+    ★★★★★ R2218 §5.2 — **one reader for every artifact, not one per screen.**
+    R2146 gave `pinion-chart` an emitted grammar and this file a composer for
+    it; R2217 gave `hello-analyzer-shell` the same artifact, and a second
+    screen-shaped copy of `chart_grammar` would have been the rule written
+    twice — the shape R2163 removed from this very campaign, where the copy
+    that was not repaired stayed broken for eight rounds.
+
+    The package is the artifact's own directory name, so nothing here holds a
+    table of where screens live: `painted_grammar.artifacts()` already globs
+    both `crates/*` and `examples/*`.
+
+    ⚠ A package that emits nothing is an `AssertionError` naming the ones that
+    do. The alternative is an empty mapping, from which every composition below
+    falls back to a spelled address — which is the defect this reader exists to
+    remove, arriving quietly.
+    """
+    for path in painted_grammar.artifacts():
+        if path.parent.parent.name == package:
+            table = painted_grammar.table(path)
+            if painted_grammar.REQUIRED_KIND not in table:
+                raise AssertionError(
+                    f"{path} carries no {painted_grammar.REQUIRED_KIND!r} row — "
+                    "a walk that cannot read the grammar would go back to "
+                    "spelling an address, which is what this reader removes."
+                )
+            return table
+    emitting = sorted(path.parent.parent.name for path in painted_grammar.artifacts())
+    raise AssertionError(
+        f"{package!r} emits no address grammar. These do: {emitting}. A screen "
+        "that composes its addresses in Rust and publishes none of them leaves "
+        "a walk nothing to compose from — see R2217."
+    )
+
+
+def painted_address(package: str, name: str, **fields: Any) -> str:
+    """One address `package` paints, composed from what it publishes.
+
+    `name` is the composer's own name in that screen's `address.rs`, and the
+    keyword arguments are that composer's arguments, spelled the same way:
+
+        painted_address("hello-analyzer-shell", "card", id="decode#3")
+            -> "card.decode#3"
+        painted_address("hello-analyzer-shell", "card_grip", id="decode#3")
+            -> "card.decode#3.grip"
+        painted_address("hello-analyzer-shell", "card_cell",
+                        id="packet#1", row=2, column=3)
+            -> "card.packet#1.cell.2_3"
+
+    ⚠ A name the screen does not paint is an `AssertionError` naming what it
+    does, never a composed guess — [`chart_address`]'s refusal, for the reason
+    it gives: a fallback turns this into the thing it replaced the moment the
+    grammar moves.
+
+    ⚠ The ARGUMENT rule is [`fill_template`]'s, in both directions. This
+    composes an address only when the fields are exactly the template's.
+    """
+    grammar = emitted_grammar(package)["grammar"]
+    if name not in grammar:
+        raise AssertionError(
+            f"{package!r} paints no family called {name!r}. It paints "
+            f"{sorted(grammar)}. A walk cannot call a Rust function, so a "
+            "family it is not handed is one it would have to spell."
+        )
+    return fill_template(grammar[name], **fields)
+
+
+def painted_id(package: str, name: str, **fields: Any) -> str:
+    """One ARGUMENT a screen's addresses take, composed from its grammar.
+
+    ★ R2217 gave the artifact format an `id` kind for exactly this: the
+    analyzer shell's cards are addressed by `kind#ordinal`, which is not an
+    address and carries no separator, but IS a published grammar a walk would
+    otherwise spell:
+
+        painted_id("hello-analyzer-shell", "card_id", kind="decode", ordinal=3)
+            -> "decode#3"
+    """
+    ids = emitted_grammar(package).get("id", {})
+    if name not in ids:
+        raise AssertionError(
+            f"{package!r} publishes no id grammar called {name!r}. It publishes "
+            f"{sorted(ids)}."
+        )
+    return fill_template(ids[name], **fields)
+
+
 def chart_grammar() -> dict[str, dict[str, str]]:
     """The emitted chart grammar, as `kind -> name -> value`.
 
@@ -5205,9 +5296,12 @@ def chart_grammar() -> dict[str, dict[str, str]]:
     mapping: an absent grammar would make every composition below fall back to a
     spelled address, which is the defect this reader exists to remove.
     """
+    # ★ R2218 — the artifact is found by [`emitted_grammar`], which every
+    # screen's composer uses; what stays here is the CHART's own contract, the
+    # kinds its compositions below read.
     if _CHART_GRAMMAR_CACHE:
         return _CHART_GRAMMAR_CACHE
-    _CHART_GRAMMAR_CACHE.update(painted_grammar.table(_CHART_GRAMMAR_PATH))
+    _CHART_GRAMMAR_CACHE.update(emitted_grammar("pinion-chart"))
     # ★★★★★ R2217 — the kinds THIS composer reads, not every kind the FORMAT
     # knows. Those were the same set while one artifact existed, and this asked
     # for `painted_grammar.KINDS`; the moment a second artifact taught the

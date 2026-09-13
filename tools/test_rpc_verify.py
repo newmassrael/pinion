@@ -580,6 +580,73 @@ def test_chart_family_cuts_the_template_where_the_fields_run_out() -> None:
           "chart_family: and a member of it sits inside that")
 
 
+def test_painted_address_composes_from_any_screens_grammar() -> None:
+    """★★★★★ R2218 — one composer over every emitted artifact, not one each.
+
+    R2146 gave `pinion-chart` an emitted grammar and this file `chart_address`;
+    R2217 gave `hello-analyzer-shell` the same artifact. A second, screen-shaped
+    copy of that composer would be the rule written twice — the shape R2163
+    removed from this campaign, where the copy nobody repaired stayed broken for
+    eight rounds. These cases hold the general reader against BOTH artifacts, so
+    a change that serves one and breaks the other is a red here.
+    """
+    shell = "hello-analyzer-shell"
+    check(
+        rpc_verify.painted_address(shell, "card", id="decode#3") == "card.decode#3",
+        "painted_address: a screen's own root address",
+    )
+    check(
+        rpc_verify.painted_address(shell, "card_grip", id="decode#3") == "card.decode#3.grip",
+        "painted_address: a part under it",
+    )
+    check(
+        rpc_verify.painted_address(shell, "card_cell", id="packet#1", row=2, column=3)
+        == "card.packet#1.cell.2_3",
+        "painted_address: a two-argument template, joined the screen's way",
+    )
+    # ★ The join is the point: `2_3` is the screen's composition, and a walk
+    # spelling it would be re-typing half the grammar (R2176's finding).
+    check(
+        rpc_verify.painted_id(shell, "card_id", kind="decode", ordinal=3) == "decode#3",
+        "painted_id: the ARGUMENT grammar, which carries no separator",
+    )
+    # And the chart still composes through the same reader.
+    check(
+        rpc_verify.painted_address("pinion-chart", "series", prefix="chart", index=0)
+        == "chart.series.0",
+        "painted_address: the crate artifact reads identically",
+    )
+
+
+def test_painted_address_refuses_in_every_direction() -> None:
+    """Each way to compose a plausible string that names nothing.
+
+    A refusal is the whole value here: a composed guess reads to a walk as *the
+    screen did not paint this*, which is this campaign's failure mode one
+    language further out.
+    """
+    shell = "hello-analyzer-shell"
+    cases = [
+        ("a family the screen does not paint",
+         lambda: rpc_verify.painted_address(shell, "card_nope", id="x")),
+        ("a field the template wants and did not get",
+         lambda: rpc_verify.painted_address(shell, "card_grip")),
+        ("a field the template does not carry",
+         lambda: rpc_verify.painted_address(shell, "card_grip", id="x", extra=1)),
+        ("a package that emits no grammar at all",
+         lambda: rpc_verify.painted_address("hello-menu", "card", id="x")),
+        ("an id grammar the screen does not publish",
+         lambda: rpc_verify.painted_id(shell, "nope", kind="a", ordinal=1)),
+    ]
+    for label, call in cases:
+        try:
+            got = call()
+        except AssertionError:
+            check(True, f"painted_address refuses {label}")
+        else:
+            check(False, f"painted_address composed {got!r} for {label}")
+
+
 def test_chart_family_refuses_a_field_its_cut_never_reaches() -> None:
     """★★★★★ And the refusals, which are what keeps a miscount from passing.
 
