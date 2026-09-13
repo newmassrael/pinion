@@ -73,6 +73,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_rpc_error,
     call,
+    external_paths,
     rpc_error_data,
     run_demo,
 )
@@ -223,6 +224,7 @@ def body() -> None:
     # largest single population found. Asserting it here is what keeps this
     # round's correction from being one binding's local tidy-up.
     with RpcSubprocess("hello-data-grid", boot_grace=1.5) as grid:
+        gp = external_paths(grid, EXT)
         counted = assert_declared_channels_are_true(grid)
         assert counted["invoke"] >= 22, (
             f"I: every one of the 22 corrected declarations is still a verb: {counted}"
@@ -243,10 +245,10 @@ def body() -> None:
         #
         # `value.<row>.<col>` is exactly that family — writable at a real
         # address, and absent at this one.
-        grid.intervene(f"{EXT}/value.0.0", "27")
-        assert_eq(grid.query(f"{EXT}/value.0.0"), "27", "I2: the family IS writable")
+        grid.intervene(f"{EXT}/{gp.at('value', row=0, col=0)}", "27")
+        assert_eq(grid.query(f"{EXT}/{gp.at('value', row=0, col=0)}"), "27", "I2: the family IS writable")
         assert_rpc_error(
-            lambda: grid.intervene(f"{EXT}/value.9999.0", "x"),
+            lambda: grid.intervene(f"{EXT}/{gp.at('value', row=9999, col=0)}", "x"),
             data="UnknownIntervenePath",
         )
         # The scalar peer, same surface, same round: decidable, so decided.

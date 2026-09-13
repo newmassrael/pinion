@@ -39,6 +39,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     access_node_by_tag,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_snap,
@@ -59,6 +60,7 @@ def access(tf):
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, request_timeout=12.0) as tf:
+        gp = external_paths(tf, EXT)
         wait_snap(
             tf,
             lambda s: find_by_tag(s, f"{GRID}#0_0") is not None,
@@ -66,7 +68,7 @@ def body() -> None:
             desc="grid painted",
         )
         for row in range(NROWS):
-            assert_eq(tf.query(f"{EXT}/row_modified.{row}"), True, f"row {row} boots modified")
+            assert_eq(tf.query(f"{EXT}/{gp.at('row_modified', row=row)}"), True, f"row {row} boots modified")
 
         acc = access(tf)
 
@@ -98,9 +100,9 @@ def body() -> None:
         # ── (C) an AT Click on the row reset clears the whole row ────
         sub = reset_tag.split("#", 1)[1]            # "resetrow<src>"
         src = int(sub.removeprefix("resetrow"))     # the source row index
-        assert_eq(tf.query(f"{EXT}/row_modified.{src}"), True, "the addressed row is modified")
+        assert_eq(tf.query(f"{EXT}/{gp.at('row_modified', row=src)}"), True, "the addressed row is modified")
         tf.invoke(f"{EXT}/send", f"{sub}:PointerUp")
-        wait_until(lambda: tf.query(f"{EXT}/row_modified.{src}") is False,
+        wait_until(lambda: tf.query(f"{EXT}/{gp.at('row_modified', row=src)}") is False,
                    timeout=4.0, interval=0.03, desc="the AT row reset cleared the whole row")
         acc = access(tf)
         assert access_node_by_tag(acc, reset_tag) is None, "the row reset button leaves the tree once the row is default"

@@ -36,6 +36,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     unclipped_rects_of,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_snap,
@@ -89,6 +90,7 @@ def col_x(rects, tag) -> int:
 
 def body() -> None:
     with RpcSubprocess("hello-data-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) structure + overflow at boot ────────────────────────
         snap = tf.snapshot(source="paint", viewport=WIN)
         rects = unclipped_rects_of(snap)
@@ -155,12 +157,12 @@ def body() -> None:
         tf.intervene("/external/focused_col", 1)
         assert_eq(tf.query("/external/focused_row"), 2, "cursor parked at row 2")
         assert_eq(tf.query("/external/focused_col"), 1, "cursor parked at col 1")
-        seed_01 = tf.query("/external/value.0.1")
+        seed_01 = tf.query(f"/external/{gp.at('value', row=0, col=1)}")
         tf.scroll(H_SCROLL, to=(0, 0))
         wait_snap(tf, lambda s: offset_x(s) == 0, viewport=WIN, desc="scrolled back to rest")
         assert_eq(tf.query("/external/focused_row"), 2, "focus row survives the scroll")
         assert_eq(tf.query("/external/focused_col"), 1, "focus col survives the scroll")
-        assert_eq(tf.query("/external/value.0.1"), seed_01, "model value survives the scroll")
+        assert_eq(tf.query(f"/external/{gp.at('value', row=0, col=1)}"), seed_01, "model value survives the scroll")
         assert_eq(offset_x(tf.snapshot(source="paint", viewport=WIN)), 0,
                   "AI reads offset_x straight off the scroll node")
 

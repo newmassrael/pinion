@@ -44,6 +44,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     access_node_by_tag,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_query,
@@ -91,6 +92,7 @@ def cell_of(tag: str) -> tuple[int, int]:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, request_timeout=12.0) as tf:
+        gp = external_paths(tf, EXT)
         wait_snap(
             tf,
             lambda s: find_by_tag(s, f"{GRID}#0_0") is not None,
@@ -170,10 +172,10 @@ def body() -> None:
         # A cell reset NOT in the group column (col 1), so the row stays put.
         cb = next(b for b in buttons(acc, is_cell_reset) if cell_of(b["tag"])[1] != 1)
         r, c = cell_of(cb["tag"])
-        assert_eq(tf.query(f"{EXT}/modified.{r}.{c}"), True, "the addressed cell is modified")
+        assert_eq(tf.query(f"{EXT}/{gp.at('modified', row=r, col=c)}"), True, "the addressed cell is modified")
         tf.invoke(f"{EXT}/send", f"{sub_of(cb['tag'])}:PointerUp")
         wait_until(
-            lambda: tf.query(f"{EXT}/modified.{r}.{c}") is False,
+            lambda: tf.query(f"{EXT}/{gp.at('modified', row=r, col=c)}") is False,
             timeout=4.0, interval=0.03, desc="the AT cell reset cleared the cell",
         )
         assert access_node_by_tag(access(tf), cb["tag"]) is None, "the cleared cell's reset button leaves the tree"
@@ -182,10 +184,10 @@ def body() -> None:
         acc = access(tf)
         cc = next(iter(buttons(acc, lambda t: "#resetcol" in t)))
         col = int(sub_of(cc["tag"]).removeprefix("resetcol"))
-        assert_eq(tf.query(f"{EXT}/col_modified.{col}"), True, "the addressed column is modified")
+        assert_eq(tf.query(f"{EXT}/{gp.at('col_modified', col=col)}"), True, "the addressed column is modified")
         tf.invoke(f"{EXT}/send", f"{sub_of(cc['tag'])}:PointerUp")
         wait_until(
-            lambda: tf.query(f"{EXT}/col_modified.{col}") is False,
+            lambda: tf.query(f"{EXT}/{gp.at('col_modified', col=col)}") is False,
             timeout=4.0, interval=0.03, desc="the AT column reset cleared the column",
         )
 
@@ -195,10 +197,10 @@ def body() -> None:
         src = int(sub_of(rb["tag"]).removeprefix("resetrow"))
         host = next(n for n in acc["nodes"] if rb["tag"] in n.get("children", []))
         assert_eq(host["role"], "rowheader", "the row reset hangs off a rowheader")
-        assert_eq(tf.query(f"{EXT}/row_modified.{src}"), True, "the addressed row is modified")
+        assert_eq(tf.query(f"{EXT}/{gp.at('row_modified', row=src)}"), True, "the addressed row is modified")
         tf.invoke(f"{EXT}/send", f"{sub_of(rb['tag'])}:PointerUp")
         wait_until(
-            lambda: tf.query(f"{EXT}/row_modified.{src}") is False,
+            lambda: tf.query(f"{EXT}/{gp.at('row_modified', row=src)}") is False,
             timeout=4.0, interval=0.03, desc="the AT row reset cleared the whole row",
         )
         acc = access(tf)

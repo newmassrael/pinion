@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_query,
@@ -55,8 +56,8 @@ def reset_dot(row: int, col: int) -> str:
     return f"{GRID}#reset{row}_{col}"
 
 
-def modq(g: RpcSubprocess, row: int, col: int) -> object:
-    return g.query(f"{EXT}/modified.{row}.{col}")
+def modq(g: RpcSubprocess, gp, row: int, col: int) -> object:
+    return g.query(f"{EXT}/{gp.at('modified', row=row, col=col)}")
 
 
 def count(g: RpcSubprocess) -> object:
@@ -65,6 +66,7 @@ def count(g: RpcSubprocess) -> object:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, request_timeout=12.0) as g:
+        gp = external_paths(g, EXT)
         rows = g.query(f"{EXT}/row_count")
         assert isinstance(rows, int) and rows >= 3, f"need >= 3 rows, got {rows}"
 
@@ -74,29 +76,29 @@ def body() -> None:
 
         # ── (A) reset_row: modify Count (col 2) in rows 0, 1, 2 ─────────────
         for r, v in ((0, 50), (1, 60), (2, 70)):
-            g.intervene(f"{EXT}/value.{r}.{COUNT_COL}", v)
+            g.intervene(f"{EXT}/{gp.at('value', row=r, col=COUNT_COL)}", v)
         wait_query(g, f"{EXT}/modified_count", 3, desc="three Count cells modified")
         for r in (0, 1, 2):
-            assert_eq(modq(g, r, COUNT_COL), True, f"row {r} Count modified")
+            assert_eq(modq(g, gp, r, COUNT_COL), True, f"row {r} Count modified")
 
         # reset_row(1) clears row 1 only.
         assert_eq(g.invoke(f"{EXT}/reset_row", 1), 1, "reset_row(1) clears one cell")
-        wait_query(g, f"{EXT}/modified.1.{COUNT_COL}", False, desc="row 1 Count reset")
-        assert_eq(modq(g, 0, COUNT_COL), True, "row 0 untouched")
-        assert_eq(modq(g, 2, COUNT_COL), True, "row 2 untouched")
+        wait_query(g, f"{EXT}/{gp.at('modified', row=1, col=COUNT_COL)}", False, desc="row 1 Count reset")
+        assert_eq(modq(g, gp, 0, COUNT_COL), True, "row 0 untouched")
+        assert_eq(modq(g, gp, 2, COUNT_COL), True, "row 2 untouched")
         assert_eq(count(g), 2, "two cells remain modified")
         assert_eq(g.invoke(f"{EXT}/reset_row", 1), 0, "an already-default row is a 0 no-op")
 
         # ── (B) reset_col: add an Asset (col 0) edit, then reset the Count col
-        g.intervene(f"{EXT}/value.0.{ASSET_COL}", "renamed")
+        g.intervene(f"{EXT}/{gp.at('value', row=0, col=ASSET_COL)}", "renamed")
         wait_query(g, f"{EXT}/modified_count", 3, desc="Asset edit + two Count cells")
-        assert_eq(modq(g, 0, ASSET_COL), True, "Asset cell modified")
+        assert_eq(modq(g, gp, 0, ASSET_COL), True, "Asset cell modified")
 
         # reset_col(2) clears both remaining Count cells; Asset (col 0) untouched.
         assert_eq(g.invoke(f"{EXT}/reset_col", COUNT_COL), 2, "reset_col(2) clears both Count cells")
-        wait_query(g, f"{EXT}/modified.0.{COUNT_COL}", False, desc="row 0 Count reset by column")
-        assert_eq(modq(g, 2, COUNT_COL), False, "row 2 Count reset by column")
-        assert_eq(modq(g, 0, ASSET_COL), True, "the Asset column is untouched")
+        wait_query(g, f"{EXT}/{gp.at('modified', row=0, col=COUNT_COL)}", False, desc="row 0 Count reset by column")
+        assert_eq(modq(g, gp, 2, COUNT_COL), False, "row 2 Count reset by column")
+        assert_eq(modq(g, gp, 0, ASSET_COL), True, "the Asset column is untouched")
         assert_eq(count(g), 1, "only the Asset edit remains")
         assert_eq(g.invoke(f"{EXT}/reset_col", COUNT_COL), 0, "an already-default column is a 0 no-op")
 

@@ -40,6 +40,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     access_node_by_tag,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_snap,
@@ -68,6 +69,7 @@ def reset_child_of(node):
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, request_timeout=12.0) as tf:
+        gp = external_paths(tf, EXT)
         # Boot: every seed cell differs from its column default, so every cell +
         # column boots modified and every reset button is emitted.
         wait_snap(
@@ -76,7 +78,7 @@ def body() -> None:
             viewport=VIEWPORT,
             desc="grid painted",
         )
-        assert_eq(tf.query(f"{EXT}/col_modified.{ASSET_COL}"), True, "Asset column boots modified")
+        assert_eq(tf.query(f"{EXT}/{gp.at('col_modified', col=ASSET_COL)}"), True, "Asset column boots modified")
 
         acc = access(tf)
         assert acc["count"] > 0, "the access tree is non-empty"
@@ -111,10 +113,11 @@ def body() -> None:
         # ── (C) activation through the AT wire twin: an AT Click routes to the
         # same `send "<sub>:PointerUp"` wire. Resetting the (0,Asset) cell to its
         # column default removes the button from the access tree.
-        assert_eq(tf.query(f"{EXT}/value.0.{ASSET_COL}"), "Hero", "seed (0,Asset) is Hero")
+        assert_eq(tf.query(f"{EXT}/{gp.at('value', row=0, col=ASSET_COL)}"), "Hero", "seed (0,Asset) is Hero")
         cell_sub = cell_reset_tag.split("#", 1)[1]  # e.g. "reset0_0"
         tf.invoke(f"{EXT}/send", f"{cell_sub}:PointerUp")
-        assert_eq(tf.query(f"{EXT}/value.0.{ASSET_COL}"), "", "the AT-wire reset cleared the cell to its default")
+        assert_eq(tf.query(f"{EXT}/{gp.at('value', row=0, col=ASSET_COL)}"), "",
+                  "the AT-wire reset cleared the cell to its default")
         wait_until(
             lambda: access_node_by_tag(access(tf), cell_reset_tag) is None,
             timeout=4.0, interval=0.03,
@@ -125,7 +128,8 @@ def body() -> None:
         assert reset_child_of(access_node_by_tag(acc, f"{GRID}#0_{ASSET_COL}")) is None, \
             "the cleaned cell advertises no reset child"
         # ...but its column is still modified (other rows), so the header keeps its button.
-        assert_eq(tf.query(f"{EXT}/col_modified.{ASSET_COL}"), True, "the Asset column is still modified")
+        assert_eq(tf.query(f"{EXT}/{gp.at('col_modified', col=ASSET_COL)}"), True,
+                  "the Asset column is still modified")
         assert reset_child_of(access_node_by_tag(acc, asset_header["tag"])) is not None, \
             "the column header still advertises its reset button"
 
@@ -133,12 +137,13 @@ def body() -> None:
         col_sub = col_reset_tag.split("#", 1)[1]  # "resetcol0"
         tf.invoke(f"{EXT}/send", f"{col_sub}:PointerUp")
         wait_until(
-            lambda: tf.query(f"{EXT}/col_modified.{ASSET_COL}") is False,
+            lambda: tf.query(f"{EXT}/{gp.at('col_modified', col=ASSET_COL)}") is False,
             timeout=4.0, interval=0.03,
             desc="the AT-wire column reset cleared the whole Asset column",
         )
         for row in range(4):
-            assert_eq(tf.query(f"{EXT}/value.{row}.{ASSET_COL}"), "", f"Asset row {row} is the column default")
+            assert_eq(tf.query(f"{EXT}/{gp.at('value', row=row, col=ASSET_COL)}"), "",
+                      f"Asset row {row} is the column default")
         acc = access(tf)
         assert access_node_by_tag(acc, col_reset_tag) is None, "the column reset button is gone once the column is clean"
         assert reset_child_of(access_node_by_tag(acc, f"{GRID}#0_{ASSET_COL}")) is None, \
