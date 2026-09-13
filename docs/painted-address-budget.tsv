@@ -106,7 +106,7 @@ hist.bar	0	3
 histogram.axis	0	1
 histogram.bar	0	1
 histogram.inspect	0	5
-hit.{}	1	2
+hit.{}	0	2
 id_at.{}	38	3
 is_dir.{}	5	0
 item.bake	0	0

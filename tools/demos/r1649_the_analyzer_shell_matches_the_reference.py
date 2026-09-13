@@ -69,6 +69,7 @@ from rpc_verify import (  # noqa: E402
     assert_declared_channels_are_true,
     assert_eq,
     assert_router_press_moves,
+    external_paths,
     find_by_tag,
     painted_address,
     painted_part,
@@ -869,10 +870,16 @@ def body() -> None:
         # single cost in a walk that sat at 108.09s of a 180s budget on the
         # hosted runner. `hit.<x>.<y>` is the same `Hit::at` as a READ.
         before = q(tf, "cursor")
+        # ★★★★★ R2226 — the path is ASKED FOR, not spelled. This screen declares
+        # `hit.<x>.<y>` beside the scalar `hit`, and until R2226 those folded
+        # onto one name and `external_paths` refused this screen ENTIRELY — all
+        # 87 of its declared paths, which is why this line typed one out. The
+        # arguments are what tell the two apart now.
+        paths = external_paths(tf, EXT)
         probed, named = 0, 0
         for py in range(4, 900, 44):
             for px in range(4, 1440, 52):
-                where = q(tf, f"hit.{px}.{py}")
+                where = q(tf, paths.at("hit", x=px, y=py))
                 probed += 1
                 if where == "nothing":
                     continue

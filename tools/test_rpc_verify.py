@@ -884,10 +884,10 @@ def test_external_paths_compose_the_declared_introspection_vocabulary() -> None:
     paths = rpc_verify.ExternalPaths(
         external="/grid/external",
         declared={
-            "value": "value.<index>",
-            "modified": "modified.<addr>",
-            "expanded": "expanded.<branch_id>",
-            "any_modified": "any_modified",
+            "value": ("value.<index>",),
+            "modified": ("modified.<addr>",),
+            "expanded": ("expanded.<branch_id>",),
+            "any_modified": ("any_modified",),
         },
     )
     check(paths.at("value", index="elem.1") == "value.elem.1",
@@ -927,6 +927,181 @@ def test_external_paths_compose_the_declared_introspection_vocabulary() -> None:
             check(True, f"ExternalPaths: {label} is refused")
         else:
             check(False, f"ExternalPaths: {label} must be refused -> {composed}")
+
+
+def test_a_name_carrying_two_paths_is_told_apart_by_its_arguments() -> None:
+    """★★★★★ R2226 — a screen may declare a SCALAR and a QUERY under one head,
+    and the arguments are what separate them.
+
+    Three screens in this tree do: a date picker offers `selected` (which day is
+    chosen) beside `selected.<day>` (is THIS day chosen), a table the same for a
+    row, and the analyzer shell `hit` beside `hit.<x>.<y>`. `schema_path_name`
+    drops the argument-bearing segments, so both arrive under one name — and
+    until this round `external_paths` refused the WHOLE screen for it. Measured
+    before the repair: those three were shut out of 11, 25 and 87 composable
+    paths, every one of which a walk then had to spell. That is why the census's
+    largest family (`selected.{}`, 63 sites) had no door.
+    """
+    paths = rpc_verify.ExternalPaths(
+        external="/external",
+        declared={
+            "selected": ("selected", "selected.<day>"),
+            "hit": ("hit", "hit.<x>.<y>"),
+            "value": ("value.<index>",),
+        },
+    )
+    check(paths.at("selected") == "selected",
+          "ExternalPaths: no arguments picks the scalar")
+    check(paths.at("selected", day=15) == "selected.15",
+          "ExternalPaths: ★ the same name with an argument picks the query")
+    check(paths.at("hit", x=40, y=40) == "hit.40.40",
+          "ExternalPaths: two arguments, both substituted")
+    check(paths.at("value", index=4) == "value.4",
+          "ExternalPaths: a name carrying one path is unchanged")
+
+    # ⚠ The refusal the read-time one was narrowed to: arguments that do NOT
+    # separate. Nothing a caller can say picks between these, so the reader says
+    # so rather than choosing — which is the value the old refusal protected,
+    # kept rather than traded away.
+    #
+    # ★ Building this fixture refuted the round's first draft, which used
+    # `seat.<key>` beside `seat.<name>`. Those are NOT ambiguous: the argument
+    # NAMES differ, so `at("seat", key=…)` already picks one. Genuine ambiguity
+    # needs the same name AND the same argument set, which is an argument in a
+    # different POSITION — the two below both fold onto `a.b` taking `{k}`.
+    ambiguous = rpc_verify.ExternalPaths(
+        external="/external",
+        declared={"a.b": ("a.<k>.b", "a.b.<k>")},
+    )
+    try:
+        composed = ambiguous.at("a.b", k="x")
+    except AssertionError as exc:
+        check("a.<k>.b" in str(exc) and "a.b.<k>" in str(exc),
+              f"ExternalPaths: the refusal names both paths it could not choose "
+              f"between: {exc}")
+    else:
+        check(False, f"ExternalPaths: ambiguous pair composed {composed!r}")
+
+    # ★★ And the pair that only LOOKS ambiguous composes, because the argument
+    # names separate it. A reader that refused this would shut a screen out for
+    # a clash it does not have.
+    by_name = rpc_verify.ExternalPaths(
+        external="/external",
+        declared={"seat": ("seat.<key>", "seat.<name>")},
+    )
+    check(by_name.at("seat", key="a") == "seat.a",
+          "ExternalPaths: two paths one name, told apart by the ARGUMENT NAME")
+    check(by_name.at("seat", name="b") == "seat.b",
+          "ExternalPaths: and the other one")
+
+    # ★ And an argument set NO template under the name takes is refused with the
+    # sets it does take, so a caller is told what to say rather than that it was
+    # wrong.
+    try:
+        composed = paths.at("selected", row=2)
+    except AssertionError as exc:
+        check("day" in str(exc),
+              f"ExternalPaths: the refusal names the argument sets on offer: {exc}")
+    else:
+        check(False, f"ExternalPaths: a wrong argument name composed {composed!r}")
+
+    # ⚠⚠ The OLD shape — one string per name — is refused rather than adapted.
+    # `at` would iterate it character by character and refuse for a reason that
+    # says nothing about the real mistake.
+    try:
+        rpc_verify.ExternalPaths(external="/external", declared={"value": "value.<i>"})
+    except AssertionError as exc:
+        check("tuple" in str(exc),
+              f"ExternalPaths: a bare string under a name is refused: {exc}")
+    else:
+        check(False, "ExternalPaths: a bare string under a name was accepted")
+
+    # ★★★★★ THE COLLECTION ITSELF, which had no test until this round. It lived
+    # inside `external_paths` — which needs a live screen — so a mutation making
+    # it keep only the LAST path per name (its shape before R2226) passed every
+    # gate including the walk this round converted, because that walk asks only
+    # for the parametric path. Lifted to a pure function, the schema rows can be
+    # handed over directly.
+    collected = rpc_verify.declared_paths(
+        [
+            {"path": "selected"},
+            {"path": "selected.<day>"},
+            {"path": "month"},
+            {"path": "not-a-row"},
+            {"path": 7},
+            {"no_path": "ignored"},
+            "not a dict",
+            {"path": "month"},
+        ]
+    )
+    check(collected["selected"] == ("selected", "selected.<day>"),
+          f"declared_paths: ★ BOTH paths under one name, in declaration order: "
+          f"{collected.get('selected')}")
+    check(collected["month"] == ("month",),
+          "declared_paths: a path declared twice is kept once")
+    check("not-a-row" in collected,
+          "declared_paths: a path with no argument is its own name")
+    check(set(collected) == {"selected", "month", "not-a-row"},
+          f"declared_paths: rows with no usable path are skipped: {sorted(collected)}")
+
+
+def test_no_composer_shadows_the_vocabulary_it_composes_from() -> None:
+    """★★★★★ R2226 — **a composer's own parameter must not be a word the
+    declaration can use.**
+
+    Every composer here takes its fixed arguments first and the DECLARED ones as
+    `**kwargs`. Those declared names come from a screen's `$schema` or a
+    screen's emitted grammar — they are the vocabulary, not this file's — and
+    nothing stops one being called `name`, `package` or `template`. When it is,
+    Python raises `TypeError: got multiple values for argument 'name'` before
+    the composer runs: the reader's parameter shadows the thing it exists to
+    compose from, and the walk gets a crash instead of an address.
+
+    Met at `ExternalPaths.at` by a case written to prove something else, and
+    closed at all six sites in the same round — a defect repaired at one of
+    several identical sites is one that returns.
+
+    ⚠ Derived from the signatures rather than from a list of them, so a
+    composer added tomorrow is covered by existing. The rule is the one the
+    repair used: every parameter BEFORE `**kwargs` is positional-only.
+    """
+    import inspect
+
+    composers = [
+        rpc_verify.painted_address,
+        rpc_verify.painted_id,
+        rpc_verify.painted_part,
+        rpc_verify.chart_address,
+        rpc_verify.fill_template,
+        rpc_verify.ExternalPaths.at,
+        rpc_verify.ChartAddresses.at,
+        rpc_verify.ChartAddresses.family,
+    ]
+    for fn in composers:
+        sig = inspect.signature(fn)
+        if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+            check(False, f"{fn.__qualname__} takes no **kwargs — this scan is stale")
+            continue
+        shadowing = [
+            p.name
+            for p in sig.parameters.values()
+            if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD and p.name != "self"
+        ]
+        check(
+            not shadowing,
+            f"{fn.__qualname__} can be shadowed through {shadowing} — a declared "
+            "argument by that name raises TypeError instead of composing",
+        )
+
+    # ★ And the rule actually bites: a vocabulary that uses the shadowing word
+    # composes rather than crashing.
+    paths = rpc_verify.ExternalPaths(
+        external="/external", declared={"seat": ("seat.<name>",)}
+    )
+    check(paths.at("seat", name="b") == "seat.b",
+          "ExternalPaths: a declared argument called `name` composes")
+    check(rpc_verify.fill_template("{template}.x", template="a") == "a.x",
+          "fill_template: a field called `template` composes")
 
 
 def test_seat_member_recovers_a_key_and_refuses_what_is_not_one() -> None:

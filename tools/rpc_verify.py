@@ -5256,7 +5256,7 @@ def emitted_grammar(package: str) -> dict[str, dict[str, str]]:
     )
 
 
-def painted_address(package: str, name: str, **fields: Any) -> str:
+def painted_address(package: str, name: str, /, **fields: Any) -> str:
     """One address `package` paints, composed from what it publishes.
 
     `name` is the composer's own name in that screen's `address.rs`, and the
@@ -5288,7 +5288,7 @@ def painted_address(package: str, name: str, **fields: Any) -> str:
     return fill_template(grammar[name], **fields)
 
 
-def painted_id(package: str, name: str, **fields: Any) -> str:
+def painted_id(package: str, name: str, /, **fields: Any) -> str:
     """One ARGUMENT a screen's addresses take, composed from its grammar.
 
     ★ R2217 gave the artifact format an `id` kind for exactly this: the
@@ -5332,7 +5332,7 @@ def painted_const(package: str, name: str) -> str:
     return consts[name]
 
 
-def painted_part(package: str, name: str, **fields: Any) -> str:
+def painted_part(package: str, name: str, /, **fields: Any) -> str:
     """One address a screen paints for a named PART of a placeholder it
     publishes — `part` rows, composed the way [`painted_address`] composes
     `grammar` ones.
@@ -5419,7 +5419,7 @@ def _chart_format(template: str, name: str, prefix: Optional[str], fields: dict)
     return fill_template(template, prefix=prefix, **fields)
 
 
-def chart_address(name: str, *, prefix: Optional[str] = None, **fields: Any) -> str:
+def chart_address(name: str, /, *, prefix: Optional[str] = None, **fields: Any) -> str:
     """One address `pinion-chart` paints, composed from its emitted grammar.
 
     `name` is the composer's own name — `series`, `label_x`, `tile_label` — and
@@ -5574,11 +5574,18 @@ class ChartAddresses:
     prefix: str
     part: Optional[str]
 
-    def at(self, name: str, **fields: Any) -> str:
-        """One address this chart paints — see [`chart_address`]."""
+    def at(self, name: str, /, **fields: Any) -> str:
+        """One address this chart paints — see [`chart_address`].
+
+        ⚠ `name` is POSITIONAL-ONLY for the reason [`ExternalPaths.at`] gives:
+        the template's own field names come from the artifact, and one called
+        `name` would collide with this parameter and raise `TypeError` rather
+        than compose. Closed here in the same round it was met one class over —
+        a defect repaired at one of two identical sites is one that returns.
+        """
         return chart_address(name, prefix=self.prefix, **fields)
 
-    def family(self, name: str, **fields: Any) -> str:
+    def family(self, name: str, /, **fields: Any) -> str:
         """The family stem, cut as far as `fields` reach — see [`chart_family`]."""
         return chart_family(name, prefix=self.prefix, **fields)
 
@@ -6916,7 +6923,7 @@ def seat_member(seat: str, tag: str) -> Optional[str]:
     return rest if rest and "." not in rest else None
 
 
-def fill_template(template: str, **fields: Any) -> str:
+def fill_template(template: str, /, **fields: Any) -> str:
     """Fill a published address TEMPLATE, refusing a field mismatch.
 
     ★★★★★ R2176 — a seat plus a key is not the only shape an address has. A
@@ -7857,10 +7864,35 @@ class ExternalPaths:
     """
 
     external: str
-    declared: dict[str, str]
+    declared: dict[str, tuple[str, ...]]
 
-    def at(self, name: str, **args: Any) -> str:
+    def __post_init__(self) -> None:
+        """★ R2226 — a bare string under a name is REFUSED, not adapted.
+
+        `declared` held one path per name until this round and now holds every
+        path under it. A caller still passing the old shape would have its
+        string iterated CHARACTER BY CHARACTER by [`at`] — which refuses, but
+        with a sentence about argument sets that says nothing about the real
+        mistake. Accepting it by wrapping would be worse: the old model would
+        keep working and nothing would ever say it had moved.
+        """
+        for name, paths in self.declared.items():
+            if isinstance(paths, str):
+                raise AssertionError(
+                    f"{name!r} was given the single path {paths!r}. Since R2226 "
+                    "a name carries every path declared under it, so this takes "
+                    f"a tuple — ({paths!r},) for one."
+                )
+
+    def at(self, name: str, /, **args: Any) -> str:
         """One introspection path, composed from what the screen DECLARES.
+
+        ⚠⚠ `name` is POSITIONAL-ONLY, and that is a defect this round met rather
+        than a tidiness. A screen declares its own argument names, and nothing
+        stops one being called `name`: `at("seat", name="b")` then raises
+        `TypeError: got multiple values for argument 'name'` — the reader's own
+        parameter shadowing the vocabulary it exists to compose from. Found by a
+        test case written to prove something else.
 
             paths.at("value", index="elem.1")   -> "value.elem.1"
             paths.at("modified", addr="elem.2") -> "modified.elem.2"
@@ -7870,12 +7902,29 @@ class ExternalPaths:
         `value.<index>` — because that is the part a walk means, and the only
         part that stays put when an argument is renamed.
 
-        ⚠⚠ Both directions are refused, as [`_chart_format`] refuses them and
-        for the same reason. A path the screen does not declare, or an argument
-        it does not take, composes a plausible string that names nothing; the
-        screen answers that with an error a walk reads as *the screen does not
-        have this*, which is this campaign's failure mode one language further
-        out.
+        ★★★★★ R2226 — **a name can carry more than one path, and the ARGUMENTS
+        are what tell them apart.** A screen may declare both a scalar and a
+        query under one head, and three in this tree do: a date picker offers
+        `selected` (which day is chosen) beside `selected.<day>` (is THIS day
+        chosen), a table the same for a row, and the analyzer shell `hit` beside
+        `hit.<x>.<y>`. [`schema_path_name`] drops the argument-bearing segments,
+        so both arrive under one name — and until this round [`external_paths`]
+        refused the WHOLE screen for it, shutting a walk out of every other path
+        that screen declares. Measured at entry: 3 screens shut out of 11, 25
+        and 87 paths respectively, which is why the census's largest family
+        (`selected.{}`, 63 sites) was spelled by hand.
+
+        The arity is not a new idea here — the refusal below already compared
+        `wanted` with `given`. What changes is that it now SELECTS rather than
+        merely validating: the templates under a name are searched for the one
+        whose arguments are exactly the ones handed over.
+
+        ⚠⚠ Both directions are still refused, as [`_chart_format`] refuses them
+        and for the same reason. A path the screen does not declare, or an
+        argument set no template under that name takes, composes a plausible
+        string that names nothing; the screen answers that with an error a walk
+        reads as *the screen does not have this*, which is this campaign's
+        failure mode one language further out.
         """
         if name not in self.declared:
             raise AssertionError(
@@ -7883,17 +7932,28 @@ class ExternalPaths:
                 f"{sorted(self.declared)}. A walk cannot name a Rust item, so a "
                 "path it is not handed is one it would have to spell."
             )
-        template = self.declared[name]
-        wanted = set(_SCHEMA_ARG.findall(template))
+        templates = self.declared[name]
         given = set(args)
-        if wanted != given:
+        matches = [t for t in templates if set(_SCHEMA_ARG.findall(t)) == given]
+        if not matches:
+            takes = sorted(sorted(_SCHEMA_ARG.findall(t)) for t in templates)
             raise AssertionError(
-                f"{self.external} declares {template!r}: it takes {sorted(wanted)} "
-                f"and was given {sorted(given)}. A path composed past this would "
-                "name nothing, and the walk would read that as the screen not "
-                "having it."
+                f"{self.external} declares {list(templates)} under {name!r}: "
+                f"they take {takes} and this was given {sorted(given)}. A path "
+                "composed past this would name nothing, and the walk would read "
+                "that as the screen not having it."
             )
-        out = template
+        if len(matches) > 1:
+            # ★ The refusal `external_paths` used to make at READ time, narrowed
+            # to what is genuinely ambiguous: two paths one name AND one
+            # argument set, where nothing a caller can say picks between them.
+            raise AssertionError(
+                f"{self.external} declares {sorted(matches)}, which take the "
+                f"same arguments {sorted(given)} under the same name {name!r}. "
+                "One name, one argument set, two paths — say so rather than "
+                "letting this reader pick."
+            )
+        out = matches[0]
         for arg, value in args.items():
             out = out.replace(f"<{arg}>", str(value))
         return out
@@ -7919,25 +7979,54 @@ def schema_path_name(path: str) -> str:
 def external_paths(app: "RpcSubprocess", external: str = "/external") -> ExternalPaths:
     """Read one External's declared path vocabulary, once, ready to compose.
 
-    ⚠ A name two declared paths share is REFUSED rather than resolved. Silently
-    keeping the last would hand a walk one path while it meant the other, and
-    the walk would read the screen's answer as being about its own question.
+    ★★★★★ R2226 — **every path under a name is kept, and [`ExternalPaths.at`]
+    picks by the arguments.** This used to refuse at READ time the moment two
+    declared paths folded onto one name, which shut a walk out of the screen
+    ENTIRELY: measured at entry, three screens here declare a scalar and a query
+    under one head (`selected` / `selected.<day>`, `selected` / `selected.<row>`,
+    `hit` / `hit.<x>.<y>`), and the refusal cost them 11, 25 and 87 composable
+    paths — every one of which a walk then had to spell.
+
+    ⚠ The value the old refusal protected is kept rather than traded away, and
+    that is the whole point of moving it. It existed because *silently keeping
+    the last would hand a walk one path while it meant the other* — and that
+    cannot happen now: a caller's arguments select, so the reader either hands
+    back the path whose arguments are exactly those, or refuses. What stays
+    refused, at [`ExternalPaths.at`], is the case where arguments do NOT
+    separate them: one name, one argument set, two paths.
     """
-    declared: dict[str, str] = {}
-    for row in external_schema(app, external):
-        path = row.get("path")
-        if not isinstance(path, str):
-            continue
-        name = schema_path_name(path)
-        if name in declared and declared[name] != path:
-            raise AssertionError(
-                f"{external} declares {declared[name]!r} and {path!r}, which a "
-                f"walk would call by the same name {name!r}. One name, two "
-                "paths — say so rather than letting this reader keep the last."
-            )
-        declared[name] = path
+    declared = declared_paths(external_schema(app, external))
     assert declared, f"{external}/$schema carried no `path` row this reader could use"
     return ExternalPaths(external=external, declared=declared)
+
+
+def declared_paths(rows: Iterable[Any]) -> dict[str, tuple[str, ...]]:
+    """`$schema` rows -> the name each path is called by, and every path under it.
+
+    ★★★★★ R2226 — **its own function because the collection had no test.** It
+    lived inside [`external_paths`], which needs a live screen, so the suite
+    could only ever exercise a hand-built `ExternalPaths` — and a mutation that
+    made this keep the LAST path per name (the shape it had before this round)
+    passed every gate, including the walk this round converted. That walk asks
+    only for the parametric path, so keeping the scalar or dropping it is
+    invisible to it.
+
+    R2224 made exactly this repair one tool over, on the same reasoning: a
+    decision with no name has no place to be tested from.
+
+    ⚠ Order within a name is the declaration's, and a path repeated verbatim is
+    kept once — a schema listing one path twice says nothing a reader can get
+    wrong, and [`ExternalPaths.at`] would report it as ambiguous.
+    """
+    out: dict[str, list[str]] = {}
+    for row in rows:
+        path = row.get("path") if isinstance(row, dict) else None
+        if not isinstance(path, str):
+            continue
+        under = out.setdefault(schema_path_name(path), [])
+        if path not in under:
+            under.append(path)
+    return {name: tuple(paths) for name, paths in out.items()}
 
 
 def declared_panes(app: "RpcSubprocess", external: str = "/external") -> list[dict]:
