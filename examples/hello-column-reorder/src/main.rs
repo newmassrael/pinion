@@ -109,7 +109,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::column_layout::{
-    ColumnLayout, ColumnLayoutView, DEFAULT_HEADER_ALIGNMENT, DEFAULT_SECTION_SIZE,
+    self, ColumnLayout, ColumnLayoutView, DEFAULT_HEADER_ALIGNMENT, DEFAULT_SECTION_SIZE,
     SectionPlacement, SectionResizeMode, SectionSelection, read_column_layout,
     use_column_layout_with,
 };
@@ -828,7 +828,7 @@ fn visible_visuals(intro: &dyn ExternalIntrospect) -> Vec<usize> {
 /// The logical column under the keyboard cursor, if the cursor is on a painted
 /// section.
 fn logical_at(intro: &dyn ExternalIntrospect, cursor: Option<usize>) -> Option<usize> {
-    match intro.query(&format!("logical_index.{}", cursor?)) {
+    match intro.query(&column_layout::LOGICAL_INDEX.at(&[&cursor?])) {
         Ok(IntrospectValue::Int(l)) => usize::try_from(l).ok(),
         _ => None,
     }
@@ -837,7 +837,7 @@ fn logical_at(intro: &dyn ExternalIntrospect, cursor: Option<usize>) -> Option<u
 /// R1452 — the sizing policy of logical section `logical`, read back through
 /// the same wire slot an RPC client would use.
 fn read_mode(intro: &dyn ExternalIntrospect, logical: usize) -> SectionResizeMode {
-    match intro.query(&format!("resize_mode.{logical}")) {
+    match intro.query(&column_layout::RESIZE_MODE.at(&[&logical])) {
         Ok(IntrospectValue::Text(m)) => m.parse().unwrap_or_default(),
         _ => SectionResizeMode::default(),
     }
@@ -848,7 +848,7 @@ fn read_mode(intro: &dyn ExternalIntrospect, logical: usize) -> SectionResizeMod
 /// the mode that was set, and reading the override there would let one keypress
 /// turn a filled `Interactive` section into a `ResizeToContents` one.
 fn read_effective_mode(intro: &dyn ExternalIntrospect, logical: usize) -> SectionResizeMode {
-    match intro.query(&format!("effective_resize_mode.{logical}")) {
+    match intro.query(&column_layout::EFFECTIVE_RESIZE_MODE.at(&[&logical])) {
         Ok(IntrospectValue::Text(m)) => m.parse().unwrap_or_default(),
         _ => read_mode(intro, logical),
     }
@@ -887,7 +887,7 @@ fn toggle_hidden_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -
         return false;
     };
     let hidden = matches!(
-        intro.query(&format!("section_hidden.{logical}")),
+        intro.query(&column_layout::SECTION_HIDDEN.at(&[&logical])),
         Ok(IntrospectValue::Bool(true))
     );
     if intro
@@ -969,16 +969,18 @@ fn toggle_bool_rule(intro: &mut dyn ExternalIntrospect, path: &str) -> bool {
 /// section then, which would pin the cycle at its first step.
 fn cycle_selection_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> bool {
     let Some(visual) = cursor else { return false };
-    let Ok(IntrospectValue::Int(l)) = intro.query(&format!("logical_index.{visual}")) else {
+    let Ok(IntrospectValue::Int(l)) = intro.query(&column_layout::LOGICAL_INDEX.at(&[&visual]))
+    else {
         return false;
     };
     let Ok(logical) = usize::try_from(l) else {
         return false;
     };
-    let now: Option<SectionSelection> = match intro.query(&format!("section_selection.{logical}")) {
-        Ok(IntrospectValue::Text(s)) => s.parse().ok(),
-        _ => None,
-    };
+    let now: Option<SectionSelection> =
+        match intro.query(&column_layout::SECTION_SELECTION.at(&[&logical])) {
+            Ok(IntrospectValue::Text(s)) => s.parse().ok(),
+            _ => None,
+        };
     let next = match now {
         Some(SectionSelection::Unselected) | None => "partial",
         Some(SectionSelection::Partial) => "full",
@@ -1019,13 +1021,14 @@ fn cycle_default_alignment(intro: &mut dyn ExternalIntrospect) -> bool {
 /// spelling that hands it to the header's rule.
 fn cycle_alignment_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> bool {
     let Some(visual) = cursor else { return false };
-    let Ok(IntrospectValue::Int(l)) = intro.query(&format!("logical_index.{visual}")) else {
+    let Ok(IntrospectValue::Int(l)) = intro.query(&column_layout::LOGICAL_INDEX.at(&[&visual]))
+    else {
         return false;
     };
     let Ok(logical) = usize::try_from(l) else {
         return false;
     };
-    let now = match intro.query(&format!("section_alignment_override.{logical}")) {
+    let now = match intro.query(&column_layout::SECTION_ALIGNMENT_OVERRIDE.at(&[&logical])) {
         Ok(IntrospectValue::Text(a)) => TextAlign::from_wire(&a),
         _ => None,
     };
@@ -1070,7 +1073,7 @@ fn nudge_size_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>, grow
     if !read_effective_mode(&*intro, logical).user_resizable() {
         return false;
     }
-    let size = match intro.query(&format!("section_size.{logical}")) {
+    let size = match intro.query(&column_layout::SECTION_SIZE.at(&[&logical])) {
         Ok(IntrospectValue::Int(n)) => u32::try_from(n).unwrap_or(0),
         _ => return false,
     };

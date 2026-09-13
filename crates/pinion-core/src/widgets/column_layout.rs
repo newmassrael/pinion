@@ -864,6 +864,124 @@ pub struct ColumnLayout {
     pressed_section: Cell<Option<usize>>,
 }
 
+/// ★★★★★ R2197 — the size policy of a logical section, declared ONCE:
+/// [`ColumnLayout`]'s schema lists this field, and a reader composes from it
+/// ([`SchemaField::at`]) instead of spelling `resize_mode.<logical>` again.
+/// The same holds for every per-section family below.
+///
+/// Every one of them is an index into `count`, except [`LOGICAL_INDEX_AT`].
+pub const RESIZE_MODE: SchemaField = SchemaField::parametric(
+    "resize_mode.<logical>",
+    "string",
+    const { &[SchemaArg::index("logical", "count")] },
+);
+
+/// ★★★★★ R2197 — the size policy the header is APPLYING to a section, which a
+/// stretched last section makes differ from [`RESIZE_MODE`].
+pub const EFFECTIVE_RESIZE_MODE: SchemaField = SchemaField::parametric(
+    "effective_resize_mode.<logical>",
+    "string",
+    const { &[SchemaArg::index("logical", "count")] },
+);
+
+/// ★★★★★ R2197 — the width a section's content asks for; see [`RESIZE_MODE`].
+pub const CONTENT_WIDTH: SchemaField = SchemaField::parametric(
+    "content_width.<logical>",
+    "int",
+    const { &[SchemaArg::index("logical", "count")] },
+);
+
+/// ★★★★★ R2197 — the size a section is painted at; see [`RESIZE_MODE`].
+pub const SECTION_SIZE: SchemaField = SchemaField::parametric(
+    "section_size.<logical>",
+    "int",
+    const { &[SchemaArg::index("logical", "count")] },
+);
+
+/// ★★★★★ R2197 — whether a section is hidden; see [`RESIZE_MODE`].
+pub const SECTION_HIDDEN: SchemaField = SchemaField::parametric(
+    "section_hidden.<logical>",
+    "bool",
+    const { &[SchemaArg::index("logical", "count")] },
+);
+
+/// ★★★★★ R2197 — where a section starts along the painted row; see
+/// [`RESIZE_MODE`].
+pub const SECTION_POSITION: SchemaField = SchemaField::parametric(
+    "section_position.<logical>",
+    "int",
+    const { &[SchemaArg::index("logical", "count")] },
+);
+
+/// ★★★★★ R2197 — the alignment a section's label is painted with.
+///
+/// R1504 — the first of a pair, declared adjacently like every other
+/// stored/effective pair: this is what the label is painted with, and
+/// [`SECTION_ALIGNMENT_OVERRIDE`] is the model's exception alone.
+pub const SECTION_ALIGNMENT: SchemaField = SchemaField::parametric(
+    "section_alignment.<logical>",
+    "string",
+    const { &[SchemaArg::index("logical", "count")] },
+);
+
+/// ★★★★★ R2197 — a section's own alignment exception, which answers `Null`
+/// where the section defers to the header; see [`SECTION_ALIGNMENT`].
+pub const SECTION_ALIGNMENT_OVERRIDE: SchemaField = SchemaField::parametric(
+    "section_alignment_override.<logical>",
+    "string",
+    const { &[SchemaArg::index("logical", "count")] },
+);
+
+/// ★★★★★ R2197 — the selection the consumer published for a section.
+///
+/// R1510 — the first of a pair: this is what the consumer published, and
+/// [`SECTION_HIGHLIGHT`] is what the header paints from it. Unlike the
+/// alignment pair, neither half answers `Null` — a section the selection never
+/// reached is `"none"`, which is a state and not an absence.
+pub const SECTION_SELECTION: SchemaField = SchemaField::parametric(
+    "section_selection.<logical>",
+    "string",
+    const { &[SchemaArg::index("logical", "count")] },
+);
+
+/// ★★★★★ R2197 — what the header paints from [`SECTION_SELECTION`].
+pub const SECTION_HIGHLIGHT: SchemaField = SchemaField::parametric(
+    "section_highlight.<logical>",
+    "string",
+    const { &[SchemaArg::index("logical", "count")] },
+);
+
+/// ★★★★★ R2197 — the visual position a logical section is painted at; see
+/// [`RESIZE_MODE`].
+pub const VISUAL_INDEX: SchemaField = SchemaField::parametric(
+    "visual_index.<logical>",
+    "int",
+    const { &[SchemaArg::index("logical", "count")] },
+);
+
+/// ★★★★★ R2197 — the logical section painted at a visual position; the
+/// inverse of [`VISUAL_INDEX`].
+pub const LOGICAL_INDEX: SchemaField = SchemaField::parametric(
+    "logical_index.<visual>",
+    "int",
+    const { &[SchemaArg::index("visual", "count")] },
+);
+
+/// ★★★★★ R2197 — the logical section under a pixel offset along the painted
+/// row, whose bound the surface publishes as `visible_total`.
+///
+/// R1501 — it was declared as a plain scalar spelling `<x>` in its path, which
+/// is neither half of a declaration: `$schema` rendered it exactly like
+/// `visible_total` and a client had nothing to enumerate the argument from. It
+/// escaped both halves of the R1353.1 audit — the static scan reads
+/// `parametric(` call sites, and the dynamic one only reaches widgets
+/// `pinion-core` links.
+pub const LOGICAL_INDEX_AT: SchemaField = SchemaField::parametric(
+    "logical_index_at.<x>",
+    "int",
+    const { &[SchemaArg::index("x", "visible_total")] },
+);
+
 /// R1501 — the paths [`ColumnLayout`] answers itself, ahead of the ones it
 /// inherits from the embedded [`ReorderModel`]. Composed into
 /// [`ColumnLayout::SCHEMA_FIELDS`], which is the list callers should read; this
@@ -924,87 +1042,21 @@ const OWN_SCHEMA_FIELDS: &[SchemaField] = &[
     // whether an unhighlighted section is unselected or merely un-permitted.
     SchemaField::new("selections", "json"),
     SchemaField::new("highlights", "json"),
-    // The parametric families. Every one is an index into `count`, except the
-    // last: `logical_index_at` takes a **pixel** offset along the painted row,
-    // whose bound the surface publishes as `visible_total`. R1501 — it was
-    // declared as a plain scalar spelling `<x>` in its path, which is neither
-    // half of a declaration: `$schema` rendered it exactly like `visible_total`
-    // and a client had nothing to enumerate the argument from. It escaped both
-    // halves of the R1353.1 audit — the static scan reads `parametric(` call
-    // sites, and the dynamic one only reaches widgets `pinion-core` links.
-    SchemaField::parametric(
-        "resize_mode.<logical>",
-        "string",
-        const { &[SchemaArg::index("logical", "count")] },
-    ),
-    SchemaField::parametric(
-        "effective_resize_mode.<logical>",
-        "string",
-        const { &[SchemaArg::index("logical", "count")] },
-    ),
-    SchemaField::parametric(
-        "content_width.<logical>",
-        "int",
-        const { &[SchemaArg::index("logical", "count")] },
-    ),
-    SchemaField::parametric(
-        "section_size.<logical>",
-        "int",
-        const { &[SchemaArg::index("logical", "count")] },
-    ),
-    SchemaField::parametric(
-        "section_hidden.<logical>",
-        "bool",
-        const { &[SchemaArg::index("logical", "count")] },
-    ),
-    SchemaField::parametric(
-        "section_position.<logical>",
-        "int",
-        const { &[SchemaArg::index("logical", "count")] },
-    ),
-    // R1504 — the pair, declared adjacently like every other stored/effective
-    // pair in this list: the first is what the label is painted with, the
-    // second is the model's exception alone and answers `Null` where the
-    // section defers to the header.
-    SchemaField::parametric(
-        "section_alignment.<logical>",
-        "string",
-        const { &[SchemaArg::index("logical", "count")] },
-    ),
-    SchemaField::parametric(
-        "section_alignment_override.<logical>",
-        "string",
-        const { &[SchemaArg::index("logical", "count")] },
-    ),
-    // R1510 — the same pair per section: what the consumer published, and what
-    // the header paints from it. Unlike the alignment pair above, neither half
-    // answers `Null` — a section the selection never reached is `"none"`, which
-    // is a state and not an absence.
-    SchemaField::parametric(
-        "section_selection.<logical>",
-        "string",
-        const { &[SchemaArg::index("logical", "count")] },
-    ),
-    SchemaField::parametric(
-        "section_highlight.<logical>",
-        "string",
-        const { &[SchemaArg::index("logical", "count")] },
-    ),
-    SchemaField::parametric(
-        "visual_index.<logical>",
-        "int",
-        const { &[SchemaArg::index("logical", "count")] },
-    ),
-    SchemaField::parametric(
-        "logical_index.<visual>",
-        "int",
-        const { &[SchemaArg::index("visual", "count")] },
-    ),
-    SchemaField::parametric(
-        "logical_index_at.<x>",
-        "int",
-        const { &[SchemaArg::index("x", "visible_total")] },
-    ),
+    // The parametric families, each declared once as its own item above so a
+    // reader composes its path (`SchemaField::at`) instead of spelling it.
+    RESIZE_MODE,
+    EFFECTIVE_RESIZE_MODE,
+    CONTENT_WIDTH,
+    SECTION_SIZE,
+    SECTION_HIDDEN,
+    SECTION_POSITION,
+    SECTION_ALIGNMENT,
+    SECTION_ALIGNMENT_OVERRIDE,
+    SECTION_SELECTION,
+    SECTION_HIGHLIGHT,
+    VISUAL_INDEX,
+    LOGICAL_INDEX,
+    LOGICAL_INDEX_AT,
     // The toolkit's section vocabulary, as `invoke` channels.
     SchemaField::action("swap_sections", "string"),
     SchemaField::action("resize_section", "string"),
