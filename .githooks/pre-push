@@ -468,6 +468,25 @@ fi
 if ! python3 "$repo_root/tools/walk_names.py" --check >&2; then
     exit 1
 fi
+# R2216 — the other half of the same sentence: a call a definition REFUSES.
+#
+# R2215 threaded an argument through the helpers that spell a path with a bulk
+# replace, and `value(tf, 1)` -> `value(tf, gp, 1)` also rewrote
+# `open_value(tf, 1)`, because one name is a SUFFIX of the other. The name is
+# bound and the file compiles, so the step above passes; it is a TypeError on
+# the line that runs it. The sweep caught that one because the line runs —
+# R2213's own first find was a line that does not.
+#
+# Skips what it cannot count (`*args`, `**kwargs`, splats, decorated defs,
+# shadowed names): a draft without those skips reported 86 mismatches here,
+# every one correct code.
+if ! python3 "$repo_root/tools/walk_arity.py" --selftest >&2; then
+    echo "pre-push: the walk-arity gate failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/walk_arity.py" --check >&2; then
+    exit 1
+fi
 
 step "painted address spellers"
 # ★★★★★ R2163 — the ONE reader of an emitted grammar, ahead of the two tools

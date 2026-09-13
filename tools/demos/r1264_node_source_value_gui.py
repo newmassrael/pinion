@@ -115,7 +115,7 @@ def body() -> None:
                   "node 1 is an authorable source")
 
         # ── (B) begin_edit_value opens the seeded field ──────────────
-        open_value(tf,1)  # the Color source
+        open_value(tf, 1)  # the Color source
         wait_until(lambda: field_painted(tf), timeout=4.0, interval=0.03,
                    desc="the shared field paints over the source constant")
         assert_eq(editor_text(tf), "#808080", "seeded with the current constant's hex")
@@ -167,7 +167,7 @@ def body() -> None:
         assert_eq(tf.query(f"/external/{gp.at('node.is_source', id=4)}"), True,
                   "the Scalar is a source")
         assert_eq(const_label(tf, 4), "0", "the Scalar source paints its 0 constant")
-        open_value(tf,4)
+        open_value(tf, 4)
         assert_eq(editor_text(tf), "0", "seeded with the Scalar's current value")
         tf.key(path=EDIT, name="x")  # a letter is gated out of a Float field
         assert_eq(editor_text(tf), "0", "a non-numeric keystroke never reaches a Float source")

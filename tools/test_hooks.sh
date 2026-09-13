@@ -2016,6 +2016,33 @@ ok "the push gate runs the walk-name selftest before trusting it" \
 ok "CI runs the walk-name selftest before trusting it" \
    "${ci_walk_self:+present}" "present"
 
+# ★★★★★ R2216 — and the OTHER half of reading a walk as Python: a call whose
+# shape its own definition refuses.
+#
+# The name gate above is satisfied by `open_value(tf, gp, 1)` — the name is
+# bound; it is the ARITY that is wrong — and so is `py_compile`. R2215 wrote
+# exactly that, from a bulk replace whose pattern was a suffix of another
+# helper's name, and only the sweep caught it, because that line happened to
+# run. R2213's own first find was a line that does not run, so "the sweep will
+# catch it" is not a defence for this class.
+hook_arity="$(sed -n 's|^if ! python3 "$repo_root/\(tools/walk_arity\.py\)" \(--check\) >&2; then$|\1 \2|p' \
+    "$repo_root/.githooks/pre-push" | head -1)"
+ci_arity="$(sed -n 's|^ *run: python3 \(tools/walk_arity\.py\) \(--check\)$|\1 \2|p' \
+    "$repo_root/.github/workflows/ci.yml" | head -1)"
+hook_arity_self="$(sed -n 's|^if ! python3 "$repo_root/\(tools/walk_arity\.py\)" \(--selftest\) >&2; then$|\1 \2|p' \
+    "$repo_root/.githooks/pre-push" | head -1)"
+ci_arity_self="$(sed -n 's|^ *run: python3 \(tools/walk_arity\.py\) \(--selftest\)$|\1 \2|p' \
+    "$repo_root/.github/workflows/ci.yml" | head -1)"
+ok "the push gate checks a walk's call shapes at all" \
+   "${hook_arity:+present}" "present"
+ok "CI checks a walk's call shapes at all" \
+   "${ci_arity:+present}" "present"
+ok "and both run the SAME walk-arity command" "$hook_arity" "$ci_arity"
+ok "the push gate runs the walk-arity selftest before trusting it" \
+   "${hook_arity_self:+present}" "present"
+ok "CI runs the walk-arity selftest before trusting it" \
+   "${ci_arity_self:+present}" "present"
+
 # ★★★★★ R2067 — and the SCOPE covers `examples/`, which it did not.
 #
 # The selection was read out of `crates/<name>/…` alone, so a push touching only

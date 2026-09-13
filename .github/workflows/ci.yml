@@ -126,6 +126,14 @@ jobs:
         run: python3 tools/walk_names.py --selftest
       - name: walk name gate
         run: python3 tools/walk_names.py --check
+      - name: walk arity gate selftest
+        # R2216 — a call a definition refuses. The name gate above sees names,
+        # the demo sweep sees behaviour, and neither sees a wrong-shape call on
+        # a line that never runs. R2215 produced exactly that with a bulk
+        # replace whose pattern was a suffix of another helper's name.
+        run: python3 tools/walk_arity.py --selftest
+      - name: walk arity gate
+        run: python3 tools/walk_arity.py --check
       - name: analysis-tool census proofs
         # ★★★★★ R1804 — placed HERE, immediately after `cargo test --workspace`,
         # and the position is the whole point. This gate runs
