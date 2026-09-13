@@ -43,6 +43,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_query,
@@ -77,19 +78,20 @@ def open_via_click(tf, row: int) -> None:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot — Type is now a Choice column ──────────────────
         assert_eq(q(tf, "row_count"), 4, "4 seed rows")
         assert_eq(q(tf, "col_count"), 6, "6 columns (R943 added the Tint colour column)")
-        assert_eq(q(tf, "col_kind.0"), "text", "Asset stays text")
-        assert_eq(q(tf, "col_kind.1"), "choice", "Type is a choice column")
-        assert_eq(q(tf, "col_kind.2"), "int", "Count stays int")
-        assert_eq(q(tf, "col_kind.4"), "bool", "Active stays bool")
+        assert_eq(q(tf, gp.at("col_kind", col=0)), "text", "Asset stays text")
+        assert_eq(q(tf, gp.at("col_kind", col=1)), "choice", "Type is a choice column")
+        assert_eq(q(tf, gp.at("col_kind", col=2)), "int", "Count stays int")
+        assert_eq(q(tf, gp.at("col_kind", col=4)), "bool", "Active stays bool")
         # The choice cells carry {selected, label, options}; the label degrades
         # to the option text (the filter / group / sort SSOT).
-        assert_eq(q(tf, "value.0.1")["label"], "sprite", "Hero Type = sprite")
-        assert_eq(q(tf, "value.1.1")["label"], "mesh", "Tree Type = mesh")
-        assert_eq(q(tf, "value.0.1")["selected"], 0, "sprite is option 0")
-        assert_eq(q(tf, "value.0.1")["options"], ["sprite", "mesh", "material", "audio", "script"],
+        assert_eq(q(tf, gp.at("value", row=0, col=1))["label"], "sprite", "Hero Type = sprite")
+        assert_eq(q(tf, gp.at("value", row=1, col=1))["label"], "mesh", "Tree Type = mesh")
+        assert_eq(q(tf, gp.at("value", row=0, col=1))["selected"], 0, "sprite is option 0")
+        assert_eq(q(tf, gp.at("value", row=0, col=1))["options"], ["sprite", "mesh", "material", "audio", "script"],
                   "the full asset-type enum")
         assert_eq(q(tf, "popup_open"), False, "no dropdown open at boot")
         assert not painted(tf, POPUP), "no dropdown panel painted at boot"
@@ -124,10 +126,10 @@ def body() -> None:
         wait_query(tf, "/external/popup_cursor", 3, desc="ArrowUp roves back (audio)")
         tf.key(path=GRID, name="Enter")
         wait_query(tf, "/external/popup_open", False, desc="Enter committed + closed the dropdown")
-        assert_eq(q(tf, "value.0.1")["label"], "audio", "Enter committed the cursor option")
+        assert_eq(q(tf, gp.at("value", row=0, col=1))["label"], "audio", "Enter committed the cursor option")
         # The keyboard pick journals exactly one cell edit.
         tf.invoke(f"{UNDO}/undo", None)
-        wait_query(tf, "/external/value.0.1", {"selected": 0, "label": "sprite",
+        wait_query(tf, f"/external/{gp.at('value', row=0, col=1)}", {"selected": 0, "label": "sprite",
                    "options": ["sprite", "mesh", "material", "audio", "script"]},
                    desc="undo reverts the dropdown pick in one step")
 
@@ -135,11 +137,11 @@ def body() -> None:
         open_via_click(tf, 1)  # Tree = mesh (1)
         inv(tf, "send", "opt3:PointerUp")  # click "audio"
         wait_query(tf, "/external/popup_open", False, desc="option click committed + closed")
-        assert_eq(q(tf, "value.1.1")["label"], "audio", "the option click committed audio")
+        assert_eq(q(tf, gp.at("value", row=1, col=1))["label"], "audio", "the option click committed audio")
         open_via_click(tf, 1)
         inv(tf, "send", "dismiss:PointerUp")
         wait_query(tf, "/external/popup_open", False, desc="dismiss closed the dropdown")
-        assert_eq(q(tf, "value.1.1")["label"], "audio", "dismiss kept the prior value (no commit)")
+        assert_eq(q(tf, gp.at("value", row=1, col=1))["label"], "audio", "dismiss kept the prior value (no commit)")
 
         # ── (E) RPC choose verb + symmetric undo / redo ─────────────
         # open_choice rejects a non-choice focused cell (the Asset text column).
@@ -151,13 +153,13 @@ def body() -> None:
         assert_eq(q(tf, "popup_open"), True, "the RPC opened the dropdown")
         assert_eq(inv(tf, "choose", 2), True, "choose committed option 2 (material)")
         assert_eq(q(tf, "popup_open"), False, "choose closed the dropdown")
-        assert_eq(q(tf, "value.2.1")["label"], "material", "Coin Type = material")
+        assert_eq(q(tf, gp.at("value", row=2, col=1))["label"], "material", "Coin Type = material")
         tf.invoke(f"{UNDO}/undo", None)
-        wait_query(tf, "/external/value.2.1", {"selected": 0, "label": "sprite",
+        wait_query(tf, f"/external/{gp.at('value', row=2, col=1)}", {"selected": 0, "label": "sprite",
                    "options": ["sprite", "mesh", "material", "audio", "script"]},
                    desc="undo restored Coin's sprite")
         tf.invoke(f"{UNDO}/redo", None)
-        wait_query(tf, "/external/value.2.1", {"selected": 2, "label": "material",
+        wait_query(tf, f"/external/{gp.at('value', row=2, col=1)}", {"selected": 2, "label": "material",
                    "options": ["sprite", "mesh", "material", "audio", "script"]},
                    desc="redo re-applied material")
         # An out-of-range choose with the popup open commits nothing.
@@ -165,14 +167,14 @@ def body() -> None:
         tf.intervene("/external/focused_col", 1)
         assert_eq(inv(tf, "open_choice", None), True, "re-open Coin's dropdown")
         assert_eq(inv(tf, "choose", 99), False, "an out-of-range choose is a no-op")
-        assert_eq(q(tf, "value.2.1")["label"], "material", "the value is unchanged")
+        assert_eq(q(tf, gp.at("value", row=2, col=1))["label"], "material", "the value is unchanged")
 
         # ── (F) the choice column composes with the filter ──────────
         # CellValue::Choice degrades to its selected label, so the existing
         # equality filter indexes it with no special-casing.
         assert_eq(inv(tf, "set_filter", "1=mesh"), 1, "filter Type=mesh keeps the one mesh row (Tree was edited away)")
         assert_eq(inv(tf, "set_filter", "1=material"), 1, "filter Type=material keeps Coin")
-        assert_eq(q(tf, "source_at.0"), 2, "Coin (material) is the only match")
+        assert_eq(q(tf, gp.at("source_at", pos=0)), 2, "Coin (material) is the only match")
         assert_eq(inv(tf, "set_filter", None), 4, "clearing the filter restores every row")
 
 

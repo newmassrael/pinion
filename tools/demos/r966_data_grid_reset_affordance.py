@@ -46,6 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_query,
@@ -78,6 +79,7 @@ def dot_present(tf: RpcSubprocess, tag: str) -> bool:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, request_timeout=12.0) as tf:
+        gp = external_paths(tf, EXT)
         wait_snap(
             tf,
             lambda s: find_by_tag(s, f"{GRID}#0_{ASSET_COL}") is not None,
@@ -88,19 +90,21 @@ def body() -> None:
         # ── (A/C) every column + row boots modified (seed != column defaults), so
         # every header + row reset dot paints; the query is the dot's read peer.
         for col in range(6):
-            assert_eq(tf.query(f"{EXT}/col_modified.{col}"), True, f"col {col} boots modified")
+            assert_eq(tf.query(f"{EXT}/{gp.at('col_modified', col=col)}"), True, f"col {col} boots modified")
         for row in range(4):
-            assert_eq(tf.query(f"{EXT}/row_modified.{row}"), True, f"row {row} boots modified")
+            assert_eq(tf.query(f"{EXT}/{gp.at('row_modified', row=row)}"), True, f"row {row} boots modified")
         assert dot_present(tf, col_dot(ASSET_COL)), "the Asset column shows a header reset dot"
         assert dot_present(tf, col_dot(COUNT_COL)), "the Count column shows a header reset dot"
         assert dot_present(tf, row_dot(0)), "row 0 shows a reset dot in its handle gutter"
 
         # ── (A) click the in-viewport Asset header dot -> the whole column resets
-        assert_eq(tf.query(f"{EXT}/value.0.{ASSET_COL}"), "Hero", "seed row-0 Asset is Hero")
+        assert_eq(tf.query(f"{EXT}/{gp.at('value', row=0, col=ASSET_COL)}"), "Hero", "seed row-0 Asset is Hero")
         tf.click(path=col_dot(ASSET_COL))
-        wait_query(tf, f"{EXT}/col_modified.{ASSET_COL}", False, desc="header dot click reset the Asset column")
+        wait_query(tf, f"{EXT}/{gp.at('col_modified', col=ASSET_COL)}", False,
+                   desc="header dot click reset the Asset column")
         for row in range(4):
-            assert_eq(tf.query(f"{EXT}/value.{row}.{ASSET_COL}"), "", f"Asset row {row} is now the column default")
+            assert_eq(tf.query(f"{EXT}/{gp.at('value', row=row, col=ASSET_COL)}"), "",
+                      f"Asset row {row} is now the column default")
         wait_snap(
             tf,
             lambda s: find_by_tag(s, col_dot(ASSET_COL)) is None,
@@ -109,10 +113,11 @@ def body() -> None:
         )
 
         # ── (B) row 0 keeps its dot while cols 1..5 stay modified; click resets it
-        assert_eq(tf.query(f"{EXT}/row_modified.0"), True, "row 0 still modified after the column reset")
+        assert_eq(tf.query(f"{EXT}/{gp.at('row_modified', row=0)}"), True,
+                  "row 0 still modified after the column reset")
         assert dot_present(tf, row_dot(0)), "row 0's reset dot persists while the row has modified cells"
         tf.click(path=row_dot(0))
-        wait_query(tf, f"{EXT}/row_modified.0", False, desc="row dot click reset the whole row")
+        wait_query(tf, f"{EXT}/{gp.at('row_modified', row=0)}", False, desc="row dot click reset the whole row")
         wait_snap(
             tf,
             lambda s: find_by_tag(s, row_dot(0)) is None,
@@ -121,24 +126,29 @@ def body() -> None:
         )
 
         # ── (C) the off-screen Count column via the reset_col RPC peer
-        assert_eq(tf.query(f"{EXT}/col_modified.{COUNT_COL}"), True, "the Count column is still modified")
+        assert_eq(tf.query(f"{EXT}/{gp.at('col_modified', col=COUNT_COL)}"), True,
+                  "the Count column is still modified")
         cleared = tf.invoke(f"{EXT}/reset_col", COUNT_COL)
         assert isinstance(cleared, int) and cleared > 0, f"reset_col cleared the Count cells (got {cleared})"
-        wait_query(tf, f"{EXT}/col_modified.{COUNT_COL}", False, desc="RPC reset_col cleared the Count column")
+        wait_query(tf, f"{EXT}/{gp.at('col_modified', col=COUNT_COL)}", False,
+                   desc="RPC reset_col cleared the Count column")
         for row in range(4):
-            assert_eq(tf.query(f"{EXT}/value.{row}.{COUNT_COL}"), 0, f"Count row {row} is the column default 0")
+            assert_eq(tf.query(f"{EXT}/{gp.at('value', row=row, col=COUNT_COL)}"), 0,
+                      f"Count row {row} is the column default 0")
 
         # ── (C) the row reset RPC peer + idempotent no-op semantics
-        assert_eq(tf.query(f"{EXT}/row_modified.1"), True, "row 1 still has modified cells")
+        assert_eq(tf.query(f"{EXT}/{gp.at('row_modified', row=1)}"), True, "row 1 still has modified cells")
         cleared = tf.invoke(f"{EXT}/reset_row", 1)
         assert isinstance(cleared, int) and cleared > 0, f"reset_row cleared row 1 (got {cleared})"
-        wait_query(tf, f"{EXT}/row_modified.1", False, desc="RPC reset_row cleared row 1")
+        wait_query(tf, f"{EXT}/{gp.at('row_modified', row=1)}", False, desc="RPC reset_row cleared row 1")
         assert_eq(tf.invoke(f"{EXT}/reset_row", 1), 0, "an already-clean row is a 0 no-op")
         assert_eq(tf.invoke(f"{EXT}/reset_col", COUNT_COL), 0, "an already-clean column is a 0 no-op")
 
         # ── out-of-range read peers are graceful (false, never an error)
-        assert_eq(tf.query(f"{EXT}/col_modified.99"), False, "an out-of-range column is not modified")
-        assert_eq(tf.query(f"{EXT}/row_modified.99"), False, "an out-of-range row is not modified")
+        assert_eq(tf.query(f"{EXT}/{gp.at('col_modified', col=99)}"), False,
+                  "an out-of-range column is not modified")
+        assert_eq(tf.query(f"{EXT}/{gp.at('row_modified', row=99)}"), False,
+                  "an out-of-range row is not modified")
 
         # ── reset_all clears the rest; every row + column reset dot is gone
         remaining = tf.query(f"{EXT}/modified_count")

@@ -33,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_query,
 )
@@ -56,6 +57,7 @@ def cursor(tf, row: int, col: int) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-data-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot: ungrouped ─────────────────────────────────────
         assert_eq(q(tf, "row_count"), 4, "4 seed rows")
         assert_eq(q(tf, "group"), "none", "boot: ungrouped")
@@ -64,12 +66,12 @@ def body() -> None:
         # ── (B) group by Asset (col 0): 4 distinct names, one each ──
         assert_eq(inv(tf, "set_group", "0"), 4, "4 distinct Asset names => 4 groups")
         assert_eq(q(tf, "visible_len"), 8, "4 headers + 4 data rows")
-        assert_eq(q(tf, "kind_at.0"), "header", "position 0 is a header")
-        assert_eq(q(tf, "kind_at.1"), "data", "position 1 is a data row")
-        assert_eq(q(tf, "label_at.0"), "Hero", "first-appearance Asset leads")
-        assert_eq(q(tf, "source_at.1"), 0, "its one member is source row 0")
-        assert_eq(q(tf, "label_at.2"), "Tree", "second group label")
-        assert_eq(q(tf, "source_at.3"), 1, "second group's member")
+        assert_eq(q(tf, gp.at("kind_at", pos=0)), "header", "position 0 is a header")
+        assert_eq(q(tf, gp.at("kind_at", pos=1)), "data", "position 1 is a data row")
+        assert_eq(q(tf, gp.at("label_at", pos=0)), "Hero", "first-appearance Asset leads")
+        assert_eq(q(tf, gp.at("source_at", pos=1)), 0, "its one member is source row 0")
+        assert_eq(q(tf, gp.at("label_at", pos=2)), "Tree", "second group label")
+        assert_eq(q(tf, gp.at("source_at", pos=3)), 1, "second group's member")
 
         # ── (C) grow to N distinct-Asset rows via one paste ─────────
         inv(tf, "set_group", None)  # paste writes in flat (source) order
@@ -78,8 +80,8 @@ def body() -> None:
         block = "\n".join(f"G{i}" for i in range(N))  # N distinct names, one column
         assert_eq(inv(tf, "paste", block), N, "all N Asset cells land")
         assert_eq(q(tf, "row_count"), N, f"the grid grew to {N} rows")
-        assert_eq(q(tf, "value.0.0"), "G0", "row 0 Asset overwritten")
-        assert_eq(q(tf, "value.39.0"), "G39", "the last grown row's Asset")
+        assert_eq(q(tf, gp.at("value", row=0, col=0)), "G0", "row 0 Asset overwritten")
+        assert_eq(q(tf, gp.at("value", row=39, col=0)), "G39", "the last grown row's Asset")
 
         # ── (D) group by Asset at scale: N groups, 2N rows, no drop/dup ─
         assert_eq(inv(tf, "set_group", "0"), N, f"{N} distinct Assets => {N} groups")
@@ -87,18 +89,18 @@ def body() -> None:
         # Spot-check the interleave across the range: even = header, odd = data.
         for pos in (0, 1, 2, 3, 2 * N - 2, 2 * N - 1):
             expect = "header" if pos % 2 == 0 else "data"
-            assert_eq(q(tf, f"kind_at.{pos}"), expect, f"pos {pos} is a {expect}")
-        assert_eq(q(tf, "label_at.0"), "G0", "first header label (source order)")
-        assert_eq(q(tf, "source_at.1"), 0, "first data row source")
-        assert_eq(q(tf, "label_at.20"), "G10", "a mid-range header label")
-        assert_eq(q(tf, "source_at.21"), 10, "the mid-range group's member")
-        assert_eq(q(tf, f"label_at.{2 * N - 2}"), f"G{N - 1}", "the last header label")
-        assert_eq(q(tf, f"source_at.{2 * N - 1}"), N - 1, "the last data row source")
-        assert_eq(q(tf, "source_at.0"), None, "a header reports a Null source")
+            assert_eq(q(tf, gp.at("kind_at", pos=pos)), expect, f"pos {pos} is a {expect}")
+        assert_eq(q(tf, gp.at("label_at", pos=0)), "G0", "first header label (source order)")
+        assert_eq(q(tf, gp.at("source_at", pos=1)), 0, "first data row source")
+        assert_eq(q(tf, gp.at("label_at", pos=20)), "G10", "a mid-range header label")
+        assert_eq(q(tf, gp.at("source_at", pos=21)), 10, "the mid-range group's member")
+        assert_eq(q(tf, gp.at("label_at", pos=2 * N - 2)), f"G{N - 1}", "the last header label")
+        assert_eq(q(tf, gp.at("source_at", pos=2 * N - 1)), N - 1, "the last data row source")
+        assert_eq(q(tf, gp.at("source_at", pos=0)), None, "a header reports a Null source")
 
         # ── (E) collapse tracks exactly at scale ────────────────────
         assert_eq(inv(tf, "toggle_group", 0), True, "collapse the first group")
-        wait_query(tf, "/external/collapsed.0", True, desc="group 0 collapsed")
+        wait_query(tf, f"/external/{gp.at('collapsed', group=0)}", True, desc="group 0 collapsed")
         assert_eq(q(tf, "visible_len"), 2 * N - 1, "collapsing one 1-member group hides one row")
         inv(tf, "collapse_all", None)
         wait_query(tf, "/external/visible_len", N, desc="collapse_all leaves only the N headers")

@@ -45,6 +45,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_query,
@@ -81,48 +82,49 @@ def drag_handle_onto(tf, src_row: int, dst_row: int, frac_y: float) -> None:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot — the plain reorder view ───────────────────────
         assert_eq(q(tf, "row_count"), 4, "4 seed rows")
         assert_eq(q(tf, "col_count"), 6, "6 data columns (the handle is not one)")
         assert_eq(q(tf, "reorder_enabled"), True, "the plain view enables reorder")
         assert_eq(q(tf, "drag_preview"), None, "no drag in flight at boot")
         # Boot source rows: 0 Hero, 1 Tree, 2 Coin, 3 Boss (Asset column).
-        assert_eq(q(tf, "value.0.0"), "Hero", "boot row 0")
-        assert_eq(q(tf, "value.1.0"), "Tree", "boot row 1")
-        assert_eq(q(tf, "value.2.0"), "Coin", "boot row 2")
-        assert_eq(q(tf, "value.3.0"), "Boss", "boot row 3")
+        assert_eq(q(tf, gp.at("value", row=0, col=0)), "Hero", "boot row 0")
+        assert_eq(q(tf, gp.at("value", row=1, col=0)), "Tree", "boot row 1")
+        assert_eq(q(tf, gp.at("value", row=2, col=0)), "Coin", "boot row 2")
+        assert_eq(q(tf, gp.at("value", row=3, col=0)), "Boss", "boot row 3")
         for r in range(4):
             assert painted(tf, f"{GRID}#d{r}"), f"row {r} grip handle painted"
         assert not painted(tf, "dg_drop_line"), "no drop line at rest"
 
         # ── (B) RPC move_row — the AI-first reorder primary ─────────
         assert_eq(inv(tf, "move_row", "0,2"), True, "move_row reorders the source")
-        assert_eq(q(tf, "value.0.0"), "Tree", "rows shifted up")
-        assert_eq(q(tf, "value.1.0"), "Coin", "rows shifted up")
-        assert_eq(q(tf, "value.2.0"), "Hero", "Hero moved to index 2")
-        assert_eq(q(tf, "value.3.0"), "Boss", "the tail is unchanged")
+        assert_eq(q(tf, gp.at("value", row=0, col=0)), "Tree", "rows shifted up")
+        assert_eq(q(tf, gp.at("value", row=1, col=0)), "Coin", "rows shifted up")
+        assert_eq(q(tf, gp.at("value", row=2, col=0)), "Hero", "Hero moved to index 2")
+        assert_eq(q(tf, gp.at("value", row=3, col=0)), "Boss", "the tail is unchanged")
         assert_eq(q(tf, "focused_row"), 2, "the moved row follows the cursor")
         assert_eq(inv(tf, "move_row", "1,1"), False, "from == to is a no-op")
         assert_eq(inv(tf, "move_row", "0,9"), False, "out-of-range is a no-op")
         # One symmetric undo step: undo restores order + cursor, redo re-applies.
         tf.invoke(f"{UNDO}/undo", None)
-        wait_query(tf, "/external/value.0.0", "Hero", desc="undo restored the boot order")
-        assert_eq(q(tf, "value.2.0"), "Coin", "undo restored every row")
+        wait_query(tf, f"/external/{gp.at('value', row=0, col=0)}", "Hero", desc="undo restored the boot order")
+        assert_eq(q(tf, gp.at("value", row=2, col=0)), "Coin", "undo restored every row")
         tf.invoke(f"{UNDO}/redo", None)
-        wait_query(tf, "/external/value.2.0", "Hero", desc="redo re-moved Hero to index 2")
+        wait_query(tf, f"/external/{gp.at('value', row=2, col=0)}", "Hero", desc="redo re-moved Hero to index 2")
         # Back to the boot order for the drag test.
         tf.invoke(f"{UNDO}/undo", None)
-        wait_query(tf, "/external/value.0.0", "Hero", desc="back to the boot order")
+        wait_query(tf, f"/external/{gp.at('value', row=0, col=0)}", "Hero", desc="back to the boot order")
 
         # ── (C) pointer drag — the GUI twin of move_row ─────────────
         # Press Hero's handle (row 0), release over row 2's bottom half (insert
         # after 2 → gap 3 → resting index 2): [Hero, Tree, Coin, Boss] -> [Tree,
         # Coin, Hero, Boss].
         drag_handle_onto(tf, 0, 2, 0.8)
-        wait_query(tf, "/external/value.2.0", "Hero", desc="the drag moved Hero after row 2")
-        assert_eq(q(tf, "value.0.0"), "Tree", "the drag reordered the source")
-        assert_eq(q(tf, "value.1.0"), "Coin", "the drag reordered the source")
-        assert_eq(q(tf, "value.3.0"), "Boss", "the tail stayed put")
+        wait_query(tf, f"/external/{gp.at('value', row=2, col=0)}", "Hero", desc="the drag moved Hero after row 2")
+        assert_eq(q(tf, gp.at("value", row=0, col=0)), "Tree", "the drag reordered the source")
+        assert_eq(q(tf, gp.at("value", row=1, col=0)), "Coin", "the drag reordered the source")
+        assert_eq(q(tf, gp.at("value", row=3, col=0)), "Boss", "the tail stayed put")
         assert_eq(q(tf, "focused_row"), 2, "the dragged row follows the cursor")
         assert_eq(q(tf, "drag_preview"), None, "the drag preview clears at release")
         assert not painted(tf, "dg_drop_line"), "no drop line at rest after release"
