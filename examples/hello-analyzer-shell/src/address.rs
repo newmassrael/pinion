@@ -1306,6 +1306,82 @@ pub const CARD_BODY_ROOTS: &[fn(&str) -> String] = &[
     card_bins,
 ];
 
+// --- the detached panel ---------------------------------------------------------
+//
+// ★★★★★ R2225 §5.2 §5.11 — **the family this module's own artifact named as
+// next, and the only one in this screen with NO declaring site at all.**
+//
+// Every other family here arrived the same way: the addresses were spelled at
+// each reader, a round gathered them into a composer, and the composer became
+// the one place a letter could be wrong. The detached panel never had that
+// round. Measured at entry: **7 sites in `main.rs`**, 25 in the paint sweep, 1
+// in the crate's tests and 6 across two walks — and the seven in `main.rs` are
+// not seven copies of one composition, they are TWO compositions of one
+// grammar that a reader has to hold side by side to see agree:
+//
+//   * the paint tags a control `float.{id}.{}` from `offered.wire()`;
+//   * the hit test answers for the same control, and of its three lines ONE
+//     called `wire()` while two spelled `redock` and `close` as literals —
+//     under a comment stating the invariant the other two break: *the tag is
+//     the affordance's own wire word, so what a pointer answers and what the
+//     paint tagged are one name.*
+//
+// ⇒ the comment was the only thing holding it. A letter changed in
+// `DetachedAffordance::wire` moves the paint and leaves the hit test behind:
+// the control is drawn, the pointer answers a name nothing painted, and every
+// later assertion reads that as *the panel did not draw its redock control*.
+// Nothing in the tree could have caught it, because the two sites agreeing was
+// never something anything compared.
+
+/// The prefix every detached panel's address carries.
+pub const FLOAT: &str = "float.";
+
+// ⚠⚠ **Deliberately no `FLOAT_TEMPLATE` and no `float_card_id`**, and the
+// absence is a judgement rather than an omission. Both were written this round
+// — the siblings above have each — and the workspace's `dead_code` lint refused
+// them, because nothing in this binary reads a float address back or lists one
+// in a `&'static str` table. R2176's finding is why that refusal is respected
+// rather than silenced: a composer nobody calls is published API that no
+// consumer holds to its shape, and one `pub` word turns the only thing that
+// would have said so off. The parse belongs here the day something parses.
+
+/// The detached panel showing the card `id`.
+///
+/// ⚠ The id is the CARD's — a float is a card that left the board, so it keeps
+/// the id the board gave it and a reader can follow one panel across the move.
+#[must_use]
+pub fn float(id: &str) -> String {
+    format!("{FLOAT}{id}")
+}
+
+/// One control in the panel's header, named by the affordance's own wire word.
+///
+/// ★★★★★ The invariant R1907's comment stated and nothing enforced: the paint
+/// and the hit test compose through THIS, so they cannot name a control
+/// differently. `wire()` is called here once instead of at each of them.
+#[must_use]
+pub fn float_affordance(id: &str, affordance: pinion_core::detach::DetachedAffordance) -> String {
+    format!("{}.{}", float(id), affordance.wire())
+}
+
+/// The badge that says this panel is not on the board.
+#[must_use]
+pub fn float_badge(id: &str) -> String {
+    format!("{}.badge", float(id))
+}
+
+/// The corner a person drags to resize the panel.
+///
+/// ⚠ Its own composer rather than an affordance, and the asymmetry is the
+/// panel's rather than this module's: the header controls come from a policy
+/// roster that can drop one, and the resize corner is drawn by this screen
+/// unconditionally. A reader that treated it as an affordance would count the
+/// header's controls wrong — [`rail_account`]'s distinction, one family over.
+#[must_use]
+pub fn float_resize(id: &str) -> String {
+    format!("{}.resize", float(id))
+}
+
 // --- the emitted grammar --------------------------------------------------------
 
 /// The committed artifact's body: every CARD address grammar this screen
@@ -1461,9 +1537,19 @@ fn card_setting_rows() -> Vec<(&'static str, String, String)> {
         .collect()
 }
 
-/// Every word `{affordance}` can be, as `part` rows — the kind the format
-/// already has for "one word a placeholder can be".
-fn affordance_rows() -> Vec<(&'static str, String, String)> {
+/// Every word a CARD's `{affordance}` can be, as `part` rows — the kind the
+/// format already has for "one word a placeholder can be".
+///
+/// ★★★★★ R2225 — **the row's name carries the family now**, and this is the
+/// change that let a second family into this artifact at all. A `part` name is
+/// a BARE WORD where a `grammar` name is already family-qualified
+/// (`card_grip`, `card_cell`), and a card's `close` and a detached panel's
+/// `close` are two addresses under one name. The reader kept whichever sorted
+/// last — silently, composing an address for the wrong family, which a walk
+/// reads as *the screen did not paint it*. `painted_grammar.table` refuses the
+/// collision as of this round; this is the publisher's half, and it is the one
+/// that makes the refusal something no artifact ever has to hit.
+fn card_affordance_rows() -> Vec<(&'static str, String, String)> {
     use pinion_core::widgets::card::CardAffordance;
 
     [
@@ -1476,11 +1562,46 @@ fn affordance_rows() -> Vec<(&'static str, String, String)> {
     .map(|affordance| {
         (
             "part",
-            affordance.wire().to_owned(),
+            format!("card_{}", affordance.wire()),
             card_affordance(GRAMMAR_ID, affordance),
         )
     })
     .collect()
+}
+
+/// Every DETACHED PANEL address grammar this screen paints.
+///
+/// ★★★★★ R2225 §5.2 — the second family in this artifact. Its `part` rows are
+/// derived from [`pinion_core::detach::DetachedAffordance::ALL`] rather than
+/// listed, so a word added to that vocabulary is published by adding it and
+/// nothing else — and `ALL` is the VOCABULARY rather than a policy's roster,
+/// because a walk composes an address for a control before it knows which host
+/// will be asked.
+fn float_rows() -> Vec<(&'static str, String, String)> {
+    let id = GRAMMAR_ID;
+    let mut rows = vec![
+        ("const", "FLOAT".to_owned(), FLOAT.to_owned()),
+        ("grammar", "float".to_owned(), float(id)),
+        (
+            "grammar",
+            "float_affordance".to_owned(),
+            format!("{}.{{affordance}}", float(id)),
+        ),
+        ("grammar", "float_badge".to_owned(), float_badge(id)),
+        ("grammar", "float_resize".to_owned(), float_resize(id)),
+    ];
+    rows.extend(
+        pinion_core::detach::DetachedAffordance::ALL
+            .iter()
+            .map(|affordance| {
+                (
+                    "part",
+                    format!("float_{}", affordance.wire()),
+                    float_affordance(id, *affordance),
+                )
+            }),
+    );
+    rows
 }
 
 /// Every card grammar row this screen publishes, sorted — the ONE table both
@@ -1498,21 +1619,29 @@ fn affordance_rows() -> Vec<(&'static str, String, String)> {
 /// So the rows are built ONCE here. The artifact renders them; the wire
 /// publishes them; a test asserts the two carry the same table. A hand-written
 /// second copy could drift, and the copy that drifts is the one nobody reads.
+///
+/// ★★★★★ R2225 — **`grammar_rows`, not `card_grammar_rows`.** It held one
+/// family when it was named, and the artifact's header said the rest were the
+/// next instalments; the detached panel is the first of them. A name that
+/// asserts a population is the shape this project keeps paying for — R2129's
+/// two checks over one population, R2122's one name over two — so the name
+/// widened in the same round the population did rather than one round later.
 #[must_use]
-pub fn card_grammar_rows() -> Vec<(&'static str, String, String)> {
+pub fn grammar_rows() -> Vec<(&'static str, String, String)> {
     let mut rows = chrome_rows();
     rows.extend(body_rows());
     rows.extend(card_setting_rows());
-    rows.extend(affordance_rows());
+    rows.extend(card_affordance_rows());
+    rows.extend(float_rows());
     rows.sort_unstable();
     rows
 }
 
 /// The same table, as the wire publishes it: `kind -> name -> value`.
 #[must_use]
-pub fn card_grammar_json() -> serde_json::Value {
+pub fn grammar_json() -> serde_json::Value {
     let mut out = serde_json::Map::new();
-    for (kind, name, value) in card_grammar_rows() {
+    for (kind, name, value) in grammar_rows() {
         let entry = out
             .entry(kind.to_owned())
             .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
@@ -1526,11 +1655,12 @@ pub fn card_grammar_json() -> serde_json::Value {
 #[cfg(test)]
 #[must_use]
 fn render_grammar() -> String {
-    let rows = card_grammar_rows();
+    let rows = grammar_rows();
 
     let mut out = String::from(
-        "# Every CARD address grammar this screen paints, emitted from the\n\
-         # composers in `src/address.rs` by handing each one a placeholder.\n\
+        "# Every address grammar this screen paints for a CARD and for a\n\
+         # DETACHED PANEL, emitted from the composers in `src/address.rs` by\n\
+         # handing each one a placeholder.\n\
          # Rewritten by setting PINION_REGEN_ADDRESS_PIN and running this\n\
          # example's `the_committed_grammar_is_what_the_composers_compose`\n\
          # test; do not hand-edit.\n\
@@ -1540,9 +1670,13 @@ fn render_grammar() -> String {
          # carries. A `part` row is one word `{affordance}` can be. The `id`\n\
          # row composes an ARGUMENT for an address, not an address.\n\
          #\n\
-         # ⚠ The CARD family only. This screen's rail, palette, settings,\n\
-         # float and torn-off grammars are the next instalments; their absence\n\
-         # here is unemitted, not unpainted.\n",
+         # ⚠ A `part` name carries its FAMILY (`card_close`, `float_close`).\n\
+         # The word alone is what a card and a detached panel both offer, and\n\
+         # a reader handed one for the other composes an address naming\n\
+         # nothing — `painted_grammar.table` refuses such a row outright.\n\
+         #\n\
+         # ⚠ This screen's rail, palette and settings grammars are the next\n\
+         # instalments; their absence here is unemitted, not unpainted.\n",
     );
     for (kind, name, value) in rows {
         out.push_str(kind);
@@ -1602,34 +1736,34 @@ mod grammar_tests {
     /// waiting to happen, and this campaign has paid for that shape twice
     /// already (R2129's two populations, R2217's two kind-vocabularies).
     ///
-    /// The join is that both render `card_grammar_rows`. This asserts it in
+    /// The join is that both render `grammar_rows`. This asserts it in
     /// both directions: every row reaches the JSON under its own kind, the JSON
     /// carries nothing the rows do not, and the artifact's text carries each
     /// row verbatim.
     #[test]
     fn the_wire_and_the_artifact_publish_one_table() {
-        let rows = super::card_grammar_rows();
+        let rows = super::grammar_rows();
         // ⚠ The WIRE ROW ITSELF, not this module's view of it. Comparing
-        // `card_grammar_json` with `card_grammar_rows` would be two readings of
+        // `grammar_json` with `grammar_rows` would be two readings of
         // one function agreeing with itself; what can actually regress is
         // `declared_addresses_json` going back to a hand-written list, which is
         // the shape it had for the `carry` family. So the assertion reaches for
         // what the screen publishes.
         let published_row = crate::declared_addresses_json();
         let json = published_row
-            .get("card")
+            .get("painted")
             .cloned()
-            .expect("the screen publishes its card grammar on the wire");
+            .expect("the screen publishes its painted grammar on the wire");
         assert_eq!(
             json,
-            super::card_grammar_json(),
+            super::grammar_json(),
             "the published row is not the table this module builds — a second \
              hand-written copy is exactly what R2219 removed"
         );
         let rendered = super::render_grammar();
         assert!(
-            rows.len() >= 40,
-            "{} rows is not this screen's card grammar",
+            rows.len() >= 48,
+            "{} rows is not this screen's painted grammar",
             rows.len()
         );
         for (kind, name, value) in &rows {
@@ -1667,16 +1801,56 @@ mod grammar_tests {
         );
     }
 
-    /// ★★★★★ Every card composer this module publishes is IN the grammar.
+    /// Every `pub fn <family>…() -> String` in `source`, in the order written.
+    ///
+    /// Its own function so the case below can hand it a fixture: held only
+    /// against `address.rs`, whether this reads a signature or a line depends
+    /// on what rustfmt did to that file this week.
+    fn composers_of(source: &str, family: &str) -> Vec<String> {
+        let padded = format!("\n{source}");
+        let opening = format!("\npub fn {family}");
+        let mut out = Vec::new();
+        for (start, _) in padded.match_indices(&opening) {
+            let head = &padded[start + 1..];
+            let Some(body) = head.find(" {") else {
+                continue;
+            };
+            let signature = &head[..body];
+            // ★ The return type is the discriminator, not the name: a
+            // `-> Option<&str>` beside these is a PARSER and composes nothing,
+            // so it is right for the grammar not to carry it.
+            if !signature.ends_with("-> String") {
+                continue;
+            }
+            if let Some(name) = signature
+                .strip_prefix("pub fn ")
+                .and_then(|rest| rest.split('(').next())
+            {
+                out.push(name.to_owned());
+            }
+        }
+        out
+    }
+
+    /// ★★★★★ Every composer of an EMITTED family is IN the grammar.
     ///
     /// Derived from this file's own source rather than from a list beside it:
     /// R2145 measured that a list of needles is what goes stale, and the
     /// composer added tomorrow is exactly the row nobody would remember to
-    /// add. The rule is `pub fn card…() -> String` — a composer returns an
-    /// address; `card_kind` returns a borrowed slice and is a PARSER, which is
-    /// why the return type is the discriminator rather than the name.
+    /// add. The rule is `pub fn <family>…() -> String` — a composer returns an
+    /// address; `card_kind` and `float_card_id` return borrowed slices and are
+    /// PARSERS, which is why the return type is the discriminator rather than
+    /// the name.
+    ///
+    /// ★★ R2225 — **over the emitted families, not over `card` alone.** The
+    /// scan read `pub fn card` while one family was emitted, and a gate keyed
+    /// to one member of a growing population keeps passing while covering less
+    /// of it: the detached panel's five composers would have been outside it
+    /// from the round they were written. The families are listed once, here,
+    /// and the floor is per-family so a family that stops being scanned says so
+    /// instead of being absorbed by the other's count.
     #[test]
-    fn every_card_composer_appears_in_the_grammar() {
+    fn every_composer_appears_in_the_grammar() {
         let source = include_str!("address.rs");
         let rendered = render_grammar();
         let named: Vec<&str> = rendered
@@ -1684,26 +1858,113 @@ mod grammar_tests {
             .filter(|line| !line.starts_with('#'))
             .filter_map(|line| line.split('\t').nth(1))
             .collect();
-        let mut composers = 0;
-        for line in source.lines() {
-            let Some(rest) = line.strip_prefix("pub fn card") else {
-                continue;
-            };
-            if !line.ends_with("-> String {") {
-                continue;
+        // ★★★★★ R2225 — the scan reads a WHOLE SIGNATURE, not a line.
+        //
+        // It was `line.strip_prefix("pub fn card") … line.ends_with("-> String
+        // {")`, and every card composer happens to fit one line, so the limit
+        // was invisible: this round's `float_affordance` takes a fully-qualified
+        // enum, rustfmt broke it over four lines, and the composer left the gate
+        // silently — the floor below is the only thing that said so. A gate
+        // whose reach depends on a formatter's line budget is one that stops
+        // covering whatever grows a longer argument.
+        // ★★★★★ R2225 — the SHIPPED half of the file, and the cut is not
+        // tidiness. `composers_of` is a text scan, this module's own fixture
+        // below spells `pub fn card_one(…) -> String`, and the scan read it and
+        // demanded the grammar publish it. The population this gate asks about
+        // is what the BINARY carries; everything from the test module on is a
+        // second population that happens to share the file.
+        let shipped = source
+            .split_once("#[cfg(test)]")
+            .map_or(source, |(before, _)| before);
+        for (family, floor) in [("card", 35usize), ("float", 4)] {
+            let composers = composers_of(shipped, family);
+            for name in &composers {
+                assert!(
+                    named.contains(&name.as_str()),
+                    "{name} composes an address and is not in the emitted \
+                     grammar — a reader outside Rust cannot format what this \
+                     does not publish"
+                );
             }
-            let name = format!("card{}", rest.split('(').next().unwrap_or_default());
-            composers += 1;
             assert!(
-                named.contains(&name.as_str()),
-                "{name} composes an address and is not in the emitted grammar — \
-                 a reader outside Rust cannot format what this does not publish"
+                composers.len() >= floor,
+                "only {} {family} composer(s) found; this scan is not reading \
+                 this module",
+                composers.len()
             );
         }
-        assert!(
-            composers >= 35,
-            "only {composers} card composer(s) found; this scan is not reading \
-             this module"
+    }
+
+    /// ★★★★★ R2225 — the scan above reads a WHOLE SIGNATURE, not a line, and
+    /// THIS is what can fail when it stops doing so.
+    ///
+    /// It was `line.strip_prefix("pub fn card") … line.ends_with("-> String
+    /// {")`, and every card composer happens to fit one line, so the limit was
+    /// invisible. This round's `float_affordance` takes a fully-qualified enum;
+    /// written before it was formatted it spanned four lines and left the gate
+    /// silently, which the per-family floor is the only thing that reported.
+    ///
+    /// ⚠⚠ **And rustfmt then put it back on one line**, which is exactly why
+    /// this case is synthetic. Held against `address.rs` alone the widening has
+    /// no failing path today — a formatter's line budget decides whether the
+    /// gate is being exercised, and a gate nothing can fail is not a gate. The
+    /// fixture below fails the moment the scan goes back to reading lines,
+    /// whatever this file happens to look like.
+    #[test]
+    fn the_composer_scan_reads_a_signature_and_not_a_line() {
+        const FIXTURE: &str = "\
+pub fn card_one(id: &str) -> String { String::new() }
+pub fn card_two(
+    id: &str,
+    affordance: some::very::long::Path,
+) -> String {
+    String::new()
+}
+pub fn card_kind(id: &str) -> &str { id }
+pub fn card_three(
+    id: &str,
+) -> Option<&str> {
+    None
+}
+fn card_private(id: &str) -> String { String::new() }
+";
+        let found = composers_of(FIXTURE, "card");
+        assert_eq!(
+            found,
+            vec!["card_one".to_owned(), "card_two".to_owned()],
+            "the scan reads a one-line composer AND a wrapped one, and takes \
+             neither the parser (`-> &str`, `-> Option<&str>`) nor the private \
+             function"
         );
+        // ★ The floor's other half: a family with no composer answers empty
+        // rather than raising, so the per-family floor above is what reports it.
+        assert!(composers_of(FIXTURE, "float").is_empty());
+    }
+
+    /// ★★★★★ R2225 — no two rows of this artifact claim one name.
+    ///
+    /// The publisher's half of the refusal `painted_grammar.table` gained this
+    /// round. That reader stops a collision from being read wrongly; this stops
+    /// one from being WRITTEN, which is the half that matters while families
+    /// keep joining — the artifact's header names three more still to come.
+    ///
+    /// ⚠ Asserted over `(kind, name)` rather than over `name`, because the
+    /// kinds are separate namespaces to the reader: `const FLOAT` and a
+    /// `grammar` row could legitimately share a name, and demanding otherwise
+    /// would refuse an artifact nothing can misread.
+    #[test]
+    fn no_two_rows_claim_one_name() {
+        let mut seen: std::collections::HashMap<(String, String), String> =
+            std::collections::HashMap::new();
+        for (kind, name, value) in super::grammar_rows() {
+            if let Some(held) = seen.insert((kind.to_owned(), name.clone()), value.clone()) {
+                assert_eq!(
+                    held, value,
+                    "{kind} {name} is published twice, as {held} and {value} — \
+                     a reader asking for {name} would be handed one of them and \
+                     could not tell which. Name the family in the row."
+                );
+            }
+        }
     }
 }

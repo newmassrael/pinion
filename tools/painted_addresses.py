@@ -1884,9 +1884,56 @@ def pin_artifact_addresses() -> tuple[str, ...]:
     data; the marker is dropped here because this asks which FAMILY is covered,
     and a family is the same one whichever row of it was folded.
     """
-    return tuple(line.replace("#*", "") for line in pin_artifact_lines()) + tuple(
-        config_surface_paths()
+    return (
+        tuple(line.replace("#*", "") for line in pin_artifact_lines())
+        + tuple(config_surface_paths())
+        + emitted_absolute_addresses()
     )
+
+
+@functools.lru_cache(maxsize=1)
+def emitted_absolute_addresses() -> tuple[str, ...]:
+    """Every WHOLE address a committed grammar artifact publishes.
+
+    ★★★★★ R2225 §5.2 — **a screen that emits its grammar was not being credited
+    with pinning it, and the reason is that this census knows one artifact
+    shape.** [`grammar_pins`] answers for the CHART model, where a template
+    opens `{prefix}.` and the prefix is supplied per instrument: it demands the
+    part be a declared grammar word AND the prefix be one some chart is actually
+    constructed with, precisely because those words (`bar`, `label`, `axis`) are
+    ordinary and a family called `panel.label` must not be claimed by an
+    artifact that never heard of it.
+
+    A SCREEN's artifact is the other shape, and `painted_grammar` says so in as
+    many words — *a screen paints one board and its addresses are absolute*.
+    R2217 taught the reader that difference and this pin judgement was never
+    told: a screen could emit `float.{id}.badge`, have a test compare that
+    artifact byte for byte on every run, and still be reported as a family
+    NOTHING pins. Measured this round, that is exactly what happened to the
+    first family emitted after the artifact format grew a second shape.
+
+    ⇒ the absolute templates join the `.pin` addresses, where [`covers`] already
+    answers the containment question in the right unit. That is the SAFE
+    direction here in a way it is not for the chart's: an absolute template
+    names its own family in its own first segment, so nothing else can be
+    claimed by it — the ambiguity `grammar_prefixes` exists to prevent cannot
+    arise where there is no caller-supplied prefix to guess.
+
+    ⚠ A template that DOES open with `{prefix}` is left to [`grammar_pins`].
+    Both halves of that judgement are still required there, and putting a
+    `{prefix}.…` row here would let its leading placeholder match any first
+    segment at all — which is the unsafe direction, stated so a later round does
+    not simplify the two into one.
+    """
+    out: list[str] = []
+    for path in painted_grammar.artifacts():
+        for kind, _name, value in painted_grammar.rows(path):
+            if kind not in ("grammar", "const"):
+                continue
+            if value.startswith("{"):
+                continue
+            out.append(value)
+    return tuple(out)
 
 
 @functools.lru_cache(maxsize=1)
@@ -4079,6 +4126,82 @@ def selftest() -> int:
                 f"wanted {want}",
                 file=sys.stderr,
             )
+    # ★★★★★ R2225 — the OTHER artifact shape, which this judgement did not know.
+    #
+    # A screen's emitted grammar carries WHOLE addresses (`float.{id}.badge`),
+    # not `{prefix}.…` templates, so `grammar_pins` — which requires the prefix
+    # to be one some chart is constructed with — answered False for every one of
+    # them. Measured at entry: the analyzer shell emitted `float.{id}` and its
+    # four siblings, a test compared that artifact byte for byte on every run,
+    # and the census still reported `float.{}` as a family NOTHING pins, which
+    # is its word for a conversion no round may finish.
+    absolute_cases: list[tuple[str, str, bool]] = [
+        ("★ a screen's emitted family is pinned by its artifact", "float.{}", True),
+        ("★ the family that was already pinned stays pinned", "card.{}", True),
+        # ⚠ `float.packet` is deliberately NOT here, and asserting it was this
+        # round's own first draft. The emitted template is `float.{id}`, whose
+        # placeholder `covers` matches against ONE segment of a stem — so it
+        # answers for `float.{}` and not for a stem naming a concrete card. That
+        # family is held by an assertion instead, which the selftest below
+        # proves by asking `pin_sources` rather than by anyone's reading.
+        # ⚠ The half that keeps this safe. An absolute template names its own
+        # family in its own first segment, so it cannot answer for another
+        # screen's — and a `{prefix}.…` row must never reach this reader, whose
+        # leading placeholder would match any first segment at all.
+        (
+            "★★ a family no emitted artifact names is NOT pinned by one",
+            "nosuchscreen.nosuchfamily",
+            False,
+        ),
+    ]
+    for label, stem, want in absolute_cases:
+        got = any(covers(address, stem) for address in emitted_absolute_addresses())
+        if got is not want:
+            failed += 1
+            print(
+                f"FAIL: {label}: an emitted artifact pins {stem!r} -> {got}, "
+                f"wanted {want}",
+                file=sys.stderr,
+            )
+    # ★★ And the reader may not have admitted a `{prefix}` template, which is
+    # the one way this widening could claim a family it has never heard of.
+    leading = [a for a in emitted_absolute_addresses() if a.startswith("{")]
+    if leading:
+        failed += 1
+        print(
+            f"FAIL: {len(leading)} emitted address(es) open with a placeholder "
+            f"({leading[:3]}) — a leading `{{prefix}}` matches any first segment, "
+            "which is the unsafe direction this reader excludes",
+            file=sys.stderr,
+        )
+    if len(emitted_absolute_addresses()) < 40:
+        failed += 1
+        print(
+            f"FAIL: only {len(emitted_absolute_addresses())} absolute emitted "
+            "address(es) were read — the cases above pass vacuously",
+            file=sys.stderr,
+        )
+    # ★★★ And the WHOLE judgement, not just its new half: what this round's
+    # family is reported as, through the one function the gate consults. Before
+    # this round it answered `''` — the census's word for a family nothing
+    # pins — and a walk converted under that answer would have taken the last
+    # comparison with it.
+    sourced = pin_sources(["float.{}", "float.packet"])
+    if sourced["float.{}"] != "artifact":
+        failed += 1
+        print(
+            f"FAIL: float.{{}} is pinned by {sourced['float.{}']!r}, not by the "
+            "artifact its screen emits",
+            file=sys.stderr,
+        )
+    if sourced["float.packet"] != "assertion":
+        failed += 1
+        print(
+            f"FAIL: float.packet is pinned by {sourced['float.packet']!r} — a "
+            "concrete card's family is held by an assertion, not by a template",
+            file=sys.stderr,
+        )
+
     # And neither half may be empty, or both cases above pass vacuously.
     if not grammar_parts():
         failed += 1

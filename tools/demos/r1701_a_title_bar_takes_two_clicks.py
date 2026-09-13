@@ -135,7 +135,10 @@ def body() -> None:
         # ★ The affordance by the word the screen publishes it under, formatted
         # into the screen's own family — not `f"{card}.maximize"`, which is this
         # walk composing the screen's address for it.
-        control = painted_part(SCREEN, "maximize", id=cid)
+        # ⚠ R2225 — `card_maximize`, because a `part` name carries its family
+        # now: this screen also paints a DETACHED PANEL, whose header offers a
+        # `close` of its own. The bare word was one name over two families.
+        control = painted_part(SCREEN, "card_maximize", id=cid)
         opened = state(app)
 
         banner("A — the positive control: the header BUTTON moves the witness")

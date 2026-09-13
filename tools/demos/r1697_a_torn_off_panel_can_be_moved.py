@@ -45,6 +45,9 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    painted_address,
+    painted_const,
+    painted_part,
     run_demo,
 )
 
@@ -55,6 +58,30 @@ CHECKS: list[str] = []
 # The reference's own numbers, from its source.
 OPEN_W, OPEN_H = 520, 380
 MIN_W, MIN_H = 320, 220
+
+
+# ★★★★★ R2225 §5.2 — **the panel's addresses are ASKED FOR, not spelled.**
+#
+# This walk spelled eight of them (`painted_address(EXAMPLE, "float_resize", id=card)` and its siblings),
+# which made it a second copy of a composition living in the screen's
+# `address.rs` — and until this round there was no first copy either: the screen
+# composed them inline at seven sites of its own, two of which spelled an
+# affordance word the paint took from `DetachedAffordance::wire`. The screen now
+# declares the family and EMITS its grammar, so these are formatted from what it
+# publishes; a letter that moves there moves here, and a name it does not paint
+# raises instead of quietly looking for a mark that is not there.
+def panel(card: str) -> str:
+    """The detached panel showing `card`."""
+    return painted_address(EXAMPLE, "float", id=card)
+
+
+def panel_part(card: str, word: str) -> str:
+    """One control in that panel's header, by the word the screen publishes.
+
+    ⚠ `float_redock`, not `redock`: a `part` name carries its family, because a
+    card's header offers a `close` too and the bare word named both.
+    """
+    return painted_part(EXAMPLE, f"float_{word}", id=card)
 
 
 def banner(text: str) -> None:
@@ -135,12 +162,12 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         first = panels(app)[card]
         assert_eq((first["w"], first["h"]), (OPEN_W, OPEN_H), "B: the opening size")
         ok("B: it arrives with a stacking number", first["z"] > 0)
-        ok("B: and it is painted", f"float.{card}" in rects(app))
+        ok("B: and it is painted", panel(card) in rects(app))
 
         # ── (C) the panel moves when it is dragged ─────────────────────────
         banner("C — ★ the defect: grabbing the panel moves it")
         before = panels(app)[card]
-        painted = rects(app)[f"float.{card}"]
+        painted = rects(app)[panel(card)]
         start = centre(painted)
         app.drag(from_at=start, to_at=(start[0] + 90, start[1] + 55))
         app.tick_ms(16)
@@ -151,7 +178,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             "C: the panel moved by exactly the pointer's delta",
         )
         # And the screen agrees: the painted rectangle moved with it.
-        moved = rects(app)[f"float.{card}"]
+        moved = rects(app)[panel(card)]
         assert_eq(
             (moved[0] - painted[0], moved[1] - painted[1]),
             (90, 55),
@@ -167,7 +194,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
 
         # ── (D) the corner sizes it, and stops at the floor ────────────────
         banner("D — the corner sizes the panel, and clamps where the reference does")
-        grip = rects(app)[f"float.{card}.resize"]
+        grip = rects(app)[painted_address(EXAMPLE, "float_resize", id=card)]
         ok("D: the corner is painted, so a person can find it", grip[2] > 0)
         base = panels(app)[card]
         app.drag(from_at=centre(grip), to_at=(centre(grip)[0] + 70, centre(grip)[1] + 45))
@@ -180,14 +207,14 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         )
         assert_eq((grown["x"], grown["y"]), (base["x"], base["y"]), "D: sizing is not moving")
         # Pull it far past the floor, in both axes at once.
-        grip = rects(app)[f"float.{card}.resize"]
+        grip = rects(app)[painted_address(EXAMPLE, "float_resize", id=card)]
         app.drag(from_at=centre(grip), to_at=(1.0, 1.0))
         app.tick_ms(16)
         floored = panels(app)[card]
         assert_eq((floored["w"], floored["h"]), (MIN_W, MIN_H), "D: it clamps at the floor")
         ok(
             "D: ★ and the floor is a floor, not a collapse — the panel is still usable",
-            f"float.{card}.redock" in rects(app),
+            panel_part(card, "redock") in rects(app),
         )
 
         # ── (E) stacking: a press brings a panel to the front ──────────────
@@ -202,20 +229,23 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         assert_eq(order[0], second, "E: the newest panel arrives in front")
         ok("E: it is in front by its stacking number", panels(app)[second]["z"] > panels(app)[card]["z"])
         # The paint agrees with the wire: front on the wire is painted last.
+        # ★ R2225 — the prefix from the screen's own declaration. Spelled here,
+        # it was a fourth copy of `FLOAT` and the one nothing would refuse.
+        stem = painted_const(EXAMPLE, "FLOAT")
         painted_order = [
-            tag for tag in rects(app) if tag.startswith("float.") and tag.count(".") == 1
+            tag for tag in rects(app) if tag.startswith(stem) and tag.count(".") == 1
         ]
         # `abs_rects_of` is a dict in paint order for this screen's floats.
-        ok("E: both panels are painted", set(painted_order) == {f"float.{card}", f"float.{second}"})
+        ok("E: both panels are painted", set(painted_order) == {panel(card), panel(second)})
 
         # Slide the front panel to the right so a strip of the one behind is
         # showing, and take the aim from the PAINTED rectangles rather than
         # computing where they ought to be.
-        front = rects(app)[f"float.{second}"]
+        front = rects(app)[panel(second)]
         app.drag(from_at=centre(front), to_at=(centre(front)[0] + 260, centre(front)[1]))
         app.tick_ms(16)
-        back = rects(app)[f"float.{card}"]
-        front = rects(app)[f"float.{second}"]
+        back = rects(app)[panel(card)]
+        front = rects(app)[panel(second)]
         ok("E: the panels still overlap, which is what makes stacking a fact",
            front[0] < back[0] + back[2])
         showing = (back[0] + 6, back[1] + back[3] / 2)
@@ -230,11 +260,11 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
 
         # ── (F) the panel goes home, and the roster empties ────────────────
         banner("F — a panel re-docks and closes, which is what it always could do")
-        redock = rects(app)[f"float.{card}.redock"]
+        redock = rects(app)[panel_part(card, "redock")]
         app.request("scene/click", {"button": "left", "at": {"x": centre(redock)[0], "y": centre(redock)[1]}})
         app.tick_ms(16)
         assert_eq(q(app, "floating"), second, "F: the re-docked panel left the roster")
-        close = rects(app)[f"float.{second}.close"]
+        close = rects(app)[panel_part(second, "close")]
         app.request("scene/click", {"button": "left", "at": {"x": centre(close)[0], "y": centre(close)[1]}})
         app.tick_ms(16)
         assert_eq(q(app, "floating"), "", "F: and the closed one too")
@@ -253,14 +283,14 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # could actually reach.
         painted = rects(app)
         card = next(
-            c for c in q(app, "cards").split(",") if f"card.{c}.maximize" in painted
+            c for c in q(app, "cards").split(",") if painted_part(EXAMPLE, "card_maximize", id=c) in painted
         )
         assert_eq(q(app, "maximized"), "", "G: nothing is maximised to begin with")
-        mark = rects(app)[f"card.{card}.maximize"]
+        mark = rects(app)[painted_part(EXAMPLE, "card_maximize", id=card)]
         app.request("scene/click", {"button": "left", "at": {"x": centre(mark)[0], "y": centre(mark)[1]}})
         app.tick_ms(16)
         ok("G: the card maximised", q(app, "maximized") != "")
-        mark = rects(app)[f"card.{card}.maximize"]
+        mark = rects(app)[painted_part(EXAMPLE, "card_maximize", id=card)]
         app.request("scene/click", {"button": "left", "at": {"x": centre(mark)[0], "y": centre(mark)[1]}})
         app.tick_ms(16)
         assert_eq(

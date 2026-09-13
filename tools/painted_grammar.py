@@ -137,10 +137,40 @@ def rows(path: Path) -> Iterator[tuple[str, str, str]]:
 
 
 def table(path: Path) -> dict[str, dict[str, str]]:
-    """One artifact as `kind -> name -> value`."""
+    """One artifact as `kind -> name -> value`.
+
+    ★★★★★ R2225 §5.2 — **a name two rows claim is REFUSED, not resolved.**
+    Until this round the loop was `out.setdefault(kind, {})[name] = value`,
+    which keeps the LAST row silently. That held while every artifact emitted
+    exactly one family: `pinion-chart`'s templates are all the chart's, and the
+    analyzer shell's were the CARD family alone, its own header saying so — *the
+    float and torn-off grammars are the next instalments*. The moment a second
+    family joins an artifact the names meet, and they meet on the kind whose
+    names are BARE WORDS: a card offers `close` and a detached panel offers
+    `close`, one per family, and a reader asking for `close` would be handed
+    whichever sorted last. Not an error — an address for the wrong family, which
+    every later assertion reads as *the screen did not paint it*.
+
+    `external_paths` in `rpc_verify` has drawn exactly this refusal since R2198,
+    in as many words: *one name, two paths — say so rather than letting this
+    reader keep the last*. This is that rule one reader over, and it is a
+    PRECONDITION of a second family being emitted rather than a reaction to one.
+
+    ⚠ A row REPEATED verbatim is not a collision: the artifact is generated and
+    sorted, so an identical duplicate says nothing a reader can get wrong.
+    """
     out: dict[str, dict[str, str]] = {}
     for kind, name, value in rows(path):
-        out.setdefault(kind, {})[name] = value
+        held = out.setdefault(kind, {})
+        if name in held and held[name] != value:
+            raise AssertionError(
+                f"{path} declares {kind} {name!r} twice, as {held[name]!r} and "
+                f"{value!r}. A reader asking for {name!r} would be handed one "
+                "of them and could not tell which — name the family in the row "
+                "(`card_close`, `float_close`) rather than letting this reader "
+                "keep the last."
+            )
+        held[name] = value
     return out
 
 

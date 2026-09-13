@@ -70,6 +70,8 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_router_press_moves,
     find_by_tag,
+    painted_address,
+    painted_part,
     resize_and_settle,
     run_demo,
     shell_header_prefix,
@@ -85,6 +87,10 @@ from rpc_verify import (  # noqa: E402
 )
 
 EXT = "/external"
+
+#: The screen this walk drives, named once so the address compositions below
+#: can ask it what it paints (R2225).
+SCREEN = "hello-analyzer-shell"
 
 #: The thirteen catalogue kinds, in palette order. Read back from the running
 #: application's own `spec` below as well — this list is what makes a silent
@@ -735,10 +741,15 @@ def body() -> None:
         # windowing host prefer a real window; the `float.<id>` this leg reads
         # and the re-dock control it clicks are the canvas home's paint.
         inv(tf, "detach_home", "packet#0,canvas")
-        assert find_by_tag(paint(tf), "float.packet#0") is not None, (
+        # ★ R2225 — the panel and its control, formatted from the grammar the
+        # screen emits. Spelled here they were a second copy of a composition
+        # `address.rs` now holds, and the `redock` word in particular was the
+        # fourth site naming a control whose own paint takes it from
+        # `DetachedAffordance::wire`.
+        assert find_by_tag(paint(tf), painted_address(SCREEN, "float", id="packet#0")) is not None, (
             "G: the detached panel is painted on the canvas, with its own header"
         )
-        click(tf, at(tf, "float.packet#0.redock"))
+        click(tf, at(tf, painted_part(SCREEN, "float_redock", id="packet#0")))
         assert_eq(q(tf, "floating"), "", "G: the re-dock control put it back")
         assert_eq(q(tf, "placed_count"), placed, "G: on the board again")
         bottom = json.loads(q(tf, "layout"))

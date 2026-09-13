@@ -328,6 +328,21 @@ pub enum DetachedAffordance {
 }
 
 impl DetachedAffordance {
+    /// ★★★★★ R2225 — **every affordance a detached header can carry**, so a
+    /// caller enumerating the VOCABULARY has a declaration to read.
+    ///
+    /// Deliberately not [`DetachHome::detached_affordances`], and the
+    /// difference is the unit rather than the contents: that answers *what
+    /// does THIS host offer* — two or three, by policy — and this answers
+    /// *what words exist*. A publisher emitting the grammar of a detached
+    /// panel's controls needs the second: a walk composes an address for a
+    /// control before it knows which host will be asked, and handing it one
+    /// policy's roster would publish a word list that changes with the
+    /// screen's configuration. The two happening to coincide for a windowing
+    /// host is not a reason to derive one from the other — a test below holds
+    /// them together instead, which is what says so when they stop coinciding.
+    pub const ALL: &'static [Self] = &[Self::SendHome, Self::Redock, Self::Close];
+
     /// The wire spelling, so a client names a control without parsing prose.
     #[must_use]
     pub const fn wire(self) -> &'static str {
@@ -841,6 +856,49 @@ mod tests {
                  offers a place the policy would refuse"
             );
             assert_ne!(next, *home, "'somewhere else' must be somewhere else");
+        }
+    }
+
+    /// ★★★★★ R2225 — the VOCABULARY covers every policy's roster.
+    ///
+    /// [`DetachedAffordance::ALL`] answers *what words exist* and
+    /// `detached_affordances` answers *what does this host offer*. They are
+    /// different questions, so neither derives from the other — and the
+    /// standing risk of two lists is that a word added to one is missing from
+    /// the other. What must hold is containment in one direction: a host may
+    /// offer fewer, never something the vocabulary does not name. A publisher
+    /// emitting the grammar of a detached header reads `ALL`, so a word only a
+    /// policy knows would be painted and published nowhere.
+    #[test]
+    fn r2225_every_offered_affordance_is_in_the_published_vocabulary() {
+        for offered in [
+            DetachPolicy::for_host(true).detached_affordances(),
+            DetachPolicy::for_host(false).detached_affordances(),
+        ] {
+            for one in offered {
+                assert!(
+                    DetachedAffordance::ALL.contains(one),
+                    "{one:?} is offered by a policy and is not in the published \
+                     vocabulary — a control painted under a word no publisher \
+                     emits is one no reader outside Rust can name"
+                );
+            }
+        }
+        // ★ And the vocabulary is not padded: every word in it is one some
+        // policy actually offers. A word nothing offers would publish an
+        // address the screen never paints, which a walk reads as a missing
+        // mark rather than as a surplus declaration.
+        let offered: Vec<DetachedAffordance> = DetachPolicy::for_host(true)
+            .detached_affordances()
+            .iter()
+            .chain(DetachPolicy::for_host(false).detached_affordances())
+            .copied()
+            .collect();
+        for word in DetachedAffordance::ALL {
+            assert!(
+                offered.contains(word),
+                "{word:?} is published and no policy offers it"
+            );
         }
     }
 

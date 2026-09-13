@@ -723,6 +723,18 @@
       ]
     },
     {
+      "name": "debt-the-paint-sweep-never-reaches-a-torn-off-panel",
+      "substituted": false,
+      "blocked_by": "buildable",
+      "blocked_because": "",
+      "closed_by": "",
+      "closed_because": "",
+      "rank": "ordinary",
+      "why": [
+        "links debt-canon-gui-surface-census"
+      ]
+    },
+    {
       "name": "debt-the-palettes-own-parts-sit-behind-the-whole-roster",
       "substituted": false,
       "blocked_by": "buildable",

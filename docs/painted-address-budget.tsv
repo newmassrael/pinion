@@ -31,7 +31,7 @@ card.keymap	5	0
 card.latency	4	15
 card.packet	9	11
 card.throughput	0	2
-card.{}	16	37
+card.{}	13	37
 cell.{}	6	0
 cell_at.{}	4	3
 chart.area	6	3
@@ -89,8 +89,8 @@ expanded_at.{}	25	1
 extent.{}	4	0
 feed.head	0	0
 feed.row	0	1
-float.packet	8	9
-float.{}	5	7
+float.packet	7	9
+float.{}	0	0
 flow.node	0	2
 flow.trace	0	2
 flow.watch	0	1

@@ -1,5 +1,6 @@
-# Every CARD address grammar this screen paints, emitted from the
-# composers in `src/address.rs` by handing each one a placeholder.
+# Every address grammar this screen paints for a CARD and for a
+# DETACHED PANEL, emitted from the composers in `src/address.rs` by
+# handing each one a placeholder.
 # Rewritten by setting PINION_REGEN_ADDRESS_PIN and running this
 # example's `the_committed_grammar_is_what_the_composers_compose`
 # test; do not hand-edit.
@@ -9,10 +10,15 @@
 # carries. A `part` row is one word `{affordance}` can be. The `id`
 # row composes an ARGUMENT for an address, not an address.
 #
-# ⚠ The CARD family only. This screen's rail, palette, settings,
-# float and torn-off grammars are the next instalments; their absence
-# here is unemitted, not unpainted.
+# ⚠ A `part` name carries its FAMILY (`card_close`, `float_close`).
+# The word alone is what a card and a detached panel both offer, and
+# a reader handed one for the other composes an address naming
+# nothing — `painted_grammar.table` refuses such a row outright.
+#
+# ⚠ This screen's rail, palette and settings grammars are the next
+# instalments; their absence here is unemitted, not unpainted.
 const	CARD	card.
+const	FLOAT	float.
 grammar	card	card.{id}
 grammar	card_affordance	card.{id}.{affordance}
 grammar	card_bins	card.{id}.bins
@@ -51,8 +57,15 @@ grammar	card_tabs	card.{id}.tabs
 grammar	card_tiles	card.{id}.tiles
 grammar	card_tree	card.{id}.tree
 grammar	card_tree_row	card.{id}.tree.{n}
+grammar	float	float.{id}
+grammar	float_affordance	float.{id}.{affordance}
+grammar	float_badge	float.{id}.badge
+grammar	float_resize	float.{id}.resize
 id	card_id	{kind}#{ordinal}
-part	close	card.{id}.close
-part	maximize	card.{id}.maximize
-part	settings	card.{id}.settings
-part	tear_off	card.{id}.tear_off
+part	card_close	card.{id}.close
+part	card_maximize	card.{id}.maximize
+part	card_settings	card.{id}.settings
+part	card_tear_off	card.{id}.tear_off
+part	float_close	float.{id}.close
+part	float_redock	float.{id}.redock
+part	float_send_home	float.{id}.send_home

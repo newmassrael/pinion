@@ -4350,11 +4350,18 @@ fn hit_word(hit: &Hit) -> String {
         Hit::Card(id) => address::card(id),
         // ★ R1907 — the tag is the affordance's own wire word, so what a
         // pointer answers and what the paint tagged are one name.
-        Hit::FloatHome(id) => format!("float.{id}.{}", DetachedAffordance::SendHome.wire()),
-        Hit::FloatRedock(id) => format!("float.{id}.redock"),
-        Hit::FloatClose(id) => format!("float.{id}.close"),
-        Hit::FloatResize(id) => format!("float.{id}.resize"),
-        Hit::Float(id) => format!("float.{id}"),
+        //
+        // ★★★★★ R2225 — **and now something holds that.** Of these five lines
+        // one called `wire()` and two spelled `redock` and `close` as literals,
+        // directly under the sentence above: a letter changed in
+        // `DetachedAffordance::wire` would have moved the paint and left the
+        // pointer answering a name nothing painted. All five compose through
+        // `address::float*`, which the paint composes through too.
+        Hit::FloatHome(id) => address::float_affordance(id, DetachedAffordance::SendHome),
+        Hit::FloatRedock(id) => address::float_affordance(id, DetachedAffordance::Redock),
+        Hit::FloatClose(id) => address::float_affordance(id, DetachedAffordance::Close),
+        Hit::FloatResize(id) => address::float_resize(id),
+        Hit::Float(id) => address::float(id),
         Hit::Nothing => "nothing".to_string(),
     }
 }
@@ -12830,7 +12837,7 @@ fn float_scene(state: &ShellState, float: &Float, palette: Palette) -> Option<Sc
                 FONT_TINY,
                 palette.muted,
             )])
-            .with_tag(format!("float.{}.badge", float.id))
+            .with_tag(address::float_badge(&float.id))
             .with_style(
                 BoxStyle::filled(palette.raised)
                     .with_corner_radius(4)
@@ -12857,7 +12864,7 @@ fn float_scene(state: &ShellState, float: &Float, palette: Palette) -> Option<Sc
         };
         Scene::Container(
             ContainerNode::new(vec![mark])
-                .with_tag(format!("float.{}.{}", float.id, offered.wire()))
+                .with_tag(address::float_affordance(&float.id, *offered))
                 .with_layout(absolute(slot)),
         )
     }));
@@ -12874,12 +12881,12 @@ fn float_scene(state: &ShellState, float: &Float, palette: Palette) -> Option<Sc
     );
     children.push(Scene::Container(
         ContainerNode::new(vec![resize_mark(local(grip), palette.muted)])
-            .with_tag(format!("float.{}.resize", float.id))
+            .with_tag(address::float_resize(&float.id))
             .with_layout(absolute(grip)),
     ));
     Some(Scene::Container(
         ContainerNode::new(children)
-            .with_tag(format!("float.{}", float.id))
+            .with_tag(address::float(&float.id))
             .with_style(
                 BoxStyle::filled(palette.panel)
                     .with_corner_radius(10)
@@ -13333,14 +13340,19 @@ fn gestures_json() -> Vec<serde_json::Value> {
 /// beside the members.
 fn declared_addresses_json() -> serde_json::Value {
     serde_json::json!({
-        // ★★★★★ R2219 — the CARD grammar, from the same table the emitted
-        // artifact renders (`address::card_grammar_rows`). Until this round a
-        // screen could publish a fact on one channel and not the other, and
-        // that is exactly what happened: this row carried `carry` alone while
-        // the card family — 85 retyped walk sites — was published nowhere, then
-        // (R2217) in the artifact only. One table, both channels, one test that
-        // they agree.
-        "card": crate::address::card_grammar_json(),
+        // ★★★★★ R2219 — the painted grammar, from the same table the emitted
+        // artifact renders (`address::grammar_rows`). Until R2219 a screen
+        // could publish a fact on one channel and not the other, and that is
+        // exactly what happened: this row carried `carry` alone while the card
+        // family — 85 retyped walk sites — was published nowhere, then (R2217)
+        // in the artifact only. One table, both channels, one test that they
+        // agree.
+        //
+        // ⚠ R2225 — the key is `painted`, not `card`. It held the card family
+        // alone and now holds the detached panel's too; a key that names one
+        // member of what it carries is the shape this tree keeps paying for,
+        // and it is cheapest to widen in the round the population does.
+        "painted": crate::address::grammar_json(),
         "carry": {
             "seat": crate::address::CARRY,
             "chip": crate::address::CARRY_CHIP,

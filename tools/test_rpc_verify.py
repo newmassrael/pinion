@@ -35,6 +35,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -621,9 +622,23 @@ def test_painted_address_composes_from_any_screens_grammar() -> None:
     # reader a walk could compose the family and had to spell the word, which
     # puts the retyping back where the grammar removed it.
     check(
-        rpc_verify.painted_part(shell, "maximize", id="decode#3")
+        rpc_verify.painted_part(shell, "card_maximize", id="decode#3")
         == "card.decode#3.maximize",
         "painted_part: an affordance word, formatted into its own family",
+    )
+    # ★★★★★ R2225 — and the same word under the OTHER family this screen now
+    # emits. `close` is offered by a card and by a detached panel, so the bare
+    # word names two addresses; the family-qualified names keep them apart, and
+    # this pair is what says so rather than a comment claiming it.
+    check(
+        rpc_verify.painted_part(shell, "float_close", id="packet#0")
+        == "float.packet#0.close",
+        "painted_part: a detached panel's control, not the card's",
+    )
+    check(
+        rpc_verify.painted_part(shell, "card_close", id="packet#0")
+        == "card.packet#0.close",
+        "painted_part: and the card's, not the panel's",
     )
     # ⚠ A card's configuration chooser is a `grammar` row and NOT a `part` one,
     # deliberately: the format's `part` kind means *one word `{affordance}` can
@@ -680,6 +695,77 @@ def test_painted_address_refuses_in_every_direction() -> None:
             check(True, f"painted_address refuses {label}")
         else:
             check(False, f"painted_address composed {got!r} for {label}")
+
+
+def _artifact(body: str):
+    """One throwaway grammar artifact, for the reader to be asked about.
+
+    Synthesised rather than borrowed from the tree for the suite's standing
+    reason: what is interesting here is an artifact this workspace does not
+    have, and the committed ones are asserted separately below.
+    """
+    handle = tempfile.NamedTemporaryFile("w", suffix=".tsv", delete=False)
+    with handle as out:
+        out.write(body)
+    return Path(handle.name)
+
+
+def test_an_artifact_naming_one_row_twice_is_refused() -> None:
+    """★★★★★ R2225 — a name two rows claim, REFUSED rather than resolved.
+
+    The reader kept the LAST row, which was invisible while every artifact held
+    exactly one family. It stops being invisible the moment a second family
+    joins one, and it meets first on `part`, whose names are bare words: a card
+    offers `close` and a detached panel offers `close`. A reader handed the
+    wrong family's address composes a string that names nothing, and the walk
+    reads that as *the screen did not paint it*.
+    """
+    clash = _artifact(
+        "grammar\tcard\tcard.{id}\n"
+        "part\tclose\tcard.{id}.close\n"
+        "part\tclose\tfloat.{id}.close\n"
+    )
+    try:
+        painted_grammar.table(clash)
+    except AssertionError as exc:
+        check(True, "table: one name with two values is refused")
+        # ★ The sentence has to name BOTH values, or a reader cannot tell which
+        # of two families the artifact meant and the refusal is a dead end.
+        check(
+            "card.{id}.close" in str(exc) and "float.{id}.close" in str(exc),
+            f"table: the refusal names both values it could not choose between: {exc}",
+        )
+    else:
+        check(False, "table: kept one of two values for one name")
+    finally:
+        clash.unlink()
+
+    # ⚠ And the other direction, which is what keeps this from refusing a
+    # legitimate artifact: the file is GENERATED and sorted, so a row repeated
+    # verbatim tells a reader nothing it can get wrong.
+    same = _artifact("part\tclose\tcard.{id}.close\npart\tclose\tcard.{id}.close\n")
+    try:
+        table = painted_grammar.table(same)
+    except AssertionError as exc:
+        check(False, f"table: refused an identical repeated row: {exc}")
+    else:
+        check(
+            table["part"]["close"] == "card.{id}.close",
+            "table: an identical repeated row is not a collision",
+        )
+    finally:
+        same.unlink()
+
+    # ★★ And every artifact this tree actually commits still reads. A refusal
+    # nothing in the tree exercises is a gate whose green means nothing, and the
+    # two directions above are synthetic by construction.
+    for path in painted_grammar.artifacts():
+        try:
+            painted_grammar.table(path)
+        except AssertionError as exc:
+            check(False, f"table: a committed artifact no longer reads: {exc}")
+        else:
+            check(True, f"table: {path.parent.parent.name} reads with the refusal on")
 
 
 def test_chart_family_refuses_a_field_its_cut_never_reaches() -> None:

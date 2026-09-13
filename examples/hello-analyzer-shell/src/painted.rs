@@ -171,6 +171,25 @@ const STATES: &[SweptState] = &[
             }
         }
     }),
+    // ⚠⚠ R2225 — **a torn-off panel is NOT among these states, and that was
+    // measured rather than assumed.** This sweep is where a screen's paint
+    // gates get their population, and a detached panel is the one surface here
+    // that exists only after a gesture — so none of them has ever seen it: not
+    // the containment census, the overlap census, the reachability census, nor
+    // the pin `r2142` calls *every published address*, whose 223 committed
+    // lines hold nothing beginning `float.`.
+    //
+    // The state was written this round and run. It reaches the panel, and it
+    // turns nine gates red — one of them a real containment defect (the resize
+    // corner overhangs its own panel by a pixel), one a glyph this tree's face
+    // cannot draw in the toast the tear-off says, one the short-box budget, and
+    // five carry fixtures that aim at the middle of the canvas and now find a
+    // panel there. Every one of those is a finding and not one of them is this
+    // round's subject, which is where a painted address is DECLARED.
+    //
+    // ⇒ registered as `debt-the-paint-sweep-never-reaches-a-torn-off-panel`,
+    // with the nine named, rather than carried here half-done. Adding the row
+    // is the first line of that debt's repayment.
 ];
 
 /// The window sizes the screen is swept at.
@@ -4351,8 +4370,18 @@ fn a_grip_on_the_board(shot: &Painted) -> String {
 }
 
 /// The same, for a detached panel's re-dock mark.
+///
+/// ★ R2225 — both halves are DERIVED. The stem is the declared prefix and the
+/// suffix is what `address::float_affordance` composes for that affordance,
+/// with the panel's own id cut off: spelling `".redock"` here was the third
+/// site naming that control, beside the paint and the hit test.
 fn a_redock_mark(shot: &Painted) -> String {
-    grip_or_mark(shot, "float.", ".redock")
+    let composed =
+        crate::address::float_affordance("", pinion_core::detach::DetachedAffordance::Redock);
+    let suffix = composed
+        .strip_prefix(crate::address::FLOAT)
+        .expect("a float affordance address opens with the float prefix");
+    grip_or_mark(shot, crate::address::FLOAT, suffix)
         .unwrap_or_else(|| panic!("the canvas paints no detached panel's re-dock mark"))
 }
 
@@ -4841,9 +4870,14 @@ fn painted_order() -> Vec<String> {
     let (_, scene) = painted_at((WIN_W, WIN_H));
     let mut order = Vec::new();
     scene.for_each_node(&mut |visit| {
+        // ★ R2225 — the prefix and its LENGTH both come from the declaration.
+        // This read `tag.starts_with("float.") && !tag[6..]…`, where the 6 is
+        // that string's length written a second time: a prefix that changed by
+        // a letter would have left this slicing mid-address and comparing the
+        // remainder of the wrong word.
         if let Some(tag) = visit.node.tag()
-            && tag.starts_with("float.")
-            && !tag[6..].contains('.')
+            && let Some(id) = tag.strip_prefix(crate::address::FLOAT)
+            && !id.contains('.')
         {
             order.push(tag.to_owned());
         }
