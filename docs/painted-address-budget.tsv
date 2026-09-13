@@ -32,7 +32,7 @@ card.latency	4	15
 card.packet	9	11
 card.throughput	0	2
 card.{}	13	37
-cell.{}	6	0
+cell.{}	2	0
 cell_at.{}	4	3
 chart.area	6	3
 chart.axis	2	3
@@ -98,7 +98,7 @@ frame.{}	0	23
 group.{}	8	4
 group_at.{}	14	0
 has_pane.{}	3	2
-header.{}	4	1
+header.{}	0	1
 hello_modal_handoff.hover	0	5
 hello_modal_refocus.hover	0	6
 hello_window_refocus.hover	0	2
@@ -212,7 +212,7 @@ section_highlight.{}	0	0
 section_position.{}	0	0
 section_selection.{}	0	0
 section_size.{}	0	0
-selected.{}	53	8
+selected.{}	21	8
 selection.{}	1	0
 share.legend	0	5
 share.slice	0	6

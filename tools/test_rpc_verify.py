@@ -1089,6 +1089,64 @@ def test_the_app_holds_the_declared_paths_and_asks_once() -> None:
           f"paths_at: and asking for it is a second round trip: {app.asked}")
 
 
+def test_ask_composes_and_puts_the_question_in_one_step() -> None:
+    """★★★★★ R2229 — the two steps every walk writes a helper for.
+
+    Counted across `tools/demos/`: 121 copies of `return app.query(f"<ext>/
+    {slot}")` in 27 spellings, differing only in the app's name, how the
+    External is written, and whether the parameter is `slot`, `path` or `name`.
+    Each takes a WHOLE path and prefixes it, so the address is composed at the
+    CALLER — which is where this debt's retyping lives. A walk that writes no
+    helper has nowhere to spell a path.
+    """
+
+    class FakeApp(rpc_verify.RpcSubprocess):
+        def __init__(self) -> None:  # noqa: D107 — a fixture, not the real boot
+            self.asked: list[str] = []
+            self._declared_paths = {}
+
+        def query(self, path, *, with_origin=False):  # noqa: D102
+            self.asked.append(path)
+            if path.endswith("$schema"):
+                return [{"path": "selected"}, {"path": "selected.<row>"}]
+            return "the screen's answer"
+
+    app = FakeApp()
+    paths = app.paths_at()
+    check(paths.ask("selected", row=2) == "the screen's answer",
+          "ask: composes and puts the question in one step")
+    check(app.asked[-1] == "/external/selected.2",
+          f"ask: ★ the path reaching the wire is the composed one: {app.asked[-1]!r}")
+    check(paths.ask("selected") == "the screen's answer",
+          "ask: the scalar under the same name")
+    check(app.asked[-1] == "/external/selected",
+          f"ask: and it composed the scalar, not the query: {app.asked[-1]!r}")
+
+    # ⚠ The composition is `at`'s, so a slot the screen does not declare never
+    # reaches the wire — the refusal is one step before the question.
+    before = len(app.asked)
+    try:
+        paths.ask("nope")
+    except AssertionError:
+        check(len(app.asked) == before,
+              "ask: ★ an undeclared slot is refused BEFORE anything is asked")
+    else:
+        check(False, "ask: an undeclared slot reached the wire")
+
+    # ⚠⚠ A table built by hand has no screen. Answering `None` would read to a
+    # walk as *the screen said nothing* where the truth is *nobody asked*.
+    handmade = rpc_verify.ExternalPaths(
+        external="/external", declared={"value": ("value.<i>",)}
+    )
+    try:
+        handmade.ask("value", i=1)
+    except AssertionError as exc:
+        check("without a screen" in str(exc),
+              f"ask: a table with no screen says so rather than answering: {exc}")
+    else:
+        check(False, "ask: a table with no screen answered something")
+
+
 def test_no_composer_shadows_the_vocabulary_it_composes_from() -> None:
     """★★★★★ R2226 — **a composer's own parameter must not be a word the
     declaration can use.**

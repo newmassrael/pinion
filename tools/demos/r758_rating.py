@@ -149,8 +149,8 @@ def body() -> None:
         assert_eq(sel(tf), 4, "clicking the 5th star commits a 5-star rating")
         assert_eq(glyph_counts(paint(tf)), (5, 0), "all 5 filled")
         # Exactly one radio is selected at a time (mutual exclusion).
-        assert_eq(tf.query("/external/selected.4"), True, "5th star radio selected")
-        assert_eq(tf.query("/external/selected.0"), False, "1st star radio not selected")
+        assert_eq(tf.paths_at().ask("selected", index=4), True, "5th star radio selected")
+        assert_eq(tf.paths_at().ask("selected", index=0), False, "1st star radio not selected")
 
         # ── keyboard (single Tab stop) ───────────────────────────────────
         assert_eq(

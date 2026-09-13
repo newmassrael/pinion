@@ -66,7 +66,29 @@ T = "table"
 VIEWPORT = (540, 360)
 
 
-def q(d, slot):
+def q(d, slot, **args):
+    """One declared slot of this screen, ASKED FOR rather than spelled.
+
+    ★★★★★ R2229 — `paths_at().ask` composes from the declaration and puts the
+    question in one step. Measured before the change: of the seventeen slots
+    this walk asks for, sixteen are declared and one (`no_such_slot`) is the
+    negative control below — so nothing here was a dead question, and now
+    nothing can become one silently.
+
+    The argument names are the SCREEN's: `selected.<row>`, `header.<col>`,
+    `cell.<row>.<col>`. This screen declares `selected` beside `selected.<row>`,
+    the pair R2226's reader learned to tell apart by arguments.
+    """
+    return d.paths_at().ask(slot, **args)
+
+
+def q_raw(d, slot):
+    """One slot spelled DELIBERATELY, for asking what the screen refuses.
+
+    ⚠ The negative control asks for a slot this screen does not declare; `q`
+    would refuse it at composition time and the walk would test this file's
+    reader instead of the screen's router.
+    """
     return d.query(f"/external/{slot}")
 
 
@@ -76,33 +98,33 @@ def body() -> None:
         assert_eq(q(d, "rows"), 6, "6 data rows")
         assert_eq(q(d, "cols"), 4, "4 columns")
         assert_eq(q(d, "multiselect"), True, "multiselect mode flag set")
-        assert_eq(q(d, "header.0"), "Widget", "column 0 header")
-        assert_eq(q(d, "header.3"), "Role", "column 3 header")
-        assert_eq(q(d, "cell.5.0"), "Table", "row 5 col 0 cell")
+        assert_eq(q(d, "header", col=0), "Widget", "column 0 header")
+        assert_eq(q(d, "header", col=3), "Role", "column 3 header")
+        assert_eq(q(d, "cell", row=5, col=0), "Table", "row 5 col 0 cell")
 
         assert_eq(q(d, "selected"), True, "aggregate selected true at boot")
-        assert_eq(q(d, "selected.0"), True, "row 0 seeded selected")
-        assert_eq(q(d, "selected.1"), False, "row 1 unselected")
-        assert_eq(q(d, "selected.2"), True, "row 2 seeded selected")
-        assert_eq(q(d, "selected.3"), False, "row 3 unselected")
-        assert_eq(q(d, "selected.4"), False, "row 4 unselected")
-        assert_eq(q(d, "selected.5"), False, "row 5 unselected")
+        assert_eq(q(d, "selected", row=0), True, "row 0 seeded selected")
+        assert_eq(q(d, "selected", row=1), False, "row 1 unselected")
+        assert_eq(q(d, "selected", row=2), True, "row 2 seeded selected")
+        assert_eq(q(d, "selected", row=3), False, "row 3 unselected")
+        assert_eq(q(d, "selected", row=4), False, "row 4 unselected")
+        assert_eq(q(d, "selected", row=5), False, "row 5 unselected")
         # Multi-mode has no single selected row: the -1 sentinel.
         assert_eq(q(d, "selected_row"), -1, "selected_row is -1 in multi-mode")
 
         # ── click an UNSELECTED row -> ADD it (no sibling-deselect) ─────
         d.click(path=f"{T}#4_0")
         d.pointer_leave()
-        assert_eq(q(d, "selected.4"), True, "click row 4 adds it")
-        assert_eq(q(d, "selected.0"), True, "row 0 still selected (no exclusion)")
-        assert_eq(q(d, "selected.2"), True, "row 2 still selected (no exclusion)")
+        assert_eq(q(d, "selected", row=4), True, "click row 4 adds it")
+        assert_eq(q(d, "selected", row=0), True, "row 0 still selected (no exclusion)")
+        assert_eq(q(d, "selected", row=2), True, "row 2 still selected (no exclusion)")
 
         # ── click a SELECTED row -> TOGGLE off (siblings untouched) ─────
         d.click(path=f"{T}#0_2")
         d.pointer_leave()
-        assert_eq(q(d, "selected.0"), False, "click selected row 0 toggles it off")
-        assert_eq(q(d, "selected.2"), True, "row 2 untouched by row-0 toggle")
-        assert_eq(q(d, "selected.4"), True, "row 4 untouched by row-0 toggle")
+        assert_eq(q(d, "selected", row=0), False, "click selected row 0 toggles it off")
+        assert_eq(q(d, "selected", row=2), True, "row 2 untouched by row-0 toggle")
+        assert_eq(q(d, "selected", row=4), True, "row 4 untouched by row-0 toggle")
 
         # ── 2-D keyboard roving + Enter/Space TOGGLE ────────────────────
         assert_eq(d.request("focus/set", {"tag": T}).result.get("focused"), T,
@@ -119,10 +141,10 @@ def body() -> None:
         assert_eq(q(d, "focused_col"), 0, "active descendant col 0")
         # Row 0 is OFF; Enter toggles it back ON.
         d.key(path=T, name="Enter")
-        assert_eq(q(d, "selected.0"), True, "Enter toggles active row 0 on")
+        assert_eq(q(d, "selected", row=0), True, "Enter toggles active row 0 on")
         # Space toggles it OFF again (Enter/Space both toggle in multi).
         d.key(path=T, name="Space")
-        assert_eq(q(d, "selected.0"), False, "Space toggles active row 0 off")
+        assert_eq(q(d, "selected", row=0), False, "Space toggles active row 0 off")
         d.key(path=T, name="ArrowRight")
         assert_eq(q(d, "focused_col"), 1, "ArrowRight -> col 1")
         d.key(path=T, name="End")
@@ -134,16 +156,16 @@ def body() -> None:
 
         # ── per-row intervene admin write (multi-mode only) ─────────────
         d.intervene("/external/selected.1", True)
-        assert_eq(q(d, "selected.1"), True, "intervene selects row 1")
+        assert_eq(q(d, "selected", row=1), True, "intervene selects row 1")
         d.intervene("/external/selected.1", False)
-        assert_eq(q(d, "selected.1"), False, "intervene clears row 1")
+        assert_eq(q(d, "selected", row=1), False, "intervene clears row 1")
 
         # ── AI invoke "send" toggle wire (returns Null in multi-mode) ───
         out = None
         for ev in ("PointerEnter", "PointerDown", "PointerUp", "PointerLeave"):
             out = d.invoke("/external/send", f"3_0:{ev}")
         assert_eq(out, None, "invoke send returns Null in multi-mode")
-        assert_eq(q(d, "selected.3"), True, "invoke send toggled row 3 on")
+        assert_eq(q(d, "selected", row=3), True, "invoke send toggled row 3 on")
 
         # ── negatives: bad send + unknown slot reject cleanly ───────────
         raised = False
@@ -154,7 +176,9 @@ def body() -> None:
         assert raised, "out-of-range cell index must be rejected"
         raised = False
         try:
-            q(d, "no_such_slot")
+            # ★ R2229 — spelled on purpose: the subject is the SCREEN's refusal
+            # of an undeclared slot, so the path must reach it.
+            q_raw(d, "no_such_slot")
         except RpcError:
             raised = True
         assert raised, "unknown introspect slot must raise, not silently pass"

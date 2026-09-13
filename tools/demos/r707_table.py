@@ -48,7 +48,25 @@ T = "table"
 VIEWPORT = (600, 360)
 
 
-def _q(d, slot: str):
+def _q(d, slot: str, **args):
+    """One declared slot of this screen, ASKED FOR rather than spelled.
+
+    ★★★★★ R2229 — `paths_at().ask` composes from the declaration and puts the
+    question in one step, so this walk names no path. `selected.2` is
+    `_q(d, "selected", row=2)`, and `row` is the screen's own argument name —
+    this table declares `selected.<row>` beside the scalar `selected`, the pair
+    R2226's reader learned to tell apart by arguments.
+    """
+    return d.paths_at().ask(slot, **args)
+
+
+def _q_raw(d, slot: str):
+    """One slot spelled DELIBERATELY, for asking what the screen refuses.
+
+    ⚠ The negative control below asks for a slot this screen does not declare;
+    `_q` would refuse it at composition time and the walk would test this file's
+    reader instead of the screen's router.
+    """
     return d.query(f"/external/{slot}")
 
 
@@ -79,11 +97,11 @@ def body() -> None:
             assert_eq(_q(d, "focused_col"), 0, "focused_col defaults to 0")
 
             # ── 2. cell content via introspect (AI reads the data) ──
-            assert_eq(_q(d, "header.0"), "Widget", "column 0 header")
-            assert_eq(_q(d, "header.3"), "Role", "column 3 header")
-            assert_eq(_q(d, "cell.0.0"), "Tabs", "row 0 col 0 cell")
-            assert_eq(_q(d, "cell.5.0"), "Table", "row 5 col 0 cell")
-            assert_eq(_q(d, "cell.5.3"), "grid", "row 5 col 3 cell")
+            assert_eq(_q(d, "header", col=0), "Widget", "column 0 header")
+            assert_eq(_q(d, "header", col=3), "Role", "column 3 header")
+            assert_eq(_q(d, "cell", row=0, col=0), "Tabs", "row 0 col 0 cell")
+            assert_eq(_q(d, "cell", row=5, col=0), "Table", "row 5 col 0 cell")
+            assert_eq(_q(d, "cell", row=5, col=3), "grid", "row 5 col 3 cell")
 
             # ── 3. paint-tag shape (the a11y walker's substrate) ────
             assert _present(d, T), "grid root tag present"
@@ -101,8 +119,8 @@ def body() -> None:
             d.click(path=f"{T}#2_1")
             assert_eq(_q(d, "selected"), True, "selected flag true after click")
             assert_eq(_q(d, "selected_row"), 2, "row 2 selected")
-            assert_eq(_q(d, "selected.2"), True, "selected.2 true")
-            assert_eq(_q(d, "selected.1"), False, "selected.1 false")
+            assert_eq(_q(d, "selected", row=2), True, "selected.2 true")
+            assert_eq(_q(d, "selected", row=1), False, "selected.1 false")
             # WAI-ARIA "activation moves focus": the active descendant
             # syncs to the clicked cell.
             assert_eq(_q(d, "focused_row"), 2, "active descendant row syncs to click")
@@ -111,7 +129,7 @@ def body() -> None:
             # ── 5. switch rows: click cell (4,0) ────────────────────
             d.click(path=f"{T}#4_0")
             assert_eq(_q(d, "selected_row"), 4, "row 4 selected")
-            assert_eq(_q(d, "selected.2"), False, "row 2 deselected (exclusion)")
+            assert_eq(_q(d, "selected", row=2), False, "row 2 deselected (exclusion)")
             assert_eq(_q(d, "focused_row"), 4, "active descendant follows to row 4")
             assert_eq(_q(d, "focused_col"), 0, "active descendant col 0")
             # Click a different cell in the SAME (already-selected) row:
@@ -197,7 +215,9 @@ def body() -> None:
             assert raised, "out-of-range cell index must be rejected"
             raised = False
             try:
-                _q(d, "no_such_slot")
+                # ★ R2229 — spelled on purpose: the subject is the SCREEN's
+                # refusal of an undeclared slot, so the path must reach it.
+                _q_raw(d, "no_such_slot")
             except RpcError:
                 raised = True
             assert raised, "unknown introspect slot must raise, not silently pass"

@@ -147,17 +147,30 @@ def body() -> None:
         wait_query(tf, "/external/focus", 2, desc="ArrowDown roves to row index 2")        # 34
         tf.key(at=KEY_AT, name="Space")
         _wait_count(tf, 1, "Space toggles the focused row")                                # 35
-        assert_eq(tf.query("/external/selected.2"), True, "the focused row is selected")   # 36
+        assert_eq(tf.paths_at().ask("selected", i=2), True, "the focused row is selected")   # 36
 
         # ── (H2) R990.1 — absolute selected.<i> write (wire symmetry) ─
         # The write mirror of the selected.<i> read: an idempotent absolute set,
         # not a relative toggle (unlike the `send` wire).
-        tf.intervene("/external/selected.0", True)
+        #
+        # ★ R2229 — the WRITE composes from the same declaration the read does,
+        # so this leg is now literally one path asked two ways. `ask` is the
+        # read side; the write puts `at`'s composition on the other channel.
+        # ⚠ And that is where this campaign meets the §7 axis's open item
+        # `R1642 schema-channel-writable`: the declaration says WHICH paths
+        # exist and not which admit a write. Measured R2228 — `channel` carries
+        # exactly one value (`invoke`) — so a row without it is read-only
+        # (`hit.<x>.<y>`) or writable (this one) and nothing tells them apart.
+        # The composition is right either way; what cannot be checked here is
+        # whether the screen will take it.
+        paths = tf.paths_at()
+        row_zero = f"{paths.external}/{paths.at('selected', i=0)}"
+        tf.intervene(row_zero, True)
         _wait_count(tf, 2, "intervene selected.0=true adds row 0 (absolute set)")          # 37
-        assert_eq(tf.query("/external/selected.0"), True, "read mirrors the write")        # 38
-        tf.intervene("/external/selected.0", True)  # idempotent: set, not toggle
+        assert_eq(tf.paths_at().ask("selected", i=0), True, "read mirrors the write")        # 38
+        tf.intervene(row_zero, True)  # idempotent: set, not toggle
         assert_eq(tf.query("/external/selected_count"), 2, "absolute set is idempotent")   # 39
-        tf.intervene("/external/selected.0", False)
+        tf.intervene(row_zero, False)
         _wait_count(tf, 1, "intervene selected.0=false removes it (back to the kbd row)")   # 40
 
         # ── (I) keyboard toolbar: focus + Enter activates Delete ─────

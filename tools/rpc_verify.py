@@ -44,7 +44,7 @@ import os
 import shutil
 import tempfile
 from contextlib import AbstractContextManager, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, NoReturn, Optional, Sequence
 
@@ -2589,7 +2589,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             assert declared, (
                 f"{external}/$schema carried no `path` row this reader could use"
             )
-            held = ExternalPaths(external=external, declared=declared)
+            held = ExternalPaths(external=external, declared=declared, app=self)
             self._declared_paths[external] = held
         return held
 
@@ -7911,6 +7911,12 @@ class ExternalPaths:
 
     external: str
     declared: dict[str, tuple[str, ...]]
+    #: The screen this vocabulary came from, so [`ask`] can put a question to it.
+    #: Excluded from comparison and repr: it is the SOURCE of the table, not part
+    #: of its value, and a `RpcSubprocess` in a repr would bury the paths.
+    app: Optional["RpcSubprocess"] = dataclass_field(
+        default=None, compare=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         """★ R2226 — a bare string under a name is REFUSED, not adapted.
@@ -8003,6 +8009,41 @@ class ExternalPaths:
         for arg, value in args.items():
             out = out.replace(f"<{arg}>", str(value))
         return out
+
+    def ask(self, name: str, /, **args: Any) -> Any:
+        """Build one declared path and PUT IT TO THE SCREEN — the two steps
+        every walk in this tree writes a helper for.
+
+        ★★★★★ R2229 §5.7 — **121 copies of that helper, in 27 spellings.**
+        Counted across `tools/demos/`: `return tf.query(f"/external/{path}")`
+        thirty-one times, `return tf.query(f"{EXT}/{path}")` thirty, and
+        twenty-five more shapes differing only in which name the app is bound
+        to, how the External is spelled, and whether the parameter is called
+        `slot`, `path` or `name`.
+
+        Each of those helpers takes a WHOLE path and prefixes it, so the address
+        is composed at the CALLER — which is where the retyping this debt is
+        named for actually lives. R2227 removed the three steps it cost to reach
+        the declaration; this removes the step after it, and a walk that writes
+        no helper has nowhere to spell a path.
+
+            app.paths_at().ask("selected", row=2)   # -> the screen's answer
+
+        ⚠ `name` is positional-only for [`at`]'s reason, and the composition is
+        [`at`]'s — so a slot the screen does not declare, or an argument set no
+        template takes, is refused before anything reaches the wire.
+
+        ⚠⚠ Raises rather than returning a sentinel when this table was built by
+        hand: a fixture has no screen to ask, and answering `None` would make a
+        walk read *the screen said nothing* where the truth is *nobody asked*.
+        """
+        if self.app is None:
+            raise AssertionError(
+                f"this {type(self).__name__} was built without a screen, so it "
+                "can compose but not ask. Use `at` for the path, or get the "
+                "table from `RpcSubprocess.paths_at`."
+            )
+        return self.app.query(f"{self.external}/{self.at(name, **args)}")
 
 
 def schema_path_name(path: str) -> str:

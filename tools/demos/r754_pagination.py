@@ -81,9 +81,9 @@ def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as d:
         # ── boot: page index 2 current; prev + next both available ───────
         assert_eq(cur(d), 2, "boot current = page 3 (index 2)")
-        assert_eq(d.query("/external/selected.2"), True, "page 2 current")
-        assert_eq(d.query("/external/selected.0"), False, "page 0 not current")
-        assert_eq(d.query("/external/selected.4"), False, "page 4 not current")
+        assert_eq(d.paths_at().ask("selected", index=2), True, "page 2 current")
+        assert_eq(d.paths_at().ask("selected", index=0), False, "page 0 not current")
+        assert_eq(d.paths_at().ask("selected", index=4), False, "page 4 not current")
         assert_eq(d.query("/external/can_prev"), True, "mid page: has previous")
         assert_eq(d.query("/external/can_next"), True, "mid page: has next")
         assert_eq(d.query("/external/count"), N, "five pages")
@@ -107,8 +107,8 @@ def body() -> None:
         d.click(path=cell(4))
         d.pointer_leave()
         assert_eq(cur(d), 4, "click navigates to page 4")
-        assert_eq(d.query("/external/selected.4"), True, "page 4 now current")
-        assert_eq(d.query("/external/selected.2"), False, "page 2 no longer current")
+        assert_eq(d.paths_at().ask("selected", index=4), True, "page 4 now current")
+        assert_eq(d.paths_at().ask("selected", index=2), False, "page 2 no longer current")
         assert_eq(d.query("/external/can_next"), False, "last page: no next")
         assert_eq(d.query("/external/can_prev"), True, "last page: has previous")
         assert cell_fill(paint(d), 4)[3] == 255, "page 4 now opaque Accent"
