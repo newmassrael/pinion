@@ -2247,10 +2247,13 @@ def template_family(literal: str) -> str | None:
     return f"{segments[0]}.{family}"
 
 
-#: A literal carrying a NUMERIC id where a family segment goes — `value.3`,
-#: `node.0.x` — which neither [`ADDRESS`] (a word there) nor
-#: [`template_family`] (a placeholder there) anchors.
-_NUMERIC_ID = re.compile(r"^[a-z][a-z0-9_]*\.\d+(?:\.[A-Za-z0-9_#.{}:-]+)?$")
+#: A literal carrying an ARGUMENT where a family segment goes — a number
+#: (`value.3`, `node.0.x`) or, since R2192, a runtime placeholder (`edge.{e}`,
+#: `state.{i}`) — which neither [`ADDRESS`] (a word there) nor, for a
+#: two-segment path, [`template_family`] (three segments at least) anchors.
+_ARGUMENT_ID = re.compile(
+    r"^[a-z][a-z0-9_]*\.(?:\d+|\{[^{}]*\})(?:\.[A-Za-z0-9_#.{}:-]+)?$"
+)
 
 #: How a declared path marks where an argument goes: `value.<index>`.
 _DECLARED_ARG = re.compile(r"<[A-Za-z_][A-Za-z0-9_]*>")
@@ -2272,8 +2275,9 @@ def declared_path_templates() -> tuple[tuple[str, str], ...]:
 def declared_path_family(
     literal: str, templates: Iterable[tuple[str, str]] | None = None
 ) -> str | None:
-    """The family of a NUMERIC-id literal that composes exactly one declared
-    path's family — `node.0.x` is `node.{}` — or `None`.
+    """The family of a literal with an ARGUMENT where the id goes — a number, or
+    since R2192 a runtime placeholder — that composes a declared path's family:
+    `node.0.x` is `node.{}`, `edge.{e}` is `edge.{}`; or `None`.
 
     ★★★★★ R2187 — the census read the §7 path vocabulary (R2166) through the
     paint address's grammar, and that grammar cannot see a path whose argument
@@ -2302,10 +2306,30 @@ def declared_path_family(
     The first draft refused "several heads", a branch that could not run; it is
     gone rather than kept as a check with no failing path.
 
+    ★★★★★ R2192 — and a RUNTIME argument where the id goes. `f"edge.{e}"`,
+    `f"state.{i}"` and `format!("state.{i}")` compose the declared `edge.<id>`
+    and `state.<index>`, and no rule charged them: [`template_family`] wants
+    three segments and this rule wanted a digit. A three-segment one
+    (`node.{i}.op`) is [`template_family`]'s already and never reaches here.
+    The Rust readers it charges are examples querying their own widget's
+    introspection with a retyped path; they have no Rust door to convert to
+    yet, which is the next structure to build rather than a reason to leave
+    them uncounted. Built on two rounds that made its measurement true first:
+    R2190 separated a function that RETURNS such an address from one that
+    reads through it (28 readers, not 29), and R2191 stopped a unit test's
+    declaration counting as a screen's (its first implementation here failed a
+    fixture through a test's `a.<x><y>`, and was reverted until that was fixed).
+    Re-measured on that vocabulary, a dry run with every cache cleared: walk
+    +166, Rust +35 — queue (1267, 32) -> (1433, 60); retyped (25, 7) ->
+    (53, 7); roles (32, 917, 74) -> (60, 923, 75); the handed-prefix
+    remainder, BLOCKED, the unpinned families and the deleted check unchanged;
+    eight new budget rows, each held by a declared schema head or an artifact;
+    36 risen; none fallen.
+
     `templates` is handed in by a fixture; the tree's are
     [`declared_path_templates`].
     """
-    if " " in literal or "/" in literal or not _NUMERIC_ID.match(literal):
+    if " " in literal or "/" in literal or not _ARGUMENT_ID.match(literal):
         return None
     pool = declared_path_templates() if templates is None else templates
     if any(template_denotes(template, literal) for _declared, template in pool):
@@ -3736,7 +3760,9 @@ def selftest() -> int:
          "lab.form_{x}.row", "lab.form_{}"),
         ("a concrete family stays concrete", "card.alarms#6.feed", "card.alarms"),
         ("★★ a handed prefix is not one", "{tag}.row.{slot}", None),
-        ("a word and a placeholder is a prefix, as two words are", "state.{i}", None),
+        ("★★★★★ R2192 — a word and a placeholder that NO declaration composes is "
+         "a prefix, as two words are (`state.{i}` is not: `state.<index>` is "
+         "declared, and `declared_cases` holds that half)", "unheard_of.{i}", None),
         ("a sentence is not one", "the card.{id}.x", None),
     ]
     for label, literal, want in family_cases:
@@ -3806,6 +3832,13 @@ def selftest() -> int:
         ("a word in the family segment is ADDRESS's question, not this one",
          "value.elem.1", None),
         ("a sentence is not the shape", "value 3", None),
+        # ★★★★★ R2192 — a runtime argument where the id goes.
+        ("★★ a two-segment path with a RUNTIME argument", "value.{}", "value.{}"),
+        ("★ a Rust placeholder carries its name and is the same argument",
+         "value.{idx}", "value.{}"),
+        ("★★ a runtime argument on a head nothing declares composes nothing",
+         "elem.{i}", None),
+        ("text beside a placeholder is not an argument segment", "value.x{i}", None),
     ]
     for label, literal, want in declared_cases:
         got = declared_path_family(literal, declared)
