@@ -42,6 +42,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    external_paths,
     find_by_tag,
     run_demo,
     wait_snap,
@@ -106,6 +107,7 @@ def scrub(tf, row: int, col: int, dx: int) -> None:
 
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot — clean history, status mirror ──────────────────
         assert find_by_tag(tf.snapshot(source="paint", viewport=VIEWPORT), GRID) is not None, "grid present"
         assert_eq(q(tf, "row_count"), 4, "4 seed rows")
@@ -121,9 +123,9 @@ def body() -> None:
 
         # ── (B) cell edit (RPC value) → undo → redo ─────────────────
         # Tree's Count (value.1.2) boots at 24; write 7.
-        assert_eq(q(tf, "value.1.2"), 24, "Tree Count boots 24")
-        tf.intervene("/external/value.1.2", 7)
-        assert_eq(q(tf, "value.1.2"), 7, "the write landed")
+        assert_eq(q(tf, gp.at("value", row=1, col=2)), 24, "Tree Count boots 24")
+        tf.intervene(f"/external/{gp.at('value', row=1, col=2)}", 7)
+        assert_eq(q(tf, gp.at("value", row=1, col=2)), 7, "the write landed")
         assert_eq(uq(tf, "can_undo"), True, "the edit is journaled")
         assert_eq(uq(tf, "count"), 1, "one history step")
         assert_eq(uq(tf, "undo_label"), "Edit cell", "the next undo is the cell edit")
@@ -132,22 +134,22 @@ def body() -> None:
             desc="the status mirrors the pending undo label",
         )
         assert_eq(uinv(tf, "undo"), True, "undo stepped")
-        assert_eq(q(tf, "value.1.2"), 24, "undo restored the original 24")
+        assert_eq(q(tf, gp.at("value", row=1, col=2)), 24, "undo restored the original 24")
         assert_eq(uq(tf, "can_redo"), True, "the edit is now redoable")
         assert_eq(uinv(tf, "redo"), True, "redo stepped")
-        assert_eq(q(tf, "value.1.2"), 7, "redo re-applied 7")
+        assert_eq(q(tf, gp.at("value", row=1, col=2)), 7, "redo re-applied 7")
         assert_eq(uinv(tf, "clear"), 0, "clear the history for the next section")
 
         # ── (C) bool toggle is one undo step ────────────────────────
         # Hero's Active (value.0.4) boots true.
-        assert_eq(q(tf, "value.0.4"), True, "Hero Active boots true")
+        assert_eq(q(tf, gp.at("value", row=0, col=4)), True, "Hero Active boots true")
         tf.intervene("/external/focused_row", 0)
         tf.intervene("/external/focused_col", 4)
         assert_eq(inv(tf, "toggle"), True, "toggle the focused bool")
-        assert_eq(q(tf, "value.0.4"), False, "Active flipped to false")
+        assert_eq(q(tf, gp.at("value", row=0, col=4)), False, "Active flipped to false")
         assert_eq(uq(tf, "undo_label"), "Toggle cell", "the undo is the toggle")
         assert_eq(uinv(tf, "undo"), True, "undo the toggle")
-        assert_eq(q(tf, "value.0.4"), True, "toggle reversed")
+        assert_eq(q(tf, gp.at("value", row=0, col=4)), True, "toggle reversed")
         assert_eq(uinv(tf, "clear"), 0, "clear for the next section")
 
         # ── (D) a numeric scrub drag is ONE undo step ───────────────
@@ -156,14 +158,14 @@ def body() -> None:
         tf.scroll(H_SCROLL, to=(1000, 0))  # clamps to max => Count/Scale on-screen
         wait_snap(tf, lambda s: cell_on_screen(s, f"{GRID}#0_2"),
                   viewport=VIEWPORT, desc="Count column scrolled on-screen")
-        base = q(tf, "value.0.2")
+        base = q(tf, gp.at("value", row=0, col=2))
         scrub(tf, 0, 2, 80)  # +80px well past the click dead zone
-        scrubbed = q(tf, "value.0.2")
+        scrubbed = q(tf, gp.at("value", row=0, col=2))
         assert scrubbed > base, f"the scrub raised Count from {base} to {scrubbed}"
         assert_eq(uq(tf, "count"), 1, "the whole drag is ONE undo step, not one per frame")
         assert_eq(uq(tf, "undo_label"), "Scrub cell", "the step is the scrub")
         assert_eq(uinv(tf, "undo"), True, "undo the scrub")
-        assert_eq(q(tf, "value.0.2"), base, "undo restored the press value in one step")
+        assert_eq(q(tf, gp.at("value", row=0, col=2)), base, "undo restored the press value in one step")
         assert_eq(uinv(tf, "clear"), 0, "clear for the next section")
         tf.scroll(H_SCROLL, to=(0, 0))  # restore the horizontal scroll
 
@@ -179,15 +181,15 @@ def body() -> None:
 
         # ── (F) remove_row → undo restores the WHOLE row verbatim ───
         # Source rows: 0 Hero, 1 Tree(Count 7 from B's redo), 2 Coin, 3 Boss, 4 (added).
-        assert_eq(q(tf, "value.1.0"), "Tree", "row 1 is Tree")
-        assert_eq(q(tf, "value.1.2"), 7, "Tree's Count is 7 (from the B edit)")
+        assert_eq(q(tf, gp.at("value", row=1, col=0)), "Tree", "row 1 is Tree")
+        assert_eq(q(tf, gp.at("value", row=1, col=2)), 7, "Tree's Count is 7 (from the B edit)")
         tf.intervene("/external/focused_row", 1)
         assert_eq(inv(tf, "remove_row", 1), True, "remove source row 1 (Tree)")
-        assert_eq(q(tf, "value.1.0"), "Coin", "Coin shifted into the freed slot")
+        assert_eq(q(tf, gp.at("value", row=1, col=0)), "Coin", "Coin shifted into the freed slot")
         assert_eq(uq(tf, "undo_label"), "Remove row", "the undo is the remove")
         assert_eq(uinv(tf, "undo"), True, "undo the remove")
-        assert_eq(q(tf, "value.1.0"), "Tree", "Tree's name re-inserted")
-        assert_eq(q(tf, "value.1.2"), 7, "and its Count — the whole row, not just the name")
+        assert_eq(q(tf, gp.at("value", row=1, col=0)), "Tree", "Tree's name re-inserted")
+        assert_eq(q(tf, gp.at("value", row=1, col=2)), 7, "and its Count — the whole row, not just the name")
         assert_eq(q(tf, "focused_row"), 1, "cursor restored to the re-inserted row")
         assert_eq(uinv(tf, "clear"), 0, "clear for the next section")
 
@@ -201,30 +203,30 @@ def body() -> None:
 
         # ── (H) keyboard Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z ─────────────
         tf.request("focus/set", {"tag": GRID})
-        tf.intervene("/external/value.0.2", 42)
-        assert_eq(q(tf, "value.0.2"), 42, "a fresh edit to drive the keyboard")
+        tf.intervene(f"/external/{gp.at('value', row=0, col=2)}", 42)
+        assert_eq(q(tf, gp.at("value", row=0, col=2)), 42, "a fresh edit to drive the keyboard")
         # Ctrl+Z undoes.
         tf.modifiers(ctrl=True)
         tf.key(path=GRID, name="z")
         tf.modifiers()
-        assert_eq(wait_until(lambda: True if q(tf, "value.0.2") == base else None,
+        assert_eq(wait_until(lambda: True if q(tf, gp.at("value", row=0, col=2)) == base else None,
                              desc="Ctrl+Z undid the edit"), True)
         # Ctrl+Y redoes.
         tf.modifiers(ctrl=True)
         tf.key(path=GRID, name="y")
         tf.modifiers()
-        assert_eq(wait_until(lambda: True if q(tf, "value.0.2") == 42 else None,
+        assert_eq(wait_until(lambda: True if q(tf, gp.at("value", row=0, col=2)) == 42 else None,
                              desc="Ctrl+Y redid the edit"), True)
         # Ctrl+Z again, then Ctrl+Shift+Z (the redo twin).
         tf.modifiers(ctrl=True)
         tf.key(path=GRID, name="z")
         tf.modifiers()
-        assert_eq(wait_until(lambda: True if q(tf, "value.0.2") == base else None,
+        assert_eq(wait_until(lambda: True if q(tf, gp.at("value", row=0, col=2)) == base else None,
                              desc="Ctrl+Z undid again"), True)
         tf.modifiers(ctrl=True, shift=True)
         tf.key(path=GRID, name="Z")
         tf.modifiers()
-        assert_eq(wait_until(lambda: True if q(tf, "value.0.2") == 42 else None,
+        assert_eq(wait_until(lambda: True if q(tf, gp.at("value", row=0, col=2)) == 42 else None,
                              desc="Ctrl+Shift+Z redid the edit"), True)
 
         # ── (I) history as data + clear ─────────────────────────────

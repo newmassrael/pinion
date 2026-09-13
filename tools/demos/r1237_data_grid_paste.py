@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
 )
 
@@ -58,66 +59,67 @@ def cursor(tf, row: int, col: int) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-data-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) boot ─────────────────────────────────────────────────
         assert_eq(q(tf, "row_count"), 4, "4 seed rows")
-        assert_eq(q(tf, "col_kind.2"), "int", "col 2 (Count) is int")
-        assert_eq(q(tf, "col_kind.3"), "float", "col 3 (Scale) is float")
-        assert_eq(q(tf, "value.0.2"), 1, "row0 Count seed")
-        assert_eq(q(tf, "value.1.2"), 24, "row1 Count seed")
+        assert_eq(q(tf, gp.at("col_kind", col=2)), "int", "col 2 (Count) is int")
+        assert_eq(q(tf, gp.at("col_kind", col=3)), "float", "col 3 (Scale) is float")
+        assert_eq(q(tf, gp.at("value", row=0, col=2)), 1, "row0 Count seed")
+        assert_eq(q(tf, gp.at("value", row=1, col=2)), 24, "row1 Count seed")
 
         # ── (B) paste a 2x2 block at (row 0, col 2) ──────────────────
         cursor(tf, 0, 2)
         assert_eq(inv(tf, "paste", "42\t1.5\n7\t9.5"), 4, "four cells written")
-        assert_eq(q(tf, "value.0.2"), 42, "row0 Count = 42")
-        assert_eq(q(tf, "value.0.3"), 1.5, "row0 Scale = 1.5")
-        assert_eq(q(tf, "value.1.2"), 7, "row1 Count = 7")
-        assert_eq(q(tf, "value.1.3"), 9.5, "row1 Scale = 9.5")
-        assert_eq(q(tf, "value.2.2"), 99, "a cell below the block is unchanged")
-        assert_eq(q(tf, "value.0.0"), "Hero", "a cell left of the block is unchanged")
+        assert_eq(q(tf, gp.at("value", row=0, col=2)), 42, "row0 Count = 42")
+        assert_eq(q(tf, gp.at("value", row=0, col=3)), 1.5, "row0 Scale = 1.5")
+        assert_eq(q(tf, gp.at("value", row=1, col=2)), 7, "row1 Count = 7")
+        assert_eq(q(tf, gp.at("value", row=1, col=3)), 9.5, "row1 Scale = 9.5")
+        assert_eq(q(tf, gp.at("value", row=2, col=2)), 99, "a cell below the block is unchanged")
+        assert_eq(q(tf, gp.at("value", row=0, col=0)), "Hero", "a cell left of the block is unchanged")
 
         # ── (C) one undo reverts the whole block; redo re-applies ────
         assert_eq(tf.query(f"{UNDO}/undo_label"), "Paste", "the block is one step")
         assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo the paste")
-        assert_eq(q(tf, "value.0.2"), 1, "row0 Count restored")
-        assert_eq(q(tf, "value.1.2"), 24, "row1 Count restored")
-        assert_eq(q(tf, "value.1.3"), 2.5, "row1 Scale restored")
+        assert_eq(q(tf, gp.at("value", row=0, col=2)), 1, "row0 Count restored")
+        assert_eq(q(tf, gp.at("value", row=1, col=2)), 24, "row1 Count restored")
+        assert_eq(q(tf, gp.at("value", row=1, col=3)), 2.5, "row1 Scale restored")
         assert_eq(tf.invoke(f"{UNDO}/redo", None), True, "redo the paste")
-        assert_eq(q(tf, "value.1.2"), 7, "row1 Count re-applied")
+        assert_eq(q(tf, gp.at("value", row=1, col=2)), 7, "row1 Count re-applied")
         tf.invoke(f"{UNDO}/undo", None)  # settle back to baseline
 
         # ── (D) grow on overrun (R1244) ──────────────────────────────
         cursor(tf, 3, 2)  # last row
         assert_eq(inv(tf, "paste", "55\n66"), 2, "both rows land — the overrun grew a row")
-        assert_eq(q(tf, "value.3.2"), 55, "the last row got 55")
+        assert_eq(q(tf, gp.at("value", row=3, col=2)), 55, "the last row got 55")
         assert_eq(q(tf, "row_count"), 5, "the grid grew by one row to fit the block")
-        assert_eq(q(tf, "value.4.2"), 66, "the grown row got 66")
+        assert_eq(q(tf, gp.at("value", row=4, col=2)), 66, "the grown row got 66")
         assert_eq(tf.invoke(f"{UNDO}/undo", None), True, "undo the grown paste")
         assert_eq(q(tf, "row_count"), 4, "one undo removed the grown row too")
-        assert_eq(q(tf, "value.3.2"), 1, "the last row's Count restored")
+        assert_eq(q(tf, gp.at("value", row=3, col=2)), 1, "the last row's Count restored")
 
         # ── (E) skip unparseable + empty paste ───────────────────────
         cursor(tf, 0, 2)
         assert_eq(inv(tf, "paste", "abc"), 0, "'abc' does not parse into Int")
-        assert_eq(q(tf, "value.0.2"), 1, "the Int cell keeps its value")
+        assert_eq(q(tf, gp.at("value", row=0, col=2)), 1, "the Int cell keeps its value")
         assert_eq(inv(tf, "paste", ""), 0, "an empty paste writes nothing")
         # R1239 — a trailing newline (OS-clipboard convention) is stripped, so a
         # single-cell paste does not clobber the Text row below it.
         cursor(tf, 0, 0)  # Text column
         assert_eq(inv(tf, "paste", "Solo\n"), 1, "trailing newline strips to 1 cell")
-        assert_eq(q(tf, "value.0.0"), "Solo", "row 0 Asset got Solo")
-        assert_eq(q(tf, "value.1.0"), "Tree", "row 1 Asset UNTOUCHED (no phantom write)")
+        assert_eq(q(tf, gp.at("value", row=0, col=0)), "Solo", "row 0 Asset got Solo")
+        assert_eq(q(tf, gp.at("value", row=1, col=0)), "Tree", "row 1 Asset UNTOUCHED (no phantom write)")
         tf.invoke(f"{UNDO}/undo", None)  # revert Solo before the sort section
-        assert_eq(q(tf, "value.0.0"), "Hero", "row 0 Asset back to Hero")
+        assert_eq(q(tf, gp.at("value", row=0, col=0)), "Hero", "row 0 Asset back to Hero")
 
         # ── (F) the paste follows the active sort (visible order) ────
         inv(tf, "cycle_sort", 0)  # sort col 0 (Asset) ascending
-        s0 = q(tf, "source_at.0")  # source row now shown at visual position 0
-        s1 = q(tf, "source_at.1")
+        s0 = q(tf, gp.at("source_at", pos=0))  # source row now shown at visual position 0
+        s1 = q(tf, gp.at("source_at", pos=1))
         assert s0 != 0, "the sort reorders (visual row 0 is not source row 0)"
         cursor(tf, s0, 0)  # cursor at visual row 0
         assert_eq(inv(tf, "paste", "Alpha\nBeta"), 2, "two Asset cells written")
-        assert_eq(q(tf, f"value.{s0}.0"), "Alpha", "visual row 0 got Alpha")
-        assert_eq(q(tf, f"value.{s1}.0"), "Beta", "visual row 1 got Beta (not source 1)")
+        assert_eq(q(tf, gp.at("value", row=s0, col=0)), "Alpha", "visual row 0 got Alpha")
+        assert_eq(q(tf, gp.at("value", row=s1, col=0)), "Beta", "visual row 1 got Beta (not source 1)")
         assert_eq(q(tf, "row_count"), 4, "the sorted paste added no rows")
 
 

@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    external_paths,
     run_demo,
     wait_query,
     wait_snap,
@@ -74,34 +75,35 @@ def _texts(snap) -> list:
 
 def body() -> None:
     with RpcSubprocess("hello-data-grid", boot_grace=1.5) as tf:
+        gp = external_paths(tf)
         # ── (A) the column ranges are AI-readable ───────────────────
-        assert_eq(tf.query("/external/col_range.2"), "0..1000", "Count range")
-        assert_eq(tf.query("/external/col_range.3"), "none", "Scale unbounded")
-        assert_eq(tf.query("/external/col_range.0"), "none", "Asset unbounded")
-        assert_eq(tf.query("/external/col_range.4"), "none", "Active unbounded")
+        assert_eq(tf.query(f"/external/{gp.at('col_range', col=2)}"), "0..1000", "Count range")
+        assert_eq(tf.query(f"/external/{gp.at('col_range', col=3)}"), "none", "Scale unbounded")
+        assert_eq(tf.query(f"/external/{gp.at('col_range', col=0)}"), "none", "Asset unbounded")
+        assert_eq(tf.query(f"/external/{gp.at('col_range', col=4)}"), "none", "Active unbounded")
         # (an out-of-range column is an UnknownPath over the wire; the Rust
         # `None` -> error mapping is covered by the r894_col_range unit test.)
 
         # ── (B) intervene (AI write) clamps the bounded column ──────
-        tf.request("scene/intervene", {"path": "/external/value.0.2", "value": 5000})
-        assert_eq(tf.query("/external/value.0.2"), 1000, "Count 5000 -> clamp to max 1000")
-        tf.request("scene/intervene", {"path": "/external/value.3.2", "value": -99})
-        assert_eq(tf.query("/external/value.3.2"), 0, "Count -99 -> clamp to min 0")
-        tf.request("scene/intervene", {"path": "/external/value.2.2", "value": 1000})
-        assert_eq(tf.query("/external/value.2.2"), 1000, "Count 1000 -> the bound itself")
+        tf.request("scene/intervene", {"path": f"/external/{gp.at('value', row=0, col=2)}", "value": 5000})
+        assert_eq(tf.query(f"/external/{gp.at('value', row=0, col=2)}"), 1000, "Count 5000 -> clamp to max 1000")
+        tf.request("scene/intervene", {"path": f"/external/{gp.at('value', row=3, col=2)}", "value": -99})
+        assert_eq(tf.query(f"/external/{gp.at('value', row=3, col=2)}"), 0, "Count -99 -> clamp to min 0")
+        tf.request("scene/intervene", {"path": f"/external/{gp.at('value', row=2, col=2)}", "value": 1000})
+        assert_eq(tf.query(f"/external/{gp.at('value', row=2, col=2)}"), 1000, "Count 1000 -> the bound itself")
 
         # ── (C) an in-range value passes through unchanged ──────────
-        tf.request("scene/intervene", {"path": "/external/value.0.2", "value": 42})
-        assert_eq(tf.query("/external/value.0.2"), 42, "in-range Count kept verbatim")
+        tf.request("scene/intervene", {"path": f"/external/{gp.at('value', row=0, col=2)}", "value": 42})
+        assert_eq(tf.query(f"/external/{gp.at('value', row=0, col=2)}"), 42, "in-range Count kept verbatim")
 
         # ── (D) unbounded columns are verbatim (incl. negative) ─────
-        tf.request("scene/intervene", {"path": "/external/value.0.0", "value": "LongAssetName"})
-        assert_eq(tf.query("/external/value.0.0"), "LongAssetName", "unbounded Text unclamped")
-        tf.request("scene/intervene", {"path": "/external/value.1.3", "value": 50.0})
-        assert_eq(tf.query("/external/value.1.3"), 50.0, "unbounded Scale 50 kept (no fake max)")
+        tf.request("scene/intervene", {"path": f"/external/{gp.at('value', row=0, col=0)}", "value": "LongAssetName"})
+        assert_eq(tf.query(f"/external/{gp.at('value', row=0, col=0)}"), "LongAssetName", "unbounded Text unclamped")
+        tf.request("scene/intervene", {"path": f"/external/{gp.at('value', row=1, col=3)}", "value": 50.0})
+        assert_eq(tf.query(f"/external/{gp.at('value', row=1, col=3)}"), 50.0, "unbounded Scale 50 kept (no fake max)")
         # The exact value R837 writes; R895.1 regression guard.
-        tf.request("scene/intervene", {"path": "/external/value.2.3", "value": -2.5})
-        assert_eq(tf.query("/external/value.2.3"), -2.5, "unbounded Scale -2.5 kept verbatim")
+        tf.request("scene/intervene", {"path": f"/external/{gp.at('value', row=2, col=3)}", "value": -2.5})
+        assert_eq(tf.query(f"/external/{gp.at('value', row=2, col=3)}"), -2.5, "unbounded Scale -2.5 kept verbatim")
 
         # ── (E) a keyboard commit clamps the same way ───────────────
         _focus_grid(tf)
@@ -114,7 +116,7 @@ def body() -> None:
         for ch in "9999":
             tf.key(path="data_grid_edit", name=ch)
         tf.key(path="data_grid_edit", name="Enter")
-        wait_query(tf, "/external/value.1.2", 1000, desc="keyboard commit clamps 9999 -> 1000")
+        wait_query(tf, f"/external/{gp.at('value', row=1, col=2)}", 1000, desc="keyboard commit clamps 9999 -> 1000")
         assert_eq(tf.query("/external/editing_row"), None, "edit latch closed")
 
         # ── (F) clamp composes with sort ────────────────────────────
@@ -122,8 +124,8 @@ def body() -> None:
         # ascending puts the two clamped maxima last, in stable source order.
         tf.invoke("/external/cycle_sort", 2)
         wait_query(tf, "/external/sort", "2:ascending", desc="sort Count ascending")
-        assert_eq(tf.query("/external/source_at.2"), 1, "Tree (1000) second-to-last")
-        assert_eq(tf.query("/external/source_at.3"), 2, "Coin (1000) last (stable tie)")
+        assert_eq(tf.query(f"/external/{gp.at('source_at', pos=2)}"), 1, "Tree (1000) second-to-last")
+        assert_eq(tf.query(f"/external/{gp.at('source_at', pos=3)}"), 2, "Coin (1000) last (stable tie)")
         tf.request("scene/intervene", {"path": "/external/sort", "value": "none"})
 
         # ── (G) the clamped value is what the grid paints ───────────
@@ -137,13 +139,13 @@ def body() -> None:
 
         # ── (H) re-read sweep: every Count cell within its bounds ───
         for r in range(4):
-            cnt = tf.query(f"/external/value.{r}.2")
+            cnt = tf.query(f"/external/{gp.at('value', row=r, col=2)}")
             assert_eq(0 <= cnt <= 1000, True, f"Count[{r}]={cnt} within 0..1000")
         # The Count bounds themselves are valid (inclusive on both ends).
-        tf.request("scene/intervene", {"path": "/external/value.3.2", "value": 1000})
-        assert_eq(tf.query("/external/value.3.2"), 1000, "the upper bound is inclusive")
-        tf.request("scene/intervene", {"path": "/external/value.3.2", "value": 0})
-        assert_eq(tf.query("/external/value.3.2"), 0, "the lower bound is inclusive")
+        tf.request("scene/intervene", {"path": f"/external/{gp.at('value', row=3, col=2)}", "value": 1000})
+        assert_eq(tf.query(f"/external/{gp.at('value', row=3, col=2)}"), 1000, "the upper bound is inclusive")
+        tf.request("scene/intervene", {"path": f"/external/{gp.at('value', row=3, col=2)}", "value": 0})
+        assert_eq(tf.query(f"/external/{gp.at('value', row=3, col=2)}"), 0, "the lower bound is inclusive")
 
 
 if __name__ == "__main__":
