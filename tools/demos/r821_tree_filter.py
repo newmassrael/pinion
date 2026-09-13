@@ -77,8 +77,15 @@ FILTER_TAG = "sgtree_filter"
 SEARCH_TAG = "sgtree_search"
 
 
-def q(tf, path):
-    return tf.query(f"/{FILTER_TAG}/external/{path}")
+def q(tf, path, **args):
+    """One declared slot of this filtered tree, ASKED FOR rather than spelled.
+
+    ★★★★★ R2230 — composed through what the MOUNTED External declares
+    (`paths_at(f"/{FILTER_TAG}/external")`, the per-External cache R2227 built
+    for exactly this). Measured before the conversion: all thirteen slots this
+    walk asks for are declared, and `label_at` / `visible_at` both take `<pos>`.
+    """
+    return tf.paths_at(f"/{FILTER_TAG}/external").ask(path, **args)
 
 
 def visible_count(tf):
@@ -111,29 +118,29 @@ def body() -> None:
         boot_rows = present_rows(snap)
         assert 0 < len(boot_rows) < 30, f"virtualized: small window, got {len(boot_rows)} of {BOOT_VISIBLE}"
         assert all(r.startswith("g") for r in boot_rows), "rendered rows are scene-graph nodes"
-        assert_eq(q(tf, "visible_at.0"), "g0", "unfiltered visual 0 is the first group")
-        assert_eq(q(tf, "label_at.0"), "Group00", "…labelled Group00")
+        assert_eq(q(tf, "visible_at", pos=0), "g0", "unfiltered visual 0 is the first group")
+        assert_eq(q(tf, "label_at", pos=0), "Group00", "…labelled Group00")
 
         # ── (B) boot-collapsed groups hide their children ───────────
         # Rows 0..83 are g0..g3 expanded (4 * 21); rows 84..91 are the
         # collapsed groups g4..g11 — so g9 sits immediately before g10
         # (its 20 children are NOT in the visible order while collapsed).
-        assert_eq(q(tf, "visible_at.84"), "g4", "first collapsed group at visual 84")
-        assert_eq(q(tf, "visible_at.89"), "g9", "g9 is a collapsed group row")
+        assert_eq(q(tf, "visible_at", pos=84), "g4", "first collapsed group at visual 84")
+        assert_eq(q(tf, "visible_at", pos=89), "g9", "g9 is a collapsed group row")
         assert_eq(
-            q(tf, "visible_at.90"), "g10",
+            q(tf, "visible_at", pos=90), "g10",
             "g10 immediately follows g9 — g9's children are hidden while collapsed",
         )
-        assert_eq(q(tf, "visible_at.91"), "g11", "last collapsed group")
-        assert_eq(q(tf, "visible_at.92"), None, "one past the end is Null (present-but-empty)")
+        assert_eq(q(tf, "visible_at", pos=91), "g11", "last collapsed group")
+        assert_eq(q(tf, "visible_at", pos=92), None, "one past the end is Null (present-but-empty)")
 
         # ── (C) filter reveals a match inside a COLLAPSED group ──────
         assert_eq(set_filter(tf, "Node09"), 1 + CHILDREN_PER, "Group09 + its 20 leaves = 21")
         assert_eq(q(tf, "query"), "Node09", "the filter query reflects the active facet")
-        assert_eq(q(tf, "visible_at.0"), "g9", "the buried group is revealed as path context…")
-        assert_eq(q(tf, "label_at.0"), "Group09", "…labelled Group09")
-        assert_eq(q(tf, "visible_at.1"), "g9-n0", "…immediately followed by its first matching leaf")
-        assert_eq(q(tf, "label_at.1"), "Node09_00", "…the buried match, now revealed")
+        assert_eq(q(tf, "visible_at", pos=0), "g9", "the buried group is revealed as path context…")
+        assert_eq(q(tf, "label_at", pos=0), "Group09", "…labelled Group09")
+        assert_eq(q(tf, "visible_at", pos=1), "g9-n0", "…immediately followed by its first matching leaf")
+        assert_eq(q(tf, "label_at", pos=1), "Node09_00", "…the buried match, now revealed")
         snap = tf.snapshot(source="paint", viewport=WIN)
         revealed = present_rows(snap)
         assert "g9" in revealed, "the revealed group renders in the filtered window"
@@ -143,28 +150,28 @@ def body() -> None:
 
         # ── (D) filter Node03 → group 3 path, windowed ──────────────
         assert_eq(set_filter(tf, "Node03"), 1 + CHILDREN_PER, "Group03 + 20 leaves")
-        assert_eq(q(tf, "label_at.0"), "Group03", "ancestor group revealed")
-        assert_eq(q(tf, "label_at.5"), "Node03_04", "deep filtered visual is a group-3 leaf")
+        assert_eq(q(tf, "label_at", pos=0), "Group03", "ancestor group revealed")
+        assert_eq(q(tf, "label_at", pos=5), "Node03_04", "deep filtered visual is a group-3 leaf")
         snap = tf.snapshot(source="paint", viewport=WIN)
         assert all(r.startswith("g3") for r in present_rows(snap)), "window holds only group-3 rows"
 
         # ── (E) matched branch with no matching child = filtered leaf ─
         assert_eq(set_filter(tf, "Group03"), 1, "Group03 matches the group only, not its leaves")
-        assert_eq(q(tf, "label_at.0"), "Group03", "the single match is the group")
-        assert_eq(q(tf, "visible_at.1"), None, "no children — a filtered leaf")
+        assert_eq(q(tf, "label_at", pos=0), "Group03", "the single match is the group")
+        assert_eq(q(tf, "visible_at", pos=1), None, "no children — a filtered leaf")
         assert_eq(set_filter(tf, "Group"), GROUPS, "every group label contains 'Group' → 12 leaves")
 
         # ── (F) multi-group match (one leaf per group) ──────────────
         assert_eq(set_filter(tf, "_05"), GROUPS + GROUPS, "12 groups, each revealed with 1 leaf")
-        assert_eq(q(tf, "label_at.0"), "Group00", "first group as path context")
-        assert_eq(q(tf, "label_at.1"), "Node00_05", "its single matching leaf")
-        assert_eq(q(tf, "label_at.2"), "Group01", "next group, no intervening siblings")
+        assert_eq(q(tf, "label_at", pos=0), "Group00", "first group as path context")
+        assert_eq(q(tf, "label_at", pos=1), "Node00_05", "its single matching leaf")
+        assert_eq(q(tf, "label_at", pos=2), "Group01", "next group, no intervening siblings")
 
         # ── (G) case-insensitive, broad, and empty matches ──────────
         assert_eq(set_filter(tf, "node03"), 1 + CHILDREN_PER, "lowercase matches Node03 (case-insensitive)")
         assert_eq(set_filter(tf, "Node"), TOTAL_NODES, "'Node' matches every leaf → the whole 252-node tree")
         assert_eq(set_filter(tf, "zzz"), 0, "no match → empty filtered view")
-        assert_eq(q(tf, "visible_at.0"), None, "empty view has no first row")
+        assert_eq(q(tf, "visible_at", pos=0), None, "empty view has no first row")
 
         # ── (H) clear via invoke Null restores the full view ────────
         assert_eq(set_filter(tf, None), BOOT_VISIBLE, "Null clears → the full 92-row view")

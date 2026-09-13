@@ -64,8 +64,8 @@ col_kind.{}	2	8
 col_modified.{}	0	7
 col_name.{}	2	3
 col_range.{}	0	4
-collapsed.{}	17	9
-collapsed_at.{}	3	0
+collapsed.{}	8	9
+collapsed_at.{}	1	0
 completion.{}	4	0
 connect.endpoints	2	0
 content_width.{}	0	0
@@ -85,7 +85,7 @@ expanded.arr	0	0
 expanded.cat	0	0
 expanded.struct	0	0
 expanded.{}	0	3
-expanded_at.{}	25	1
+expanded_at.{}	12	1
 extent.{}	4	0
 feed.head	0	0
 feed.row	0	1
@@ -96,7 +96,7 @@ flow.trace	0	2
 flow.watch	0	1
 frame.{}	0	23
 group.{}	8	4
-group_at.{}	14	0
+group_at.{}	11	0
 has_pane.{}	3	2
 header.{}	0	1
 hello_modal_handoff.hover	0	5
@@ -107,7 +107,7 @@ histogram.axis	0	1
 histogram.bar	0	1
 histogram.inspect	0	5
 hit.{}	0	2
-id_at.{}	38	3
+id_at.{}	22	3
 is_dir.{}	5	0
 item.bake	0	0
 item.dark	0	0
@@ -118,7 +118,7 @@ item_count.{}	4	0
 item_kind.{}	16	0
 kind.elem	0	0
 kind.{}	0	9
-kind_at.{}	11	2
+kind_at.{}	6	2
 kp.column	0	0
 kp.detail	0	0
 kp.filter	0	0
@@ -144,9 +144,9 @@ lab.scenario	0	11
 lab.toast	0	0
 lab.toolbar	0	0
 lab.wire	0	1
-label_at.{}	29	6
+label_at.{}	10	6
 layers.{}	1	0
-level_at.{}	19	2
+level_at.{}	13	2
 line.area	0	0
 line.focus	0	2
 line.series	1	4
@@ -162,7 +162,7 @@ lv.severity	0	0
 match.spark	0	2
 match.{}	2	0
 measured_height.{}	3	1
-member_count_at.{}	4	0
+member_count_at.{}	3	0
 mixed.{}	0	19
 model_height.{}	1	1
 modified.elem	0	0
@@ -226,7 +226,7 @@ shell.status	1	4
 shell.subbar	0	0
 shell.toast	0	3
 sizes.legend	0	1
-source_at.{}	22	22
+source_at.{}	20	22
 source_len.{}	1	0
 source_name.{}	2	0
 state.{}	1	0
@@ -269,7 +269,7 @@ tv.toggle	0	0
 unmapped_bytes.{}	1	0
 value.elem	0	0
 value.{}	8	282
-visible_at.{}	10	2
+visible_at.{}	0	2
 visual_index.{}	0	1
 vn.sprite	2	0
 voice.{}	4	0

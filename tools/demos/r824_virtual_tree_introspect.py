@@ -46,8 +46,16 @@ BOOT_ROWS = 4 * (1 + 99) + 96  # 496
 def body() -> None:
     with RpcSubprocess("hello-virtual-tree", boot_grace=1.5) as tf:
 
-        def q(path: str):
-            return tf.query(f"/{STATE_TAG}/external/{path}")
+        def q(path: str, **args):
+            """One declared slot of this tree's state, ASKED FOR not spelled.
+
+            ★★★★★ R2230 — composed through what the MOUNTED External declares
+            (`paths_at(f"/{STATE_TAG}/external")`, the per-External cache R2227
+            built for exactly this). Measured before the conversion: all
+            twenty-three slots this walk asks for are declared, and every
+            parametric one takes `<pos>` — the screen's own argument name.
+            """
+            return tf.paths_at(f"/{STATE_TAG}/external").ask(path, **args)
 
         def snap():
             return tf.snapshot(source="paint", viewport=VIEWPORT)
@@ -88,34 +96,34 @@ def body() -> None:
         assert 0 < len(boot_painted) < 40, f"only a window paints, got {len(boot_painted)} of {BOOT_ROWS}"
         assert "s0" in boot_painted, "the cursor section is in the painted window"
         # boot root structure
-        assert_eq(q("id_at.0"), "s0", "id_at.0 == s0")
-        assert_eq(q("label_at.0"), "Section 000", "label_at.0 == Section 000")
-        assert_eq(q("level_at.0"), 1, "a section is a root row → aria-level 1")
-        assert_eq(q("expanded_at.0"), True, "s0 boots expanded")
+        assert_eq(q("id_at", pos=0), "s0", "id_at.0 == s0")
+        assert_eq(q("label_at", pos=0), "Section 000", "label_at.0 == Section 000")
+        assert_eq(q("level_at", pos=0), 1, "a section is a root row → aria-level 1")
+        assert_eq(q("expanded_at", pos=0), True, "s0 boots expanded")
 
         # ── (B) window-independence: far off-window rows are queryable ─────
         # Flat positions: s1@100, s2@200, s3@300, s4@400, s5@401, s99@495.
-        assert_eq(q("id_at.100"), "s1", "row 100 is the 2nd section (after s0 + 99 children)")
-        assert_eq(q("label_at.100"), "Section 001", "…labelled Section 001")
-        assert_eq(q("expanded_at.100"), True, "s1 boots expanded (s < 4)")
-        assert_eq(q("id_at.200"), "s2", "row 200 is s2")
-        assert_eq(q("id_at.300"), "s3", "row 300 is s3")
-        assert_eq(q("id_at.400"), "s4", "row 400 is the first collapsed section")
-        assert_eq(q("label_at.400"), "Section 004", "…labelled Section 004")
-        assert_eq(q("level_at.400"), 1, "s4 is a section → aria-level 1")
-        assert_eq(q("expanded_at.400"), False, "s4 is collapsed (s >= 4)")
-        assert_eq(q("id_at.401"), "s5", "collapsed sections are contiguous → s5 follows s4")
-        assert_eq(q("id_at.495"), "s99", "row 495 is the last section")
-        assert_eq(q("id_at.496"), None, "one past the end is Null (present-but-empty)")
+        assert_eq(q("id_at", pos=100), "s1", "row 100 is the 2nd section (after s0 + 99 children)")
+        assert_eq(q("label_at", pos=100), "Section 001", "…labelled Section 001")
+        assert_eq(q("expanded_at", pos=100), True, "s1 boots expanded (s < 4)")
+        assert_eq(q("id_at", pos=200), "s2", "row 200 is s2")
+        assert_eq(q("id_at", pos=300), "s3", "row 300 is s3")
+        assert_eq(q("id_at", pos=400), "s4", "row 400 is the first collapsed section")
+        assert_eq(q("label_at", pos=400), "Section 004", "…labelled Section 004")
+        assert_eq(q("level_at", pos=400), 1, "s4 is a section → aria-level 1")
+        assert_eq(q("expanded_at", pos=400), False, "s4 is collapsed (s >= 4)")
+        assert_eq(q("id_at", pos=401), "s5", "collapsed sections are contiguous → s5 follows s4")
+        assert_eq(q("id_at", pos=495), "s99", "row 495 is the last section")
+        assert_eq(q("id_at", pos=496), None, "one past the end is Null (present-but-empty)")
         # The decisive point: these rows are NOT painted, yet are fully queryable.
         for off in ("s1", "s2", "s4", "s99"):
             assert off not in boot_painted, f"{off} is off-window (not painted) but was queryable"
 
         # ── (C) child rows: aria-level 2 + undefined aria-expanded ────────
-        assert_eq(q("id_at.1"), "s0-i0", "s0's first child is flat row 1")
-        assert_eq(q("label_at.1"), "Item 000-0000", "…labelled Item 000-0000")
-        assert_eq(q("level_at.1"), 2, "a child is one level deeper → aria-level 2")
-        assert_eq(q("expanded_at.1"), None, "a leaf's aria-expanded is undefined (Null)")
+        assert_eq(q("id_at", pos=1), "s0-i0", "s0's first child is flat row 1")
+        assert_eq(q("label_at", pos=1), "Item 000-0000", "…labelled Item 000-0000")
+        assert_eq(q("level_at", pos=1), 2, "a child is one level deeper → aria-level 2")
+        assert_eq(q("expanded_at", pos=1), None, "a leaf's aria-expanded is undefined (Null)")
 
         # Focus the single-tab-stop tree before driving keys (R820.1 gate).
         tf.request("focus/set", {"tag": "vtree_root"})
@@ -123,12 +131,12 @@ def body() -> None:
         # ── (D) row_count + expanded_at track a key-driven collapse/expand ─
         press("ArrowLeft")  # collapse the expanded s0 (cursor sits on it)
         await_row_count(BOOT_ROWS - 99)  # 496 - 99 children = 397
-        assert_eq(q("expanded_at.0"), False, "s0 reports collapsed via the query surface")
-        assert_eq(q("id_at.1"), "s1", "with s0 collapsed, flat row 1 is the s1 sibling")
+        assert_eq(q("expanded_at", pos=0), False, "s0 reports collapsed via the query surface")
+        assert_eq(q("id_at", pos=1), "s1", "with s0 collapsed, flat row 1 is the s1 sibling")
         press("ArrowRight")  # re-expand s0
         await_row_count(BOOT_ROWS)
-        assert_eq(q("expanded_at.0"), True, "s0 reports expanded again")
-        assert_eq(q("id_at.1"), "s0-i0", "its first child is flat row 1 again")
+        assert_eq(q("expanded_at", pos=0), True, "s0 reports expanded again")
+        assert_eq(q("id_at", pos=1), "s0-i0", "its first child is flat row 1 again")
 
         # ── (E) cursor is introspectable when navigated far off-window ─────
         press("End")

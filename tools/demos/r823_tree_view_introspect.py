@@ -47,8 +47,17 @@ BOOT_IDS = ["src", "src/main.rs", "src/lib.rs", "src/widgets", "tests", "docs"]
 def body() -> None:
     with RpcSubprocess("hello-tree-view", boot_grace=1.5) as tf:
 
-        def q(path: str):
-            return tf.query(f"/{STATE_TAG}/external/{path}")
+        def q(path: str, **args):
+            """One declared slot of this tree's state, ASKED FOR not spelled.
+
+            ★★★★★ R2230 — composed through what the MOUNTED External declares
+            (`paths_at(f"/{STATE_TAG}/external")`, the per-External cache R2227
+            built for exactly this). `expanded_at.3` is `q("expanded_at", pos=3)`,
+            and `pos` is the screen's own argument name — measured before this
+            conversion, all eighteen slots this walk asks for are declared and
+            every parametric one takes `<pos>`.
+            """
+            return tf.paths_at(f"/{STATE_TAG}/external").ask(path, **args)
 
         def snap():
             return tf.snapshot(source="paint", viewport=VIEWPORT)
@@ -71,23 +80,23 @@ def body() -> None:
         assert_eq(q("cursor_index"), 0, "src is visual row 0")
         # Per-position id + label + aria-level (depth + 1).
         for pos, node_id in enumerate(BOOT_IDS):
-            assert_eq(q(f"id_at.{pos}"), node_id, f"id_at.{pos} == {node_id}")
-        assert_eq(q("label_at.0"), "src", "label_at.0 == src")
-        assert_eq(q("label_at.1"), "main.rs", "label_at.1 == main.rs")
-        assert_eq(q("label_at.3"), "widgets", "label_at.3 == widgets")
-        assert_eq(q("level_at.0"), 1, "src is a root row → aria-level 1")
-        assert_eq(q("level_at.1"), 2, "src/main.rs is one level deeper → aria-level 2")
-        assert_eq(q("level_at.3"), 2, "src/widgets is one level deeper → aria-level 2")
+            assert_eq(q("id_at", pos=pos), node_id, f"id_at at {pos} == {node_id}")
+        assert_eq(q("label_at", pos=0), "src", "label_at.0 == src")
+        assert_eq(q("label_at", pos=1), "main.rs", "label_at.1 == main.rs")
+        assert_eq(q("label_at", pos=3), "widgets", "label_at.3 == widgets")
+        assert_eq(q("level_at", pos=0), 1, "src is a root row → aria-level 1")
+        assert_eq(q("level_at", pos=1), 2, "src/main.rs is one level deeper → aria-level 2")
+        assert_eq(q("level_at", pos=3), 2, "src/widgets is one level deeper → aria-level 2")
         # aria-expanded: Bool for a branch, Null for a leaf.
-        assert_eq(q("expanded_at.0"), True, "src is an expanded branch")
-        assert_eq(q("expanded_at.1"), None, "src/main.rs is a leaf → aria-expanded undefined")
-        assert_eq(q("expanded_at.3"), False, "src/widgets is a collapsed branch")
-        assert_eq(q("expanded_at.4"), False, "tests is a collapsed branch")
+        assert_eq(q("expanded_at", pos=0), True, "src is an expanded branch")
+        assert_eq(q("expanded_at", pos=1), None, "src/main.rs is a leaf → aria-expanded undefined")
+        assert_eq(q("expanded_at", pos=3), False, "src/widgets is a collapsed branch")
+        assert_eq(q("expanded_at", pos=4), False, "tests is a collapsed branch")
 
         # ── (E) out-of-range position is present-but-empty ──────────
-        assert_eq(q("id_at.6"), None, "one past the end is Null (present-but-empty)")
-        assert_eq(q("label_at.99"), None, "far out-of-range label is Null")
-        assert_eq(q("expanded_at.6"), None, "out-of-range aria-expanded is Null")
+        assert_eq(q("id_at", pos=6), None, "one past the end is Null (present-but-empty)")
+        assert_eq(q("label_at", pos=99), None, "far out-of-range label is Null")
+        assert_eq(q("expanded_at", pos=6), None, "out-of-range aria-expanded is Null")
 
         # ── (B) the query surface agrees with the paint scene ───────
         painted = set()
@@ -126,13 +135,13 @@ def body() -> None:
         # ── (D) row_count + expanded_at track collapse / expand ─────
         press("ArrowLeft")  # collapse the expanded src
         await_row_count(3)
-        assert_eq(q("expanded_at.0"), False, "src now reports collapsed via the query surface")
-        assert_eq(q("id_at.1"), "tests", "with src collapsed, visual row 1 is the tests sibling")
-        assert_eq(q("id_at.2"), "docs", "…and visual row 2 is docs")
+        assert_eq(q("expanded_at", pos=0), False, "src now reports collapsed via the query surface")
+        assert_eq(q("id_at", pos=1), "tests", "with src collapsed, visual row 1 is the tests sibling")
+        assert_eq(q("id_at", pos=2), "docs", "…and visual row 2 is docs")
         press("ArrowRight")  # re-expand src
         await_row_count(6)
-        assert_eq(q("expanded_at.0"), True, "src reports expanded again")
-        assert_eq(q("id_at.1"), "src/main.rs", "its first child is visible row 1 again")
+        assert_eq(q("expanded_at", pos=0), True, "src reports expanded again")
+        assert_eq(q("id_at", pos=1), "src/main.rs", "its first child is visible row 1 again")
 
         # ── (E) a cursor on a collapsed-away id has no visible index ─
         # Move to src/widgets (a collapsed branch), then collapse its

@@ -89,8 +89,21 @@ def selected(d):
     return d.query("/external/selected")
 
 
-def g(d, path):
-    return d.query(f"/{GROUP_TAG}/external/{path}")
+def g(d, path, **args):
+    """One declared slot of the grouping model, ASKED FOR rather than spelled.
+
+    ★★★★★ R2230 — composed through what the MOUNTED External declares
+    (`paths_at(f"/{GROUP_TAG}/external")`, the per-External cache R2227 built
+    for exactly this). Measured before the conversion: all eighteen slots this
+    walk asks for are declared.
+
+    ⚠⚠ **And the argument name is NOT uniform here** — six of the seven
+    parametric ones take `<pos>` (a row position) and `collapsed` takes `<g>`
+    (a GROUP id). They mean different things and the walk's own sentences say
+    so (*per-group flag* beside *the header reports collapsed*), which is why
+    R2229's rule is to ask each screen rather than carry the neighbour's word.
+    """
+    return d.paths_at(f"/{GROUP_TAG}/external").ask(path, **args)
 
 
 def body() -> None:
@@ -110,20 +123,20 @@ def body() -> None:
 
         # Per-position axes read as data (pos 0 = Mesh header, pos 1 = its
         # first data row source 0).
-        assert_eq(g(tf, "kind_at.0"), "header", "pos 0 is a header")
-        assert_eq(g(tf, "group_at.0"), 0, "pos 0 is group 0")
-        assert_eq(g(tf, "label_at.0"), "Mesh", "group 0 label is Mesh")
-        assert_eq(g(tf, "member_count_at.0"), MEMBERS[0], "Mesh member count")
-        assert_eq(g(tf, "collapsed_at.0"), False, "group 0 boots expanded")
-        assert_eq(g(tf, "source_at.0"), None, "a header has no source")
-        assert_eq(g(tf, "kind_at.1"), "data", "pos 1 is a data row")
-        assert_eq(g(tf, "source_at.1"), 0, "pos 1 is Mesh's first member (source 0)")
-        assert_eq(g(tf, "group_at.1"), None, "a data row reports no group id")
-        assert_eq(g(tf, "label_at.1"), None, "a data row reports no group label")
-        assert_eq(g(tf, "collapsed.0"), False, "per-group flag: group 0 expanded")
-        assert_eq(g(tf, "collapsed.99"), None, "out-of-range group → Null")
+        assert_eq(g(tf, "kind_at", pos=0), "header", "pos 0 is a header")
+        assert_eq(g(tf, "group_at", pos=0), 0, "pos 0 is group 0")
+        assert_eq(g(tf, "label_at", pos=0), "Mesh", "group 0 label is Mesh")
+        assert_eq(g(tf, "member_count_at", pos=0), MEMBERS[0], "Mesh member count")
+        assert_eq(g(tf, "collapsed_at", pos=0), False, "group 0 boots expanded")
+        assert_eq(g(tf, "source_at", pos=0), None, "a header has no source")
+        assert_eq(g(tf, "kind_at", pos=1), "data", "pos 1 is a data row")
+        assert_eq(g(tf, "source_at", pos=1), 0, "pos 1 is Mesh's first member (source 0)")
+        assert_eq(g(tf, "group_at", pos=1), None, "a data row reports no group id")
+        assert_eq(g(tf, "label_at", pos=1), None, "a data row reports no group label")
+        assert_eq(g(tf, "collapsed", g=0), False, "per-group flag: group 0 expanded")
+        assert_eq(g(tf, "collapsed", g=99), None, "out-of-range group → Null")
         # Out-of-range position is present-but-empty; undeclared path absent.
-        assert_eq(g(tf, "kind_at.999999"), None, "out-of-range position → Null")
+        assert_eq(g(tf, "kind_at", pos=999999), None, "out-of-range position → Null")
 
         boot_rows = present_sources(snap)
         assert len(boot_rows) < 30, f"virtualized: small window, got {len(boot_rows)} of {N}"
@@ -141,11 +154,11 @@ def body() -> None:
         shrunk = VISIBLE_BOOT - MEMBERS[0]  # 8339
         assert_eq(tf.invoke(f"/{GROUP_TAG}/external/toggle_group", 0), shrunk, "collapse Mesh → 8339")
         assert_eq(g(tf, "visible_len"), shrunk, "visible_len reflects the collapse")
-        assert_eq(g(tf, "collapsed.0"), True, "group 0 is collapsed")
-        assert_eq(g(tf, "collapsed_at.0"), True, "the header reports collapsed")
+        assert_eq(g(tf, "collapsed", g=0), True, "group 0 is collapsed")
+        assert_eq(g(tf, "collapsed_at", pos=0), True, "the header reports collapsed")
         # The Texture header now follows the Mesh header directly (pos 1).
-        assert_eq(g(tf, "kind_at.1"), "header", "collapsed: pos 1 is now a header")
-        assert_eq(g(tf, "group_at.1"), 1, "pos 1 is group 1 (Texture) after collapse")
+        assert_eq(g(tf, "kind_at", pos=1), "header", "collapsed: pos 1 is now a header")
+        assert_eq(g(tf, "group_at", pos=1), 1, "pos 1 is group 1 (Texture) after collapse")
         snap = wait_snap(
             tf, lambda s: 6 not in present_sources(s), viewport=WIN,
             desc="collapsed Mesh hides source 6's row",
@@ -169,18 +182,24 @@ def body() -> None:
         snap = tf.snapshot(source="paint", viewport=WIN)
         assert_eq(present_headers(snap), [0, 1, 2, 3, 4, 5], "all six headers visible")
         assert not present_sources(snap), "collapse_all: no data rows rendered"
-        assert_eq(g(tf, "kind_at.3"), "header", "every visible row is a header")
-        assert_eq(g(tf, "collapsed.3"), True, "group 3 collapsed by collapse_all")
+        assert_eq(g(tf, "kind_at", pos=3), "header", "every visible row is a header")
+        assert_eq(g(tf, "collapsed", g=3), True, "group 3 collapsed by collapse_all")
         assert_eq(tf.invoke(f"/{GROUP_TAG}/external/expand_all", None), VISIBLE_BOOT, "expand_all → 10006")
         assert_eq(g(tf, "visible_len"), VISIBLE_BOOT, "full view restored")
 
         # ── (F) intervene: admin collapse is reversible by member count ─
         prefab = NGROUPS - 1  # group 5
-        tf.intervene(f"/{GROUP_TAG}/external/collapsed.{prefab}", True)
-        assert_eq(g(tf, f"collapsed.{prefab}"), True, "admin collapsed Prefab")
+        # ★ R2230 — the WRITE composes from the same declaration the read does,
+        # so this leg is one path asked two ways. `<g>` is a GROUP id here, not
+        # a row position — the distinction the screen declares and this walk's
+        # own sentences make.
+        groups = tf.paths_at(f"/{GROUP_TAG}/external")
+        prefab_flag = f"{groups.external}/{groups.at('collapsed', g=prefab)}"
+        tf.intervene(prefab_flag, True)
+        assert_eq(g(tf, "collapsed", g=prefab), True, "admin collapsed Prefab")
         assert_eq(g(tf, "visible_len"), VISIBLE_BOOT - MEMBERS[prefab], "Prefab hidden (1666)")
-        tf.intervene(f"/{GROUP_TAG}/external/collapsed.{prefab}", False)
-        assert_eq(g(tf, f"collapsed.{prefab}"), False, "admin expanded Prefab")
+        tf.intervene(prefab_flag, False)
+        assert_eq(g(tf, "collapsed", g=prefab), False, "admin expanded Prefab")
         assert_eq(g(tf, "visible_len"), VISIBLE_BOOT, "view restored")
 
         # ── (G) clicked header collapses like the RPC path ──────────────
@@ -189,7 +208,7 @@ def body() -> None:
         # GroupOrderExternal and collapses the group exactly like toggle_group.
         tf.click(path=f"{GROUP_TAG}#0")
         wait_until(
-            lambda: g(tf, "collapsed.0") is True,
+            lambda: g(tf, "collapsed", g=0) is True,
             desc="clicked Mesh header collapsed it",
         )
         assert_eq(g(tf, "visible_len"), VISIBLE_BOOT - MEMBERS[0], "clicked collapse shrank the view")
