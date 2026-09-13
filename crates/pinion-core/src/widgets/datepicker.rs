@@ -505,6 +505,16 @@ impl External for DatePickerExternal {
     }
 }
 
+/// ★★★★★ R2194 — the per-day state path, declared ONCE: [`DatePickerExternal`]'s
+/// schema publishes this field, and a reader composes from it
+/// ([`SchemaField::at`]) instead of spelling `state.<day>` again. `day` is a
+/// calendar day, `1..=days` — see the note beside it in the schema.
+pub const STATE: SchemaField = SchemaField::parametric(
+    "state.<day>",
+    "string",
+    const { &[SchemaArg::open("day", "int")] },
+);
+
 impl ExternalIntrospect for DatePickerExternal {
     fn schema(&self) -> IntrospectSchema {
         // The per-day paths advertise their `<day>` placeholder the same
@@ -532,11 +542,7 @@ impl ExternalIntrospect for DatePickerExternal {
                     // says nothing rather than something wrong. A second
                     // one-based family is what should force that variant, not
                     // this one alone.
-                    SchemaField::parametric(
-                        "state.<day>",
-                        "string",
-                        const { &[SchemaArg::open("day", "int")] },
-                    ),
+                    STATE,
                     SchemaField::parametric(
                         "selected.<day>",
                         "bool",

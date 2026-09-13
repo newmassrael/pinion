@@ -172,7 +172,7 @@ nodegroups.node	2	0
 nodegroups.pinlabel	1	0
 nodegroups.wire	0	0
 object_name.{}	6	3
-order.{}	2	2
+order.{}	2	0
 origin.l3	0	0
 origin.{}	2	0
 owner.{}	4	0
@@ -208,7 +208,7 @@ section_highlight.{}	3	0
 section_position.{}	4	0
 section_selection.{}	10	1
 section_size.{}	11	1
-selected.{}	55	9
+selected.{}	55	8
 selection.{}	1	0
 share.legend	0	5
 share.slice	0	6
@@ -225,7 +225,7 @@ sizes.legend	0	1
 source_at.{}	55	22
 source_len.{}	1	0
 source_name.{}	2	0
-state.{}	2	9
+state.{}	2	1
 struct_modified.struct	0	3
 struct_summary.struct	0	1
 sv.chip	0	0

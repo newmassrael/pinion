@@ -89,7 +89,7 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::ButtonExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::completion::{CompletionCase, CompletionFilter, completion_matches};
-use pinion_core::widgets::listbox::ListBoxExternal;
+use pinion_core::widgets::listbox::{self, ListBoxExternal};
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
@@ -279,7 +279,7 @@ fn read_combo_state(scene: &Scene) -> ComboViewState {
         _ => None,
     };
     for (i, slot) in out.options.iter_mut().enumerate() {
-        *slot = match intro.query(&format!("state.{i}")) {
+        *slot = match intro.query(&listbox::STATE.at(&[&i])) {
             Ok(IntrospectValue::Text(name)) => ListboxItemState::from_name_or_default(&name),
             _ => ListboxItemState::Idle,
         };

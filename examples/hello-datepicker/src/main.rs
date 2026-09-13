@@ -68,7 +68,7 @@ use pinion_core::scene::ContainerNode;
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle};
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::datepicker::{
-    CivilDate, DatePickerExternal, days_in_month, weekday_of_first,
+    self, CivilDate, DatePickerExternal, days_in_month, weekday_of_first,
 };
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
@@ -307,7 +307,7 @@ impl WidgetCore for DatePickerView {
         out.focused_day = read_focused_day(intro);
         let days = days_in_month(out.year, out.month);
         for d in 1..=days {
-            let st = match intro.query(&format!("state.{d}")) {
+            let st = match intro.query(&datepicker::STATE.at(&[&d])) {
                 Ok(IntrospectValue::Text(name)) => RadioState::from_name_or_default(&name),
                 _ => RadioState::Idle,
             };

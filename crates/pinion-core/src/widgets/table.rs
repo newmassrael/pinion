@@ -1487,6 +1487,30 @@ impl External for TableExternal {
     }
 }
 
+/// ★★★★★ R2194 — the per-row state path, declared ONCE: [`TableExternal`]'s
+/// schema publishes this field, and a reader composes from it
+/// ([`SchemaField::at`]) instead of spelling `state.<row>` again.
+pub const STATE: SchemaField = SchemaField::parametric(
+    "state.<row>",
+    "string",
+    const { &[SchemaArg::index("row", "rows")] },
+);
+
+/// ★★★★★ R2194 — the per-row selected path, declared once; see [`STATE`].
+pub const SELECTED: SchemaField = SchemaField::parametric(
+    "selected.<row>",
+    "bool",
+    const { &[SchemaArg::index("row", "rows")] },
+);
+
+/// ★★★★★ R2194 — the data row painted at a visual position, declared once;
+/// see [`STATE`].
+pub const ORDER: SchemaField = SchemaField::parametric(
+    "order.<visual>",
+    "int",
+    const { &[SchemaArg::index("visual", "rows")] },
+);
+
 impl ExternalIntrospect for TableExternal {
     fn schema(&self) -> IntrospectSchema {
         // The per-cell / per-row paths advertise their `<row>` / `<col>`
@@ -1527,16 +1551,8 @@ impl ExternalIntrospect for TableExternal {
                             ]
                         },
                     ),
-                    SchemaField::parametric(
-                        "state.<row>",
-                        "string",
-                        const { &[SchemaArg::index("row", "rows")] },
-                    ),
-                    SchemaField::parametric(
-                        "selected.<row>",
-                        "bool",
-                        const { &[SchemaArg::index("row", "rows")] },
-                    ),
+                    STATE,
+                    SELECTED,
                     SchemaField::send("string"),
                     // R730 §5.40 — sort surface. `sort_col` is the sort key column
                     // (`-1` when unsorted); `sort_dir` is "none"/"ascending"/
@@ -1545,11 +1561,7 @@ impl ExternalIntrospect for TableExternal {
                     // column's sort the way a header click does.
                     SchemaField::new("sort_col", "int"),
                     SchemaField::new("sort_dir", "string"),
-                    SchemaField::parametric(
-                        "order.<visual>",
-                        "int",
-                        const { &[SchemaArg::index("visual", "rows")] },
-                    ),
+                    ORDER,
                     SchemaField::action("sort", "int"),
                     // R952 §5.38 — cell range selection (the spreadsheet / the
                     // toolkit `SelectItems` model, distinct from the `selected.<row>` row selection).

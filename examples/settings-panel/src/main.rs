@@ -51,7 +51,7 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::CaretBlink;
 use pinion_core::widgets::checkbox::{CheckboxExternal, CheckboxState};
 use pinion_core::widgets::radio::RadioState;
-use pinion_core::widgets::radio_group::RadioGroupExternal;
+use pinion_core::widgets::radio_group::{self, RadioGroupExternal};
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::slider::{SliderExternal, SliderState};
@@ -575,7 +575,7 @@ fn read_nav_radio_states(scene: &Scene) -> NavRadioStates {
         }
     }
     for (i, slot) in out.states.iter_mut().enumerate() {
-        let key = format!("state.{i}");
+        let key = radio_group::STATE.at(&[&i]);
         if let Ok(IntrospectValue::Text(s)) = intro.query(&key) {
             *slot = RadioState::from_name_or_default(&s);
         }

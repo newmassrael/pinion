@@ -75,7 +75,7 @@ use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::grid_sort::col_sort_dir;
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::table::{
-    TableExternal, read_cols, read_focused_col, read_focused_row, read_rows,
+    self, TableExternal, read_cols, read_focused_col, read_focused_row, read_rows,
 };
 use pinion_core::widgets::virtual_list::VisibleWindow;
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
@@ -307,7 +307,7 @@ fn active_cell(state: &TableState) -> (usize, usize) {
 /// when unsorted.
 fn read_order(intro: &dyn pinion_core::external::ExternalIntrospect, rows: usize) -> Vec<usize> {
     (0..rows)
-        .map(|v| match intro.query(&format!("order.{v}")) {
+        .map(|v| match intro.query(&table::ORDER.at(&[&v])) {
             Ok(IntrospectValue::Int(d)) if d >= 0 => usize::try_from(d).unwrap_or(v),
             _ => v,
         })
@@ -520,7 +520,7 @@ impl WidgetCore for TableView {
         out.focused_col = read_focused_col(intro);
         let rows = read_rows(intro);
         for r in 0..rows {
-            let st = match intro.query(&format!("state.{r}")) {
+            let st = match intro.query(&table::STATE.at(&[&r])) {
                 Ok(IntrospectValue::Text(name)) => RadioState::from_name_or_default(&name),
                 _ => RadioState::Idle,
             };
@@ -539,7 +539,7 @@ impl WidgetCore for TableView {
                 matches!(intro.query("sort_dir"), Ok(IntrospectValue::Text(d)) if d == "ascending");
             out.sort = Some((col, ascending));
         }
-        out.order = core::array::from_fn(|v| match intro.query(&format!("order.{v}")) {
+        out.order = core::array::from_fn(|v| match intro.query(&table::ORDER.at(&[&v])) {
             Ok(IntrospectValue::Int(d)) if d >= 0 => usize::try_from(d).unwrap_or(v),
             _ => v,
         });

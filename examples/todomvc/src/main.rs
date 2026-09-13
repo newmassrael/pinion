@@ -58,7 +58,7 @@ use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_a11y::{AccessAction, AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::radio::RadioState;
-use pinion_core::widgets::radio_group::RadioGroupExternal;
+use pinion_core::widgets::radio_group::{self, RadioGroupExternal};
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
@@ -622,7 +622,7 @@ fn read_filter_radio_states(scene: &Scene) -> FilterRadioStates {
     };
     let mut states = [RadioState::Idle; 3];
     for (i, slot) in states.iter_mut().enumerate() {
-        if let Ok(IntrospectValue::Text(name)) = intro.query(&format!("state.{i}")) {
+        if let Ok(IntrospectValue::Text(name)) = intro.query(&radio_group::STATE.at(&[&i])) {
             *slot = RadioState::from_name_or_default(&name);
         }
     }

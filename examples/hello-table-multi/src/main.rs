@@ -65,7 +65,7 @@ use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, La
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::table::{
-    TableExternal, read_cols, read_focused_col, read_focused_row, read_rows,
+    self, TableExternal, read_cols, read_focused_col, read_focused_row, read_rows,
 };
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{WidgetView, vello_renderer_impl};
@@ -325,11 +325,11 @@ impl WidgetCore for TableMultiView {
         for r in 0..rows {
             if let Some(slot) = out.row_selected.get_mut(r) {
                 *slot = matches!(
-                    intro.query(&format!("selected.{r}")),
+                    intro.query(&table::SELECTED.at(&[&r])),
                     Ok(IntrospectValue::Bool(true))
                 );
             }
-            let st = match intro.query(&format!("state.{r}")) {
+            let st = match intro.query(&table::STATE.at(&[&r])) {
                 Ok(IntrospectValue::Text(name)) => RadioState::from_name_or_default(&name),
                 _ => RadioState::Idle,
             };

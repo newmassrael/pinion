@@ -82,7 +82,7 @@ use pinion_core::style::{
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::widgets::listbox::ListBoxExternal;
+use pinion_core::widgets::listbox::{self, ListBoxExternal};
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{WidgetView, vello_renderer_impl};
@@ -220,7 +220,7 @@ fn read_combo_state(scene: &Scene) -> ComboViewState {
         _ => None,
     };
     for (i, slot) in out.options.iter_mut().enumerate() {
-        *slot = match intro.query(&format!("state.{i}")) {
+        *slot = match intro.query(&listbox::STATE.at(&[&i])) {
             Ok(IntrospectValue::Text(name)) => ListboxItemState::from_name_or_default(&name),
             _ => ListboxItemState::Idle,
         };

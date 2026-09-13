@@ -481,6 +481,15 @@ impl External for RadioGroupExternal {
     }
 }
 
+/// ★★★★★ R2194 — the per-radio state path, declared ONCE: [`RadioGroupExternal`]'s
+/// schema publishes this field, and a reader composes from it
+/// ([`SchemaField::at`]) instead of spelling `state.<index>` again.
+pub const STATE: SchemaField = SchemaField::parametric(
+    "state.<index>",
+    "string",
+    const { &[SchemaArg::index("index", "count")] },
+);
+
 impl ExternalIntrospect for RadioGroupExternal {
     fn schema(&self) -> IntrospectSchema {
         // The per-radio paths advertise their `<index>` placeholder
@@ -498,11 +507,7 @@ impl ExternalIntrospect for RadioGroupExternal {
                     SchemaField::new("count", "int"),
                     SchemaField::new("selected_index", "int"),
                     SchemaField::new("focused_index", "int"),
-                    SchemaField::parametric(
-                        "state.<index>",
-                        "string",
-                        const { &[SchemaArg::index("index", "count")] },
-                    ),
+                    STATE,
                     SchemaField::parametric(
                         "selected.<index>",
                         "bool",
