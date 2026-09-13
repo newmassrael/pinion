@@ -31,7 +31,7 @@ card.latency	4	15
 card.packet	16	11
 card.throughput	0	2
 card.{}	20	37
-cell.{}	7	0
+cell.{}	6	0
 cell_at.{}	4	3
 chart.area	6	3
 chart.axis	2	3

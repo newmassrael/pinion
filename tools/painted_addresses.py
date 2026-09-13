@@ -1961,6 +1961,56 @@ def grammar_prefixes() -> tuple[str, ...]:
 SCHEMA_DECLARATION = re.compile(r'SchemaField::(?:new|parametric|action)\(\s*"([^"]+)"')
 
 
+def declarations_outside_tests(text: str) -> list[str]:
+    """The paths Rust `text` declares with `SchemaField::…` OUTSIDE every
+    `#[cfg(test)]` item — PURE, so the discrimination is a fixture."""
+    spans = test_spans(text)
+    found: list[str] = []
+    for match in SCHEMA_DECLARATION.finditer(text):
+        line = text.count("\n", 0, match.start()) + 1
+        if not any(first <= line <= last for first, last in spans):
+            found.append(match.group(1))
+    return found
+
+
+@functools.lru_cache(maxsize=1)
+def shipped_declarations() -> tuple[str, ...]:
+    """Every introspection path a `SchemaField` declares in code that SHIPS —
+    **the one reader of the declarations** [`schema_heads`] and
+    [`declared_path_templates`] both ask.
+
+    ★★★★★ R2191 — both read test code as if a screen had declared it, each in
+    its own copy of this corpus loop. Measured: 184 parametric declaration
+    sites, 26 of them inside a `#[cfg(test)]` item or a [`test_only_modules`]
+    file, and three templates declared ONLY there — `a.<x><y>` (a unit test's
+    undelimitable path), `cell.<row>` and `hit.<x>` — which also gave the head
+    `a`. What that charged: exactly one walk site,
+    `r1525_paints_its_model.py:203`, which queries `cell.0` to assert the screen
+    answers `UnknownIntrospectPath` — a deliberate probe of a path the screen
+    does NOT declare (it ships `cell.<row>.<col>`), billed as a retyping because
+    a `pinion-core` unit test declares `cell.<row>`. Found when the two-segment
+    rule measured next made a fixture charge `a.{}` through `a.<x><y>`.
+
+    A dry run with every cache cleared: templates 135 -> 132, heads 87 -> 86,
+    queue (1268, 32) -> (1267, 32), `cell.{}` walk 7 -> 6; roles, retyped, the
+    handed-prefix remainder, BLOCKED, the unpinned families, the deleted check,
+    every pin source and every vocabulary unchanged.
+    """
+    only_test = test_only_modules()
+    found: list[str] = []
+    for root in RUST_ROOTS:
+        for path in sorted((ROOT / root).rglob("*.rs")):
+            if path in only_test:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if "SchemaField::" in text:
+                found.extend(declarations_outside_tests(text))
+    return tuple(found)
+
+
 @functools.lru_cache(maxsize=1)
 def schema_heads() -> frozenset[str]:
     """The fixed head of every PARAMETRIC declared introspection path.
@@ -1979,23 +2029,15 @@ def schema_heads() -> frozenset[str]:
     `intervene`, and not one of them painted.
     """
     heads: set[str] = set()
-    for root in RUST_ROOTS:
-        for path in sorted((ROOT / root).rglob("*.rs")):
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            if "SchemaField::" not in text:
-                continue
-            for declared in SCHEMA_DECLARATION.findall(text):
-                segments = declared.split(".")
-                fixed: list[str] = []
-                for segment in segments:
-                    if segment.startswith("<"):
-                        break
-                    fixed.append(segment)
-                if fixed and len(fixed) < len(segments):
-                    heads.add(fixed[0])
+    for declared in shipped_declarations():
+        segments = declared.split(".")
+        fixed: list[str] = []
+        for segment in segments:
+            if segment.startswith("<"):
+                break
+            fixed.append(segment)
+        if fixed and len(fixed) < len(segments):
+            heads.add(fixed[0])
     return frozenset(heads)
 
 
@@ -2220,22 +2262,10 @@ def declared_path_templates() -> tuple[tuple[str, str], ...]:
     `("node.<id>.op", "node.{}.op")` — read with [`SCHEMA_DECLARATION`].
 
     Over the wide Rust corpus, as [`schema_heads`] reads it: a screen's
-    declaration is where the vocabulary lives, whichever crate holds it.
+    declaration is where the vocabulary lives, whichever crate holds it — and,
+    since R2191, only the code that ships ([`shipped_declarations`]).
     """
-    found: set[str] = set()
-    for root in RUST_ROOTS:
-        for path in sorted((ROOT / root).rglob("*.rs")):
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            if "SchemaField::" not in text:
-                continue
-            found.update(
-                declared
-                for declared in SCHEMA_DECLARATION.findall(text)
-                if _DECLARED_ARG.search(declared)
-            )
+    found = {d for d in shipped_declarations() if _DECLARED_ARG.search(d)}
     return tuple(sorted((d, _DECLARED_ARG.sub("{}", d)) for d in found))
 
 
@@ -3575,6 +3605,29 @@ def selftest() -> int:
             "is vacuous",
             file=sys.stderr,
         )
+    # ★★★★★ R2191 — a declaration inside a test is a fixture, not a screen's
+    # vocabulary; one in shipped code is read wherever it sits beside tests.
+    declaration_cases: list[tuple[str, str, list[str]]] = [
+        ("a declaration in shipped code is read",
+         'const F: &[SchemaField] = &[SchemaField::parametric("row.<i>", "text", A)];\n',
+         ["row.<i>"]),
+        ("★★ one inside a #[cfg(test)] item is a unit test's fixture",
+         'fn view() {}\n#[cfg(test)]\nmod tests {\n'
+         '    const F: SchemaField = SchemaField::parametric("a.<x><y>", "text", A);\n}\n',
+         []),
+        ("★ and shipped code AFTER a test module is still read",
+         '#[cfg(test)]\nmod tests {\n    fn t() {}\n}\n'
+         'const G: SchemaField = SchemaField::new("count", "int");\n',
+         ["count"]),
+    ]
+    for label, fixture, want in declaration_cases:
+        got = declarations_outside_tests(fixture)
+        if got != want:
+            failed += 1
+            print(
+                f"FAIL: {label}: declarations_outside_tests -> {got!r}, wanted {want!r}",
+                file=sys.stderr,
+            )
 
     # ★★★★★ R2167 — the vocabulary derivation, and the invariant that keeps it
     # from HIDING the ambiguity it would otherwise resolve by preference.
