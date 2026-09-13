@@ -238,6 +238,38 @@ FAILURE_MARKERS_BY_HARNESS = {
         "a read path answers two shapes",
         "a walk decodes a read the wire answers as JSON",
     ),
+    # ★★★★★ R2220 — this tree's PYTHON CASE SUITES, the `tools/test_*.py` files
+    # `pre-push` runs, and until now not one of them was readable here.
+    #
+    # Measured while gating five counterfactuals on a new one: all five really
+    # caught — the gate red, the failing case named — and all five reported
+    # UNREADABLE. Looking at why turned up the general fact: FIVE such suites
+    # and FIVE spellings, none of them in this table.
+    #
+    #   test_rpc_verify.py      `  - {label}` under `[harness] N case(s): ...`
+    #   test_binding_focus.py   `[test] FAIL: {label}`
+    #   test_counterfactual.py  `  FAIL {label}`
+    #   test_pin_sync.py        `  FAIL: {label}`
+    #   test_display_seat.py    this sentence
+    #
+    # ⚠ The marker is the SENTENCE, following R2116's rule one line further:
+    # every one of those prefixes differs, and a marker built from a prefix
+    # would have to be five markers and would still overlap `[demo] FAIL:`,
+    # which belongs to the walk harness. A sentence is adoptable — the other
+    # four join this entry by printing it, with no edit here.
+    #
+    # ⚠ The four that have not adopted it are still unreadable: registered as
+    # [[debt-four-python-suites-cannot-be-read-by-the-counterfactual-driver]],
+    # not fixed here, because each one's adoption needs its own demonstration
+    # that a mutation under it now reports CAUGHT.
+    #
+    # ⚠⚠ LOWER CASE, and the selftest is what found that out. The first draft
+    # said `a case FAILED:` and the disjointness assertion refused it: cargo's
+    # own vocabulary carries the bare word `" FAILED"`, so the new harness's
+    # line was read by TWO entries and deleting cargo's would have left the
+    # gate green. The table is only worth having while each entry is the sole
+    # reader of its own sentence.
+    "python case suite": ("a case failed:",),
 }
 
 #: Flattened, for the reader that only needs "does this line name a failure".
@@ -595,6 +627,9 @@ def selftest() -> int:
         ),
         "read-path-shapes ratchet": (
             "read-path-shapes: a read path answers two shapes"
+        ),
+        "python case suite": (
+            "[display] a case failed: the guard let a seat through"
         ),
     }
     held(

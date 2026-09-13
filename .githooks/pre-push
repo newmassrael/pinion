@@ -150,6 +150,21 @@ if ! python3 "$repo_root/tools/test_rpc_verify.py" >&2; then
     exit 1
 fi
 
+# ★★★★★ R2220 — the rule that says which displays a test may paint on, tested
+# before anything trusts it. The owner asked on 2026-09-11 whether any test
+# shows up on their own screen; the policy existed in prose (a sweep header, a
+# comment in `worktree.sh`, fifteen demo docstrings) and in no check at all.
+# `tools/display_seat.py` is now the one derivation, and this is its gate: a
+# pure rule plus a parse of three servers' captured output, both of which go
+# wrong silently — a criterion that stops discriminating REFUSES NOTHING and
+# reports success. Sub-second: no cargo, and the probe case asserts nothing on
+# a machine with no display.
+step "display seat rule tests"
+if ! python3 "$repo_root/tools/test_display_seat.py" >&2; then
+    echo "pre-push: the display seat rule failed its own tests" >&2
+    exit 1
+fi
+
 # R1588 — the population both focus sweeps census, checked against the tree it
 # is derived from. The sweeps themselves are CI's job (they boot 92 windowed
 # shells); what runs here is the derivation, because a population that has

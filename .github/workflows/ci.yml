@@ -216,11 +216,18 @@ jobs:
           # line and skips its real-pointer sections, which is how the shape
           # R1726 shipped — a green belonging to a gesture nobody performs —
           # comes back. Arming it here is what keeps it out.
+          # R2220 — x11-xserver-utils (xrandr): the seat rule reads TWO signs,
+          # the DPMS extension (x11-utils, already here) and a connected output
+          # with a physical size, which only xrandr reports. Without it the rule
+          # still judges and says which evidence was missing — but it would
+          # judge on different evidence here than on a developer's machine, and
+          # a gate that is green for a different reason in each place is the
+          # shape [[zero-flake-policy]] exists to forbid.
           sudo apt-get install -y \
             pkg-config libfontconfig1-dev libxkbcommon-dev \
             libxkbcommon-x11-0 libwayland-dev \
             xvfb mesa-vulkan-drivers vulkan-tools libvulkan1 \
-            ffmpeg x11-utils gcc libxtst-dev libx11-dev python3 xdotool \
+            ffmpeg x11-utils x11-xserver-utils gcc libxtst-dev libx11-dev python3 xdotool \
             libasound2-dev libasound2-plugins alsa-utils \
             libxml2-dev libclang-dev \
             pulseaudio pulseaudio-utils
@@ -326,6 +333,13 @@ jobs:
         # deterministic sweep failures into thirty-seven that differed between
         # runs. Sub-second: no cargo, no display.
         run: python3 tools/test_rpc_verify.py
+      - name: Display seat rule tests
+        # R2220 — the rule the harness above now consults before it launches
+        # anything: a test may paint on a display only when the X server shows
+        # no sign of a panel. Runs here as well as at the push gate because the
+        # parse it rests on reads three programs' output, and a parse that has
+        # stopped matching refuses nothing while reporting success.
+        run: python3 tools/test_display_seat.py
       - name: Run full demo sweep under Xvfb
         run: |
           Xvfb :99 -screen 0 1600x1200x24 >/tmp/xvfb.log 2>&1 &

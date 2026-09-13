@@ -18,7 +18,7 @@
 #
 # Two render modes (PINION_SWEEP_MODE):
 #
-#   realgpu (default, R808) — real GPU via Vulkan on the host X display
+#   realgpu (default, R808) — real GPU via Vulkan on an X display
 #     (PINION_SWEEP_DISPLAY, default :0). Forced because vello 0.9 + wgpu 29
 #     broke the Xvfb + software-GL path: vello's RenderContext builds its
 #     instance with display:None (upstream TODO), so wgpu 29's GL backend
@@ -26,6 +26,12 @@
 #     The host cursor returns (the R720 Xvfb move had removed it), but the
 #     R719 `scene/pointer_leave` boot baseline absorbs the boot-hover, so
 #     the sweep stays green (144/144 verified R808).
+#     ★★★★★ R2220 — "host X display" USED to mean the developer's own screen,
+#     and this header said so while nothing stopped it. It may now be any X
+#     display that is not a SEAT: `tools/display_seat.py` asks the server about
+#     its own outputs and refuses one with a panel behind it. A real GPU does
+#     not require a monitor — measured R2220, this whole sweep's walks run on a
+#     throwaway `Xvfb :99` with Vulkan on the real adapter.
 #
 #   xvfb (R720, legacy) — deterministic throw-away Xvfb display +
 #     software-GL (`WGPU_BACKEND=gl LIBGL_ALWAYS_SOFTWARE=1`); the parked
@@ -345,6 +351,24 @@ case "$PINION_SWEEP_MODE" in
       echo "        server is required while VELLO-002 blocks Xvfb + GL on" >&2
       echo "        vello 0.9. Set PINION_SWEEP_DISPLAY, or PINION_SWEEP_MODE" >&2
       echo "        =xvfb once vello threads the window display handle." >&2
+      exit 2
+    fi
+    # ★★★★★ R2220 — and it must not be a display somebody is SITTING at.
+    #
+    # This mode exists because VELLO-002 forced the sweep off Xvfb onto a real
+    # GPU, and the header above records the price in prose: "that reintroduces
+    # the host cursor the R720 Xvfb move removed". A price recorded in prose is
+    # a price nobody is stopped from paying — the default here was `:0`, i.e.
+    # whatever X server the developer is looking at. `tools/display_seat.py`
+    # decides from what the server says about its own outputs, not from the
+    # display NUMBER, which is a convention and cannot refuse.
+    #
+    # The harness refuses per-launch as well (`rpc_verify._enter_inner`), which
+    # covers a demo run by hand. This one is here so the sweep says so ONCE, up
+    # front, instead of after building the workspace.
+    if ! python3 "$ROOT/tools/display_seat.py" --check "$DISPLAY" \
+         --what "this demo sweep" >&2; then
+      echo "[sweep] FATAL: this sweep would paint on a seated display." >&2
       exit 2
     fi
     exec bash -c "$runner" _ "${demos[@]}"

@@ -2765,5 +2765,58 @@ ok "a process launched from target/ is still called residual" "$anchor_got_demo"
 ok "a process that only names target/ in its arguments is not" "$anchor_got_tool" no
 ok "and the unanchored pattern did see it, so this case can fail" "$anchor_old_tool" yes
 
+# ── R2220: the seat rule has a gate in both homes, and a consumer ──────────
+#
+# ★★★★★ The owner's instruction is "every test runs offscreen", and what this
+# tree had was PROSE — a sweep header naming the price it paid, a comment in
+# `worktree.sh`, fifteen demo docstrings pointing at the seat. The rule lives in
+# `tools/display_seat.py` now, but a rule is only as good as what consults it,
+# and the two things that would make it silently stop mattering are the LAUNCH
+# SITE dropping the call and the gate losing a home. Both are asserted by name,
+# because a count cannot tell "covered" from "never reached" (the sentence this
+# file already carries about `ident`).
+seat_launch="$(grep -c 'display_seat.refuse_seated(' \
+    "$repo_root/tools/rpc_verify.py" 2>/dev/null || echo 0)"
+ok "the demo harness asks the seat rule before it launches anything" \
+   "$seat_launch" "1"
+# ⚠ And BEFORE `Popen`, not after — a refusal that fires once the child is up
+# has already painted. Compared by line number rather than by reading the call,
+# because the ordering is the property.
+seat_line="$(grep -n 'display_seat.refuse_seated(' \
+    "$repo_root/tools/rpc_verify.py" | head -1 | cut -d: -f1)"
+popen_line="$(grep -n 'self._proc = subprocess.Popen(' \
+    "$repo_root/tools/rpc_verify.py" | head -1 | cut -d: -f1)"
+if [[ -n "$seat_line" && -n "$popen_line" && "$seat_line" -lt "$popen_line" ]]; then
+    seat_order=before
+else
+    seat_order="not before (guard=$seat_line popen=$popen_line)"
+fi
+ok "and it asks BEFORE the child process exists" "$seat_order" before
+seat_sweep="$(grep -c 'display_seat.py" --check' \
+    "$repo_root/tools/sweep_headless.sh" 2>/dev/null || echo 0)"
+ok "the demo sweep checks the display it chose" "$seat_sweep" "1"
+seat_hook="$(grep -c 'tools/test_display_seat.py' \
+    "$repo_root/.githooks/pre-push" 2>/dev/null || echo 0)"
+seat_ci="$(grep -c 'tools/test_display_seat.py' \
+    "$repo_root/.github/workflows/ci.yml" 2>/dev/null || echo 0)"
+ok "the seat rule is tested at the push gate" "$seat_hook" "1"
+ok "and in CI, which is the other home" "$seat_ci" "1"
+# ★ The rule itself, exercised through this file too: a gate that merely EXISTS
+# is what R1884 found. One call, one sentence, and it fails if the criterion
+# stops discriminating.
+seat_verdict="$(python3 - "$repo_root" <<'PY' 2>&1 || true
+import sys
+sys.path.insert(0, sys.argv[1] + "/tools")
+from display_seat import Output, Probe, judge
+panel = Probe(display=":n", reachable=True, outputs=(Output("DP-4", True, 344, 215),),
+              ran=("xrandr",))
+virtual = Probe(display=":n", reachable=True, outputs=(Output("screen", True, 0, 0),),
+                ran=("xrandr",))
+print(f"{judge(panel).kind}/{judge(virtual).kind}")
+PY
+)"
+ok "a panel is a seat and a zero-millimetre output is not" \
+   "$seat_verdict" "seated/offscreen"
+
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

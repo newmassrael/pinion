@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, NoReturn, Optional, Sequence
 
 from build_gate import BuildError, ensure_built
+import display_seat
 import driven_binaries
 import painted_grammar
 
@@ -1041,6 +1042,28 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         # R1319 — demo-supplied env wins (e.g. `PINION_LOG`), so a demo can observe a
         # level-gated `tracing` line the default `warn` filter would drop.
         env.update(self.extra_env)
+        # ★★★★★ R2220 §5.15 — **nothing this harness launches paints on a seat.**
+        #
+        # The owner asked on 2026-09-11 whether any test shows up on their own
+        # screen, and the answer was that the policy existed only as prose: the
+        # sweep defaulted to the host display, fifteen demo docstrings named the
+        # seat, and no check anywhere refused one. See `tools/display_seat.py`
+        # for the criterion and for the five candidates measured and rejected.
+        #
+        # It sits HERE, at the one point every driven binary is launched from,
+        # rather than only in the sweep — a demo run by hand, by a test, or by a
+        # future runner nobody has written yet passes through this line too, and
+        # a guard the sweep owns would miss all three. It is checked against the
+        # env the CHILD is given, not this process's, because `extra_env` above
+        # can still change it.
+        #
+        # ⚠ It refuses regardless of `visible_window`. A hidden window is still
+        # a test running on somebody's screen, hiddenness is a runtime property
+        # one regression undoes, and eight of the visible demos WARP THE X
+        # POINTER — on a seat that is the owner's own mouse.
+        display_seat.refuse_seated(
+            env.get("DISPLAY"), what=f"the demo binary `{self.example}`"
+        )
         self._proc = subprocess.Popen(
             cmd,
             cwd=WORKSPACE_ROOT,
