@@ -126,8 +126,27 @@ def body() -> None:
         def snap_now():
             return tf.snapshot(source="paint", viewport=VIEWPORT)
 
+        def q(path: str, **args):
+            """One declared slot of this tree's state, ASKED FOR not spelled.
+
+            ★★★★★ R2231 — composed through what the MOUNTED External declares
+            (`paths_at(f"/{STATE_TAG}/external")`, the per-External cache R2227
+            built for exactly this). Measured against the screen: it declares
+            SEVEN names (`cursor`, `cursor_index`, `expanded_at`, `id_at`,
+            `label_at`, `level_at`, `row_count`); this walk asks five of them
+            over ten sites, undeclared ZERO, and every parametric one takes
+            `<pos>` — the screen's own argument name, asked of this screen
+            rather than carried from a neighbour (R2230's rule, which `r843`
+            earned by declaring `collapsed.<g>` beside `<pos>`).
+
+            ⚠ The two it does not ask are the CURSOR pair, which is
+            `r944_lazy_tree_keyboard`'s subject — so this walk's five is a
+            complete account of what it reads, not a shortfall.
+            """
+            return tf.paths_at(f"/{STATE_TAG}/external").ask(path, **args)
+
         def row_count() -> int:
-            return tf.query(f"/{STATE_TAG}/external/row_count")
+            return q("row_count")
 
         # ── (A) boot: the root's children load lazily, then 6 top-level rows ──
         # The root fetch resolves under the demo's own snapshot polling. R946 —
@@ -156,16 +175,16 @@ def body() -> None:
 
         # (A1) the AI-first tree-state introspection surface mirrors the paint.
         assert_eq(row_count(), 6, "row_count at boot")
-        assert_eq(tf.query(f"/{STATE_TAG}/external/id_at.0"), "0", "id_at.0 at boot")
-        assert_eq(tf.query(f"/{STATE_TAG}/external/label_at.2"), "Textures", "label_at.2")
-        assert_eq(tf.query(f"/{STATE_TAG}/external/level_at.0"), 1, "level_at.0 (root depth)")
+        assert_eq(q("id_at", pos=0), "0", "the id at row 0 at boot")
+        assert_eq(q("label_at", pos=2), "Textures", "the label at row 2")
+        assert_eq(q("level_at", pos=0), 1, "the level at row 0 is the root depth")
         assert_eq(
-            tf.query(f"/{STATE_TAG}/external/expanded_at.0"),
+            q("expanded_at", pos=0),
             False,
             "node 0 is a collapsed branch",
         )
         assert_eq(
-            tf.query(f"/{STATE_TAG}/external/expanded_at.1"),
+            q("expanded_at", pos=1),
             None,
             "node 1 is a leaf (aria-expanded undefined)",
         )
@@ -208,9 +227,9 @@ def body() -> None:
 
         # (B3) introspection reflects the deeper tree (level = depth + 1), the
         # whole flatten regardless of which window paints.
-        assert_eq(tf.query(f"/{STATE_TAG}/external/expanded_at.0"), True, "node 0 now expanded")
-        assert_eq(tf.query(f"/{STATE_TAG}/external/id_at.1"), "0/0", "id_at.1 == first child")
-        assert_eq(tf.query(f"/{STATE_TAG}/external/level_at.1"), 2, "child level == 2")
+        assert_eq(q("expanded_at", pos=0), True, "node 0 now expanded")
+        assert_eq(q("id_at", pos=1), "0/0", "the id at row 1 is the first child")
+        assert_eq(q("level_at", pos=1), 2, "child level == 2")
 
         # ── (C) collapse node 0 → children hidden, no skeleton, cache kept ───
         tf.click(path=row_tag("0"))
@@ -260,7 +279,7 @@ def body() -> None:
         assert "0/0/0" in deep_ids, "grandchild 0/0/0 visible"
         assert deep_ids.index("0/0/0") == deep_ids.index("0/0") + 1, "grandchild follows its parent"
         # 0/0/0 is at depth 2 → aria-level 3 (query the full-flatten position).
-        assert_eq(tf.query(f"/{STATE_TAG}/external/level_at.2"), 3, "grandchild level == 3")
+        assert_eq(q("level_at", pos=2), 3, "grandchild level == 3")
 
         # ── (F) clicking a leaf is a no-op (the reducer gates on id_is_branch) ─
         before_leaf = visible_ids(deep)

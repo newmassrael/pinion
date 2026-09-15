@@ -85,7 +85,7 @@ expanded.arr	0	0
 expanded.cat	0	0
 expanded.struct	0	0
 expanded.{}	0	3
-expanded_at.{}	12	1
+expanded_at.{}	9	1
 extent.{}	4	0
 feed.head	0	0
 feed.row	0	1
@@ -107,7 +107,7 @@ histogram.axis	0	1
 histogram.bar	0	1
 histogram.inspect	0	5
 hit.{}	0	2
-id_at.{}	22	3
+id_at.{}	20	3
 is_dir.{}	5	0
 item.bake	0	0
 item.dark	0	0
@@ -144,9 +144,9 @@ lab.scenario	0	11
 lab.toast	0	0
 lab.toolbar	0	0
 lab.wire	0	1
-label_at.{}	10	6
+label_at.{}	8	6
 layers.{}	1	0
-level_at.{}	13	2
+level_at.{}	10	2
 line.area	0	0
 line.focus	0	2
 line.series	1	4
