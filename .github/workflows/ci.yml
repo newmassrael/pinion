@@ -12,6 +12,16 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Latest-only. A run in flight is never cancelled by a newer push, and the
+# commits pushed while it runs collapse to the LAST one, which runs next.
+# GitHub keeps one running and at most one pending run per group; a newer
+# pending run replaces the older pending one, which ends `cancelled` having
+# started nothing. The group carries no sha, so a push cannot open a group of
+# its own and the pending slot stays singular.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
 
