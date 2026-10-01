@@ -42,8 +42,8 @@
 
 # Decide a verdict for `branch` from `gh run list` plain-text output.
 #
-# Echoes one of `green <id>` / `red <id>` / `unknown`, and returns 0 always —
-# the caller decides what a verdict means.
+# Returns 0 always — the caller decides what a verdict means. The verdicts it
+# echoes are listed below, after the account of cancelled runs.
 #
 # Plain text, not `--json`: this host has no `jq`, and a `gh ... --json | jq`
 # pipeline there dies silently, producing zero rows that are indistinguishable
@@ -51,8 +51,9 @@
 # STATUS, CONCLUSION, TITLE, WORKFLOW, BRANCH, EVENT, ID, ELAPSED, AGE —
 # tab-separated, newest first. A run still going has an EMPTY conclusion
 # field, which is why the scan takes the first row whose status is
-# `completed`: an in-progress run has not judged anything yet, and the last
-# run that DID judge is the one whose verdict the base inherits.
+# `completed` and whose conclusion is not `cancelled`: an in-progress run has
+# not judged anything yet, and the last run that DID judge is the one whose
+# verdict the base inherits.
 #
 # The branch is filtered HERE rather than by `gh run list --branch`. R1495
 # wrote that the flag does not exist in the `gh` on this machine, and passing
@@ -70,15 +71,40 @@
 # already has to walk. What is corrected is the CLAIM, because a comment
 # asserting a version nobody re-measures is how the sibling defect below went
 # three misdiagnoses deep.
+#
+# ## A cancelled run is stepped over, not graded
+#
+# ci.yml groups by ref and never cancels a run in flight (owner decision,
+# 2026-10-01), and a group keeps only ONE waiting run: a push that arrives while
+# one run executes and another waits REPLACES the waiting one, which then ends
+# `cancelled` having executed no job. Under that policy a cancelled run is the
+# ordinary result of a burst of pushes, not an anomaly, and it judged nothing.
+# So it is skipped exactly as an in-progress run is, and the scan goes on to the
+# next completed row: that one is the last run that DID judge. It is never read
+# as green, and it is never read as red either, because the listing is newest
+# first and a cancelled row can be the first completed one on the branch for as
+# long as the run behind it takes to finish.
+#
+# When every completed row on the branch was cancelled, nothing was measured.
+# That is `ungraded`, a verdict of its own rather than `unknown`: `unknown`
+# says no run has completed, and here some did and graded nothing. The caller
+# says so aloud and does not call it green.
+#
+# Echoes one of `green <id>` / `red <id>` / `ungraded <id>` / `unknown`, where
+# the id of `ungraded` is the newest cancelled run.
 ci_verdict_from_listing() {
     local listing="$1" want_branch="$2"
-    local status conclusion rest id branch
+    local status conclusion rest id branch stepped_over=""
     while IFS=$'\t' read -r status conclusion rest; do
         [[ "$status" == "completed" ]] || continue
         # In the remainder: 1=TITLE, 2=WORKFLOW, 3=BRANCH, 4=EVENT, 5=ID.
         branch="$(printf '%s' "$rest" | cut -f3)"
         [[ "$branch" == "$want_branch" ]] || continue
         id="$(printf '%s' "$rest" | cut -f5)"
+        if [[ "$conclusion" == "cancelled" ]]; then
+            [[ -n "$stepped_over" ]] || stepped_over="$id"
+            continue
+        fi
         if [[ "$conclusion" == "success" ]]; then
             printf 'green %s\n' "$id"
         else
@@ -86,7 +112,11 @@ ci_verdict_from_listing() {
         fi
         return 0
     done <<<"$listing"
-    printf 'unknown\n'
+    if [[ -n "$stepped_over" ]]; then
+        printf 'ungraded %s\n' "$stepped_over"
+    else
+        printf 'unknown\n'
+    fi
 }
 
 # How long after a push GitHub is still allowed not to have scheduled a run.
@@ -485,6 +515,14 @@ check_last_ci_run() {
         unknown)
             echo "$label: no completed CI run on $branch yet — nothing to" \
                  "inherit, continuing" >&2
+            return 0
+            ;;
+        ungraded)
+            # Not green, and not silent: the line says nothing was measured.
+            echo "$label: every completed CI run on $branch was cancelled" \
+                 "(newest: run $id) — a cancelled run executed no job, so" \
+                 "this gate measured nothing; that is not the same as no" \
+                 "red. Continuing" >&2
             return 0
             ;;
         red)

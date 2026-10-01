@@ -151,11 +151,59 @@ ok "the scan walks past other branches to this one" \
 
 # GitHub has conclusions other than success/failure. None of them is a
 # verdict this project may build on top of unexamined.
-for conclusion in cancelled timed_out startup_failure action_required; do
+#
+# `cancelled` is not in this list any more, and the reason is the point: under
+# ci.yml's group (one run in flight, one waiting, a newer push REPLACES the
+# waiting one) a replaced run ends `cancelled` having executed no job. It judged
+# nothing, so it is stepped over like an in-progress run -- see the cases below.
+for conclusion in timed_out startup_failure action_required; do
     ok "'$conclusion' is not a green light" \
        "$(ci_verdict_from_listing "$(row completed "$conclusion" 777)" main)" \
        "red 777"
 done
+
+# A cancelled run is stepped over to the last run that DID judge, and the
+# listing is newest first, so the cancelled row is the first completed one for
+# as long as the run behind it takes to finish.
+cancelled_over_green="$(printf '%s\n%s' \
+    "$(row completed cancelled 771)" "$(row completed success 772)")"
+ok "a cancelled run is stepped over to the green behind it" \
+   "$(ci_verdict_from_listing "$cancelled_over_green" main)" \
+   "green 772"
+
+# The reason stepping over cannot simply answer "green when unsure": a red
+# behind a cancelled run is still the base's verdict.
+cancelled_over_red="$(printf '%s\n%s' \
+    "$(row completed cancelled 773)" "$(row completed failure 774)")"
+ok "a cancelled run does not hide the red behind it" \
+   "$(ci_verdict_from_listing "$cancelled_over_red" main)" \
+   "red 774"
+
+# A burst leaves several cancelled rows in a row, and an in-progress one may
+# sit among them; the scan must walk past all of them.
+burst_over_red="$(printf '%s\n%s\n%s\n%s' \
+    "$(row in_progress '' 775)" "$(row completed cancelled 776)" \
+    "$(row completed cancelled 778)" "$(row completed failure 779)")"
+ok "a burst of cancelled runs and a running one hide nothing" \
+   "$(ci_verdict_from_listing "$burst_over_red" main)" \
+   "red 779"
+
+# Nothing but cancelled runs: nothing was measured. That is `ungraded`, not
+# `unknown` (no run has completed) and not `green`, and it names the NEWEST
+# cancelled run.
+only_cancelled="$(printf '%s\n%s' \
+    "$(row completed cancelled 780)" "$(row completed cancelled 781)")"
+ok "only cancelled runs is ungraded, not green and not unknown" \
+   "$(ci_verdict_from_listing "$only_cancelled" main)" \
+   "ungraded 780"
+
+# The branch filter applies to the step-over too: another branch's cancelled
+# run is not this branch's, and must not turn "no run yet" into "ungraded".
+other_branch_cancelled="$(printf '%s\t%s\tsome commit\tCI\t%s\tpush\t%s\t10m\t1h' \
+    completed cancelled feature-x 782)"
+ok "another branch's cancelled run does not make this branch ungraded" \
+   "$(ci_verdict_from_listing "$other_branch_cancelled" main)" \
+   "unknown"
 
 # ---------------------------------------------------------------------------
 # check_last_ci_run — the decision, with `gh` stubbed
@@ -317,6 +365,23 @@ ok "an unknown base publishes (nothing to inherit)" \
    "$(with_stub - "" check_last_ci_run main test)" \
    "0"
 
+# The decision, end to end, for the shapes a burst of pushes leaves behind. The
+# exit code alone cannot tell "published because green" from "published because
+# nothing was measured", so the last case reads the message as well.
+ok "a cancelled run over a green base publishes" \
+   "$(with_stub - "$(printf '%s\n%s' "$(row completed cancelled 771)" \
+        "$(row completed success 772)")" check_last_ci_run main test)" \
+   "0"
+
+ok "a cancelled run over a red base still refuses" \
+   "$(with_stub - "$(printf '%s\n%s' "$(row completed cancelled 773)" \
+        "$(row completed failure 774)")" check_last_ci_run main test)" \
+   "1"
+
+ok "only cancelled runs publishes, because nothing was measured" \
+   "$(with_stub - "$(row completed cancelled 780)" check_last_ci_run main test)" \
+   "0"
+
 # The override exists so the FIX for a red base can be published. Without it a
 # stop-the-line rule stops the line permanently.
 ok "the override publishes onto a red base" \
@@ -356,6 +421,22 @@ ok "and says which rule let it through" \
    "$(with_stub_stderr 1 "$(row completed failure 222)" check_last_ci_run main test \
         | grep -c 'PINION_PUSH_ON_RED=1')" \
    "1"
+
+# Only cancelled runs publishes, and it SAYS why: a gate that passed in silence
+# here would be indistinguishable from a green one, which is the confusion this
+# gate exists to prevent. The line names the newest cancelled run and says that
+# nothing was measured; it never says SUCCESS.
+only_cancelled_said="$(with_stub_stderr 0 "$(row completed cancelled 780)" \
+    check_last_ci_run main test)"
+ok "only cancelled runs says nothing was measured" \
+   "$(printf '%s' "$only_cancelled_said" | grep -c 'measured nothing')" \
+   "1"
+ok "and names the newest cancelled run" \
+   "$(printf '%s' "$only_cancelled_said" | grep -c 'run 780')" \
+   "1"
+ok "and does not call it a success" \
+   "$(printf '%s' "$only_cancelled_said" | grep -c 'SUCCESS')" \
+   "0"
 
 # ---------------------------------------------------------------------------
 # R1953 — a red is a SHAPE, not a run id.
