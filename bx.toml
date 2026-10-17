@@ -67,16 +67,11 @@ sweep  = "xvfb-run -a bash tools/sweep_headless.sh"
 # BUILD's parallelism, not about what one test holds, and inventing a per-test
 # figure would make the executor's RAM arithmetic confidently wrong.
 
-[ext.pinion]
-# A silent sound card, for `examples/hello-audio-device` only. Not a package:
-# `snd-dummy` is a kernel module, so a machine satisfies this by having it
-# loaded (`modprobe snd-dummy`, and a line in `/etc/modules-load.d/` to survive
-# a reboot). Stated because a missing card does not read as missing — the demo
-# boots, opens no device, and the surface measures differently from one that
-# did.
-#
-# ⚠ NOTHING CHECKS THIS. It sat at the top level as `modules` and read like a
-# requirement bx enforces; bx never read it, and no tool here does. It lives in
-# this table, which is this repository's own, until a kernel-module requirement
-# is part of bx's format (an open question in bx's RFC 0001, step 1 item 6).
-modules = ["snd-dummy"]
+# `snd-dummy` (the silent sound card) is deliberately NOT declared, although bx
+# now checks a top-level `modules` list. A module listed there is required for
+# EVERY run, and here only `examples/hello-audio-device` uses it: `build` and
+# `verify` do not, so declaring it would refuse every host without the card (on
+# 2026-10-17, three of four) for runs that never open a sound device. The demo
+# guards itself instead — without the card the binary aborts loudly, listing
+# what it found (tools/demos/hello_audio_device.py) — and CI provides a userspace
+# null sink in its place (`PINION_SILENT_PCM`). Locally: `sudo modprobe snd-dummy`.
