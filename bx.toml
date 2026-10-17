@@ -1,16 +1,20 @@
+schema = 1
+
 # What this repository needs from a build machine, and how it is verified.
 #
 # Machine names, addresses and accounts are deliberately ABSENT: this repository
 # is public, and the registry that maps a requirement to a machine lives outside
-# it (`~/.claude/remote-build/hosts.toml` + `~/.ssh/config`). A new machine is a
-# line there, not an edit here.
+# it (bx's registry, `bx-paths.sh registry`, and `~/.ssh/config`). A new machine
+# is a line there, not an edit here.
 
+# Only what git tracks crosses. `target/` is a SYMLINK into a shared compressed
+# volume (R1489) and it stays home because `.gitignore` ignores it, not because
+# of a key here: rsync would carry a broken link to the far side, and `cargo
+# clean` deletes the link itself — after which cargo silently rebuilds into a
+# real directory on the root filesystem, which is the incident that volume
+# exists to prevent. (An `exclude = ["/target"]` line sat here until 2026-10-17;
+# bx never read it, and bx.toml refuses a key bx does not define.)
 send    = "tracked"
-# `target/` is a SYMLINK into a shared compressed volume (R1489). rsync would
-# carry a broken link to the far side, and `cargo clean` deletes the link
-# itself — after which cargo silently rebuilds into a real directory on the
-# root filesystem, which is the incident that volume exists to prevent.
-exclude = ["/target"]
 
 # `cargo` builds it; `python3` drives every demo (`tools/rpc_verify.py`).
 needs = ["cargo", "python3"]
@@ -43,14 +47,6 @@ packages = [
     "xvfb",
 ]
 
-# A silent sound card, for `examples/hello-audio-device` only. Not a package:
-# `snd-dummy` is a kernel module, so a machine satisfies this by having it
-# loaded (`modprobe snd-dummy`, and a line in `/etc/modules-load.d/` to survive
-# a reboot). Stated here because a missing card does not read as missing — the
-# demo boots, opens no device, and the surface measures differently from one
-# that did.
-modules = ["snd-dummy"]
-
 min_ram_gb  = 16
 min_free_gb = 40
 
@@ -70,3 +66,17 @@ sweep  = "xvfb-run -a bash tools/sweep_headless.sh"
 # measured (`jobs = 32` OOM-killing `cargo test --workspace`) is about the
 # BUILD's parallelism, not about what one test holds, and inventing a per-test
 # figure would make the executor's RAM arithmetic confidently wrong.
+
+[ext.pinion]
+# A silent sound card, for `examples/hello-audio-device` only. Not a package:
+# `snd-dummy` is a kernel module, so a machine satisfies this by having it
+# loaded (`modprobe snd-dummy`, and a line in `/etc/modules-load.d/` to survive
+# a reboot). Stated because a missing card does not read as missing — the demo
+# boots, opens no device, and the surface measures differently from one that
+# did.
+#
+# ⚠ NOTHING CHECKS THIS. It sat at the top level as `modules` and read like a
+# requirement bx enforces; bx never read it, and no tool here does. It lives in
+# this table, which is this repository's own, until a kernel-module requirement
+# is part of bx's format (an open question in bx's RFC 0001, step 1 item 6).
+modules = ["snd-dummy"]
