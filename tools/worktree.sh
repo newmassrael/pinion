@@ -422,7 +422,7 @@ in 17s). Until \`bx\` grows a --root, paste this and use \`wtb\` instead:
 
   wtb() { BX_LOCAL_REASON="testing linked worktree $name; bx resolves its root \\
 from cwd and has no override" \\
-    "\$HOME/.claude/remote-build/bin/bx" --local -- \\
+    "\$HOME/.local/bin/bx" --local -- \\
     "\$@" --manifest-path $wt/Cargo.toml; }
 
   wtb cargo test -p pinion-core        # -> runs against $name
