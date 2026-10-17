@@ -70,8 +70,8 @@ sweep  = "xvfb-run -a bash tools/sweep_headless.sh"
 # `snd-dummy` (the silent sound card) is deliberately NOT declared, although bx
 # now checks a top-level `modules` list. A module listed there is required for
 # EVERY run, and here only `examples/hello-audio-device` uses it: `build` and
-# `verify` do not, so declaring it would refuse every host without the card (on
-# 2026-10-17, three of four) for runs that never open a sound device. The demo
+# `verify` do not, so declaring it would refuse every host without the card for
+# runs that never open a sound device. The demo
 # guards itself instead — without the card the binary aborts loudly, listing
 # what it found (tools/demos/hello_audio_device.py) — and CI provides a userspace
 # null sink in its place (`PINION_SILENT_PCM`). Locally: `sudo modprobe snd-dummy`.
